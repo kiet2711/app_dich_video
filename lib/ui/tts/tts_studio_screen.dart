@@ -1,3 +1,5 @@
+import 'package:flutter/services.dart';
+import '../../domain/media/network_header_helper.dart';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -85,38 +87,120 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
   }
 
   void _showEnterLinkDialog() {
-    final controller = TextEditingController(text: _videoPath?.startsWith('http') == true ? _videoPath : '');
+    final controller = TextEditingController(
+      text: _videoPath?.startsWith('http') == true ? _videoPath : '',
+    );
+    String? errorText;
+
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppColors.darkCard,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('Nhập Link Video Online', style: TextStyle(color: Colors.white, fontSize: 16)),
-        content: TextField(
-          controller: controller,
-          style: const TextStyle(color: Colors.white),
-          decoration: const InputDecoration(
-            hintText: 'Dán link Bilibili hoặc link video MP4...',
-            hintStyle: TextStyle(color: Colors.grey),
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: AppColors.darkCard,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(
+            children: const [
+              Icon(Icons.link, color: AppColors.primaryEmerald, size: 20),
+              SizedBox(width: 8),
+              Text(
+                'Nhập Link Video Online',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
           ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Dán link video trực tiếp (Bilibili, Douyin, MP4, M3U8...):',
+                style: TextStyle(color: Colors.grey, fontSize: 13),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: controller,
+                style: const TextStyle(color: Colors.white, fontSize: 13),
+                decoration: InputDecoration(
+                  hintText: 'https://.../video.mp4 hoặc link Bilibili',
+                  hintStyle: const TextStyle(color: Colors.grey, fontSize: 12),
+                  filled: true,
+                  fillColor: const Color(0xFF14151B),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: const BorderSide(color: AppColors.cardBorder),
+                  ),
+                ),
+                onChanged: (_) {
+                  if (errorText != null) {
+                    setDialogState(() => errorText = null);
+                  }
+                },
+              ),
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: () async {
+                      final data = await Clipboard.getData('text/plain');
+                      final text = data?.text?.trim() ?? '';
+                      if (text.isNotEmpty) {
+                        controller.text = text;
+                        setDialogState(() => errorText = null);
+                      }
+                    },
+                    icon: const Icon(Icons.paste, size: 14, color: AppColors.primaryEmerald),
+                    label: const Text('Dán từ Clipboard', style: TextStyle(color: AppColors.primaryEmerald, fontSize: 12)),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      side: const BorderSide(color: AppColors.primaryEmerald),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    ),
+                  ),
+                ],
+              ),
+              if (errorText != null) ...[
+                const SizedBox(height: 6),
+                Text(
+                  errorText!,
+                  style: const TextStyle(color: Color(0xFFFFB74D), fontSize: 12),
+                ),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Hủy', style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primaryEmerald,
+                foregroundColor: Colors.black,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              onPressed: () {
+                final clean = NetworkHeaderHelper.extractCleanUrl(controller.text);
+                if (clean.isEmpty || !NetworkHeaderHelper.isRemoteUrl(clean)) {
+                  setDialogState(() {
+                    errorText =
+                        'Vui lòng nhập link hợp lệ (http://, https:// hoặc link Bilibili/b23.tv)';
+                  });
+                  return;
+                }
+                setState(() => _videoPath = clean);
+                Navigator.pop(ctx);
+              },
+              child: const Text('Xác Nhận', style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Hủy', style: TextStyle(color: Colors.grey)),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: AppColors.primaryEmerald, foregroundColor: Colors.black),
-            onPressed: () {
-              final link = controller.text.trim();
-              if (link.isNotEmpty) {
-                setState(() => _videoPath = link);
-              }
-              Navigator.pop(ctx);
-            },
-            child: const Text('Đồng ý'),
-          ),
-        ],
       ),
     );
   }
@@ -461,7 +545,7 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
     final hasVideo = _videoPath != null && _videoPath!.isNotEmpty;
     final isOnline = hasVideo && _videoPath!.startsWith('http');
     final name = hasVideo
-        ? (isOnline ? _videoPath! : File(_videoPath!).uri.pathSegments.last)
+        ? (isOnline ? NetworkHeaderHelper.getSuggestedTitle(_videoPath!) : File(_videoPath!).uri.pathSegments.last)
         : '';
 
     return Container(
@@ -469,7 +553,7 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
       decoration: BoxDecoration(
         color: AppColors.darkCard,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: hasVideo ? AppColors.primaryEmerald.withValues(alpha: 0.5) : AppColors.cardBorder),
+        border: Border.all(color: AppColors.cardBorder),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -547,13 +631,16 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
 
   Widget _buildCard1Subtitle() {
     final hasDoc = _doc != null && _doc!.items.isNotEmpty;
+    final voicedCount = hasDoc
+        ? _doc!.items.where((it) => it.audioFilePath != null && it.audioFilePath!.isNotEmpty).length
+        : 0;
 
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: AppColors.darkCard,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: hasDoc ? AppColors.primaryEmerald.withValues(alpha: 0.5) : AppColors.cardBorder),
+        border: Border.all(color: AppColors.cardBorder),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -561,7 +648,10 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('1. Danh Sách Phụ Đề', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+              const Text(
+                '1. Danh Sách Phụ Đề',
+                style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+              ),
               Row(
                 children: [
                   OutlinedButton.icon(
@@ -585,66 +675,107 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                     ),
                   ),
-                  if (hasDoc) ...[
-                    const SizedBox(width: 6),
-                    OutlinedButton.icon(
-                      onPressed: _openTranslateDialog,
-                      icon: const Icon(Icons.translate, size: 14, color: Colors.amberAccent),
-                      label: const Text('Dịch SRT', style: TextStyle(color: Colors.amberAccent, fontSize: 12)),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        side: const BorderSide(color: Colors.amberAccent),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                      ),
-                    ),
-                  ],
                 ],
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
-            decoration: BoxDecoration(
-              color: const Color(0xFF14151B),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: Colors.white10),
-            ),
-            child: hasDoc
-                ? Row(
-                    children: [
-                      const Icon(Icons.subtitles, color: AppColors.primaryEmerald, size: 24),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          'Đã nạp ${_doc!.items.length} câu phụ đề',
-                          style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+          const SizedBox(height: 10),
+          if (hasDoc) ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1F2029),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.white10),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.subtitles, color: AppColors.primaryEmerald, size: 24),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Đã sẵn sàng: ${_doc!.items.length} câu phụ đề',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.close, size: 16, color: Colors.grey),
-                        onPressed: () => setState(() => _doc = null),
-                      ),
-                    ],
-                  )
-                : Column(
-                    children: const [
-                      Icon(Icons.subtitles, color: Colors.grey, size: 28),
-                      SizedBox(height: 6),
-                      Text(
-                        'Chưa có phụ đề để lồng tiếng',
-                        style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
-                      ),
-                      SizedBox(height: 4),
-                      Text(
-                        "Tạo phụ đề từ Tab 'Tạo Phụ Đề' hoặc bấm 'Nạp SRT ngoài' ở trên",
-                        style: TextStyle(color: Colors.grey, fontSize: 11),
-                        textAlign: TextAlign.center,
-                      ),
-                    ],
+                        const SizedBox(height: 2),
+                        Text(
+                          voicedCount > 0
+                              ? 'Đã tạo giọng: $voicedCount / ${_doc!.items.length} câu'
+                              : 'Chưa tạo giọng đọc',
+                          style: TextStyle(
+                            color: voicedCount > 0 ? AppColors.primaryEmerald : Colors.grey,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-          ),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 18, color: Colors.grey),
+                    tooltip: 'Bỏ chọn phụ đề này',
+                    onPressed: () => setState(() => _doc = null),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              height: 38,
+              child: OutlinedButton.icon(
+                onPressed: _openTranslateDialog,
+                icon: const Icon(Icons.translate, size: 16, color: Color(0xFF64B5F6)),
+                label: const Text(
+                  'Dịch phụ đề bằng Gemini AI',
+                  style: TextStyle(
+                    color: Color(0xFF64B5F6),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: Color(0xFF384055)),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  backgroundColor: const Color(0xFF1E222D).withValues(alpha: 0.3),
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                ),
+              ),
+            ),
+          ] else ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1F2029),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.white10),
+              ),
+              child: Column(
+                children: const [
+                  Icon(Icons.subtitles, color: Colors.grey, size: 32),
+                  SizedBox(height: 8),
+                  Text(
+                    'Chưa có phụ đề để lồng tiếng',
+                    style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600),
+                  ),
+                  SizedBox(height: 4),
+                  Text(
+                    "Tạo phụ đề từ Tab 'Tạo Phụ Đề' hoặc bấm 'Nạp SRT' ở trên",
+                    style: TextStyle(color: Colors.grey, fontSize: 12),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );

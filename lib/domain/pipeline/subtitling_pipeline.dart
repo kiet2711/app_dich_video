@@ -1,4 +1,6 @@
-﻿import 'dart:async';
+import '../media/network_header_helper.dart';
+import '../media/multi_thread_downloader.dart';
+import 'dart:async';
 import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
@@ -42,7 +44,7 @@ class SubtitlingPipeline {
     _emit(
       const ProcessProgress(
         stage: ProcessStage.cancelled,
-        message: 'ÄÃ£ huá»· bá»Ÿi ngÆ°á»i dÃ¹ng.',
+        message: 'Đã huỷ bởi người dùng.',
       ),
     );
   }
@@ -64,11 +66,11 @@ class SubtitlingPipeline {
       throw ArgumentError.value(
         totalDurationMs,
         'totalDurationMs',
-        'Thá»i lÆ°á»£ng media pháº£i lá»›n hÆ¡n 0',
+        'Thời lượng media phải lớn hơn 0',
       );
     }
     if (translationEngine.startsWith('gemini') && apiKeys.isEmpty) {
-      throw StateError('ÄÃ£ chá»n Gemini nhÆ°ng chÆ°a cáº¥u hÃ¬nh API Key.');
+      throw StateError('Đã chọn Gemini nhưng chưa cấu hình API Key.');
     }
     final tempBase = await getTemporaryDirectory();
     final sessionDir = Directory(
@@ -87,7 +89,7 @@ class SubtitlingPipeline {
           const ProcessProgress(
             stage: ProcessStage.extractingAudio,
             progress: 0.02,
-            message: 'Äang phÃ¢n tÃ­ch link Bilibili...',
+      message: 'Đang phân tích link Bilibili...',
           ),
         );
         final target = await resolver.resolveUrl(videoPath);
@@ -116,7 +118,7 @@ class SubtitlingPipeline {
                   stage: ProcessStage.extractingAudio,
                   progress: 0.20,
                   message:
-                      'ÄÃ£ náº¡p ${sourceDocument.size} cÃ¢u phá»¥ Ä‘á» Bilibili (${preferred.languageName}).',
+        'Đã nạp ${sourceDocument.size} câu phụ đề Bilibili (${preferred.languageName}).',
                 ),
               );
             }
@@ -149,22 +151,59 @@ class SubtitlingPipeline {
         }
       }
 
-      // -------------------------------------------------------------
-      // GIAI ÄOáº N 1: TÃCH Ã‚M THANH SANG M4A
-      // -------------------------------------------------------------
-      if (_isCancelled) throw Exception('ÄÃ£ huá»· tÃ¡c vá»¥');
-      _emit(
-        const ProcessProgress(
-          stage: ProcessStage.extractingAudio,
-          progress: 0.05,
-          message: 'Äang trÃ­ch xuáº¥t luá»“ng Ã¢m thanh tá»« video...',
-        ),
-      );
-
       final allItems = <SubtitleItem>[];
       if (sourceDocument != null) {
         allItems.addAll(sourceDocument.items);
+        _emit(
+          ProcessProgress(
+            stage: ProcessStage.extractingAudio,
+            progress: 0.50,
+            message: 'Đã nạp ${sourceDocument.size} câu phụ đề có sẵn! Chuẩn bị dịch...',
+          ),
+        );
       } else {
+        // Nếu là URL video online thông thường (không phải Bilibili), tải trước qua MultiThreadDownloader
+        if (NetworkHeaderHelper.isRemoteUrl(extractionPath)) {
+          _emit(
+            const ProcessProgress(
+              stage: ProcessStage.extractingAudio,
+              progress: 0.03,
+              message: 'Đang tải video trực tuyến để bóc tách âm thanh...',
+            ),
+          );
+          final tempRemoteFile = File(
+            '${sessionDir.path}${Platform.pathSeparator}downloaded_remote_stream.mp4',
+          );
+          final settings = await SettingsRepository.getInstance();
+          final headers = NetworkHeaderHelper.getHeadersForUrl(extractionPath, settings.bilibiliSessData);
+          await MultiThreadDownloader.downloadFile(
+            url: extractionPath,
+            outputFile: tempRemoteFile,
+            headers: headers,
+            concurrency: settings.downloadThreadCount,
+            progressCallback: (pct, msg) {
+              _emit(
+                ProcessProgress(
+                  stage: ProcessStage.extractingAudio,
+                  progress: 0.03 + pct * 0.12,
+                  message: msg,
+                ),
+              );
+            },
+          );
+          extractionPath = tempRemoteFile.path;
+        }
+
+        // GIAI ĐOẠN 1: TÁCH ÂM THANH SANG M4A
+        if (_isCancelled) throw Exception('Đã huỷ tác vụ');
+        _emit(
+          const ProcessProgress(
+            stage: ProcessStage.extractingAudio,
+            progress: 0.05,
+            message: 'Đang trích xuất luồng âm thanh từ video...',
+          ),
+        );
+
         final chunks = await AudioChunker.sliceMedia(
           videoPath: extractionPath,
           totalDurationMs: totalDurationMs,
@@ -181,11 +220,11 @@ class SubtitlingPipeline {
         );
 
         // -------------------------------------------------------------
-        // GIAI ÄOáº N 2 & 3: UPLOAD VOD VÃ€ STT CAPCUT CHO Tá»ªNG CHUNK
+    // GIAI ĐOẠN 2 & 3: UPLOAD VOD VÀ STT CAPCUT CHO TỪNG CHUNK
         // -------------------------------------------------------------
         final totalChunks = chunks.length;
         for (var i = 0; i < totalChunks; i++) {
-          if (_isCancelled) throw Exception('ÄÃ£ huá»· tÃ¡c vá»¥');
+      if (_isCancelled) throw Exception('Đã huỷ tác vụ');
           final chunk = chunks[i];
 
           // 2. Upload VOD
@@ -197,7 +236,7 @@ class SubtitlingPipeline {
               stage: ProcessStage.uploadingVod,
               progress: 0.20 + (i / totalChunks) * 0.30,
               message:
-                  'Äang táº£i phÃ¢n Ä‘oáº¡n ${i + 1}/$totalChunks lÃªn CapCut Cloud...',
+        'Đang tải phân đoạn ${i + 1}/$totalChunks lên CapCut Cloud...',
             ),
           );
 
@@ -213,14 +252,14 @@ class SubtitlingPipeline {
                 ProcessProgress(
                   stage: ProcessStage.uploadingVod,
                   progress: overall,
-                  message: '[Äoáº¡n ${i + 1}/$totalChunks] $msg',
+      message: '[Đoạn ${i + 1}/$totalChunks] $msg',
                 ),
               );
             },
           );
 
           // 3. STT CapCut
-          if (_isCancelled) throw Exception('ÄÃ£ huá»· tÃ¡c vá»¥');
+      if (_isCancelled) throw Exception('Đã huỷ tác vụ');
           final sttClient = CapCutSttClient(device: device);
 
           _emit(
@@ -228,7 +267,7 @@ class SubtitlingPipeline {
               stage: ProcessStage.sttTranscribing,
               progress: 0.50 + (i / totalChunks) * 0.25,
               message:
-                  'CapCut Ä‘ang nháº­n diá»‡n giá»ng nÃ³i [Äoáº¡n ${i + 1}/$totalChunks]...',
+        'CapCut đang nhận diện giọng nói [Đoạn ${i + 1}/$totalChunks]...',
             ),
           );
 
@@ -250,7 +289,7 @@ class SubtitlingPipeline {
                 ProcessProgress(
                   stage: ProcessStage.sttTranscribing,
                   progress: overall,
-                  message: '[Äoáº¡n ${i + 1}/$totalChunks] $msg',
+      message: '[Đoạn ${i + 1}/$totalChunks] $msg',
                 ),
               );
             },
@@ -264,15 +303,15 @@ class SubtitlingPipeline {
       fullDoc.reindex();
 
       // -------------------------------------------------------------
-      // GIAI ÄOáº N 4: Dá»ŠCH PHá»¤ Äá»€ Báº°NG GEMINI AI
+    // GIAI ĐOẠN 4: DỊCH PHỤ ĐỀ BẰNG GEMINI AI
       // -------------------------------------------------------------
       if (translationEngine.startsWith('gemini') && fullDoc.isNotEmpty) {
-        if (_isCancelled) throw Exception('ÄÃ£ huá»· tÃ¡c vá»¥');
+    if (_isCancelled) throw Exception('Đã huỷ tác vụ');
         _emit(
           const ProcessProgress(
             stage: ProcessStage.aiTranslating,
             progress: 0.75,
-            message: 'Báº¯t Ä‘áº§u dá»‹ch phá»¥ Ä‘á» theo ngá»¯ cáº£nh vá»›i Gemini AI...',
+      message: 'Bắt đầu dịch phụ đề theo ngữ cảnh với Gemini AI...',
           ),
         );
 
@@ -309,7 +348,7 @@ class SubtitlingPipeline {
         ProcessProgress(
           stage: ProcessStage.completed,
           progress: 1.0,
-          message: 'HoÃ n táº¥t xá»­ lÃ½ phá»¥ Ä‘á»!',
+      message: 'Hoàn tất xử lý phụ đề!',
           resultDocument: fullDoc,
         ),
       );
@@ -320,7 +359,7 @@ class SubtitlingPipeline {
         _emit(
           ProcessProgress(
             stage: ProcessStage.error,
-            message: 'Lá»—i: $e',
+            message: 'Lỗi: $e',
             error: e,
           ),
         );

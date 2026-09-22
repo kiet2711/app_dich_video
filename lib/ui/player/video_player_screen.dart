@@ -97,7 +97,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       await _controller!.play();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _playerError = 'KhÃ´ng má»Ÿ Ä‘Æ°á»£c video: $e');
+      setState(() => _playerError = 'Không mở được video: $e');
     }
   }
 
@@ -202,7 +202,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
           ),
         ],
         fileNameOverrides: ['${baseName.isEmpty ? 'capsub' : baseName}.srt'],
-        subject: 'Phá»¥ Ä‘á» CapSub',
+      subject: 'Phụ đề CapSub',
         sharePositionOrigin: renderBox == null
             ? null
             : renderBox.localToGlobal(Offset.zero) & renderBox.size,
@@ -251,7 +251,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              // 1. TrÃ¬nh phÃ¡t Video
+              // 1. Trình phát Video
               Center(
                 child: AspectRatio(
                   aspectRatio: controller.value.aspectRatio,
@@ -259,7 +259,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                 ),
               ),
 
-              // 2. Lá»›p Há»™p Äen (BlackBox) vÃ  Phá»¥ Ä‘á» ná»•i
+              // 2. Lớp Hộp Đen (BlackBox) và Phụ đề nổi
               SubtitleOverlay(
                 document: widget.document,
                 currentPositionMs: _currentPosMs,
@@ -271,9 +271,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                 },
               ),
 
-              // 3. Thanh Ä‘iá»u khiá»ƒn Video (Controls)
+              // 3. Thanh điều khiển Video (Controls)
               if (_showControls) ...[
-                // NÃºt quay láº¡i & tiÃªu Ä‘á» trÃªn cÃ¹ng
+                // Nút quay lại & tiêu đề trên cùng
                 Positioned(
                   top: 8,
                   left: 8,
@@ -294,7 +294,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                               ? Colors.yellowAccent
                               : Colors.white70,
                         ),
-                        tooltip: 'Báº­t/Táº¯t Há»™p Äen',
+                        tooltip: 'Bật/Tắt Hộp Đen',
                         onPressed: () {
                           setState(() {
                             _settings.isBlackBoxEnabled =
@@ -311,7 +311,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                               ? Colors.lightGreenAccent
                               : Colors.white70,
                         ),
-                        tooltip: 'Báº­t/Táº¯t lá»“ng tiáº¿ng AI',
+                        tooltip: 'Bật/Tắt lồng tiếng AI',
                         onPressed: () async {
                           setState(() {
                             _settings.isTtsPlaybackEnabled =
@@ -361,7 +361,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                       ),
                       IconButton(
                         icon: const Icon(Icons.subtitles, color: Colors.white),
-                        tooltip: 'Ká»‹ch báº£n phá»¥ Ä‘á»',
+                        tooltip: 'Kịch bản phụ đề',
                         onPressed: () {
                           showModalBottomSheet(
                             context: context,
@@ -391,7 +391,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                   ),
                 ),
 
-                // NÃºt Play / Pause á»Ÿ giá»¯a mÃ n hÃ¬nh
+                // Nút Play / Pause ở giữa màn hình
                 Center(
                   child: IconButton(
                     iconSize: 56,
@@ -411,7 +411,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                   ),
                 ),
 
-                // Thanh trÆ°á»£t tua thá»i gian á»Ÿ Ä‘Ã¡y
+                // Thanh trượt tua thời gian ở đáy
                 Positioned(
                   bottom: 8,
                   left: 16,

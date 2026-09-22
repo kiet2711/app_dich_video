@@ -1,4 +1,5 @@
-﻿import 'dart:io';
+import '../../domain/media/network_header_helper.dart';
+import 'dart:io';
 import 'dart:convert';
 import 'dart:async';
 
@@ -17,7 +18,6 @@ import '../../domain/pipeline/subtitling_pipeline.dart';
 import '../../domain/media/audio_extractor.dart';
 import '../../domain/media/media_storage.dart';
 import '../../domain/media/bilibili_resolver.dart';
-import '../player/video_player_screen.dart';
 import '../theme/app_theme.dart';
 import 'progress_bottom_sheet.dart';
 
@@ -153,30 +153,26 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _probeUrl(String url) async {
-    final clean = url.trim();
-    if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
+  Future<void> _probeUrl(String rawUrl) async {
+    final clean = NetworkHeaderHelper.extractCleanUrl(rawUrl);
+    if (clean.isEmpty || !NetworkHeaderHelper.isRemoteUrl(clean)) {
       setState(() {
         _probeStatusMessage =
-            '⚠️ Vui lòng nhập link hợp lệ (http://, https://)';
+            '⚠️ Vui lòng nhập link hợp lệ (http://, https:// hoặc link Bilibili/b23.tv)';
       });
       return;
     }
 
     setState(() {
+      _urlController.text = clean;
       _isProbingUrl = true;
-      _probeStatusMessage = '⏳ Đang kiểm tra link video...';
+      _probeStatusMessage = '⏳ Đang kết nối và phân tích thông tin video...';
     });
 
     try {
-      final uri = Uri.parse(clean);
-      if (!uri.hasAuthority) {
-        throw const FormatException('URL không có tên miền');
-      }
       var durationMs = 0;
-      var resolvedName = uri.pathSegments.isNotEmpty
-          ? uri.pathSegments.last
-          : 'video_online.mp4';
+      var resolvedName = NetworkHeaderHelper.getSuggestedTitle(clean);
+
       if (BilibiliResolver.isBilibiliPageUrl(clean)) {
         final resolver = BilibiliResolver();
         final target = await resolver.resolveUrl(clean);
@@ -186,28 +182,46 @@ class _HomeScreenState extends State<HomeScreen> {
         );
         durationMs = details.durationSeconds * 1000;
         resolvedName = '${details.title}.mp4';
+
+        // Tự động kiểm tra phụ đề Bilibili có sẵn
+        try {
+          final subs = await resolver.getSubtitles(
+            details,
+            _settings?.bilibiliSessData ?? '',
+          );
+          if (subs.isNotEmpty) {
+            _probeStatusMessage =
+                '✨ Video có sẵn phụ đề Bilibili! Bấm "Bắt đầu" để nạp và dịch ngay.';
+          } else {
+            _probeStatusMessage =
+                '✅ Đã tìm thấy audio Bilibili. Sẵn sàng tạo sub!';
+          }
+        } catch (_) {
+          _probeStatusMessage =
+              '✅ Đã tìm thấy audio Bilibili. Sẵn sàng tạo sub!';
+        }
       } else {
         durationMs = await AudioExtractor.probeDuration(clean);
+        _probeStatusMessage = '✅ Link video online hợp lệ!';
       }
-      if (durationMs <= 0) throw StateError('Không đọc được thời lượng video');
+
       if (!mounted) return;
       setState(() {
         _isProbingUrl = false;
         _selectedVideoPath = clean;
         _fileDurationMs = durationMs;
-        _fileName = resolvedName;
-        if (_fileName.isEmpty) _fileName = 'video_online.mp4';
+        _fileName = resolvedName.isNotEmpty ? resolvedName : 'video_online.mp4';
         _fileSizeMb = 'Trực tuyến';
-        _probeStatusMessage =
-            '✅ Link media hợp lệ • ${_formatDuration(durationMs)}';
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _isProbingUrl = false;
-        _selectedVideoPath = null;
+        _selectedVideoPath = clean;
         _fileDurationMs = 0;
-        _probeStatusMessage = '❌ Không mở được link media trực tiếp: $e';
+        _fileName = NetworkHeaderHelper.getSuggestedTitle(clean);
+        _fileSizeMb = 'Trực tuyến';
+        _probeStatusMessage = '✅ Đã nhận link (sẵn sàng tạo sub & xem)';
       });
     }
   }
@@ -290,15 +304,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
       if (mounted) {
         widget.onProcessCompleted?.call(resultDoc, _selectedVideoPath!);
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (ctx) => VideoPlayerScreen(
-              videoPath: _selectedVideoPath!,
-              document: resultDoc,
-            ),
-          ),
-        );
       }
     } catch (e) {
       if (mounted && !_cancelRequested) {
@@ -365,7 +370,9 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      body: SingleChildScrollView(
+      body: Stack(
+        children: [
+          SingleChildScrollView(
         padding: const EdgeInsets.symmetric(horizontal: 20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -965,19 +972,26 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
             ),
 
-            if (_isProcessing) ...[
-              const SizedBox(height: 16),
-              ProgressBottomSheet(
-                progress: _currentProgress,
-                onCancel: () {
-                  _cancelRequested = true;
-                  _activePipeline?.cancel();
-                },
-              ),
-            ],
+
             const SizedBox(height: 24),
           ],
         ),
+      ),
+          if (_isProcessing)
+            Positioned.fill(
+              child: Container(
+                color: Colors.black.withValues(alpha: 0.65),
+                alignment: Alignment.bottomCenter,
+                child: ProgressBottomSheet(
+                  progress: _currentProgress,
+                  onCancel: () {
+                    _cancelRequested = true;
+                    _activePipeline?.cancel();
+                  },
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }

@@ -1,8 +1,9 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 
 import '../../data/api/gemini_translator.dart';
 import '../../data/model/subtitle_document.dart';
 import '../../data/repository/settings_repository.dart';
+import '../settings/settings_screen.dart';
 import '../theme/app_theme.dart';
 
 class GeminiTranslateSubtitleDialog extends StatefulWidget {
@@ -23,34 +24,30 @@ class GeminiTranslateSubtitleDialog extends StatefulWidget {
 class _GeminiTranslateSubtitleDialogState
     extends State<GeminiTranslateSubtitleDialog> {
   SettingsRepository? _settings;
-  String _selectedModel = 'gemini-3.5-flash-lite';
+  List<String> _apiKeys = [];
+  bool _isLoadingSettings = true;
+
+  final List<MapEntry<String, String>> _langOptions = const [
+    MapEntry('Tiếng Việt', '🇻🇳 Tiếng Việt'),
+    MapEntry('Tiếng Anh', '🇺🇸 Tiếng Anh (English)'),
+    MapEntry('Tiếng Trung', '🇨🇳 Tiếng Trung (Chinese)'),
+    MapEntry('Tiếng Nhật', '🇯🇵 Tiếng Nhật (Japanese)'),
+    MapEntry('Tiếng Hàn', '🇰🇷 Tiếng Hàn (Korean)'),
+  ];
+
+  final List<MapEntry<String, String>> _modelOptions = const [
+    MapEntry('gemini-3.1-flash-lite', '🤖 Gemini 3.1 Flash-Lite (Khuyên dùng)'),
+    MapEntry('gemini-3.5-flash-lite', '🤖 Gemini 3.5 Flash-Lite (RPD cao)'),
+  ];
+
   String _selectedTargetLang = 'Tiếng Việt';
-  String _selectedStyle = 'Zhihu';
-  final TextEditingController _customPromptController = TextEditingController();
+  String _selectedModel = 'gemini-3.1-flash-lite';
+  final TextEditingController _contextPromptController = TextEditingController();
 
   bool _isTranslating = false;
   double _progress = 0.0;
   String _progressMessage = '';
-
-  static const List<MapEntry<String, String>> _modelOptions = [
-    MapEntry('gemini-3.5-flash-lite', 'Gemini 3.5 Flash-Lite (RPD cao)'),
-    MapEntry('gemini-3.1-flash-lite', 'Gemini 3.1 Flash-Lite (Khuyên dùng)'),
-  ];
-
-  static const List<String> _langOptions = [
-    'Tiếng Việt',
-    'Tiếng Anh',
-    'Tiếng Trung',
-    'Tiếng Nhật',
-    'Tiếng Hàn',
-  ];
-
-  static const List<MapEntry<String, String>> _styleOptions = [
-    MapEntry('Zhihu', 'Phong cách Zhihu (Kịch tính, dồn dập, gay cấn)'),
-    MapEntry('thuanviet', 'Thuần Việt (Mượt mà, văn học, giàu cảm xúc)'),
-    MapEntry('cotrang', 'Cổ trang (Tiên hiệp, kiếm hiệp, chuẩn danh xưng)'),
-    MapEntry('standard', 'Tự nhiên (Phim tài liệu, vlog đời sống)'),
-  ];
+  bool _isCancelled = false;
 
   @override
   void initState() {
@@ -60,30 +57,32 @@ class _GeminiTranslateSubtitleDialogState
 
   Future<void> _loadSettings() async {
     final s = await SettingsRepository.getInstance();
+    if (!mounted) return;
     setState(() {
       _settings = s;
-      if (s.selectedModel == 'gemini-3.1-flash-lite') {
-        _selectedModel = 'gemini-3.1-flash-lite';
-      } else {
-        _selectedModel = 'gemini-3.5-flash-lite';
+      _apiKeys = s.geminiApiKeys;
+      _selectedModel = (s.selectedModel == 'gemini-3.5-flash-lite')
+          ? 'gemini-3.5-flash-lite'
+          : 'gemini-3.1-flash-lite';
+      if (_langOptions.any((e) => e.key == s.targetLanguage)) {
+        _selectedTargetLang = s.targetLanguage;
       }
-      _customPromptController.text = s.geminiCustomPrompt;
+      _contextPromptController.text = s.geminiCustomPrompt;
+      _isLoadingSettings = false;
     });
   }
 
   @override
   void dispose() {
-    _customPromptController.dispose();
+    _contextPromptController.dispose();
     super.dispose();
   }
 
   Future<void> _startTranslation() async {
-    final s = _settings;
-    if (s == null) return;
-    if (s.geminiApiKeys.isEmpty) {
+    if (_apiKeys.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Vui lòng cấu hình ít nhất 1 API Key trong Cài Đặt!'),
+          content: Text('Vui lòng nhập Gemini API Key trong Cài Đặt!'),
         ),
       );
       return;
@@ -91,24 +90,31 @@ class _GeminiTranslateSubtitleDialogState
 
     setState(() {
       _isTranslating = true;
+      _isCancelled = false;
       _progress = 0.05;
-      _progressMessage = 'Bắt đầu kết nối Gemini AI...';
+      _progressMessage = 'Đang chuẩn bị dịch...';
     });
 
     try {
       final translator = GeminiTranslator(
-        apiKeys: s.geminiApiKeys,
+        apiKeys: _apiKeys,
         modelId: _selectedModel,
       );
 
+      final promptToUse = _contextPromptController.text.trim().isNotEmpty
+          ? _contextPromptController.text.trim()
+          : (_settings?.geminiCustomPrompt ?? '');
+
       final resultDoc = await translator.translateSubtitles(
         document: widget.subtitleDoc,
-        stylePreset: _selectedStyle,
-        customPrompt: _customPromptController.text,
+        stylePreset: _settings?.selectedStyle ?? 'Zhihu',
+        customPrompt: promptToUse,
         targetLanguage: _selectedTargetLang,
-        threadCount: s.geminiThreadCount,
+        chunkSize: 45,
+        threadCount: _settings?.geminiThreadCount ?? 2,
+        isCancelled: () => _isCancelled,
         progressCallback: (pct, msg) {
-          if (mounted) {
+          if (mounted && !_isCancelled) {
             setState(() {
               _progress = pct;
               _progressMessage = msg;
@@ -122,7 +128,9 @@ class _GeminiTranslateSubtitleDialogState
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Đã dịch thành công ${resultDoc.size} câu phụ đề!'),
+            content: Text(
+              'Đã dịch xong ${resultDoc.items.length} câu phụ đề!',
+            ),
           ),
         );
       }
@@ -130,6 +138,7 @@ class _GeminiTranslateSubtitleDialogState
       if (mounted) {
         setState(() {
           _isTranslating = false;
+          _progressMessage = 'Lỗi dịch: $e';
         });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Lỗi dịch: $e')),
@@ -138,170 +147,317 @@ class _GeminiTranslateSubtitleDialogState
     }
   }
 
+  void _cancelTranslation() {
+    setState(() {
+      _isCancelled = true;
+      _isTranslating = false;
+      _progressMessage = 'Đã huỷ dịch.';
+    });
+  }
+
+  Widget _buildDropdownContainer({
+    required String value,
+    required List<MapEntry<String, String>> items,
+    required bool enabled,
+    required ValueChanged<String?> onChanged,
+  }) {
+    return Container(
+      height: 44,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF14151B),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.cardBorder),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: value,
+          isExpanded: true,
+          icon: const Icon(Icons.arrow_drop_down, color: Colors.grey),
+          dropdownColor: const Color(0xFF1E1F28),
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+          ),
+          items: items.map((e) {
+            return DropdownMenuItem<String>(
+              value: e.key,
+              child: Text(
+                e.value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            );
+          }).toList(),
+          onChanged: enabled ? onChanged : null,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Dialog(
-      backgroundColor: AppTheme.darkCard,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Container(
-        constraints: const BoxConstraints(maxWidth: 500),
+      backgroundColor: AppColors.darkCard,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: Padding(
         padding: const EdgeInsets.all(20),
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // Title
               Row(
                 children: const [
-                  Icon(Icons.translate, color: AppTheme.primaryEmerald, size: 22),
+                  Icon(Icons.translate, color: AppColors.primaryEmerald, size: 22),
                   SizedBox(width: 8),
                   Text(
-                    'Dịch Phụ Đề Bằng Gemini AI',
+                    'Dịch Phụ Đề (Gemini AI)',
                     style: TextStyle(
                       color: Colors.white,
-                      fontSize: 16,
+                      fontSize: 17,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 16),
-
-              // 1. Model Gemini
-              const Text(
-                'Mô hình dịch (Chỉ 2 model hỗ trợ):',
-                style: TextStyle(color: Colors.white70, fontSize: 13),
+              const SizedBox(height: 12),
+              Text(
+                'Dịch ${widget.subtitleDoc.items.length} câu phụ đề sang ngôn ngữ đích để lồng tiếng hoặc xem Vietsub:',
+                style: const TextStyle(color: Color(0xFFCCCCCC), fontSize: 13),
               ),
-              const SizedBox(height: 6),
-              DropdownButtonFormField<String>(
-                initialValue: _selectedModel,
-                isExpanded: true,
-                dropdownColor: AppTheme.darkSurface,
-                decoration: InputDecoration(
-                  filled: true,
-                  fillColor: AppTheme.darkSurface,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: AppTheme.cardBorder),
-                  ),
+              const SizedBox(height: 14),
+
+              // 1. Ngôn ngữ dịch sang
+              const Text(
+                '🔵 Ngôn ngữ dịch sang:',
+                style: TextStyle(
+                  color: Color(0xFFB0B0B8),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
                 ),
-                style: const TextStyle(color: Colors.white, fontSize: 13),
-                items: _modelOptions.map((e) {
-                  return DropdownMenuItem(value: e.key, child: Text(e.value));
-                }).toList(),
-                onChanged: _isTranslating ? null : (v) => setState(() => _selectedModel = v!),
+              ),
+              const SizedBox(height: 4),
+              _buildDropdownContainer(
+                value: _selectedTargetLang,
+                items: _langOptions,
+                enabled: !_isTranslating,
+                onChanged: (val) {
+                  if (val != null) setState(() => _selectedTargetLang = val);
+                },
               ),
               const SizedBox(height: 12),
 
-              // 2. Ngôn ngữ đích
+              // 2. Model Gemini
               const Text(
-                'Ngôn ngữ đích:',
-                style: TextStyle(color: Colors.white70, fontSize: 13),
-              ),
-              const SizedBox(height: 6),
-              DropdownButtonFormField<String>(
-                initialValue: _selectedTargetLang,
-                isExpanded: true,
-                dropdownColor: AppTheme.darkSurface,
-                decoration: InputDecoration(
-                  filled: true,
-                  fillColor: AppTheme.darkSurface,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: AppTheme.cardBorder),
-                  ),
+                '🤖 Model Gemini:',
+                style: TextStyle(
+                  color: Color(0xFFB0B0B8),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
                 ),
-                style: const TextStyle(color: Colors.white, fontSize: 13),
-                items: _langOptions.map((l) {
-                  return DropdownMenuItem(value: l, child: Text(l));
-                }).toList(),
-                onChanged: _isTranslating ? null : (v) => setState(() => _selectedTargetLang = v!),
+              ),
+              const SizedBox(height: 4),
+              _buildDropdownContainer(
+                value: _selectedModel,
+                items: _modelOptions,
+                enabled: !_isTranslating,
+                onChanged: (val) {
+                  if (val != null) setState(() => _selectedModel = val);
+                },
               ),
               const SizedBox(height: 12),
 
-              // 3. Phong cách dịch
-              const Text(
-                'Phong cách dịch:',
-                style: TextStyle(color: Colors.white70, fontSize: 13),
-              ),
-              const SizedBox(height: 6),
-              DropdownButtonFormField<String>(
-                initialValue: _selectedStyle,
-                isExpanded: true,
-                dropdownColor: AppTheme.darkSurface,
-                decoration: InputDecoration(
-                  filled: true,
-                  fillColor: AppTheme.darkSurface,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: AppTheme.cardBorder),
+              // 3. Ngữ cảnh / Gợi ý dịch
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: const [
+                  Text(
+                    '✍️ Ngữ cảnh / Gợi ý dịch:',
+                    style: TextStyle(
+                      color: Color(0xFFB0B0B8),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
-                ),
-                style: const TextStyle(color: Colors.white, fontSize: 13),
-                items: _styleOptions.map((s) {
-                  return DropdownMenuItem(value: s.key, child: Text(s.value));
-                }).toList(),
-                onChanged: _isTranslating ? null : (v) => setState(() => _selectedStyle = v!),
+                  Text(
+                    'Có thể bỏ trống',
+                    style: TextStyle(color: Colors.grey, fontSize: 11),
+                  ),
+                ],
               ),
-              const SizedBox(height: 12),
-
-              // 4. Custom prompt
-              const Text(
-                'Hướng dẫn bổ sung (Tùy chọn):',
-                style: TextStyle(color: Colors.white70, fontSize: 13),
-              ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 4),
               TextField(
-                controller: _customPromptController,
-                maxLines: 2,
+                controller: _contextPromptController,
+                enabled: !_isTranslating,
+                minLines: 2,
+                maxLines: 3,
                 style: const TextStyle(color: Colors.white, fontSize: 12),
                 decoration: InputDecoration(
                   filled: true,
-                  fillColor: AppTheme.darkSurface,
-                  hintText: 'Nhập hướng dẫn prompt thêm (vd: dịch xưng hô huynh/muội...)',
-                  hintStyle: const TextStyle(color: Colors.grey, fontSize: 11),
+                  fillColor: const Color(0xFF14151B),
+                  hintText:
+                      'Ví dụ: Phim cổ trang, xưng hô huynh - đệ; video review công nghệ; văn phong vui vẻ...',
+                  hintStyle: const TextStyle(color: Colors.grey, fontSize: 12),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: AppTheme.cardBorder),
+                    borderSide: const BorderSide(color: AppColors.cardBorder),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: const BorderSide(color: AppColors.cardBorder),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide:
+                        const BorderSide(color: AppColors.primaryEmerald),
                   ),
                 ),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
 
-              if (_isTranslating) ...[
-                LinearProgressIndicator(
-                  value: _progress,
-                  backgroundColor: Colors.white12,
-                  color: AppTheme.primaryEmerald,
+              // 4. Trạng thái API Key
+              if (_isLoadingSettings)
+                const SizedBox.shrink()
+              else if (_apiKeys.isNotEmpty)
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.check_circle,
+                      color: AppColors.primaryEmerald,
+                      size: 16,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Đã cấu hình ${_apiKeys.length} Gemini API Key',
+                      style: const TextStyle(
+                        color: AppColors.primaryEmerald,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                )
+              else
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.warning_amber_rounded,
+                      color: Color(0xFFFFB74D),
+                      size: 16,
+                    ),
+                    const SizedBox(width: 6),
+                    const Expanded(
+                      child: Text(
+                        'Chưa có Gemini API Key!',
+                        style: TextStyle(
+                          color: Color(0xFFFFB74D),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const SettingsScreen(),
+                          ),
+                        );
+                      },
+                      child: const Text(
+                        'Cài đặt',
+                        style: TextStyle(
+                          color: AppColors.primaryEmerald,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 8),
+
+              // 5. Thanh tiến trình khi đang dịch
+              if (_isTranslating) ...[
+                const SizedBox(height: 12),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(3),
+                  child: LinearProgressIndicator(
+                    value: _progress,
+                    minHeight: 6,
+                    color: AppColors.primaryEmerald,
+                    backgroundColor: const Color(0xFF2A2B36),
+                  ),
+                ),
+                const SizedBox(height: 6),
                 Text(
                   _progressMessage,
-                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+                  style: const TextStyle(
+                    color: AppColors.primaryEmerald,
+                    fontSize: 12,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                 ),
-                const SizedBox(height: 12),
               ],
 
+              const SizedBox(height: 16),
+
+              // Action buttons
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  TextButton(
-                    onPressed: _isTranslating ? null : () => Navigator.pop(context),
-                    child: const Text('Hủy', style: TextStyle(color: Colors.grey)),
-                  ),
-                  const SizedBox(width: 8),
-                  ElevatedButton(
-                    onPressed: _isTranslating ? null : _startTranslation,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTheme.primaryEmerald,
-                      foregroundColor: Colors.black,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  if (_isTranslating)
+                    TextButton(
+                      onPressed: _cancelTranslation,
+                      child: const Text(
+                        'Huỷ dịch',
+                        style: TextStyle(color: Color(0xFFFF6B6B)),
+                      ),
+                    )
+                  else ...[
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text(
+                        'Đóng',
+                        style: TextStyle(color: Colors.grey, fontSize: 13),
+                      ),
                     ),
-                    child: const Text('Bắt Đầu Dịch', style: TextStyle(fontWeight: FontWeight.bold)),
-                  ),
+                    const SizedBox(width: 8),
+                    ElevatedButton.icon(
+                      onPressed: _apiKeys.isNotEmpty ? _startTranslation : null,
+                      icon: Icon(
+                        Icons.translate,
+                        size: 16,
+                        color: _apiKeys.isNotEmpty ? Colors.black : Colors.grey,
+                      ),
+                      label: Text(
+                        'Bắt Đầu Dịch',
+                        style: TextStyle(
+                          color: _apiKeys.isNotEmpty ? Colors.black : Colors.grey,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primaryEmerald,
+                        disabledBackgroundColor: const Color(0xFF2A2B36),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 10,
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ],
@@ -310,6 +466,4 @@ class _GeminiTranslateSubtitleDialogState
       ),
     );
   }
-
-
 }
