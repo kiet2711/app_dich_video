@@ -1,19 +1,26 @@
-import 'dart:convert';
+﻿import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../model/history_item.dart';
 
 class HistoryRepository {
   static const String _key = 'capsub_history';
+  static final ValueNotifier<List<HistoryItem>> historyNotifier =
+      ValueNotifier<List<HistoryItem>>([]);
   final SharedPreferences prefs;
 
-  HistoryRepository(this.prefs);
+  HistoryRepository(this.prefs) {
+    historyNotifier.value = getHistory();
+  }
 
   static Future<HistoryRepository> getInstance() async {
     final sp = await SharedPreferences.getInstance();
-    return HistoryRepository(sp);
+    final repo = HistoryRepository(sp);
+    historyNotifier.value = repo.getHistory();
+    return repo;
   }
 
   List<HistoryItem> getHistory() {
@@ -59,6 +66,7 @@ class HistoryRepository {
   Future<void> clearAll() async {
     final items = getHistory();
     await prefs.remove(_key);
+    historyNotifier.value = [];
     for (final item in items) {
       await _deleteItemFiles(item);
     }
@@ -67,19 +75,22 @@ class HistoryRepository {
   Future<void> _save(List<HistoryItem> items) async {
     final raw = jsonEncode(items.map((e) => e.toJson()).toList());
     await prefs.setString(_key, raw);
+    historyNotifier.value = List.unmodifiable(items);
   }
 
   Future<void> _deleteItemFiles(HistoryItem item) async {
     await _deleteIfExists(item.srtPath);
-    if (item.documentPath != null) await _deleteIfExists(item.documentPath!);
+    if (item.documentPath != null) {
+      await _deleteIfExists(item.documentPath!);
+    }
   }
 
   Future<void> _deleteIfExists(String path) async {
     try {
       final file = File(path);
-      if (await file.exists()) await file.delete();
-    } catch (_) {
-      // Vẫn cho phép xóa metadata nếu tệp đang bị khóa hoặc đã mất.
-    }
+      if (await file.exists()) {
+        await file.delete();
+      }
+    } catch (_) {}
   }
 }

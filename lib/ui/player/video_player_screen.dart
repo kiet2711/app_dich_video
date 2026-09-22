@@ -1,4 +1,4 @@
-import 'dart:io';
+﻿import 'dart:io';
 import 'dart:async';
 import 'dart:convert';
 
@@ -13,6 +13,7 @@ import '../../domain/media/bilibili_resolver.dart';
 import '../../domain/media/network_header_helper.dart';
 import 'subtitle_overlay.dart';
 import 'transcript_sheet.dart';
+import 'dual_volume_sheet.dart';
 
 class VideoPlayerScreen extends StatefulWidget {
   final String videoPath;
@@ -96,7 +97,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       await _controller!.play();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _playerError = 'Không mở được video: $e');
+      setState(() => _playerError = 'KhÃ´ng má»Ÿ Ä‘Æ°á»£c video: $e');
     }
   }
 
@@ -201,7 +202,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
           ),
         ],
         fileNameOverrides: ['${baseName.isEmpty ? 'capsub' : baseName}.srt'],
-        subject: 'Phụ đề CapSub',
+        subject: 'Phá»¥ Ä‘á» CapSub',
         sharePositionOrigin: renderBox == null
             ? null
             : renderBox.localToGlobal(Offset.zero) & renderBox.size,
@@ -250,7 +251,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              // 1. Trình phát Video
+              // 1. TrÃ¬nh phÃ¡t Video
               Center(
                 child: AspectRatio(
                   aspectRatio: controller.value.aspectRatio,
@@ -258,7 +259,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                 ),
               ),
 
-              // 2. Lớp Hộp Đen (BlackBox) và Phụ đề nổi
+              // 2. Lá»›p Há»™p Äen (BlackBox) vÃ  Phá»¥ Ä‘á» ná»•i
               SubtitleOverlay(
                 document: widget.document,
                 currentPositionMs: _currentPosMs,
@@ -270,9 +271,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                 },
               ),
 
-              // 3. Thanh điều khiển Video (Controls)
+              // 3. Thanh Ä‘iá»u khiá»ƒn Video (Controls)
               if (_showControls) ...[
-                // Nút quay lại & tiêu đề trên cùng
+                // NÃºt quay láº¡i & tiÃªu Ä‘á» trÃªn cÃ¹ng
                 Positioned(
                   top: 8,
                   left: 8,
@@ -293,7 +294,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                               ? Colors.yellowAccent
                               : Colors.white70,
                         ),
-                        tooltip: 'Bật/Tắt Hộp Đen',
+                        tooltip: 'Báº­t/Táº¯t Há»™p Äen',
                         onPressed: () {
                           setState(() {
                             _settings.isBlackBoxEnabled =
@@ -310,7 +311,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                               ? Colors.lightGreenAccent
                               : Colors.white70,
                         ),
-                        tooltip: 'Bật/Tắt lồng tiếng AI',
+                        tooltip: 'Báº­t/Táº¯t lá»“ng tiáº¿ng AI',
                         onPressed: () async {
                           setState(() {
                             _settings.isTtsPlaybackEnabled =
@@ -322,13 +323,45 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                         },
                       ),
                       IconButton(
+                        icon: const Icon(Icons.graphic_eq, color: Colors.white),
+                        tooltip: 'Chỉnh âm lượng độc lập',
+                        onPressed: () {
+                          showModalBottomSheet(
+                            context: context,
+                            backgroundColor: Colors.transparent,
+                            builder: (ctx) => StatefulBuilder(
+                              builder: (context, setSheetState) {
+                                return DualVolumeSheet(
+                                  originalVolume: _settings.originalVideoVolume,
+                                  aiVolume: _settings.ttsVolume,
+                                  onOriginalVolumeChanged: (val) async {
+                                    setState(() {
+                                      _settings.originalVideoVolume = val;
+                                    });
+                                    await _controller?.setVolume(val);
+                                    setSheetState(() {});
+                                  },
+                                  onAiVolumeChanged: (val) async {
+                                    setState(() {
+                                      _settings.ttsVolume = val;
+                                    });
+                                    await _ttsPlayer.setVolume(val);
+                                    setSheetState(() {});
+                                  },
+                                );
+                              },
+                            ),
+                          );
+                        },
+                      ),
+                      IconButton(
                         icon: const Icon(Icons.ios_share, color: Colors.white),
-                        tooltip: 'Xuất/Chia sẻ SRT',
+                        tooltip: 'Xuáº¥t/Chia sáº» SRT',
                         onPressed: _shareSubtitle,
                       ),
                       IconButton(
                         icon: const Icon(Icons.subtitles, color: Colors.white),
-                        tooltip: 'Kịch bản phụ đề',
+                        tooltip: 'Ká»‹ch báº£n phá»¥ Ä‘á»',
                         onPressed: () {
                           showModalBottomSheet(
                             context: context,
@@ -358,7 +391,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                   ),
                 ),
 
-                // Nút Play / Pause ở giữa màn hình
+                // NÃºt Play / Pause á»Ÿ giá»¯a mÃ n hÃ¬nh
                 Center(
                   child: IconButton(
                     iconSize: 56,
@@ -378,7 +411,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                   ),
                 ),
 
-                // Thanh trượt tua thời gian ở đáy
+                // Thanh trÆ°á»£t tua thá»i gian á»Ÿ Ä‘Ã¡y
                 Positioned(
                   bottom: 8,
                   left: 16,

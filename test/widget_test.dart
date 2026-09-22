@@ -81,5 +81,24 @@ Chào mừng đến với CapSub Studio
       expect(split!['source'], equals('你好世界'));
       expect(split['translation'], equals('Xin chào thế giới'));
     });
+
+    test('Auto playback speed calculation formula test', () {
+      // Audio duration = 3000ms, SRT slot = 2000ms -> factor = 1.5x
+      const audioDurationMs = 3000;
+      const srtDurationMs = 2000;
+      final factor = (audioDurationMs / srtDurationMs).clamp(1.0, 2.2);
+      final playbackSpeed = (factor * 10).round() / 10.0;
+      expect(playbackSpeed, equals(1.5));
+
+      // Audio duration = 1500ms, SRT slot = 2000ms -> factor = 1.0x (no speedup needed)
+      const shortAudioMs = 1500;
+      final shortFactor = (shortAudioMs > srtDurationMs) ? (shortAudioMs / srtDurationMs).clamp(1.0, 2.2) : 1.0;
+      expect(shortFactor, equals(1.0));
+
+      // Extreme audio duration = 10000ms, SRT slot = 2000ms -> clamped to max 2.2x
+      const longAudioMs = 10000;
+      final clampedFactor = (longAudioMs / srtDurationMs).clamp(1.0, 2.2);
+      expect(clampedFactor, equals(2.2));
+    });
   });
 }

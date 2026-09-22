@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 
 import '../../data/repository/settings_repository.dart';
 import '../theme/app_theme.dart';
@@ -43,7 +43,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _settings!.bilibiliSessData = _bilibiliSessDataController.text.trim();
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('Đã lưu cài đặt thành công!'),
+        content: Text('ÄÃ£ lÆ°u cÃ i Ä‘áº·t thÃ nh cÃ´ng!'),
         backgroundColor: AppColors.primaryEmerald,
       ),
     );
@@ -68,7 +68,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       appBar: AppBar(
         backgroundColor: AppColors.darkBackground,
         title: const Text(
-          'Cài đặt hệ thống',
+          'CÃ i Ä‘áº·t há»‡ thá»‘ng',
           style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
         ),
         actions: [
@@ -82,7 +82,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         padding: const EdgeInsets.all(16),
         children: [
           // Section 1: Gemini AI
-          _buildSectionHeader('Google Gemini AI (Dịch thuật đa luồng)'),
+          _buildSectionHeader('Google Gemini AI (Dá»‹ch thuáº­t Ä‘a luá»“ng)'),
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
@@ -94,7 +94,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'Danh sách Gemini API Key (mỗi dòng 1 key để xoay vòng):',
+                  'Danh sÃ¡ch Gemini API Key (má»—i dÃ²ng 1 key Ä‘á»ƒ xoay vÃ²ng):',
                   style: TextStyle(color: Colors.white70, fontSize: 13),
                 ),
                 const SizedBox(height: 8),
@@ -105,7 +105,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   decoration: InputDecoration(
                     filled: true,
                     fillColor: const Color(0xFF1E202A),
-                    hintText: 'Dán các API Key tại đây...',
+                    hintText: 'DÃ¡n cÃ¡c API Key táº¡i Ä‘Ã¢y...',
                     hintStyle: const TextStyle(color: Colors.white38),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(8),
@@ -117,7 +117,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      'Số luồng dịch song song: ${_settings!.geminiThreadCount}',
+                      'Sá»‘ luá»“ng dá»‹ch song song: ${_settings!.geminiThreadCount}',
                       style: const TextStyle(color: Colors.white),
                     ),
                     Slider(
@@ -139,8 +139,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 16),
 
-          // Section 2: Hộp Đen (BlackBox) & Subtitle Player
-          _buildSectionHeader('Cấu hình Hộp Đen (BlackBox) & Trình Phát'),
+          // Section 2: Há»™p Äen (BlackBox) & Subtitle Player
+          _buildSectionHeader('Cáº¥u hÃ¬nh Há»™p Äen (BlackBox) & TrÃ¬nh PhÃ¡t'),
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
@@ -153,7 +153,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
                   title: const Text(
-                    'Bật Hộp Đen che phụ đề cứng',
+                    'Báº­t Há»™p Äen che phá»¥ Ä‘á» cá»©ng',
                     style: TextStyle(color: Colors.white),
                   ),
                   value: _settings!.isBlackBoxEnabled,
@@ -169,7 +169,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      'Độ mờ: ${(_settings!.blackBoxOpacity * 100).toInt()}%',
+                      'Äá»™ má»: ${(_settings!.blackBoxOpacity * 100).toInt()}%',
                       style: const TextStyle(color: Colors.white),
                     ),
                     Slider(
@@ -189,7 +189,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      'Cỡ chữ: ${_settings!.subtitleFontSize.toInt()} pt',
+                      'Cá»¡ chá»¯: ${_settings!.subtitleFontSize.toInt()} pt',
                       style: const TextStyle(color: Colors.white),
                     ),
                     Slider(
@@ -211,7 +211,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 16),
 
           // Section 3: Bilibili SESSDATA
-          _buildSectionHeader('Tài khoản Bilibili (Tùy chọn)'),
+          _buildSectionHeader('TÃ i khoáº£n Bilibili (TÃ¹y chá»n)'),
+          _buildSectionHeader('TÀI VIDEO ONLINE & BILIBILI VIP'),
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
@@ -222,9 +223,60 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'SỐ LUỒNG TẢI SONG SONG:',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                      ),
+                    ),
+                    Text(
+                      '${_settings!.downloadThreadCount} LUỒNG',
+                      style: const TextStyle(
+                        color: AppColors.primaryEmerald,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
                 const Text(
-                  'Cookie SESSDATA (dùng để tải video Bilibili 1080p/4K):',
-                  style: TextStyle(color: Colors.white70, fontSize: 13),
+                  'Tải đa luồng song song luân phiên qua các cụm máy chủ CDN (Tencent, Alibaba, Huawei, Bilibili) giúp tăng tốc độ tải lên gấp 5-10 lần (Khuyên dùng: 12 - 24 luồng).',
+                  style: TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+                const SizedBox(height: 8),
+                Slider(
+                  value: _settings!.downloadThreadCount.toDouble(),
+                  min: 8.0,
+                  max: 32.0,
+                  divisions: 24,
+                  activeColor: AppColors.primaryEmerald,
+                  inactiveColor: const Color(0xFF323444),
+                  onChanged: (val) {
+                    setState(() {
+                      _settings!.downloadThreadCount = val.toInt();
+                    });
+                  },
+                ),
+                const Divider(color: AppColors.cardBorder),
+                const SizedBox(height: 4),
+                const Text(
+                  'BILIBILI COOKIE (SESSDATA):',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Nhập mã SESSDATA tài khoản Bilibili để mở khóa xem và tải chất lượng cao 1080P+, 4K và các video giới hạn VIP.',
+                  style: TextStyle(color: Colors.white70, fontSize: 12),
                 ),
                 const SizedBox(height: 8),
                 TextField(
@@ -233,7 +285,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   decoration: InputDecoration(
                     filled: true,
                     fillColor: const Color(0xFF1E202A),
-                    hintText: 'Nhập SESSDATA cookie nếu có...',
+                    hintText: 'Nhập mã SESSDATA...',
                     hintStyle: const TextStyle(color: Colors.white38),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(8),
@@ -245,7 +297,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 24),
 
-          ElevatedButton(
+          ElevatedButton.icon(
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primaryEmerald,
               foregroundColor: Colors.black,
@@ -254,9 +306,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 borderRadius: BorderRadius.circular(10),
               ),
             ),
+            icon: const Icon(Icons.save),
             onPressed: _save,
-            child: const Text(
-              'Lưu Tất Cả Cài Đặt',
+            label: const Text(
+              'Lưu Cài Đặt',
               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
             ),
           ),

@@ -1,5 +1,5 @@
+﻿import 'dart:convert';
 import 'dart:io';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
@@ -7,9 +7,12 @@ import '../../data/model/history_item.dart';
 import '../../data/model/subtitle_document.dart';
 import '../../data/repository/history_repository.dart';
 import '../player/video_player_screen.dart';
+import '../theme/app_theme.dart';
 
 class HistoryScreen extends StatefulWidget {
-  const HistoryScreen({super.key});
+  final void Function(String videoPath, SubtitleDocument doc)? onOpenInTts;
+
+  const HistoryScreen({super.key, this.onOpenInTts});
 
   @override
   State<HistoryScreen> createState() => _HistoryScreenState();
@@ -17,7 +20,6 @@ class HistoryScreen extends StatefulWidget {
 
 class _HistoryScreenState extends State<HistoryScreen> {
   HistoryRepository? _historyRepo;
-  List<HistoryItem> _items = [];
 
   @override
   void initState() {
@@ -27,10 +29,11 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
   Future<void> _load() async {
     final repo = await HistoryRepository.getInstance();
-    setState(() {
-      _historyRepo = repo;
-      _items = repo.getHistory();
-    });
+    if (mounted) {
+      setState(() {
+        _historyRepo = repo;
+      });
+    }
   }
 
   Future<void> _openItem(HistoryItem item) async {
@@ -45,9 +48,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
     }
 
     SubtitleDocument doc;
-    final documentFile = item.documentPath == null
-        ? null
-        : File(item.documentPath!);
+    final documentFile =
+        item.documentPath == null ? null : File(item.documentPath!);
     if (documentFile != null && await documentFile.exists()) {
       final json =
           jsonDecode(await documentFile.readAsString()) as Map<String, dynamic>;
@@ -71,65 +73,124 @@ class _HistoryScreenState extends State<HistoryScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF121212),
+      backgroundColor: AppTheme.darkBackground,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF1E1E1E),
-        title: const Text(
-          'Lịch sử đã dịch',
-          style: TextStyle(fontWeight: FontWeight.bold),
+        backgroundColor: AppTheme.darkBackground,
+        elevation: 0,
+        title: Row(
+          children: const [
+            Icon(Icons.history, color: AppTheme.primaryEmerald, size: 22),
+            SizedBox(width: 8),
+            Text(
+              'Lịch Sử & Player',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
         ),
       ),
-      body: _items.isEmpty
-          ? const Center(
+      body: ValueListenableBuilder<List<HistoryItem>>(
+        valueListenable: HistoryRepository.historyNotifier,
+        builder: (context, items, _) {
+          if (items.isEmpty) {
+            return const Center(
               child: Text(
                 'Chưa có lịch sử xử lý video nào',
-                style: TextStyle(color: Colors.white54),
+                style: TextStyle(color: Colors.white54, fontSize: 14),
               ),
-            )
-          : ListView.builder(
-              padding: const EdgeInsets.all(12),
-              itemCount: _items.length,
-              itemBuilder: (context, index) {
-                final it = _items[index];
-                return Card(
-                  color: const Color(0xFF1E1E1E),
-                  margin: const EdgeInsets.only(bottom: 8),
-                  child: ListTile(
-                    leading: const Icon(
-                      Icons.video_library,
-                      color: Colors.blueAccent,
-                    ),
-                    title: Text(
-                      it.title,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
+            );
+          }
+
+          return ListView.separated(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            itemCount: items.length,
+            separatorBuilder: (_, _) => const SizedBox(height: 10),
+            itemBuilder: (context, index) {
+              final it = items[index];
+              final dateStr = DateTime.fromMillisecondsSinceEpoch(it.timestamp)
+                  .toString()
+                  .substring(0, 16);
+              final durStr = it.durationMs > 0
+                  ? '${it.durationMs ~/ 1000}s • '
+                  : '';
+
+              return Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppTheme.darkCard,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppTheme.cardBorder),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF64B5F6).withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(
+                        Icons.movie_outlined,
+                        color: Color(0xFF64B5F6),
+                        size: 24,
                       ),
                     ),
-                    subtitle: Text(
-                      DateTime.fromMillisecondsSinceEpoch(it.timestamp)
-                          .toString()
-                          .substring(0, 16),
-                      style: const TextStyle(
-                        color: Colors.white54,
-                        fontSize: 12,
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            it.title,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '$durStr$dateStr',
+                            style: const TextStyle(
+                              color: Colors.white54,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    trailing: IconButton(
+                    IconButton(
+                      icon: const Icon(
+                        Icons.play_circle_fill,
+                        color: AppTheme.primaryEmerald,
+                        size: 28,
+                      ),
+                      tooltip: 'Xem video',
+                      onPressed: () => _openItem(it),
+                    ),
+                    IconButton(
                       icon: const Icon(
                         Icons.delete_outline,
                         color: Colors.redAccent,
+                        size: 20,
                       ),
+                      tooltip: 'Xóa',
                       onPressed: () async {
                         await _historyRepo?.deleteItem(it.id);
-                        _load();
                       },
                     ),
-                    onTap: () => _openItem(it),
-                  ),
-                );
-              },
-            ),
+                  ],
+                ),
+              );
+            },
+          );
+        },
+      ),
     );
   }
 }

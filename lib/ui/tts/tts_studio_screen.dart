@@ -2,18 +2,17 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
-import '../../data/api/capcut_tts_client.dart';
-import '../../data/api/capcut_signer.dart';
 import '../../data/model/subtitle_document.dart';
-
 import '../../data/model/voice_model.dart';
+import '../../data/repository/history_repository.dart';
 import '../../data/repository/settings_repository.dart';
-import '../../domain/media/media_storage.dart';
+import '../../domain/tts/tts_generation_manager.dart';
 import '../player/video_player_screen.dart';
+import '../settings/settings_screen.dart';
 import '../theme/app_theme.dart';
+import 'gemini_translate_subtitle_dialog.dart';
 
 class TtsStudioScreen extends StatefulWidget {
   final SubtitleDocument? initialDoc;
@@ -31,10 +30,9 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
   String? _videoPath;
 
   VoiceItem _selectedVoice = VoicePresets.defaultVoice;
-  double _playbackSpeed = 1.0;
-  bool _isGeneratingTts = false;
-  int _ttsProgressCurrent = 0;
-  int _ttsProgressTotal = 0;
+  int _threadCount = 50;
+
+  final TtsGenerationManager _ttsManager = TtsGenerationManager();
 
   @override
   void initState() {
@@ -47,12 +45,11 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
   @override
   void didUpdateWidget(covariant TtsStudioScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.initialDoc != oldWidget.initialDoc &&
-        widget.initialDoc != null) {
+    if (widget.initialDoc != oldWidget.initialDoc && widget.initialDoc != null) {
       _doc = widget.initialDoc;
+      _linkExistingAudio();
     }
-    if (widget.initialVideoPath != oldWidget.initialVideoPath &&
-        widget.initialVideoPath != null) {
+    if (widget.initialVideoPath != oldWidget.initialVideoPath && widget.initialVideoPath != null) {
       _videoPath = widget.initialVideoPath;
     }
   }
@@ -62,146 +59,216 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
     if (!mounted) return;
     setState(() {
       _settings = s;
+      _threadCount = s.ttsThreadCount;
       _selectedVoice = VoicePresets.vietnameseVoices.firstWhere(
         (v) => v.voiceType == s.selectedTtsVoice,
         orElse: () => VoicePresets.defaultVoice,
       );
     });
+    _linkExistingAudio();
   }
 
-  Future<void> _pickSubtitleFile() async {
-    final files = await FilePicker.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['srt'],
-    );
-    if (files.isNotEmpty && files.first.path != null) {
-      final content = await File(files.first.path!).readAsString();
-      final loadedDoc = SubtitleDocument.parseSrt(content);
-      setState(() {
-        _doc = loadedDoc;
-      });
+  Future<void> _linkExistingAudio() async {
+    if (_doc != null) {
+      await TtsGenerationManager.linkAudioFiles(_doc!, _selectedVoice.voiceType);
+      if (mounted) setState(() {});
     }
   }
 
-  Future<void> _pickVideoFile() async {
+  Future<void> _pickVideoFromFiles() async {
     final files = await FilePicker.pickFiles(type: FileType.video);
     if (files.isNotEmpty && files.first.path != null) {
-      final imported = await MediaStorage.importForPersistentAccess(
-        File(files.first.path!),
-        files.first.name,
-      );
-      if (!mounted) return;
       setState(() {
-        _videoPath = imported.path;
+        _videoPath = files.first.path!;
       });
     }
   }
 
-  Future<void> _generateTtsForAll() async {
-    if (_doc == null || _doc!.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Chưa có phụ đề để tạo giọng đọc')),
-      );
-      return;
-    }
-
-    setState(() {
-      _isGeneratingTts = true;
-      _ttsProgressCurrent = 0;
-      _ttsProgressTotal = _doc!.size;
-    });
-    await WakelockPlus.enable();
-    try {
-      final supportDir = await getApplicationSupportDirectory();
-      final ttsDir = Directory(
-        '${supportDir.path}/tts_cache/${_selectedVoice.voiceType}',
-      );
-      await ttsDir.create(recursive: true);
-
-      final items = _doc!.items;
-      var nextIndex = 0;
-      var completed = 0;
-      final errors = <String>[];
-      final workerCount = (_settings?.ttsThreadCount ?? 4)
-          .clamp(1, 6)
-          .clamp(1, items.length)
-          .toInt();
-
-      Future<void> worker() async {
-        final client = CapCutTtsClient();
-        while (true) {
-          final index = nextIndex++;
-          if (index >= items.length) return;
-          final item = items[index];
-          final text = item.getTranslationOnlyText();
-          if (text.isNotEmpty) {
-            final cacheKey = CapCutSigner.md5String(
-              '${_selectedVoice.voiceType}|${_playbackSpeed.toStringAsFixed(2)}|$text',
-            );
-            final destFile = File('${ttsDir.path}/$cacheKey.mp3');
-            if (await destFile.exists() && await destFile.length() > 500) {
-              item.audioFilePath = destFile.path;
-            } else {
-              try {
-                await client.generateSpeechToFile(
-                  text: text,
-                  voiceType: _selectedVoice.voiceType,
-                  resourceId: _selectedVoice.resourceId,
-                  rate: _playbackSpeed.toStringAsFixed(1),
-                  destFile: destFile,
-                );
-                item.audioFilePath = destFile.path;
-              } catch (e) {
-                errors.add('#${item.id}: $e');
+  void _showEnterLinkDialog() {
+    final controller = TextEditingController(text: _videoPath?.startsWith('http') == true ? _videoPath : '');
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.darkCard,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Nhập Link Video Online', style: TextStyle(color: Colors.white, fontSize: 16)),
+        content: TextField(
+          controller: controller,
+          style: const TextStyle(color: Colors.white),
+          decoration: const InputDecoration(
+            hintText: 'Dán link Bilibili hoặc link video MP4...',
+            hintStyle: TextStyle(color: Colors.grey),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Hủy', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.primaryEmerald, foregroundColor: Colors.black),
+            onPressed: () {
+              final link = controller.text.trim();
+              if (link.isNotEmpty) {
+                setState(() => _videoPath = link);
               }
-            }
-          }
+              Navigator.pop(ctx);
+            },
+            child: const Text('Đồng ý'),
+          ),
+        ],
+      ),
+    );
+  }
 
-          completed++;
-          if (mounted) setState(() => _ttsProgressCurrent = completed);
+  Future<void> _pickSrtFile() async {
+    final files = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['srt', 'txt'],
+    );
+    if (files.isNotEmpty && files.first.path != null) {
+      try {
+        final content = await File(files.first.path!).readAsString();
+        final doc = SubtitleDocument.parseSrt(content);
+        if (doc.items.isNotEmpty) {
+          setState(() => _doc = doc);
+          await _linkExistingAudio();
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Đã nạp thành công ${doc.items.length} câu phụ đề từ SRT!')),
+            );
+          }
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Lỗi nạp SRT: $e')));
         }
       }
-
-      await Future.wait(List.generate(workerCount, (_) => worker()));
-
-      if (mounted) {
-        final successCount = items
-            .where((item) => item.audioFilePath != null)
-            .length;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              errors.isEmpty
-                  ? 'Đã tạo giọng đọc cho $successCount/${items.length} câu.'
-                  : 'Tạo được $successCount/${items.length} câu; lỗi ${errors.length} câu.',
-            ),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Không thể tạo giọng đọc: $e')));
-      }
-    } finally {
-      await WakelockPlus.disable();
-      if (mounted) setState(() => _isGeneratingTts = false);
     }
   }
 
-  void _openPlayer() {
-    if (_videoPath == null) {
+  Future<void> _showHistoryPicker() async {
+    final historyRepo = await HistoryRepository.getInstance();
+    final items = historyRepo.getHistory();
+    if (items.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Chưa có bản ghi lịch sử nào!')),
+        );
+      }
+      return;
+    }
+
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.darkCard,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Chọn Video Từ Lịch Sử',
+              style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 12),
+            ConstrainedBox(
+              constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.5),
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: items.length,
+                separatorBuilder: (_, _) => const Divider(color: AppColors.cardBorder),
+                itemBuilder: (context, idx) {
+                  final it = items[idx];
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.history, color: AppColors.primaryEmerald),
+                    title: Text(it.title, style: const TextStyle(color: Colors.white, fontSize: 14)),
+                    subtitle: Text(
+                      '${(it.durationMs / 1000).toStringAsFixed(0)}s • ${DateTime.fromMillisecondsSinceEpoch(it.timestamp).toLocal().toString().split(".")[0]}',
+                      style: const TextStyle(color: Colors.grey, fontSize: 11),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    onTap: () async {
+                      Navigator.pop(ctx);
+                      try {
+                        final srtContent = await File(it.srtPath).readAsString();
+                        final doc = SubtitleDocument.parseSrt(srtContent);
+                        if (!mounted) return;
+                        setState(() {
+                          _videoPath = it.videoPath;
+                          _doc = doc;
+                        });
+                        await _linkExistingAudio();
+                      } catch (e) {
+                        if (mounted) {
+                          messenger.showSnackBar(
+                            SnackBar(content: Text('Không thể nạp phụ đề: $e')),
+                          );
+                        }
+                      }
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _openTranslateDialog() {
+    if (_doc == null || _doc!.isEmpty) return;
+    showDialog(
+      context: context,
+      builder: (ctx) => GeminiTranslateSubtitleDialog(
+        subtitleDoc: _doc!,
+        onTranslationCompleted: (newDoc) {
+          setState(() => _doc = newDoc);
+          _linkExistingAudio();
+        },
+      ),
+    );
+  }
+
+  Future<void> _startGenerateAllTts() async {
+    if (_doc == null || _doc!.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Vui lòng chọn video trước')),
+        const SnackBar(content: Text('Vui lòng nạp phụ đề trước khi tạo giọng!')),
       );
       return;
     }
+
+    await WakelockPlus.enable();
+    try {
+      await _ttsManager.generateAll(
+        document: _doc!,
+        voice: _selectedVoice,
+        threadCount: _threadCount,
+        forceRegenerate: false,
+      );
+      await _linkExistingAudio();
+    } finally {
+      await WakelockPlus.disable();
+    }
+  }
+
+  void _navigateToPlayer() {
     if (_doc == null || _doc!.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Vui lòng chọn hoặc tạo file phụ đề trước'),
-        ),
+        const SnackBar(content: Text('Chưa có phụ đề để xem video!')),
+      );
+      return;
+    }
+    if (_videoPath == null || _videoPath!.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Vui lòng chọn Video Nguồn trước!')),
       );
       return;
     }
@@ -209,8 +276,10 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (ctx) =>
-            VideoPlayerScreen(videoPath: _videoPath!, document: _doc!),
+        builder: (ctx) => VideoPlayerScreen(
+          videoPath: _videoPath!,
+          document: _doc!,
+        ),
       ),
     );
   }
@@ -222,389 +291,518 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
       appBar: AppBar(
         backgroundColor: AppColors.darkBackground,
         elevation: 0,
-        title: const Row(
-          children: [
-            Icon(
-              Icons.record_voice_over,
-              color: AppColors.primaryEmerald,
-              size: 24,
-            ),
+        title: Row(
+          children: const [
+            Icon(Icons.record_voice_over, color: AppColors.primaryEmerald, size: 22),
             SizedBox(width: 8),
             Text(
-              'Studio Lồng Tiếng AI',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-              ),
+              'Lồng Tiếng AI (TTS Studio)',
+              style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
             ),
           ],
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings, color: Colors.white70),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (ctx) => const SettingsScreen()),
+              );
+            },
+          ),
+        ],
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const SizedBox(height: 8),
+            // 0. VIDEO NGUỒN
+            _buildCard0VideoSource(),
+            const SizedBox(height: 14),
 
-            // Card 1: Chọn Video & File SRT
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: AppColors.darkSurface,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: AppColors.cardBorder),
-              ),
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      const Icon(
-                        Icons.video_library,
-                        color: AppColors.primaryEmerald,
-                        size: 20,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          _videoPath != null
-                              ? _videoPath!.split(Platform.pathSeparator).last
-                              : 'Chưa chọn video',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      TextButton.icon(
-                        onPressed: _pickVideoFile,
-                        icon: const Icon(
-                          Icons.upload_file,
-                          size: 16,
-                          color: AppColors.primaryEmerald,
-                        ),
-                        label: const Text(
-                          'Chọn Video',
-                          style: TextStyle(color: AppColors.primaryEmerald),
-                        ),
-                      ),
-                    ],
+            // 1. DANH SÁCH PHỤ ĐỀ
+            _buildCard1Subtitle(),
+            const SizedBox(height: 14),
+
+            // 2. CHỌN GIỌNG ĐỌC CAPCUT
+            _buildCard2VoiceSelector(),
+            const SizedBox(height: 14),
+
+            // 3. SỐ LUỒNG SONG SONG
+            _buildCard3ThreadCount(),
+            const SizedBox(height: 18),
+
+            // TIẾN TRÌNH TẠO GIỌNG
+            ValueListenableBuilder<TtsGenerationState>(
+              valueListenable: _ttsManager.progress,
+              builder: (context, state, _) {
+                if (!state.isRunning) return const SizedBox.shrink();
+                final pct = state.totalCount > 0 ? (state.completedCount / state.totalCount) : 0.0;
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 14),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppColors.darkCard,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.primaryEmerald),
                   ),
-                  const Divider(color: AppColors.cardBorder),
-                  Row(
+                  child: Column(
                     children: [
-                      const Icon(
-                        Icons.subtitles,
-                        color: AppColors.accentGold,
-                        size: 20,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          _doc != null && _doc!.isNotEmpty
-                              ? 'Đã nạp ${_doc!.size} câu phụ đề'
-                              : 'Chưa có file phụ đề SRT',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                      TextButton.icon(
-                        onPressed: _pickSubtitleFile,
-                        icon: const Icon(
-                          Icons.file_open,
-                          size: 16,
-                          color: AppColors.accentGold,
-                        ),
-                        label: const Text(
-                          'Chọn file SRT',
-                          style: TextStyle(color: AppColors.accentGold),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // Card 2: Chọn giọng đọc CapCut (Horizontal list)
-            const Text(
-              'Chọn giọng đọc CapCut AI (26 Giọng Việt)',
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-                fontSize: 15,
-              ),
-            ),
-            const SizedBox(height: 8),
-            SizedBox(
-              height: 115,
-              child: ListView.builder(
-                scrollDirection: Axis.horizontal,
-                itemCount: VoicePresets.vietnameseVoices.length,
-                itemBuilder: (context, index) {
-                  final voice = VoicePresets.vietnameseVoices[index];
-                  final isSelected =
-                      voice.voiceType == _selectedVoice.voiceType;
-
-                  return GestureDetector(
-                    onTap: () {
-                      setState(() {
-                        _selectedVoice = voice;
-                        _settings?.selectedTtsVoice = voice.voiceType;
-                      });
-                    },
-                    child: Container(
-                      width: 140,
-                      margin: const EdgeInsets.only(right: 10),
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: isSelected
-                            ? const Color(0xFF1B3B2B)
-                            : AppColors.darkSurface,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: isSelected
-                              ? AppColors.primaryEmerald
-                              : AppColors.cardBorder,
-                          width: isSelected ? 2 : 1,
-                        ),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                      LinearProgressIndicator(value: pct, color: AppColors.primaryEmerald, backgroundColor: Colors.white12),
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Row(
-                            children: [
-                              Icon(
-                                Icons.mic,
-                                color: isSelected
-                                    ? AppColors.primaryEmerald
-                                    : Colors.grey,
-                                size: 18,
-                              ),
-                              const Spacer(),
-                              if (isSelected)
-                                const Icon(
-                                  Icons.check_circle,
-                                  color: AppColors.primaryEmerald,
-                                  size: 16,
-                                ),
-                            ],
-                          ),
-                          const Spacer(),
-                          Text(
-                            voice.displayName,
-                            style: TextStyle(
-                              color: isSelected
-                                  ? AppColors.primaryEmerald
-                                  : Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 13,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            voice.description,
-                            style: const TextStyle(
-                              color: Colors.grey,
-                              fontSize: 10,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                          Text(state.currentSentence, style: const TextStyle(color: Colors.white, fontSize: 12)),
+                          TextButton(
+                            onPressed: () => _ttsManager.cancel(),
+                            child: const Text('Hủy', style: TextStyle(color: Colors.redAccent)),
                           ),
                         ],
                       ),
-                    ),
-                  );
-                },
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // Card 3: Tốc độ đọc
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: AppColors.darkSurface,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: AppColors.cardBorder),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.speed, color: AppColors.primaryEmerald),
-                  const SizedBox(width: 10),
-                  Text(
-                    'Tốc độ: ${_playbackSpeed.toStringAsFixed(1)}x',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                    ),
+                    ],
                   ),
-                  Expanded(
-                    child: Slider(
-                      value: _playbackSpeed,
-                      min: 0.8,
-                      max: 1.5,
-                      divisions: 7,
-                      activeColor: AppColors.primaryEmerald,
-                      inactiveColor: AppColors.cardBorder,
-                      onChanged: (val) {
-                        setState(() {
-                          _playbackSpeed = val;
-                        });
-                      },
-                    ),
-                  ),
-                ],
-              ),
+                );
+              },
             ),
-            const SizedBox(height: 16),
 
-            // Nút Thao Tác Lớn:
+            // ACTION BUTTONS
             ElevatedButton.icon(
+              onPressed: _startGenerateAllTts,
+              icon: const Icon(Icons.mic, size: 20),
+              label: const Text('🎙️ Tạo Giọng Đọc Toàn Bộ (Đa Luồng)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.primaryEmerald,
                 foregroundColor: Colors.black,
                 padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
-              onPressed: _isGeneratingTts ? null : _generateTtsForAll,
-              icon: _isGeneratingTts
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                        color: Colors.black,
-                        strokeWidth: 2,
-                      ),
-                    )
-                  : const Icon(Icons.auto_awesome, color: Colors.black),
-              label: Text(
-                _isGeneratingTts
-                    ? 'Đang tạo giọng đọc ($_ttsProgressCurrent/$_ttsProgressTotal)...'
-                    : '🎙️ Tạo Giọng Đọc Toàn Bộ (Đa Luồng)',
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 14,
-                ),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
             ),
             const SizedBox(height: 10),
-
             OutlinedButton.icon(
+              onPressed: _navigateToPlayer,
+              icon: const Icon(Icons.play_circle_fill, size: 20, color: AppColors.primaryEmerald),
+              label: const Text('🎬 Xem Video Lồng Tiếng & Phụ Đề', style: TextStyle(color: Colors.white, fontSize: 15)),
               style: OutlinedButton.styleFrom(
-                foregroundColor: Colors.white,
                 side: const BorderSide(color: AppColors.primaryEmerald),
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
-              onPressed: _openPlayer,
-              icon: const Icon(
-                Icons.play_circle_fill,
-                color: AppColors.primaryEmerald,
-              ),
-              label: const Text(
-                '🎬 Xem Video Lồng Tiếng & Phụ Đề',
-                style: TextStyle(fontWeight: FontWeight.bold),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
 
-            // Danh sách các câu phụ đề bên dưới
-            if (_doc != null && _doc!.isNotEmpty) ...[
+            // SUBTITLES LIST PREVIEW
+            if (_doc != null && _doc!.items.isNotEmpty) ...[
               Text(
-                'Kịch bản thoại (${_doc!.size} câu)',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 15,
-                ),
+                'Danh Sách Câu Phụ Đề (${_doc!.items.length} câu)',
+                style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
-              ListView.builder(
+              ListView.separated(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
                 itemCount: _doc!.items.length,
-                itemBuilder: (context, index) {
-                  final item = _doc!.items[index];
-                  final hasAudio =
-                      item.audioFilePath != null &&
-                      File(item.audioFilePath!).existsSync();
-
+                separatorBuilder: (_, _) => const SizedBox(height: 8),
+                itemBuilder: (context, idx) {
+                  final item = _doc!.items[idx];
+                  final hasAudio = item.audioFilePath != null && item.audioFilePath!.isNotEmpty;
+                  final displayText = item.translatedText.trim().isNotEmpty ? item.translatedText : item.originalText;
                   return Container(
-                    margin: const EdgeInsets.only(bottom: 8),
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      color: AppColors.darkSurface,
+                      color: AppColors.darkCard,
                       borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                        color: hasAudio
-                            ? AppColors.primaryEmerald.withValues(alpha: 0.4)
-                            : AppColors.cardBorder,
-                      ),
+                      border: Border.all(color: hasAudio ? AppColors.primaryEmerald.withValues(alpha: 0.4) : AppColors.cardBorder),
                     ),
-                    child: Row(
+                    child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          '#${item.id}',
-                          style: const TextStyle(
-                            color: AppColors.primaryEmerald,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 12,
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                item.getDisplayText('translated'),
-                                style: const TextStyle(
-                                  color: Colors.white,
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              '#${item.id} [${item.formatSrtTimecode()}]',
+                              style: const TextStyle(color: Colors.grey, fontSize: 11),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: hasAudio ? AppColors.primaryEmerald.withValues(alpha: 0.15) : Colors.white10,
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                hasAudio ? 'Đã có audio (${item.playbackSpeed.toStringAsFixed(2)}x)' : 'Chưa tạo audio',
+                                style: TextStyle(
+                                  color: hasAudio ? AppColors.primaryEmerald : Colors.grey,
+                                  fontSize: 10,
                                   fontWeight: FontWeight.bold,
-                                  fontSize: 13,
                                 ),
                               ),
-                              if (item.originalText.isNotEmpty &&
-                                  item.originalText != item.translatedText)
-                                Text(
-                                  item.originalText,
-                                  style: const TextStyle(
-                                    color: Colors.grey,
-                                    fontSize: 11,
-                                  ),
-                                ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ),
-                        Icon(
-                          hasAudio ? Icons.volume_up : Icons.volume_off,
-                          color: hasAudio
-                              ? AppColors.primaryEmerald
-                              : Colors.grey,
-                          size: 18,
-                        ),
+                        const SizedBox(height: 4),
+                        Text(displayText, style: const TextStyle(color: Colors.white, fontSize: 13)),
                       ],
                     ),
                   );
                 },
               ),
             ],
-            const SizedBox(height: 24),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildCard0VideoSource() {
+    final hasVideo = _videoPath != null && _videoPath!.isNotEmpty;
+    final isOnline = hasVideo && _videoPath!.startsWith('http');
+    final name = hasVideo
+        ? (isOnline ? _videoPath! : File(_videoPath!).uri.pathSegments.last)
+        : '';
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.darkCard,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: hasVideo ? AppColors.primaryEmerald.withValues(alpha: 0.5) : AppColors.cardBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('0. Video Nguồn', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+              Row(
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: _pickVideoFromFiles,
+                    icon: const Icon(Icons.video_file, size: 14, color: Colors.white),
+                    label: const Text('File máy', style: TextStyle(color: Colors.white, fontSize: 12)),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      side: const BorderSide(color: AppColors.cardBorder),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    onPressed: _showEnterLinkDialog,
+                    icon: const Icon(Icons.link, size: 14, color: AppColors.primaryEmerald),
+                    label: const Text('Nhập Link', style: TextStyle(color: AppColors.primaryEmerald, fontSize: 12)),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      side: const BorderSide(color: AppColors.primaryEmerald),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFF14151B),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.white10),
+            ),
+            child: hasVideo
+                ? Row(
+                    children: [
+                      const Icon(Icons.check_circle, color: AppColors.primaryEmerald, size: 18),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          name,
+                          style: const TextStyle(color: Colors.white, fontSize: 13),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close, size: 16, color: Colors.grey),
+                        onPressed: () => setState(() => _videoPath = null),
+                      ),
+                    ],
+                  )
+                : const Center(
+                    child: Text(
+                      'Chạm để chọn File từ máy hoặc dán Link online',
+                      style: TextStyle(color: Colors.grey, fontSize: 13),
+                    ),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCard1Subtitle() {
+    final hasDoc = _doc != null && _doc!.items.isNotEmpty;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.darkCard,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: hasDoc ? AppColors.primaryEmerald.withValues(alpha: 0.5) : AppColors.cardBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('1. Danh Sách Phụ Đề', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+              Row(
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: _showHistoryPicker,
+                    icon: const Icon(Icons.play_arrow, size: 14, color: Color(0xFF64B5F6)),
+                    label: const Text('Lịch sử', style: TextStyle(color: Color(0xFF64B5F6), fontSize: 12)),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      side: const BorderSide(color: Color(0xFF64B5F6)),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  OutlinedButton.icon(
+                    onPressed: _pickSrtFile,
+                    icon: const Icon(Icons.file_upload, size: 14, color: AppColors.primaryEmerald),
+                    label: const Text('Nạp SRT', style: TextStyle(color: AppColors.primaryEmerald, fontSize: 12)),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      side: const BorderSide(color: AppColors.primaryEmerald),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    ),
+                  ),
+                  if (hasDoc) ...[
+                    const SizedBox(width: 6),
+                    OutlinedButton.icon(
+                      onPressed: _openTranslateDialog,
+                      icon: const Icon(Icons.translate, size: 14, color: Colors.amberAccent),
+                      label: const Text('Dịch SRT', style: TextStyle(color: Colors.amberAccent, fontSize: 12)),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        side: const BorderSide(color: Colors.amberAccent),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+            decoration: BoxDecoration(
+              color: const Color(0xFF14151B),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.white10),
+            ),
+            child: hasDoc
+                ? Row(
+                    children: [
+                      const Icon(Icons.subtitles, color: AppColors.primaryEmerald, size: 24),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Đã nạp ${_doc!.items.length} câu phụ đề',
+                          style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close, size: 16, color: Colors.grey),
+                        onPressed: () => setState(() => _doc = null),
+                      ),
+                    ],
+                  )
+                : Column(
+                    children: const [
+                      Icon(Icons.subtitles, color: Colors.grey, size: 28),
+                      SizedBox(height: 6),
+                      Text(
+                        'Chưa có phụ đề để lồng tiếng',
+                        style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+                      ),
+                      SizedBox(height: 4),
+                      Text(
+                        "Tạo phụ đề từ Tab 'Tạo Phụ Đề' hoặc bấm 'Nạp SRT ngoài' ở trên",
+                        style: TextStyle(color: Colors.grey, fontSize: 11),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCard2VoiceSelector() {
+    final voices = VoicePresets.vietnameseVoices;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.darkCard,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.cardBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('2. Chọn Giọng Đọc CapCut', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: AppColors.primaryEmerald.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.mic, size: 14, color: AppColors.primaryEmerald),
+                    const SizedBox(width: 4),
+                    Text(
+                      _selectedVoice.displayName,
+                      style: const TextStyle(color: AppColors.primaryEmerald, fontSize: 12, fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 76,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: voices.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 8),
+              itemBuilder: (context, idx) {
+                final v = voices[idx];
+                final isSelected = v.voiceType == _selectedVoice.voiceType;
+                return GestureDetector(
+                  onTap: () {
+                    setState(() => _selectedVoice = v);
+                    _settings?.selectedTtsVoice = v.voiceType;
+                    _linkExistingAudio();
+                  },
+                  child: Container(
+                    width: 145,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF14151B),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: isSelected ? AppColors.primaryEmerald : AppColors.cardBorder,
+                        width: isSelected ? 1.5 : 1.0,
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                v.displayName,
+                                style: TextStyle(
+                                  color: isSelected ? AppColors.primaryEmerald : Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 12,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (isSelected) const Icon(Icons.check_circle, color: AppColors.primaryEmerald, size: 14),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          v.description.isNotEmpty ? v.description : 'Giọng đọc CapCut',
+                          style: const TextStyle(color: Colors.grey, fontSize: 10),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCard3ThreadCount() {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.darkCard,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.cardBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: const [
+                  Icon(Icons.speed, color: AppColors.primaryEmerald, size: 18),
+                  SizedBox(width: 6),
+                  Text('3. Số Luồng Song Song', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+                ],
+              ),
+              Text(
+                '$_threadCount luồng',
+                style: const TextStyle(color: AppColors.primaryEmerald, fontSize: 15, fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              activeTrackColor: AppColors.primaryEmerald,
+              thumbColor: AppColors.primaryEmerald,
+              inactiveTrackColor: const Color(0xFF323444),
+            ),
+            child: Slider(
+              value: _threadCount.toDouble(),
+              min: 1,
+              max: 100,
+              divisions: 99,
+              onChanged: (val) {
+                setState(() => _threadCount = val.toInt());
+                _settings?.ttsThreadCount = val.toInt();
+              },
+            ),
+          ),
+          const Text(
+            'Mặc định 50 luồng. Hệ thống tự động phân chia và co giãn tốc độ đọc khớp khít mốc thời gian SRT.',
+            style: TextStyle(color: Colors.grey, fontSize: 12),
+          ),
+        ],
       ),
     );
   }

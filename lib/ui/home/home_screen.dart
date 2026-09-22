@@ -1,4 +1,4 @@
-import 'dart:io';
+﻿import 'dart:io';
 import 'dart:convert';
 import 'dart:async';
 
@@ -779,14 +779,20 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                       ),
                       DropdownMenuItem(
-                        value: 'gemini-2.5-flash-lite',
+                        value: 'gemini-3.5-flash-lite',
                         child: Text(
-                          '🤖 Gemini 2.5 Flash-Lite (Khuyên dùng - Cần Key)',
+                          '🚀 Gemini 3.5 Flash-Lite (RPD cao - Cần API Key)',
+                        ),
+                      ),
+                      DropdownMenuItem(
+                        value: 'gemini-3.1-flash-lite',
+                        child: Text(
+                          '🌟 Gemini 3.1 Flash-Lite (Khuyên dùng - Cần API Key)',
                         ),
                       ),
                       DropdownMenuItem(
                         value: 'none',
-                        child: Text('🚫 Giữ Nguyên Tiếng Gốc (Không dịch)'),
+                        child: Text('🔒 Giữ Nguyên Tiếng Gốc (Không dịch)'),
                       ),
                     ],
                     onChanged: (val) {

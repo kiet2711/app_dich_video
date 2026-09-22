@@ -1,4 +1,4 @@
-import 'dart:convert';
+﻿import 'dart:convert';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
@@ -32,15 +32,14 @@ class CapCutTtsClient {
   final Dio dio;
 
   CapCutTtsClient({DeviceConfig? device, Dio? dio})
-    : device = device ?? DeviceConfig(),
-      dio =
-          dio ??
-          Dio(
-            BaseOptions(
-              connectTimeout: const Duration(seconds: 15),
-              receiveTimeout: const Duration(seconds: 25),
-            ),
-          );
+      : device = device ?? DeviceConfig(),
+        dio = dio ??
+            Dio(
+              BaseOptions(
+                connectTimeout: const Duration(seconds: 15),
+                receiveTimeout: const Duration(seconds: 25),
+              ),
+            );
 
   Future<File> generateSpeechToFile({
     required String text,
@@ -89,8 +88,7 @@ class CapCutTtsClient {
         if (await partFile.exists()) await partFile.delete();
         if (attempt < maxRetries) {
           device.randomize();
-          final extraDelay =
-              (e is CapCutTtsException &&
+          final extraDelay = (e is CapCutTtsException &&
                   e.kind == TtsErrorKind.parametersModified)
               ? 600
               : 0;
@@ -158,7 +156,6 @@ class CapCutTtsClient {
       );
     }
 
-    // Polling nhận kết quả
     final startTime = DateTime.now().millisecondsSinceEpoch;
     while (DateTime.now().millisecondsSinceEpoch - startTime < timeoutMs) {
       await Future<void>.delayed(const Duration(milliseconds: 350));
@@ -188,8 +185,7 @@ class CapCutTtsClient {
         await _downloadAudioFromTask(currentTask, destFile);
         return destFile;
       } else if (status == 'failed') {
-        final errMsg =
-            currentTask['message'] as String? ??
+        final errMsg = currentTask['message'] as String? ??
             queryJson['message'] as String? ??
             'CapCut báo lỗi tổng hợp âm thanh';
         throw CapCutTtsException(
@@ -208,12 +204,10 @@ class CapCutTtsClient {
   void _throwIfApiRejected(String rawJson, Map<String, dynamic> json) {
     final ret = json['ret']?.toString();
     if (ret != null && ret.isNotEmpty && ret != '0') {
-      final message =
-          json['errmsg']?.toString() ??
+      final message = json['errmsg']?.toString() ??
           json['message']?.toString() ??
           'CapCut từ chối yêu cầu';
-      final kind =
-          (ret == '5001' ||
+      final kind = (ret == '5001' ||
               message.toLowerCase().contains('parameters modified'))
           ? TtsErrorKind.parametersModified
           : TtsErrorKind.invalidResponse;
@@ -241,8 +235,7 @@ class CapCutTtsClient {
         if (audioSubtitles != null && audioSubtitles.isNotEmpty) {
           audioUrl = audioSubtitles[0]['speech_url'] as String?;
         }
-        audioUrl ??=
-            payloadJson['speech_url'] as String? ??
+        audioUrl ??= payloadJson['speech_url'] as String? ??
             payloadJson['video_url'] as String?;
         audioBase64 ??= payloadJson['audio'] as String?;
 
@@ -251,28 +244,33 @@ class CapCutTtsClient {
           final capJson = capJsonElement is String
               ? (jsonDecode(capJsonElement) as Map<String, dynamic>)
               : (capJsonElement as Map<String, dynamic>);
-          audioUrl ??=
-              capJson['speech_url'] as String? ??
+          audioUrl ??= capJson['speech_url'] as String? ??
               capJson['video_url'] as String?;
           audioBase64 ??= capJson['audio'] as String?;
         }
       } catch (_) {}
     }
 
-    if (audioBase64 != null && audioBase64.isNotEmpty) {
-      await destFile.writeAsBytes(base64Decode(audioBase64));
-      return;
-    }
+    audioUrl ??= taskObj['video_url'] as String?;
+    audioBase64 ??= taskObj['audio'] as String?;
 
     if (audioUrl != null && audioUrl.isNotEmpty) {
       final resp = await dio.get<List<int>>(
         audioUrl,
         options: Options(responseType: ResponseType.bytes),
       );
-      if (resp.data != null) {
+      if (resp.data != null && resp.data!.isNotEmpty) {
         await destFile.writeAsBytes(resp.data!);
         return;
       }
+    }
+
+    if (audioBase64 != null && audioBase64.isNotEmpty) {
+      final clean = audioBase64.contains('base64,')
+          ? audioBase64.split('base64,').last
+          : audioBase64;
+      await destFile.writeAsBytes(base64Decode(clean));
+      return;
     }
 
     throw CapCutTtsException(
@@ -288,10 +286,18 @@ class CapCutTtsClient {
     String rate,
     String bindId,
   ) {
+    const babi =
+        '{"feature_entrance":"editor","feature_entrance_detail":"editor-feature-text_to_speech","feature_key":"text_to_speech","scenario":"video_editor"}';
+
     final ssml =
-        '<speak><voice name="${_escapeXml(voiceType)}"><prosody rate="${_escapeXml(rate)}">${_escapeXml(text)}</prosody></voice></speak>';
+        '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US">'
+        '<voice name="${_escapeXml(voiceType)}" mock_tone_info="" platform="sami" resource_id="${_escapeXml(resourceId)}" emotion="" emotion_scale="0" style="" role="" moyin_emotion="" is_clone_tone="false" need_subtitle_timestamp="false">'
+        '<prosody rate="${_escapeXml(rate)}">${_escapeXml(text)}</prosody>'
+        '</voice>'
+        '</speak>';
+
     const extraInfo = '{"benefit_info":{}}';
-    final sign = CapCutSigner.makeTtsPayloadSign(
+    final payloadSign = CapCutSigner.makeTtsPayloadSign(
       ssml,
       extraInfo,
       device.deviceId,
@@ -299,43 +305,76 @@ class CapCutTtsClient {
     );
 
     final payloadObj = {
-      'audio_subtitles': [
-        {
-          'app_id': device.aid,
-          'device_id': device.deviceId,
-          'extra_info': extraInfo,
-          'rate': rate,
-          'resource_id': resourceId,
-          'sign': sign,
-          'speaker': voiceType,
-          'ssml': ssml,
-          'text': text,
-        },
-      ],
+      'audio_format': 'mp3',
+      'babi_param': babi,
+      'credit_disable': false,
+      'extra_info': extraInfo,
+      'need_merge_voice': false,
+      'need_subtitle_timestamp': false,
+      'scene': 'text_to_speech',
+      'ssml': ssml,
+      'sign': payloadSign,
     };
 
     final body = jsonEncode({
       'bind_id': bindId,
+      'can_queue': true,
+      'enter_from': 'text_to_speech',
       'tasks': [
         {
+          'context': const Uuid().v4(),
           'payload': jsonEncode(payloadObj),
-          'req_key': 'cc_audio_tts_stream',
-          'task_version': 'v1',
+          'req_key': 'sami_text_to_speech',
+          'task_version': 'v3',
         },
       ],
     });
 
     const path = '/lv/v1/common_task/new';
     final queryMap = device.toQueryMap(includeRegion: true);
+    queryMap['babi_param'] = babi;
+
     final queryParams = queryMap.entries
-        .map(
-          (e) =>
-              '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value)}',
-        )
+        .map((e) => '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value)}')
         .join('&');
     final fullUrl = '${CapCutSigner.baseUrl}$path?$queryParams';
 
-    final headers = CapCutSigner.buildBaseHeaders(device, body, appid: false);
+    final headers = CapCutSigner.buildBaseHeaders(device, body, appid: true);
+    final signHeader = CapCutSigner.makeSignHeader(
+      fullUrl,
+      device.appvr,
+      headers['device-time'] ?? '',
+      device.tdid,
+    );
+    headers['sign'] = signHeader;
+
+    return {'url': fullUrl, 'headers': headers, 'body': body};
+  }
+
+  Map<String, dynamic> _buildQueryTtsRequest(
+    String taskId,
+    String token,
+    String bindId,
+  ) {
+    final body = jsonEncode({
+      'tasks': [
+        {
+          'bind_id': bindId,
+          'id': taskId,
+          'req_key': 'sami_text_to_speech',
+          'task_version': 'v3',
+          'token': token,
+        },
+      ],
+    });
+
+    const path = '/lv/v1/common_task/query';
+    final queryParams = device.toQueryMap(includeRegion: true).entries
+        .map((e) => '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value)}')
+        .join('&');
+    final fullUrl = '${CapCutSigner.baseUrl}$path?$queryParams';
+
+    final headers = CapCutSigner.buildBaseHeaders(device, body, appid: true);
     final signHeader = CapCutSigner.makeSignHeader(
       fullUrl,
       device.appvr,
@@ -354,44 +393,5 @@ class CapCutTtsClient {
         .replaceAll('>', '&gt;')
         .replaceAll('"', '&quot;')
         .replaceAll("'", '&apos;');
-  }
-
-  Map<String, dynamic> _buildQueryTtsRequest(
-    String taskId,
-    String token,
-    String bindId,
-  ) {
-    final body = jsonEncode({
-      'tasks': [
-        {
-          'bind_id': bindId,
-          'id': taskId,
-          'req_key': 'cc_audio_tts_stream',
-          'task_version': 'v1',
-          'token': token,
-        },
-      ],
-    });
-
-    const path = '/lv/v1/common_task/query';
-    final queryMap = device.toQueryMap(includeRegion: false);
-    final queryParams = queryMap.entries
-        .map(
-          (e) =>
-              '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value)}',
-        )
-        .join('&');
-    final fullUrl = '${CapCutSigner.baseUrl}$path?$queryParams';
-
-    final headers = CapCutSigner.buildBaseHeaders(device, body, appid: false);
-    final signHeader = CapCutSigner.makeSignHeader(
-      fullUrl,
-      device.appvr,
-      headers['device-time'] ?? '',
-      device.tdid,
-    );
-    headers['sign'] = signHeader;
-
-    return {'url': fullUrl, 'headers': headers, 'body': body};
   }
 }

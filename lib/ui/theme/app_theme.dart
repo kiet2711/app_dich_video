@@ -1,8 +1,9 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 
 class AppColors {
   static const darkBackground = Color(0xFF0F1015);
   static const darkSurface = Color(0xFF181920);
+  static const darkCard = Color(0xFF181920);
   static const darkSurfaceVariant = Color(0xFF22232D);
   static const cardBorder = Color(0xFF2D2F3E);
 
@@ -14,6 +15,8 @@ class AppColors {
   static const textSecondary = Color(0xFFA0A3B1);
   static const textMuted = Color(0xFF6B6E7D);
 }
+
+typedef AppTheme = AppColors;
 
 ThemeData buildAppTheme() {
   return ThemeData(

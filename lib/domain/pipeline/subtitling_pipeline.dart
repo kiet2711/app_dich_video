@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
@@ -30,7 +30,7 @@ class SubtitlingPipeline {
 
   SubtitlingPipeline({
     required this.apiKeys,
-    this.translationEngine = 'gemini-2.5-flash-lite',
+    this.translationEngine = 'gemini-3.5-flash-lite',
     this.stylePreset = 'Zhihu',
     this.customPrompt = '',
     this.targetLanguage = 'vi-VN',
@@ -42,7 +42,7 @@ class SubtitlingPipeline {
     _emit(
       const ProcessProgress(
         stage: ProcessStage.cancelled,
-        message: 'Đã huỷ bởi người dùng.',
+        message: 'ÄÃ£ huá»· bá»Ÿi ngÆ°á»i dÃ¹ng.',
       ),
     );
   }
@@ -64,11 +64,11 @@ class SubtitlingPipeline {
       throw ArgumentError.value(
         totalDurationMs,
         'totalDurationMs',
-        'Thời lượng media phải lớn hơn 0',
+        'Thá»i lÆ°á»£ng media pháº£i lá»›n hÆ¡n 0',
       );
     }
     if (translationEngine.startsWith('gemini') && apiKeys.isEmpty) {
-      throw StateError('Đã chọn Gemini nhưng chưa cấu hình API Key.');
+      throw StateError('ÄÃ£ chá»n Gemini nhÆ°ng chÆ°a cáº¥u hÃ¬nh API Key.');
     }
     final tempBase = await getTemporaryDirectory();
     final sessionDir = Directory(
@@ -87,7 +87,7 @@ class SubtitlingPipeline {
           const ProcessProgress(
             stage: ProcessStage.extractingAudio,
             progress: 0.02,
-            message: 'Đang phân tích link Bilibili...',
+            message: 'Äang phÃ¢n tÃ­ch link Bilibili...',
           ),
         );
         final target = await resolver.resolveUrl(videoPath);
@@ -96,7 +96,8 @@ class SubtitlingPipeline {
           settings.bilibiliSessData,
         );
 
-        if (translationEngine != 'capcut') {
+        // Tự động kiểm tra phụ đề có sẵn không phụ thuộc engine
+        try {
           final subtitles = await resolver.getSubtitles(
             details,
             settings.bilibiliSessData,
@@ -115,12 +116,12 @@ class SubtitlingPipeline {
                   stage: ProcessStage.extractingAudio,
                   progress: 0.20,
                   message:
-                      'Đã nạp ${sourceDocument.size} câu phụ đề Bilibili (${preferred.languageName}).',
+                      'ÄÃ£ náº¡p ${sourceDocument.size} cÃ¢u phá»¥ Ä‘á» Bilibili (${preferred.languageName}).',
                 ),
               );
             }
           }
-        }
+        } catch (_) {}
 
         if (sourceDocument == null) {
           final audioUrl = await resolver.getAudioUrl(
@@ -149,14 +150,14 @@ class SubtitlingPipeline {
       }
 
       // -------------------------------------------------------------
-      // GIAI ĐOẠN 1: TÁCH ÂM THANH SANG M4A
+      // GIAI ÄOáº N 1: TÃCH Ã‚M THANH SANG M4A
       // -------------------------------------------------------------
-      if (_isCancelled) throw Exception('Đã huỷ tác vụ');
+      if (_isCancelled) throw Exception('ÄÃ£ huá»· tÃ¡c vá»¥');
       _emit(
         const ProcessProgress(
           stage: ProcessStage.extractingAudio,
           progress: 0.05,
-          message: 'Đang trích xuất luồng âm thanh từ video...',
+          message: 'Äang trÃ­ch xuáº¥t luá»“ng Ã¢m thanh tá»« video...',
         ),
       );
 
@@ -180,11 +181,11 @@ class SubtitlingPipeline {
         );
 
         // -------------------------------------------------------------
-        // GIAI ĐOẠN 2 & 3: UPLOAD VOD VÀ STT CAPCUT CHO TỪNG CHUNK
+        // GIAI ÄOáº N 2 & 3: UPLOAD VOD VÃ€ STT CAPCUT CHO Tá»ªNG CHUNK
         // -------------------------------------------------------------
         final totalChunks = chunks.length;
         for (var i = 0; i < totalChunks; i++) {
-          if (_isCancelled) throw Exception('Đã huỷ tác vụ');
+          if (_isCancelled) throw Exception('ÄÃ£ huá»· tÃ¡c vá»¥');
           final chunk = chunks[i];
 
           // 2. Upload VOD
@@ -196,7 +197,7 @@ class SubtitlingPipeline {
               stage: ProcessStage.uploadingVod,
               progress: 0.20 + (i / totalChunks) * 0.30,
               message:
-                  'Đang tải phân đoạn ${i + 1}/$totalChunks lên CapCut Cloud...',
+                  'Äang táº£i phÃ¢n Ä‘oáº¡n ${i + 1}/$totalChunks lÃªn CapCut Cloud...',
             ),
           );
 
@@ -212,14 +213,14 @@ class SubtitlingPipeline {
                 ProcessProgress(
                   stage: ProcessStage.uploadingVod,
                   progress: overall,
-                  message: '[Đoạn ${i + 1}/$totalChunks] $msg',
+                  message: '[Äoáº¡n ${i + 1}/$totalChunks] $msg',
                 ),
               );
             },
           );
 
           // 3. STT CapCut
-          if (_isCancelled) throw Exception('Đã huỷ tác vụ');
+          if (_isCancelled) throw Exception('ÄÃ£ huá»· tÃ¡c vá»¥');
           final sttClient = CapCutSttClient(device: device);
 
           _emit(
@@ -227,7 +228,7 @@ class SubtitlingPipeline {
               stage: ProcessStage.sttTranscribing,
               progress: 0.50 + (i / totalChunks) * 0.25,
               message:
-                  'CapCut đang nhận diện giọng nói [Đoạn ${i + 1}/$totalChunks]...',
+                  'CapCut Ä‘ang nháº­n diá»‡n giá»ng nÃ³i [Äoáº¡n ${i + 1}/$totalChunks]...',
             ),
           );
 
@@ -249,7 +250,7 @@ class SubtitlingPipeline {
                 ProcessProgress(
                   stage: ProcessStage.sttTranscribing,
                   progress: overall,
-                  message: '[Đoạn ${i + 1}/$totalChunks] $msg',
+                  message: '[Äoáº¡n ${i + 1}/$totalChunks] $msg',
                 ),
               );
             },
@@ -263,15 +264,15 @@ class SubtitlingPipeline {
       fullDoc.reindex();
 
       // -------------------------------------------------------------
-      // GIAI ĐOẠN 4: DỊCH PHỤ ĐỀ BẰNG GEMINI AI
+      // GIAI ÄOáº N 4: Dá»ŠCH PHá»¤ Äá»€ Báº°NG GEMINI AI
       // -------------------------------------------------------------
       if (translationEngine.startsWith('gemini') && fullDoc.isNotEmpty) {
-        if (_isCancelled) throw Exception('Đã huỷ tác vụ');
+        if (_isCancelled) throw Exception('ÄÃ£ huá»· tÃ¡c vá»¥');
         _emit(
           const ProcessProgress(
             stage: ProcessStage.aiTranslating,
             progress: 0.75,
-            message: 'Bắt đầu dịch phụ đề theo ngữ cảnh với Gemini AI...',
+            message: 'Báº¯t Ä‘áº§u dá»‹ch phá»¥ Ä‘á» theo ngá»¯ cáº£nh vá»›i Gemini AI...',
           ),
         );
 
@@ -308,7 +309,7 @@ class SubtitlingPipeline {
         ProcessProgress(
           stage: ProcessStage.completed,
           progress: 1.0,
-          message: 'Hoàn tất xử lý phụ đề!',
+          message: 'HoÃ n táº¥t xá»­ lÃ½ phá»¥ Ä‘á»!',
           resultDocument: fullDoc,
         ),
       );
@@ -319,7 +320,7 @@ class SubtitlingPipeline {
         _emit(
           ProcessProgress(
             stage: ProcessStage.error,
-            message: 'Lỗi: $e',
+            message: 'Lá»—i: $e',
             error: e,
           ),
         );
