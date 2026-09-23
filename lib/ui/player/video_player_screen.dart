@@ -13,6 +13,7 @@ import '../../data/repository/settings_repository.dart';
 import '../../domain/media/bilibili_resolver.dart';
 import '../../domain/media/network_header_helper.dart';
 import '../../domain/tts/audio_file_validator.dart';
+import '../theme/app_theme.dart';
 import 'dual_volume_sheet.dart';
 import 'subtitle_control_sheet.dart';
 import 'subtitle_overlay.dart';
@@ -43,6 +44,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   int? _activeTtsItemId;
   bool _isSyncingTts = false;
   DateTime _lastUiUpdate = DateTime.fromMillisecondsSinceEpoch(0);
+  bool _isScrubbing = false;
+  int _scrubMs = 0;
+  bool _wasPlayingBeforeScrub = false;
+  bool _wasSeeked = false;
 
   @override
   void initState() {
@@ -111,7 +116,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       return;
     }
     final now = DateTime.now();
-    if (now.difference(_lastUiUpdate).inMilliseconds >= 50) {
+    if (!_isScrubbing && now.difference(_lastUiUpdate).inMilliseconds >= 50) {
       _lastUiUpdate = now;
       setState(() {
         _currentPosMs = controller.value.position.inMilliseconds;
@@ -129,8 +134,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   }
 
   void _seekTo(int targetMs) {
+    _wasSeeked = true;
     _activeTtsItemId = null;
-    _ttsPlayer.stop();
+    unawaited(_ttsPlayer.stop());
     _controller?.seekTo(Duration(milliseconds: targetMs));
   }
 
@@ -157,10 +163,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
           }
           final srtDurationMs = max(200, item.endMs - item.startMs);
           if (item.audioDurationMs > srtDurationMs) {
-            final targetPlayDurationMs = max(180, srtDurationMs - 100);
-            item.playbackSpeed = ((item.audioDurationMs / targetPlayDurationMs)
-                    .clamp(1.05, 2.5) *
-                100).round() / 100;
+            final factor =
+                (item.audioDurationMs / srtDurationMs).clamp(1.0, 2.2);
+            item.playbackSpeed = (factor * 10).round() / 10.0;
           } else {
             item.playbackSpeed = 1.0;
           }
@@ -171,6 +176,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
   Future<void> _syncTtsAudio(VideoPlayerController controller) async {
     if (_isSyncingTts || !_settings.isTtsPlaybackEnabled) return;
+    // Tạm dừng ngay giọng đọc khi video đang quay tròn tải mạng hoặc đang kéo tua
+    if (_isScrubbing || controller.value.isBuffering) {
+      if (_ttsPlayer.playing) {
+        await _ttsPlayer.pause();
+      }
+      return;
+    }
     _isSyncingTts = true;
     try {
       final positionMs = controller.value.position.inMilliseconds;
@@ -185,10 +197,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
           final activeItem = widget.document.items
               .where((it) => it.id == _activeTtsItemId)
               .firstOrNull;
-          // Nếu video đã trôi quá 1200ms sau khi câu hiện tại kết thúc hoặc trước startMs:
+          // Nếu video đã trôi quá 800ms sau khi câu kết thúc hoặc trước startMs:
           if (activeItem == null ||
               positionMs < activeItem.startMs ||
-              positionMs > activeItem.endMs + 1200) {
+              positionMs > activeItem.endMs + 800) {
             _activeTtsItemId = null;
             await _ttsPlayer.stop();
           }
@@ -196,33 +208,37 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         return;
       }
 
-      // Đảm bảo tốc độ phát đã được tính toán chính xác
+      // Đảm bảo tốc độ phát được tính chuẩn xác theo công thức của app gốc
       if (item.playbackSpeed <= 1.0 && item.audioDurationMs > 0) {
         final srtDurationMs = max(200, item.endMs - item.startMs);
         if (item.audioDurationMs > srtDurationMs) {
-          final targetPlayDurationMs = max(180, srtDurationMs - 100);
-          item.playbackSpeed = ((item.audioDurationMs / targetPlayDurationMs)
-                  .clamp(1.05, 2.5) *
-              100).round() / 100;
+          final factor =
+              (item.audioDurationMs / srtDurationMs).clamp(1.0, 2.2);
+          item.playbackSpeed = (factor * 10).round() / 10.0;
         }
       }
 
-      var speed = item.playbackSpeed.clamp(0.5, 2.5);
-      final timelineOffsetMs = max(0, positionMs - item.startMs);
-      final sourceOffsetMs = (timelineOffsetMs * speed).round();
-
-      // Nếu đã phát vượt quá thời lượng câu thoại này:
-      if (item.audioDurationMs > 0 && sourceOffsetMs >= item.audioDurationMs) {
-        return;
-      }
+      var speed = item.playbackSpeed.clamp(0.5, 2.2);
 
       if (_activeTtsItemId != item.id) {
         _activeTtsItemId = item.id;
         await _ttsPlayer.stop();
-        // Tránh seek đầu câu nếu offset nhỏ hơn 200ms để không bị nuốt âm đầu
-        final initialPos = sourceOffsetMs >= 200
-            ? Duration(milliseconds: sourceOffsetMs)
-            : null;
+
+        Duration? initialPos;
+        if (_wasSeeked) {
+          _wasSeeked = false;
+          final timelineOffsetMs = max(0, positionMs - item.startMs);
+          final sourceOffsetMs = (timelineOffsetMs * speed).round();
+          if (item.audioDurationMs > 0 &&
+              sourceOffsetMs >= item.audioDurationMs) {
+            return;
+          }
+          // Chỉ seek vào giữa câu nếu người dùng tua sâu vào trong câu (> 400ms)
+          if (sourceOffsetMs > 400) {
+            initialPos = Duration(milliseconds: sourceOffsetMs);
+          }
+        }
+
         final duration = await _ttsPlayer.setFilePath(
           path,
           initialPosition: initialPos,
@@ -231,29 +247,28 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
           item.audioDurationMs = duration.inMilliseconds;
           final srtDurationMs = max(200, item.endMs - item.startMs);
           if (item.audioDurationMs > srtDurationMs) {
-            final targetPlayDurationMs = max(180, srtDurationMs - 100);
-            speed = ((item.audioDurationMs / targetPlayDurationMs)
-                    .clamp(1.05, 2.5) *
-                100).round() / 100;
+            final factor =
+                (item.audioDurationMs / srtDurationMs).clamp(1.0, 2.2);
+            speed = (factor * 10).round() / 10.0;
             item.playbackSpeed = speed;
+          } else {
+            speed = 1.0;
+            item.playbackSpeed = 1.0;
           }
         }
-        // Áp dụng tăng tốc độ phát audio để khớp thời lượng phụ đề!
+
+        // Tốc độ phát và khóa cao độ 1.0 để giữ nguyên âm điệu tự nhiên không méo tiếng
         await _ttsPlayer.setSpeed(speed);
+        await _ttsPlayer.setPitch(1.0);
         await _ttsPlayer.setVolume(_settings.ttsVolume);
 
         if (controller.value.isPlaying) {
           await _ttsPlayer.play();
         }
       } else {
-        if (_ttsPlayer.processingState != ProcessingState.completed) {
-          final actualPosMs = _ttsPlayer.position.inMilliseconds;
-          final drift = (actualPosMs - sourceOffsetMs).abs();
-          if (drift > 600) {
-            await _ttsPlayer.seek(Duration(milliseconds: sourceOffsetMs));
-          }
-        }
-
+        // Đang phát câu thoại này:
+        // GIỐNG APP GỐC ANDROID: Tuyệt đối KHÔNG chạy seek định kỳ để tránh nuốt âm đầu câu.
+        // Chỉ đồng bộ trạng thái Play/Pause theo video.
         if (controller.value.isPlaying) {
           if (!_ttsPlayer.playing &&
               _ttsPlayer.processingState != ProcessingState.completed) {
@@ -344,6 +359,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                   child: VideoPlayer(controller),
                 ),
               ),
+
+              // Vòng xoay chờ tải mạng (Buffering indicator)
+              if (controller.value.isBuffering)
+                const Center(
+                  child: CircularProgressIndicator(
+                    color: AppTheme.primaryEmerald,
+                  ),
+                ),
 
               // 2. Lớp Hộp Đen (BlackBox) và Phụ đề nổi
               SubtitleOverlay(
@@ -527,10 +550,15 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text(
-                            _formatDuration(controller.value.position),
+                            _formatDuration(Duration(
+                              milliseconds: _isScrubbing
+                                  ? _scrubMs
+                                  : controller.value.position.inMilliseconds,
+                            )),
                             style: const TextStyle(
                               color: Colors.white70,
                               fontSize: 12,
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
                           Text(
@@ -538,19 +566,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                             style: const TextStyle(
                               color: Colors.white70,
                               fontSize: 12,
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
                         ],
                       ),
-                      VideoProgressIndicator(
-                        controller,
-                        allowScrubbing: true,
-                        colors: const VideoProgressColors(
-                          playedColor: Colors.blueAccent,
-                          bufferedColor: Colors.white24,
-                          backgroundColor: Colors.white12,
-                        ),
-                      ),
+                      _buildProgressBar(controller),
                     ],
                   ),
                 ),
@@ -558,6 +579,97 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildProgressBar(VideoPlayerController controller) {
+    final durationMs = controller.value.duration.inMilliseconds;
+    if (durationMs <= 0) return const SizedBox(height: 28);
+
+    final currentMs = _isScrubbing
+        ? _scrubMs
+        : controller.value.position.inMilliseconds.clamp(0, durationMs);
+
+    final bufferedEnd = controller.value.buffered.isNotEmpty
+        ? controller.value.buffered.last.end.inMilliseconds.clamp(0, durationMs)
+        : 0;
+    final bufferedFraction = (bufferedEnd / durationMs).clamp(0.0, 1.0);
+
+    return SizedBox(
+      height: 28,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          // Thanh nền và thanh buffer (bộ nhớ đệm tải trước)
+          ClipRRect(
+            borderRadius: BorderRadius.circular(2),
+            child: SizedBox(
+              height: 4,
+              child: Row(
+                children: [
+                  Flexible(
+                    flex: (bufferedFraction * 1000).toInt().clamp(0, 1000),
+                    child: Container(color: Colors.white30),
+                  ),
+                  Flexible(
+                    flex: ((1.0 - bufferedFraction) * 1000).toInt().clamp(0, 1000),
+                    child: Container(color: Colors.white12),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // Thanh trượt tua thời gian mượt mà (Deferred Scrubbing)
+          SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              trackHeight: 4.0,
+              activeTrackColor: AppTheme.primaryEmerald,
+              inactiveTrackColor: Colors.transparent,
+              thumbColor: AppTheme.primaryEmerald,
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6.0),
+              overlayShape: const RoundSliderOverlayShape(overlayRadius: 14.0),
+              overlayColor: AppTheme.primaryEmerald.withValues(alpha: 0.2),
+            ),
+            child: Slider(
+              value: currentMs.toDouble().clamp(0.0, durationMs.toDouble()),
+              min: 0.0,
+              max: durationMs.toDouble(),
+              onChangeStart: (val) {
+                setState(() {
+                  _isScrubbing = true;
+                  _scrubMs = val.toInt();
+                  _wasPlayingBeforeScrub = controller.value.isPlaying;
+                });
+                _activeTtsItemId = null;
+                unawaited(_ttsPlayer.stop());
+                if (_wasPlayingBeforeScrub) {
+                  controller.pause();
+                }
+              },
+              onChanged: (val) {
+                setState(() {
+                  _scrubMs = val.toInt();
+                });
+              },
+              onChangeEnd: (val) async {
+                final targetMs = val.toInt();
+                _wasSeeked = true;
+                _activeTtsItemId = null;
+                unawaited(_ttsPlayer.stop());
+                await controller.seekTo(Duration(milliseconds: targetMs));
+                if (_wasPlayingBeforeScrub) {
+                  await controller.play();
+                }
+                if (mounted) {
+                  setState(() {
+                    _isScrubbing = false;
+                  });
+                }
+              },
+            ),
+          ),
+        ],
       ),
     );
   }

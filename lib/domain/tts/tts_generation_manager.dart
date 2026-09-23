@@ -453,10 +453,8 @@ class TtsGenerationManager {
     item.audioDurationMs = durationMs;
     final srtDurationMs = max(200, item.endMs - item.startMs);
     if (durationMs > srtDurationMs) {
-      final targetPlayDurationMs = max(180, srtDurationMs - 100);
-      item.playbackSpeed = ((durationMs / targetPlayDurationMs)
-              .clamp(1.05, 2.5) *
-          100).round() / 100;
+      final factor = (durationMs / srtDurationMs).clamp(1.0, 2.2);
+      item.playbackSpeed = (factor * 10).round() / 10.0;
     } else {
       item.playbackSpeed = 1.0;
     }
