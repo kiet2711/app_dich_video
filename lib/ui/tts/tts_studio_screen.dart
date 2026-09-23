@@ -1,11 +1,17 @@
-import 'package:flutter/services.dart';
-import '../../domain/media/network_header_helper.dart';
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+
+import 'package:flutter/services.dart';
+
+import '../../domain/media/audio_extractor.dart';
+import '../../domain/media/network_header_helper.dart';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
+import '../../data/api/gemini_translator.dart';
 import '../../data/model/subtitle_document.dart';
 import '../../data/model/voice_model.dart';
 import '../../data/repository/history_repository.dart';
@@ -15,6 +21,7 @@ import '../player/video_player_screen.dart';
 import '../settings/settings_screen.dart';
 import '../theme/app_theme.dart';
 import 'gemini_translate_subtitle_dialog.dart';
+import 'tts_error_review_dialog.dart';
 
 class TtsStudioScreen extends StatefulWidget {
   final SubtitleDocument? initialDoc;
@@ -30,29 +37,55 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
   SettingsRepository? _settings;
   SubtitleDocument? _doc;
   String? _videoPath;
+  String _videoFileName = '';
+  int _videoDurationMs = 0;
+  String _videoSizeLabel = '';
 
   VoiceItem _selectedVoice = VoicePresets.defaultVoice;
   int _threadCount = 50;
 
   final TtsGenerationManager _ttsManager = TtsGenerationManager();
+  bool _errorDialogOpen = false;
 
   @override
   void initState() {
     super.initState();
     _doc = widget.initialDoc;
     _videoPath = widget.initialVideoPath;
+    _ttsManager.progress.addListener(_onTtsProgressChanged);
+    unawaited(_refreshVideoMetadata());
     _loadSettings();
+  }
+
+  @override
+  void dispose() {
+    _ttsManager.progress.removeListener(_onTtsProgressChanged);
+    super.dispose();
+  }
+
+  void _onTtsProgressChanged() {
+    if (!mounted) return;
+    setState(() {});
+    final state = _ttsManager.progress.value;
+    if (!state.isRunning && state.failedItems.isNotEmpty && !_errorDialogOpen) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !_errorDialogOpen) _showErrorReviewDialog();
+      });
+    }
   }
 
   @override
   void didUpdateWidget(covariant TtsStudioScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.initialDoc != oldWidget.initialDoc && widget.initialDoc != null) {
+    if (widget.initialDoc != oldWidget.initialDoc &&
+        widget.initialDoc != null) {
       _doc = widget.initialDoc;
       _linkExistingAudio();
     }
-    if (widget.initialVideoPath != oldWidget.initialVideoPath && widget.initialVideoPath != null) {
+    if (widget.initialVideoPath != oldWidget.initialVideoPath &&
+        widget.initialVideoPath != null) {
       _videoPath = widget.initialVideoPath;
+      unawaited(_refreshVideoMetadata());
     }
   }
 
@@ -72,7 +105,10 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
 
   Future<void> _linkExistingAudio() async {
     if (_doc != null) {
-      await TtsGenerationManager.linkAudioFiles(_doc!, _selectedVoice.voiceType);
+      await TtsGenerationManager.linkAudioFiles(
+        _doc!,
+        _selectedVoice.voiceType,
+      );
       if (mounted) setState(() {});
     }
   }
@@ -83,7 +119,45 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
       setState(() {
         _videoPath = files.first.path!;
       });
+      await _refreshVideoMetadata();
     }
+  }
+
+  Future<void> _refreshVideoMetadata() async {
+    final path = _videoPath;
+    if (path == null || path.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _videoFileName = '';
+          _videoDurationMs = 0;
+          _videoSizeLabel = '';
+        });
+      }
+      return;
+    }
+
+    final isOnline = NetworkHeaderHelper.isRemoteUrl(path);
+    var name = isOnline
+        ? NetworkHeaderHelper.getSuggestedTitle(path)
+        : File(path).uri.pathSegments.last;
+    var sizeLabel = isOnline ? 'Trực tuyến' : '';
+    var durationMs = 0;
+    if (!isOnline) {
+      try {
+        final bytes = await File(path).length();
+        sizeLabel = '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+      } catch (_) {}
+    }
+    try {
+      durationMs = await AudioExtractor.probeDuration(path);
+    } catch (_) {}
+    if (name.trim().isEmpty) name = 'video.mp4';
+    if (!mounted || _videoPath != path) return;
+    setState(() {
+      _videoFileName = name;
+      _videoDurationMs = durationMs;
+      _videoSizeLabel = sizeLabel;
+    });
   }
 
   void _showEnterLinkDialog() {
@@ -97,7 +171,9 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
       builder: (ctx) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
           backgroundColor: AppColors.darkCard,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
           title: Row(
             children: const [
               Icon(Icons.link, color: AppColors.primaryEmerald, size: 20),
@@ -129,8 +205,10 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                   hintStyle: const TextStyle(color: Colors.grey, fontSize: 12),
                   filled: true,
                   fillColor: const Color(0xFF14151B),
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(8),
                     borderSide: const BorderSide(color: AppColors.cardBorder),
@@ -155,12 +233,27 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                         setDialogState(() => errorText = null);
                       }
                     },
-                    icon: const Icon(Icons.paste, size: 14, color: AppColors.primaryEmerald),
-                    label: const Text('Dán từ Clipboard', style: TextStyle(color: AppColors.primaryEmerald, fontSize: 12)),
+                    icon: const Icon(
+                      Icons.paste,
+                      size: 14,
+                      color: AppColors.primaryEmerald,
+                    ),
+                    label: const Text(
+                      'Dán từ Clipboard',
+                      style: TextStyle(
+                        color: AppColors.primaryEmerald,
+                        fontSize: 12,
+                      ),
+                    ),
                     style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
                       side: const BorderSide(color: AppColors.primaryEmerald),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
                     ),
                   ),
                 ],
@@ -169,7 +262,10 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                 const SizedBox(height: 6),
                 Text(
                   errorText!,
-                  style: const TextStyle(color: Color(0xFFFFB74D), fontSize: 12),
+                  style: const TextStyle(
+                    color: Color(0xFFFFB74D),
+                    fontSize: 12,
+                  ),
                 ),
               ],
             ],
@@ -183,21 +279,28 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.primaryEmerald,
                 foregroundColor: Colors.black,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
               ),
               onPressed: () {
-                final clean = NetworkHeaderHelper.extractCleanUrl(controller.text);
+                final clean = NetworkHeaderHelper.extractCleanUrl(
+                  controller.text,
+                );
                 if (clean.isEmpty || !NetworkHeaderHelper.isRemoteUrl(clean)) {
                   setDialogState(() {
-                    errorText =
-                        'Vui lòng nhập link hợp lệ (http://, https:// hoặc link Bilibili/b23.tv)';
+                    errorText = 'Vui lòng nhập link hợp lệ (http://, https:// hoặc link Bilibili/b23.tv)';
                   });
                   return;
                 }
                 setState(() => _videoPath = clean);
+                unawaited(_refreshVideoMetadata());
                 Navigator.pop(ctx);
               },
-              child: const Text('Xác Nhận', style: TextStyle(fontWeight: FontWeight.bold)),
+              child: const Text(
+                'Xác Nhận',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
             ),
           ],
         ),
@@ -219,13 +322,22 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
           await _linkExistingAudio();
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Đã nạp thành công ${doc.items.length} câu phụ đề từ SRT!')),
+              SnackBar(
+                content: Text(
+                  'Đã nạp thành công ${doc.items.length} câu phụ đề từ SRT!',
+                ),
+              ),
             );
           }
+        } else if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('File SRT không có câu thoại hợp lệ')),
+          );
         }
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Lỗi nạp SRT: $e')));
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text('Lỗi nạp SRT: $e')));
         }
       }
     }
@@ -248,7 +360,9 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
     showModalBottomSheet(
       context: context,
       backgroundColor: AppColors.darkCard,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
       builder: (ctx) => Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
         child: Column(
@@ -257,21 +371,34 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
           children: [
             const Text(
               'Chọn Video Từ Lịch Sử',
-              style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+              ),
             ),
             const SizedBox(height: 12),
             ConstrainedBox(
-              constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.5),
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(context).size.height * 0.5,
+              ),
               child: ListView.separated(
                 shrinkWrap: true,
                 itemCount: items.length,
-                separatorBuilder: (_, _) => const Divider(color: AppColors.cardBorder),
+                separatorBuilder: (_, _) =>
+                    const Divider(color: AppColors.cardBorder),
                 itemBuilder: (context, idx) {
                   final it = items[idx];
                   return ListTile(
                     contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.history, color: AppColors.primaryEmerald),
-                    title: Text(it.title, style: const TextStyle(color: Colors.white, fontSize: 14)),
+                    leading: const Icon(
+                      Icons.history,
+                      color: AppColors.primaryEmerald,
+                    ),
+                    title: Text(
+                      it.title,
+                      style: const TextStyle(color: Colors.white, fontSize: 14),
+                    ),
                     subtitle: Text(
                       '${(it.durationMs / 1000).toStringAsFixed(0)}s • ${DateTime.fromMillisecondsSinceEpoch(it.timestamp).toLocal().toString().split(".")[0]}',
                       style: const TextStyle(color: Colors.grey, fontSize: 11),
@@ -281,13 +408,15 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                     onTap: () async {
                       Navigator.pop(ctx);
                       try {
-                        final srtContent = await File(it.srtPath).readAsString();
+                        final srtContent = await File(it.srtPath)
+                            .readAsString();
                         final doc = SubtitleDocument.parseSrt(srtContent);
                         if (!mounted) return;
                         setState(() {
                           _videoPath = it.videoPath;
                           _doc = doc;
                         });
+                        await _refreshVideoMetadata();
                         await _linkExistingAudio();
                       } catch (e) {
                         if (mounted) {
@@ -321,10 +450,12 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
     );
   }
 
-  Future<void> _startGenerateAllTts() async {
+  Future<void> _startGenerateAllTts({bool forceRegenerate = false}) async {
     if (_doc == null || _doc!.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Vui lòng nạp phụ đề trước khi tạo giọng!')),
+        const SnackBar(
+          content: Text('Vui lòng nạp phụ đề trước khi tạo giọng!'),
+        ),
       );
       return;
     }
@@ -335,12 +466,203 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
         document: _doc!,
         voice: _selectedVoice,
         threadCount: _threadCount,
-        forceRegenerate: false,
+        forceRegenerate: forceRegenerate,
       );
       await _linkExistingAudio();
+      await _persistDocumentToHistory();
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Lỗi tạo giọng: $error')));
+      }
     } finally {
       await WakelockPlus.disable();
     }
+  }
+
+  Future<void> _persistDocumentToHistory() async {
+    final document = _doc;
+    final videoPath = _videoPath;
+    if (document == null || videoPath == null || videoPath.isEmpty) return;
+    try {
+      final repository = await HistoryRepository.getInstance();
+      final matches = repository.getHistory().where(
+        (item) => item.videoPath == videoPath,
+      );
+      if (matches.isEmpty) return;
+      final historyItem = matches.first;
+      await File(historyItem.srtPath)
+          .writeAsString(document.toSrtString(), flush: true);
+      if (historyItem.documentPath != null) {
+        await File(historyItem.documentPath!)
+            .writeAsString(jsonEncode(document.toJson()), flush: true);
+      }
+    } catch (_) {}
+  }
+
+  String _targetLanguageLabel(String code) => switch (code) {
+    'en-US' || 'Tiếng Anh' => 'Tiếng Anh',
+    'zh-CN' || 'Tiếng Trung' => 'Tiếng Trung',
+    'ja-JP' || 'Tiếng Nhật' => 'Tiếng Nhật',
+    'ko-KR' || 'Tiếng Hàn' => 'Tiếng Hàn',
+    _ => 'Tiếng Việt',
+  };
+
+  String _translationSourceFor(int itemId, String currentText) {
+    final item = _doc?.items
+        .where((candidate) => candidate.id == itemId)
+        .firstOrNull;
+    final hasHan = RegExp(r'[\u3400-\u4DBF\u4E00-\u9FFF]');
+    if (hasHan.hasMatch(currentText)) return currentText;
+    if (item != null && hasHan.hasMatch(item.originalText)) {
+      return item.originalText;
+    }
+    if (currentText.trim().isNotEmpty) return currentText;
+    return item?.originalText ?? currentText;
+  }
+
+  GeminiTranslator _createGeminiTranslator() {
+    final settings = _settings!;
+    final selectedModel = settings.selectedModel.startsWith('gemini')
+        ? settings.selectedModel
+        : 'gemini-3.5-flash-lite';
+    return GeminiTranslator(
+      apiKeys: settings.geminiApiKeys,
+      modelId: selectedModel,
+    );
+  }
+
+  Future<void> _showErrorReviewDialog() async {
+    final settings = _settings;
+    final document = _doc;
+    final state = _ttsManager.progress.value;
+    if (settings == null ||
+        document == null ||
+        state.failedItems.isEmpty ||
+        _errorDialogOpen) {
+      return;
+    }
+    _errorDialogOpen = true;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => TtsErrorReviewDialog(
+        failedItems: state.failedItems,
+        threadCount: _threadCount,
+        geminiThreadCount: settings.geminiThreadCount,
+        geminiApiKeysAvailable: settings.geminiApiKeys.isNotEmpty,
+        onRetryOne: (itemId, editedText) async {
+          await _ttsManager.retryFailedItem(
+            document: document,
+            voice: _selectedVoice,
+            itemId: itemId,
+            editedText: editedText,
+            threadCount: _threadCount,
+          );
+          await _linkExistingAudio();
+          await _persistDocumentToHistory();
+        },
+        onRetryAll: (editedTexts) async {
+          await _ttsManager.retryFailedItems(
+            document: document,
+            voice: _selectedVoice,
+            editedTexts: editedTexts,
+            threadCount: _threadCount,
+          );
+          await _linkExistingAudio();
+          await _persistDocumentToHistory();
+        },
+        onTranslateWithGemini: (items, onProgress) async {
+          if (settings.geminiApiKeys.isEmpty) return const {};
+          final sourceItems = {
+            for (final entry in items.entries)
+              entry.key: _translationSourceFor(entry.key, entry.value),
+          };
+          final translated = await _createGeminiTranslator().translateItems(
+            items: sourceItems,
+            stylePreset: settings.selectedStyle,
+            customPrompt: settings.geminiCustomPrompt,
+            targetLanguage: _targetLanguageLabel(settings.targetLanguage),
+            threadCount: settings.geminiThreadCount,
+            progressCallback: onProgress,
+          );
+          for (final entry in translated.entries) {
+            final item = document.items
+                .where((candidate) => candidate.id == entry.key)
+                .firstOrNull;
+            if (item != null) {
+              item.translatedText = entry.value;
+              item.normalizeTranslation();
+            }
+          }
+          await _persistDocumentToHistory();
+          return translated;
+        },
+        onTranslateSingleWithGemini: (itemId, text) async {
+          if (settings.geminiApiKeys.isEmpty) return text;
+          final translated = await _createGeminiTranslator()
+              .translateSingleText(
+                text: _translationSourceFor(itemId, text),
+                stylePreset: settings.selectedStyle,
+                customPrompt: settings.geminiCustomPrompt,
+                targetLanguage: _targetLanguageLabel(settings.targetLanguage),
+              );
+          final item = document.items
+              .where((candidate) => candidate.id == itemId)
+              .firstOrNull;
+          if (item != null) {
+            item.translatedText = translated;
+            item.normalizeTranslation();
+          }
+          await _persistDocumentToHistory();
+          return translated;
+        },
+        onSkipErrors: () async {
+          await _ttsManager.skipFailedItems(
+            document: document,
+            voice: _selectedVoice,
+          );
+          await _persistDocumentToHistory();
+        },
+      ),
+    );
+    _errorDialogOpen = false;
+  }
+
+  Future<void> _showChooseVideoSourceDialog() async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: AppColors.darkCard,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'Chọn Video Nguồn',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: const Text(
+          'Chọn video trong máy hoặc nhập link video online để phát cùng phụ đề.',
+          style: TextStyle(color: Colors.grey),
+        ),
+        actions: [
+          OutlinedButton.icon(
+            onPressed: () {
+              Navigator.pop(dialogContext);
+              _pickVideoFromFiles();
+            },
+            icon: const Icon(Icons.video_file),
+            label: const Text('File máy'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () {
+              Navigator.pop(dialogContext);
+              _showEnterLinkDialog();
+            },
+            icon: const Icon(Icons.link),
+            label: const Text('Nhập Link'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _navigateToPlayer() {
@@ -351,19 +673,15 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
       return;
     }
     if (_videoPath == null || _videoPath!.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Vui lòng chọn Video Nguồn trước!')),
-      );
+      _showChooseVideoSourceDialog();
       return;
     }
 
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (ctx) => VideoPlayerScreen(
-          videoPath: _videoPath!,
-          document: _doc!,
-        ),
+        builder: (ctx) =>
+            VideoPlayerScreen(videoPath: _videoPath!, document: _doc!),
       ),
     );
   }
@@ -377,11 +695,19 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
         elevation: 0,
         title: Row(
           children: const [
-            Icon(Icons.record_voice_over, color: AppColors.primaryEmerald, size: 22),
+            Icon(
+              Icons.record_voice_over,
+              color: AppColors.primaryEmerald,
+              size: 22,
+            ),
             SizedBox(width: 8),
             Text(
               'Lồng Tiếng AI (TTS Studio)',
-              style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
             ),
           ],
         ),
@@ -418,142 +744,253 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
             _buildCard3ThreadCount(),
             const SizedBox(height: 18),
 
-            // TIẾN TRÌNH TẠO GIỌNG
+            // 4. TIẾN TRÌNH & THAO TÁC
             ValueListenableBuilder<TtsGenerationState>(
               valueListenable: _ttsManager.progress,
-              builder: (context, state, _) {
-                if (!state.isRunning) return const SizedBox.shrink();
-                final pct = state.totalCount > 0 ? (state.completedCount / state.totalCount) : 0.0;
-                return Container(
-                  margin: const EdgeInsets.only(bottom: 14),
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: AppColors.darkCard,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: AppColors.primaryEmerald),
-                  ),
-                  child: Column(
-                    children: [
-                      LinearProgressIndicator(value: pct, color: AppColors.primaryEmerald, backgroundColor: Colors.white12),
-                      const SizedBox(height: 8),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(state.currentSentence, style: const TextStyle(color: Colors.white, fontSize: 12)),
-                          TextButton(
-                            onPressed: () => _ttsManager.cancel(),
-                            child: const Text('Hủy', style: TextStyle(color: Colors.redAccent)),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                );
-              },
+              builder: (context, state, _) => _buildCard4Actions(state),
             ),
-
-            // ACTION BUTTONS
-            ElevatedButton.icon(
-              onPressed: _startGenerateAllTts,
-              icon: const Icon(Icons.mic, size: 20),
-              label: const Text('🎙️ Tạo Giọng Đọc Toàn Bộ (Đa Luồng)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primaryEmerald,
-                foregroundColor: Colors.black,
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-            ),
-            const SizedBox(height: 10),
-            OutlinedButton.icon(
-              onPressed: _navigateToPlayer,
-              icon: const Icon(Icons.play_circle_fill, size: 20, color: AppColors.primaryEmerald),
-              label: const Text('🎬 Xem Video Lồng Tiếng & Phụ Đề', style: TextStyle(color: Colors.white, fontSize: 15)),
-              style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: AppColors.primaryEmerald),
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-            ),
-            const SizedBox(height: 20),
-
-            // SUBTITLES LIST PREVIEW
-            if (_doc != null && _doc!.items.isNotEmpty) ...[
-              Text(
-                'Danh Sách Câu Phụ Đề (${_doc!.items.length} câu)',
-                style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              ListView.separated(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: _doc!.items.length,
-                separatorBuilder: (_, _) => const SizedBox(height: 8),
-                itemBuilder: (context, idx) {
-                  final item = _doc!.items[idx];
-                  final hasAudio = item.audioFilePath != null && item.audioFilePath!.isNotEmpty;
-                  final displayText = item.translatedText.trim().isNotEmpty ? item.translatedText : item.originalText;
-                  return Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: AppColors.darkCard,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: hasAudio ? AppColors.primaryEmerald.withValues(alpha: 0.4) : AppColors.cardBorder),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              '#${item.id} [${item.formatSrtTimecode()}]',
-                              style: const TextStyle(color: Colors.grey, fontSize: 11),
-                            ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: hasAudio ? AppColors.primaryEmerald.withValues(alpha: 0.15) : Colors.white10,
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: Text(
-                                hasAudio ? 'Đã có audio (${item.playbackSpeed.toStringAsFixed(2)}x)' : 'Chưa tạo audio',
-                                style: TextStyle(
-                                  color: hasAudio ? AppColors.primaryEmerald : Colors.grey,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 4),
-                        Text(displayText, style: const TextStyle(color: Colors.white, fontSize: 13)),
-                      ],
-                    ),
-                  );
-                },
-              ),
-            ],
+            const SizedBox(height: 16),
           ],
         ),
       ),
     );
   }
 
+  Widget _buildCard4Actions(TtsGenerationState state) {
+    final document = _doc;
+    final totalCount = document?.items.length ?? 0;
+    final voicedCount =
+        document?.items
+            .where((item) => item.audioFilePath?.isNotEmpty == true)
+            .length ??
+        0;
+    final hasAudio = voicedCount > 0;
+    final isFullyCompleted = totalCount > 0 && voicedCount == totalCount;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.darkCard,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.cardBorder),
+      ),
+      child: state.isRunning
+          ? _buildRunningProgress(state)
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (state.isFinished) ...[
+                  _buildStatusRow(
+                    Icons.check_circle,
+                    AppColors.primaryEmerald,
+                    state.currentSentence.isEmpty
+                        ? 'Đã hoàn thành lồng tiếng $totalCount câu thoại!'
+                        : state.currentSentence,
+                  ),
+                  const SizedBox(height: 12),
+                ] else if (state.currentSentence.isNotEmpty) ...[
+                  _buildStatusRow(
+                    state.isCancelled ? Icons.cancel : Icons.warning_amber,
+                    const Color(0xFFFFB74D),
+                    state.currentSentence,
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                if (state.failedItems.isNotEmpty) ...[
+                  OutlinedButton.icon(
+                    onPressed: _showErrorReviewDialog,
+                    icon: const Icon(Icons.warning_amber),
+                    label: Text(
+                      'Mở bảng xử lý ${state.failedItems.length} câu lỗi',
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFFFFB74D),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                ],
+                if (!hasAudio) ...[
+                  SizedBox(
+                    height: 48,
+                    child: ElevatedButton.icon(
+                      onPressed: totalCount > 0
+                          ? () => _startGenerateAllTts()
+                          : null,
+                      icon: const Icon(Icons.record_voice_over),
+                      label: const Text(
+                        'Bắt Đầu Lồng Tiếng AI',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primaryEmerald,
+                        foregroundColor: Colors.black,
+                      ),
+                    ),
+                  ),
+                  if (totalCount > 0) ...[
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      height: 48,
+                      child: OutlinedButton.icon(
+                        onPressed: _navigateToPlayer,
+                        icon: const Icon(
+                          Icons.play_arrow,
+                          color: AppColors.primaryEmerald,
+                        ),
+                        label: const Text(
+                          'Xem Vietsub Ngay (Không Cần Lồng Tiếng)',
+                        ),
+                      ),
+                    ),
+                  ],
+                ] else ...[
+                  SizedBox(
+                    height: 48,
+                    child: ElevatedButton.icon(
+                      onPressed: _navigateToPlayer,
+                      icon: const Icon(Icons.play_arrow),
+                      label: const Text(
+                        'Mở Xem Video (Đã Lồng Tiếng AI)',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primaryEmerald,
+                        foregroundColor: Colors.black,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    height: 48,
+                    child: OutlinedButton.icon(
+                      onPressed: () => _startGenerateAllTts(
+                        forceRegenerate: isFullyCompleted,
+                      ),
+                      icon: const Icon(
+                        Icons.record_voice_over,
+                        color: AppColors.primaryEmerald,
+                      ),
+                      label: Text(
+                        isFullyCompleted
+                            ? 'Tạo Lại Giọng AI Toàn Bộ'
+                            : 'Tiếp Tục Lồng Tiếng ($voicedCount/$totalCount)',
+                      ),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: _navigateToPlayer,
+                    child: const Text(
+                      'Hoặc xem video chỉ với Vietsub (âm thanh gốc)',
+                      style: TextStyle(color: Colors.grey, fontSize: 12),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+    );
+  }
+
+  Widget _buildRunningProgress(TtsGenerationState state) {
+    final progress = state.totalCount > 0
+        ? state.completedCount / state.totalCount
+        : 0.0;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'Đang lồng tiếng: ${state.completedCount}/${state.totalCount} câu',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            Text(
+              '${(progress * 100).toInt()}%',
+              style: const TextStyle(
+                color: AppColors.primaryEmerald,
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: LinearProgressIndicator(
+            value: progress,
+            minHeight: 8,
+            color: AppColors.primaryEmerald,
+            backgroundColor: const Color(0xFF323444),
+          ),
+        ),
+        const SizedBox(height: 10),
+        Text(
+          'Tốc độ: ~${state.speedPerSec.toStringAsFixed(1)} câu/giây',
+          style: const TextStyle(color: Color(0xFF64B5F6), fontSize: 12),
+        ),
+        Text(
+          state.currentSentence,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(color: Colors.grey, fontSize: 12),
+        ),
+        const SizedBox(height: 14),
+        OutlinedButton.icon(
+          onPressed: _ttsManager.cancel,
+          icon: const Icon(Icons.cancel, size: 16),
+          label: const Text('Hủy tiến trình'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: const Color(0xFFFF5252),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStatusRow(IconData icon, Color color, String message) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, color: color, size: 20),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            message,
+            style: TextStyle(
+              color: color,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildCard0VideoSource() {
     final hasVideo = _videoPath != null && _videoPath!.isNotEmpty;
     final isOnline = hasVideo && _videoPath!.startsWith('http');
-    final name = hasVideo
-        ? (isOnline ? NetworkHeaderHelper.getSuggestedTitle(_videoPath!) : File(_videoPath!).uri.pathSegments.last)
-        : '';
+    final durationSeconds = _videoDurationMs ~/ 1000;
+    final durationText = _videoDurationMs > 0
+        ? '${(durationSeconds ~/ 60).toString().padLeft(2, '0')}:'
+              '${(durationSeconds % 60).toString().padLeft(2, '0')}'
+        : 'Tự động';
 
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: AppColors.darkCard,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.cardBorder),
+        border: Border.all(
+          color: hasVideo
+              ? AppColors.primaryEmerald.withValues(alpha: 0.5)
+              : AppColors.cardBorder,
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -561,28 +998,62 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('0. Video Nguồn', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+              const Text(
+                '0. Video Nguồn',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
               Row(
                 children: [
                   OutlinedButton.icon(
                     onPressed: _pickVideoFromFiles,
-                    icon: const Icon(Icons.video_file, size: 14, color: Colors.white),
-                    label: const Text('File máy', style: TextStyle(color: Colors.white, fontSize: 12)),
+                    icon: const Icon(
+                      Icons.video_file,
+                      size: 14,
+                      color: Colors.white,
+                    ),
+                    label: const Text(
+                      'File máy',
+                      style: TextStyle(color: Colors.white, fontSize: 12),
+                    ),
                     style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
                       side: const BorderSide(color: AppColors.cardBorder),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
                     ),
                   ),
                   const SizedBox(width: 8),
                   OutlinedButton.icon(
                     onPressed: _showEnterLinkDialog,
-                    icon: const Icon(Icons.link, size: 14, color: AppColors.primaryEmerald),
-                    label: const Text('Nhập Link', style: TextStyle(color: AppColors.primaryEmerald, fontSize: 12)),
+                    icon: const Icon(
+                      Icons.link,
+                      size: 14,
+                      color: AppColors.primaryEmerald,
+                    ),
+                    label: const Text(
+                      'Nhập Link',
+                      style: TextStyle(
+                        color: AppColors.primaryEmerald,
+                        fontSize: 12,
+                      ),
+                    ),
                     style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
                       side: const BorderSide(color: AppColors.primaryEmerald),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
                     ),
                   ),
                 ],
@@ -601,26 +1072,63 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
             child: hasVideo
                 ? Row(
                     children: [
-                      const Icon(Icons.check_circle, color: AppColors.primaryEmerald, size: 18),
+                      const Icon(
+                        Icons.check_circle,
+                        color: AppColors.primaryEmerald,
+                        size: 18,
+                      ),
                       const SizedBox(width: 8),
                       Expanded(
-                        child: Text(
-                          name,
-                          style: const TextStyle(color: Colors.white, fontSize: 13),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _videoFileName,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              '⏱️ $durationText  •  💾 $_videoSizeLabel'
+                              '${isOnline ? ' (Online)' : ''}',
+                              style: TextStyle(
+                                color: isOnline
+                                    ? AppColors.primaryEmerald
+                                    : Colors.grey,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                       IconButton(
-                        icon: const Icon(Icons.close, size: 16, color: Colors.grey),
-                        onPressed: () => setState(() => _videoPath = null),
+                        icon: const Icon(
+                          Icons.close,
+                          size: 16,
+                          color: Colors.grey,
+                        ),
+                        onPressed: () {
+                          setState(() => _videoPath = null);
+                          unawaited(_refreshVideoMetadata());
+                        },
                       ),
                     ],
                   )
-                : const Center(
-                    child: Text(
-                      'Chạm để chọn File từ máy hoặc dán Link online',
-                      style: TextStyle(color: Colors.grey, fontSize: 13),
+                : InkWell(
+                    onTap: _showChooseVideoSourceDialog,
+                    child: const Center(
+                      child: Padding(
+                        padding: EdgeInsets.symmetric(vertical: 4),
+                        child: Text(
+                          'Chạm để chọn File từ máy hoặc dán Link online',
+                          style: TextStyle(color: Colors.grey, fontSize: 13),
+                        ),
+                      ),
                     ),
                   ),
           ),
@@ -632,7 +1140,12 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
   Widget _buildCard1Subtitle() {
     final hasDoc = _doc != null && _doc!.items.isNotEmpty;
     final voicedCount = hasDoc
-        ? _doc!.items.where((it) => it.audioFilePath != null && it.audioFilePath!.isNotEmpty).length
+        ? _doc!.items
+              .where(
+                (it) =>
+                    it.audioFilePath != null && it.audioFilePath!.isNotEmpty,
+              )
+              .length
         : 0;
 
     return Container(
@@ -650,29 +1163,60 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
             children: [
               const Text(
                 '1. Danh Sách Phụ Đề',
-                style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
               Row(
                 children: [
                   OutlinedButton.icon(
                     onPressed: _showHistoryPicker,
-                    icon: const Icon(Icons.play_arrow, size: 14, color: Color(0xFF64B5F6)),
-                    label: const Text('Lịch sử', style: TextStyle(color: Color(0xFF64B5F6), fontSize: 12)),
+                    icon: const Icon(
+                      Icons.play_arrow,
+                      size: 14,
+                      color: Color(0xFF64B5F6),
+                    ),
+                    label: const Text(
+                      'Lịch sử',
+                      style: TextStyle(color: Color(0xFF64B5F6), fontSize: 12),
+                    ),
                     style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
                       side: const BorderSide(color: Color(0xFF64B5F6)),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
                     ),
                   ),
                   const SizedBox(width: 6),
                   OutlinedButton.icon(
                     onPressed: _pickSrtFile,
-                    icon: const Icon(Icons.file_upload, size: 14, color: AppColors.primaryEmerald),
-                    label: const Text('Nạp SRT', style: TextStyle(color: AppColors.primaryEmerald, fontSize: 12)),
+                    icon: const Icon(
+                      Icons.file_upload,
+                      size: 14,
+                      color: AppColors.primaryEmerald,
+                    ),
+                    label: const Text(
+                      'Nạp SRT',
+                      style: TextStyle(
+                        color: AppColors.primaryEmerald,
+                        fontSize: 12,
+                      ),
+                    ),
                     style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
                       side: const BorderSide(color: AppColors.primaryEmerald),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
                     ),
                   ),
                 ],
@@ -691,7 +1235,11 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.subtitles, color: AppColors.primaryEmerald, size: 24),
+                  const Icon(
+                    Icons.subtitles,
+                    color: AppColors.primaryEmerald,
+                    size: 24,
+                  ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Column(
@@ -711,7 +1259,9 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                               ? 'Đã tạo giọng: $voicedCount / ${_doc!.items.length} câu'
                               : 'Chưa tạo giọng đọc',
                           style: TextStyle(
-                            color: voicedCount > 0 ? AppColors.primaryEmerald : Colors.grey,
+                            color: voicedCount > 0
+                                ? AppColors.primaryEmerald
+                                : Colors.grey,
                             fontSize: 12,
                           ),
                         ),
@@ -732,7 +1282,11 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
               height: 38,
               child: OutlinedButton.icon(
                 onPressed: _openTranslateDialog,
-                icon: const Icon(Icons.translate, size: 16, color: Color(0xFF64B5F6)),
+                icon: const Icon(
+                  Icons.translate,
+                  size: 16,
+                  color: Color(0xFF64B5F6),
+                ),
                 label: const Text(
                   'Dịch phụ đề bằng Gemini AI',
                   style: TextStyle(
@@ -743,8 +1297,11 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                 ),
                 style: OutlinedButton.styleFrom(
                   side: const BorderSide(color: Color(0xFF384055)),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                  backgroundColor: const Color(0xFF1E222D).withValues(alpha: 0.3),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  backgroundColor: const Color(0xFF1E222D)
+                      .withValues(alpha: 0.3),
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                 ),
               ),
@@ -764,7 +1321,11 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                   SizedBox(height: 8),
                   Text(
                     'Chưa có phụ đề để lồng tiếng',
-                    style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600),
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                   SizedBox(height: 4),
                   Text(
@@ -782,7 +1343,13 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
   }
 
   Widget _buildCard2VoiceSelector() {
-    final voices = VoicePresets.vietnameseVoices;
+    final voices = List<VoiceItem>.from(VoicePresets.vietnameseVoices);
+    final selectedIndex = voices.indexWhere(
+      (voice) => voice.voiceType == _selectedVoice.voiceType,
+    );
+    if (selectedIndex > 0) {
+      voices.insert(0, voices.removeAt(selectedIndex));
+    }
 
     return Container(
       padding: const EdgeInsets.all(14),
@@ -797,7 +1364,14 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('2. Chọn Giọng Đọc CapCut', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+              const Text(
+                '2. Chọn Giọng Đọc CapCut',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
@@ -806,11 +1380,19 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.mic, size: 14, color: AppColors.primaryEmerald),
+                    const Icon(
+                      Icons.mic,
+                      size: 14,
+                      color: AppColors.primaryEmerald,
+                    ),
                     const SizedBox(width: 4),
                     Text(
                       _selectedVoice.displayName,
-                      style: const TextStyle(color: AppColors.primaryEmerald, fontSize: 12, fontWeight: FontWeight.bold),
+                      style: const TextStyle(
+                        color: AppColors.primaryEmerald,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ],
                 ),
@@ -840,7 +1422,9 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                       color: const Color(0xFF14151B),
                       borderRadius: BorderRadius.circular(10),
                       border: Border.all(
-                        color: isSelected ? AppColors.primaryEmerald : AppColors.cardBorder,
+                        color: isSelected
+                            ? AppColors.primaryEmerald
+                            : AppColors.cardBorder,
                         width: isSelected ? 1.5 : 1.0,
                       ),
                     ),
@@ -854,7 +1438,9 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                               child: Text(
                                 v.displayName,
                                 style: TextStyle(
-                                  color: isSelected ? AppColors.primaryEmerald : Colors.white,
+                                  color: isSelected
+                                      ? AppColors.primaryEmerald
+                                      : Colors.white,
                                   fontWeight: FontWeight.bold,
                                   fontSize: 12,
                                 ),
@@ -862,13 +1448,23 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                                 overflow: TextOverflow.ellipsis,
                               ),
                             ),
-                            if (isSelected) const Icon(Icons.check_circle, color: AppColors.primaryEmerald, size: 14),
+                            if (isSelected)
+                              const Icon(
+                                Icons.check_circle,
+                                color: AppColors.primaryEmerald,
+                                size: 14,
+                              ),
                           ],
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          v.description.isNotEmpty ? v.description : 'Giọng đọc CapCut',
-                          style: const TextStyle(color: Colors.grey, fontSize: 10),
+                          v.description.isNotEmpty
+                              ? v.description
+                              : 'Giọng đọc CapCut',
+                          style: const TextStyle(
+                            color: Colors.grey,
+                            fontSize: 10,
+                          ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -902,12 +1498,23 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                 children: const [
                   Icon(Icons.speed, color: AppColors.primaryEmerald, size: 18),
                   SizedBox(width: 6),
-                  Text('3. Số Luồng Song Song', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+                  Text(
+                    '3. Số Luồng Song Song',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ],
               ),
               Text(
                 '$_threadCount luồng',
-                style: const TextStyle(color: AppColors.primaryEmerald, fontSize: 15, fontWeight: FontWeight.bold),
+                style: const TextStyle(
+                  color: AppColors.primaryEmerald,
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ],
           ),

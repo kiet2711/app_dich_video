@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -9,9 +9,24 @@ import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../../data/api/capcut_tts_client.dart';
+import '../../data/model/device_config.dart';
 import '../../data/model/subtitle_document.dart';
 import '../../data/model/subtitle_item.dart';
 import '../../data/model/voice_model.dart';
+
+class TtsFailedItem {
+  final int itemId;
+  final String text;
+  final String reason;
+  final String filePath;
+
+  const TtsFailedItem({
+    required this.itemId,
+    required this.text,
+    required this.reason,
+    this.filePath = '',
+  });
+}
 
 class TtsGenerationState {
   final bool isRunning;
@@ -19,7 +34,10 @@ class TtsGenerationState {
   final int totalCount;
   final double speedPerSec;
   final String currentSentence;
-  final Map<int, String> failedItems;
+  final bool isCancelled;
+  final bool isFinished;
+  final String? errorMessage;
+  final List<TtsFailedItem> failedItems;
 
   const TtsGenerationState({
     this.isRunning = false,
@@ -27,7 +45,10 @@ class TtsGenerationState {
     this.totalCount = 0,
     this.speedPerSec = 0.0,
     this.currentSentence = '',
-    this.failedItems = const {},
+    this.isCancelled = false,
+    this.isFinished = false,
+    this.errorMessage,
+    this.failedItems = const [],
   });
 
   TtsGenerationState copyWith({
@@ -36,7 +57,10 @@ class TtsGenerationState {
     int? totalCount,
     double? speedPerSec,
     String? currentSentence,
-    Map<int, String>? failedItems,
+    bool? isCancelled,
+    bool? isFinished,
+    String? errorMessage,
+    List<TtsFailedItem>? failedItems,
   }) {
     return TtsGenerationState(
       isRunning: isRunning ?? this.isRunning,
@@ -44,6 +68,9 @@ class TtsGenerationState {
       totalCount: totalCount ?? this.totalCount,
       speedPerSec: speedPerSec ?? this.speedPerSec,
       currentSentence: currentSentence ?? this.currentSentence,
+      isCancelled: isCancelled ?? this.isCancelled,
+      isFinished: isFinished ?? this.isFinished,
+      errorMessage: errorMessage ?? this.errorMessage,
       failedItems: failedItems ?? this.failedItems,
     );
   }
@@ -59,8 +86,22 @@ class TtsGenerationManager {
 
   bool _isCancelled = false;
 
+  static bool isPronounceable(String text) =>
+      RegExp(r'[\p{L}\p{N}]', unicode: true).hasMatch(text);
+
+  static bool isTrulyBlankSubtitle(SubtitleItem item) =>
+      !isPronounceable(item.originalText) &&
+      !isPronounceable(item.translatedText);
+
   void cancel() {
+    if (!progress.value.isRunning) return;
     _isCancelled = true;
+    progress.value = progress.value.copyWith(
+      isRunning: false,
+      isCancelled: true,
+      isFinished: false,
+      currentSentence: 'Đã hủy tiến trình lồng tiếng',
+    );
   }
 
   static String _md5Text(String text) {
@@ -70,34 +111,53 @@ class TtsGenerationManager {
   static Future<Directory> getCacheDir(String voiceType) async {
     final docs = await getApplicationDocumentsDirectory();
     final dir = Directory('${docs.path}/tts_cache_$voiceType');
-    if (!await dir.exists()) {
-      await dir.create(recursive: true);
-    }
+    if (!await dir.exists()) await dir.create(recursive: true);
     return dir;
+  }
+
+  static String _textFor(SubtitleItem item) {
+    return item.translatedText.trim().isNotEmpty
+        ? item.translatedText.trim()
+        : item.originalText.trim();
+  }
+
+  static Future<File> _audioFileFor(SubtitleItem item, String voiceType) async {
+    final cacheDir = await getCacheDir(voiceType);
+    final hash = _md5Text(_textFor(item));
+    return File('${cacheDir.path}/sub_${item.id}_$hash.mp3');
+  }
+
+  static Future<bool> _validateAndAttach(SubtitleItem item, File file) async {
+    if (!await file.exists() || await file.length() < 200) return false;
+    final player = AudioPlayer();
+    try {
+      final duration = await player.setFilePath(file.path);
+      final durationMs = duration?.inMilliseconds ?? 0;
+      if (durationMs <= 0) return false;
+      _attachAudio(item, file, durationMs);
+      return true;
+    } catch (_) {
+      return false;
+    } finally {
+      await player.dispose();
+    }
   }
 
   static Future<void> linkAudioFiles(
     SubtitleDocument document,
     String voiceType,
   ) async {
-    final cacheDir = await getCacheDir(voiceType);
     for (final item in document.items) {
-      final text = item.translatedText.trim().isNotEmpty
-          ? item.translatedText.trim()
-          : item.originalText.trim();
-      if (text.isEmpty) continue;
-
-      final hash = _md5Text(text);
-      final file = File('${cacheDir.path}/sub_${item.id}_$hash.mp3');
-      if (await file.exists() && await file.length() > 200) {
-        item.audioFilePath = file.path;
-        if (item.audioDurationMs <= 0) {
-          final srtDuration = max(200, item.endMs - item.startMs);
-          item.audioDurationMs = srtDuration;
-          item.playbackSpeed = 1.0;
-        }
-      } else {
+      final text = _textFor(item);
+      if (!isPronounceable(text)) {
         item.audioFilePath = null;
+        item.audioDurationMs = 0;
+        continue;
+      }
+      final file = await _audioFileFor(item, voiceType);
+      if (!await _validateAndAttach(item, file)) {
+        item.audioFilePath = null;
+        item.audioDurationMs = 0;
       }
     }
   }
@@ -108,153 +168,311 @@ class TtsGenerationManager {
     int threadCount = 50,
     bool forceRegenerate = false,
   }) async {
+    document.reindex();
     _isCancelled = false;
-    final items = document.items;
-    final total = items.length;
-    if (total == 0) return;
+    final targets = <SubtitleItem>[];
+    for (final item in document.items) {
+      if (isTrulyBlankSubtitle(item)) continue;
+      final file = await _audioFileFor(item, voice.voiceType);
+      final valid = !forceRegenerate && await _validateAndAttach(item, file);
+      if (!valid) targets.add(item);
+    }
 
-    final failedMap = <int, String>{};
+    if (targets.isEmpty) {
+      await _finishFromAudit(document, voice, const {});
+      return;
+    }
+    await _runBatch(
+      document: document,
+      voice: voice,
+      items: targets,
+      threadCount: threadCount,
+      forceRegenerate: forceRegenerate,
+    );
+  }
+
+  Future<void> retryFailedItems({
+    required SubtitleDocument document,
+    required VoiceItem voice,
+    required Map<int, String> editedTexts,
+    int threadCount = 50,
+  }) async {
+    final failedIds = progress.value.failedItems
+        .map((failure) => failure.itemId)
+        .toSet();
+    _applyEditedTexts(document, editedTexts);
+    final targets = document.items
+        .where(
+          (item) => failedIds.contains(item.id) && !isTrulyBlankSubtitle(item),
+        )
+        .toList(growable: false);
+    if (targets.isEmpty) return;
+    _isCancelled = false;
+    await _runBatch(
+      document: document,
+      voice: voice,
+      items: targets,
+      threadCount: threadCount,
+      forceRegenerate: true,
+    );
+  }
+
+  Future<void> retryFailedItem({
+    required SubtitleDocument document,
+    required VoiceItem voice,
+    required int itemId,
+    required String editedText,
+    int threadCount = 50,
+  }) async {
+    _applyEditedTexts(document, {itemId: editedText});
+    final item = document.items
+        .where((entry) => entry.id == itemId)
+        .firstOrNull;
+    if (item == null || isTrulyBlankSubtitle(item)) return;
+    _isCancelled = false;
+    await _runBatch(
+      document: document,
+      voice: voice,
+      items: [item],
+      threadCount: threadCount,
+      forceRegenerate: true,
+    );
+  }
+
+  Future<void> skipFailedItems({
+    required SubtitleDocument document,
+    required VoiceItem voice,
+  }) async {
+    _isCancelled = false;
+    await linkAudioFiles(document, voice.voiceType);
+    final validTargetCount = document.items
+        .where((item) => !isTrulyBlankSubtitle(item))
+        .length;
+    final linkedCount = document.items
+        .where((item) => item.audioFilePath?.isNotEmpty == true)
+        .length;
+    progress.value = TtsGenerationState(
+      isFinished: true,
+      completedCount: linkedCount,
+      totalCount: validTargetCount,
+      currentSentence:
+          'Đã bỏ qua các câu lỗi. Đã sẵn sàng phát video ($linkedCount câu)!',
+    );
+  }
+
+  Future<void> _runBatch({
+    required SubtitleDocument document,
+    required VoiceItem voice,
+    required List<SubtitleItem> items,
+    required int threadCount,
+    required bool forceRegenerate,
+  }) async {
+    final total = items.length;
+    final effectiveThreads = min(threadCount.clamp(1, 100), total);
+    final failureReasons = <int, String>{};
+    var queueIndex = 0;
+    var processed = 0;
+    var succeeded = 0;
+    var lastUiUpdate = 0;
+    final startedAt = DateTime.now().millisecondsSinceEpoch;
+
     progress.value = TtsGenerationState(
       isRunning: true,
       totalCount: total,
-      completedCount: 0,
-      currentSentence: 'Đang chuẩn bị tạo $total câu...',
-      failedItems: failedMap,
+      currentSentence:
+          'Đang khởi tạo $effectiveThreads luồng tổng hợp (${voice.displayName})...',
     );
 
-    final cacheDir = await getCacheDir(voice.voiceType);
-    final client = CapCutTtsClient();
-    final effectiveThreads = threadCount.clamp(1, 100);
-
-    var completed = 0;
-    var queueIdx = 0;
-    final startTime = DateTime.now().millisecondsSinceEpoch;
-
-    Future<void> worker() async {
+    Future<void> worker(int workerIndex) async {
+      final client = CapCutTtsClient(device: DeviceConfig().randomize());
+      if (workerIndex > 0) {
+        await Future<void>.delayed(Duration(milliseconds: workerIndex * 15));
+      }
       while (!_isCancelled) {
-        if (queueIdx >= items.length) break;
-        final idx = queueIdx++;
-        if (idx >= items.length) break;
-        final item = items[idx];
+        final index = queueIndex++;
+        if (index >= items.length) return;
+        final item = items[index];
+        final text = _textFor(item);
 
-        final text = item.translatedText.trim().isNotEmpty
-            ? item.translatedText.trim()
-            : item.originalText.trim();
-
-        if (text.isEmpty) {
-          completed++;
+        if (!isPronounceable(text)) {
+          item.audioFilePath = null;
+          item.audioDurationMs = 0;
+          failureReasons[item.id] =
+              'Bản dịch bị nuốt/chỉ chứa dấu câu (${text.isEmpty ? 'trống' : text})';
+          processed++;
+          _updateRunningProgress(
+            processed: processed,
+            total: total,
+            succeeded: succeeded,
+            text: text,
+            startedAt: startedAt,
+            force: processed == total,
+          );
           continue;
         }
 
-        final hash = _md5Text(text);
-        final destFile = File('${cacheDir.path}/sub_${item.id}_$hash.mp3');
-
         try {
-          final needGen = forceRegenerate ||
-              !await destFile.exists() ||
-              await destFile.length() < 200;
-
-          if (needGen) {
+          final destination = await _audioFileFor(item, voice.voiceType);
+          final valid =
+              !forceRegenerate && await _validateAndAttach(item, destination);
+          if (!valid) {
             await client.generateSpeechToFile(
               text: text,
               voiceType: voice.voiceType,
               resourceId: voice.resourceId,
               rate: '1.0',
-              destFile: destFile,
+              destFile: destination,
             );
           }
-
-          var durationMs = 0;
-          try {
-            final tempPlayer = AudioPlayer();
-            final dur = await tempPlayer.setFilePath(destFile.path);
-            durationMs = dur?.inMilliseconds ?? 0;
-            await tempPlayer.dispose();
-          } catch (_) {
-            durationMs = max(200, item.endMs - item.startMs);
+          if (!await _validateAndAttach(item, destination)) {
+            throw const FormatException('File âm thanh không hợp lệ');
           }
-
-          item.audioFilePath = destFile.path;
-          item.audioDurationMs = durationMs > 0 ? durationMs : (item.endMs - item.startMs);
-          final srtDurationMs = max(200, item.endMs - item.startMs);
-          if (item.audioDurationMs > srtDurationMs) {
-            final factor = (item.audioDurationMs / srtDurationMs).clamp(1.0, 2.2);
-            item.playbackSpeed = (factor * 10).round() / 10.0;
-          } else {
-            item.playbackSpeed = 1.0;
-          }
-        } catch (e) {
-          failedMap[item.id] = e.toString();
+          succeeded++;
+        } catch (error) {
           item.audioFilePath = null;
+          item.audioDurationMs = 0;
+          failureReasons[item.id] = _readableError(error);
+        } finally {
+          processed++;
+          final now = DateTime.now().millisecondsSinceEpoch;
+          if (now - lastUiUpdate >= 200 || processed == total) {
+            lastUiUpdate = now;
+            _updateRunningProgress(
+              processed: processed,
+              total: total,
+              succeeded: succeeded,
+              text: text,
+              startedAt: startedAt,
+              force: true,
+            );
+          }
         }
-
-        completed++;
-        final now = DateTime.now().millisecondsSinceEpoch;
-        final elapsedSec = (now - startTime) / 1000.0;
-        final speed = elapsedSec > 0.5 ? completed / elapsedSec : 0.0;
-
-        progress.value = progress.value.copyWith(
-          completedCount: completed,
-          speedPerSec: speed,
-          currentSentence: 'Đã tạo $completed/$total câu (${failedMap.length} lỗi)',
-          failedItems: Map.unmodifiable(failedMap),
-        );
       }
     }
 
-    final workers = List.generate(min(effectiveThreads, total), (_) => worker());
-    await Future.wait(workers);
-
-    progress.value = progress.value.copyWith(
-      isRunning: false,
-      currentSentence: _isCancelled
-          ? 'Đã hủy bởi người dùng'
-          : 'Hoàn tất $completed/$total câu!',
+    await Future.wait(
+      List.generate(effectiveThreads, (index) => worker(index)),
     );
+    if (!_isCancelled) {
+      await _finishFromAudit(document, voice, failureReasons);
+    }
+  }
+
+  void _updateRunningProgress({
+    required int processed,
+    required int total,
+    required int succeeded,
+    required String text,
+    required int startedAt,
+    required bool force,
+  }) {
+    if (!force || _isCancelled) return;
+    final elapsed =
+        (DateTime.now().millisecondsSinceEpoch - startedAt) / 1000.0;
+    final failed = processed - succeeded;
+    progress.value = progress.value.copyWith(
+      completedCount: processed,
+      speedPerSec: elapsed > 0.5 ? processed / elapsed : 0,
+      currentSentence: failed > 0
+          ? 'Đã xử lý $processed/$total câu ($failed câu đang lỗi)'
+          : 'Đã xử lý $processed/$total: ${_shortText(text, 35)}',
+    );
+  }
+
+  Future<void> _finishFromAudit(
+    SubtitleDocument document,
+    VoiceItem voice,
+    Map<int, String> failureReasons,
+  ) async {
+    final failures = <TtsFailedItem>[];
+    var successCount = 0;
+    var validTargetCount = 0;
+
+    for (final item in document.items) {
+      if (isTrulyBlankSubtitle(item)) continue;
+      validTargetCount++;
+      final text = _textFor(item);
+      final file = await _audioFileFor(item, voice.voiceType);
+      if (isPronounceable(text) && await _validateAndAttach(item, file)) {
+        successCount++;
+        continue;
+      }
+      final reason = !isPronounceable(text)
+          ? 'Bản dịch bị nuốt/chỉ chứa dấu câu (${text.isEmpty ? 'trống' : text})'
+          : failureReasons[item.id] ?? 'Thiếu hoặc hỏng file âm thanh';
+      failures.add(
+        TtsFailedItem(
+          itemId: item.id,
+          text: text.isEmpty ? item.originalText : text,
+          reason: reason,
+          filePath: file.path,
+        ),
+      );
+    }
+
+    final finished = failures.isEmpty;
+    progress.value = TtsGenerationState(
+      completedCount: successCount,
+      totalCount: validTargetCount,
+      isFinished: finished,
+      currentSentence: finished
+          ? 'Đã hoàn thành lồng tiếng toàn bộ $successCount câu thoại!'
+          : 'Đã tạo $successCount/$validTargetCount câu. '
+                'Còn ${failures.length} câu cần xử lý.',
+      failedItems: List.unmodifiable(failures),
+      errorMessage: failures.firstOrNull?.reason,
+    );
+  }
+
+  static void _applyEditedTexts(
+    SubtitleDocument document,
+    Map<int, String> editedTexts,
+  ) {
+    for (final entry in editedTexts.entries) {
+      final cleanText = entry.value.trim();
+      if (cleanText.isEmpty) continue;
+      final item = document.items
+          .where((candidate) => candidate.id == entry.key)
+          .firstOrNull;
+      if (item != null) item.translatedText = cleanText;
+    }
   }
 
   Future<File?> generateSingle({
     required SubtitleItem item,
     required VoiceItem voice,
   }) async {
-    final text = item.translatedText.trim().isNotEmpty
-        ? item.translatedText.trim()
-        : item.originalText.trim();
-    if (text.isEmpty) return null;
-
-    final cacheDir = await getCacheDir(voice.voiceType);
-    final hash = _md5Text(text);
-    final destFile = File('${cacheDir.path}/sub_${item.id}_$hash.mp3');
-
-    final client = CapCutTtsClient();
-    await client.generateSpeechToFile(
-      text: text,
-      voiceType: voice.voiceType,
-      resourceId: voice.resourceId,
-      rate: '1.0',
-      destFile: destFile,
-    );
-
-    var durationMs = 0;
-    try {
-      final tempPlayer = AudioPlayer();
-      final dur = await tempPlayer.setFilePath(destFile.path);
-      durationMs = dur?.inMilliseconds ?? 0;
-      await tempPlayer.dispose();
-    } catch (_) {
-      durationMs = max(200, item.endMs - item.startMs);
+    final text = _textFor(item);
+    if (!isPronounceable(text)) return null;
+    final destination = await _audioFileFor(item, voice.voiceType);
+    await CapCutTtsClient(device: DeviceConfig().randomize())
+        .generateSpeechToFile(
+          text: text,
+          voiceType: voice.voiceType,
+          resourceId: voice.resourceId,
+          rate: '1.0',
+          destFile: destination,
+        );
+    if (!await _validateAndAttach(item, destination)) {
+      throw const FormatException('File âm thanh không hợp lệ');
     }
-
-    item.audioFilePath = destFile.path;
-    item.audioDurationMs = durationMs > 0 ? durationMs : (item.endMs - item.startMs);
-    final srtDurationMs = max(200, item.endMs - item.startMs);
-    if (item.audioDurationMs > srtDurationMs) {
-      final factor = (item.audioDurationMs / srtDurationMs).clamp(1.0, 2.2);
-      item.playbackSpeed = (factor * 10).round() / 10.0;
-    } else {
-      item.playbackSpeed = 1.0;
-    }
-
-    return destFile;
+    return destination;
   }
+
+  static void _attachAudio(SubtitleItem item, File file, int durationMs) {
+    item.audioFilePath = file.path;
+    item.audioDurationMs = durationMs;
+    final srtDurationMs = max(200, item.endMs - item.startMs);
+    item.playbackSpeed = durationMs > srtDurationMs
+        ? ((durationMs / srtDurationMs).clamp(1.0, 2.2) * 10).round() / 10
+        : 1.0;
+  }
+
+  static String _readableError(Object error) => error.toString().replaceFirst(
+    RegExp(r'^[A-Za-z]+Exception(?:\([^)]*\))?:\s*'),
+    '',
+  );
+
+  static String _shortText(String text, int maxLength) =>
+      text.length <= maxLength ? text : '${text.substring(0, maxLength)}…';
 }
