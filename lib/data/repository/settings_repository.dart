@@ -62,8 +62,19 @@ class SettingsRepository {
   String get defaultSourceLanguage => prefs.getString('source_lang') ?? 'zh-CN';
   set defaultSourceLanguage(String v) => prefs.setString('source_lang', v);
 
-  double get subtitleFontSize => prefs.getDouble('sub_font_size') ?? 20.0;
-  set subtitleFontSize(double v) => prefs.setDouble('sub_font_size', v);
+  double get subtitleFontSize =>
+      (prefs.getDouble('sub_font_size') ?? 20.0).clamp(5.0, 30.0);
+  set subtitleFontSize(double v) =>
+      prefs.setDouble('sub_font_size', v.clamp(5.0, 30.0));
+
+  String get selectedFontFamily =>
+      prefs.getString('selected_font_family') ?? '';
+  set selectedFontFamily(String v) =>
+      prefs.setString('selected_font_family', v.trim());
+
+  List<String> get customFonts =>
+      prefs.getStringList('custom_fonts') ?? <String>[];
+  set customFonts(List<String> v) => prefs.setStringList('custom_fonts', v);
 
   bool get isBlackBoxEnabled => prefs.getBool('blackbox_enabled') ?? true;
   set isBlackBoxEnabled(bool v) => prefs.setBool('blackbox_enabled', v);

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../data/repository/settings_repository.dart';
+import '../../domain/font/custom_font_manager.dart';
 import '../theme/app_theme.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -193,9 +194,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       style: const TextStyle(color: Colors.white),
                     ),
                     Slider(
-                      value: _settings!.subtitleFontSize,
-                      min: 14.0,
-                      max: 36.0,
+                      value: _settings!.subtitleFontSize.clamp(5.0, 30.0),
+                      min: 5.0,
+                      max: 30.0,
                       activeColor: AppColors.primaryEmerald,
                       onChanged: (val) {
                         setState(() {
@@ -205,6 +206,202 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                   ],
                 ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Section 3: Phông chữ phụ đề (Custom Font)
+          _buildSectionHeader('PHÔNG CHỮ PHỤ ĐỀ (CUSTOM FONT)'),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: AppColors.darkSurface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.cardBorder),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Khung xem trước font
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF14151C),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: AppColors.cardBorder),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text(
+                            'XEM TRƯỚC PHÔNG CHỮ:',
+                            style: TextStyle(
+                              color: Colors.white54,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          Text(
+                            _settings!.selectedFontFamily.isEmpty
+                                ? 'Mặc định hệ thống'
+                                : _settings!.selectedFontFamily,
+                            style: const TextStyle(
+                              color: AppColors.primaryEmerald,
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Xin chào thế giới! Phụ đề tiếng Việt 123',
+                        style: TextStyle(
+                          fontFamily: _settings!.selectedFontFamily.isEmpty
+                              ? null
+                              : _settings!.selectedFontFamily,
+                          color: Colors.white,
+                          fontSize: _settings!.subtitleFontSize.clamp(12.0, 22.0),
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
+
+                // Nút nhập font
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.primaryEmerald,
+                      side: const BorderSide(color: AppColors.primaryEmerald),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                    icon: const Icon(Icons.file_upload_outlined, size: 20),
+                    label: const Text(
+                      'Nhập Phông Chữ Từ File (.ttf, .otf)',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    onPressed: () async {
+                      try {
+                        final family =
+                            await CustomFontManager.pickAndImportFont(
+                          _settings!,
+                        );
+                        if (family != null) {
+                          setState(() {});
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  'Đã nạp thành công phông chữ "$family"!',
+                                ),
+                                backgroundColor: AppColors.primaryEmerald,
+                              ),
+                            );
+                          }
+                        }
+                      } catch (e) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Lỗi nhập phông chữ: $e'),
+                              backgroundColor: Colors.redAccent,
+                            ),
+                          );
+                        }
+                      }
+                    },
+                  ),
+                ),
+                const SizedBox(height: 14),
+
+                // Danh sách font
+                const Text(
+                  'DANH SÁCH PHÔNG CHỮ:',
+                  style: TextStyle(
+                    color: Colors.white70,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+
+                // Font mặc định
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  leading: Icon(
+                    _settings!.selectedFontFamily.isEmpty
+                        ? Icons.check_circle
+                        : Icons.radio_button_unchecked,
+                    color: _settings!.selectedFontFamily.isEmpty
+                        ? AppColors.primaryEmerald
+                        : Colors.white38,
+                    size: 20,
+                  ),
+                  title: const Text(
+                    'Mặc định hệ thống',
+                    style: TextStyle(color: Colors.white, fontSize: 14),
+                  ),
+                  onTap: () {
+                    setState(() {
+                      _settings!.selectedFontFamily = '';
+                    });
+                  },
+                ),
+
+                // Các font tùy chỉnh đã nhập
+                ..._settings!.customFonts.map((family) {
+                  final isSelected = _settings!.selectedFontFamily == family;
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    leading: Icon(
+                      isSelected
+                          ? Icons.check_circle
+                          : Icons.radio_button_unchecked,
+                      color: isSelected
+                          ? AppColors.primaryEmerald
+                          : Colors.white38,
+                      size: 20,
+                    ),
+                    title: Text(
+                      family,
+                      style: TextStyle(
+                        fontFamily: family,
+                        color: isSelected ? AppColors.primaryEmerald : Colors.white,
+                        fontSize: 14,
+                        fontWeight:
+                            isSelected ? FontWeight.bold : FontWeight.normal,
+                      ),
+                    ),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.delete_outline,
+                          color: Colors.redAccent, size: 20),
+                      tooltip: 'Xóa phông chữ này',
+                      onPressed: () async {
+                        await CustomFontManager.deleteFont(family, _settings!);
+                        setState(() {});
+                      },
+                    ),
+                    onTap: () {
+                      setState(() {
+                        _settings!.selectedFontFamily = family;
+                      });
+                    },
+                  );
+                }),
               ],
             ),
           ),

@@ -20,7 +20,10 @@ class SubtitleOverlay extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final activeItem = document.getActiveItem(currentPositionMs);
-    final text = activeItem?.getDisplayText(settings.subtitleMode) ?? '';
+    final mode = settings.subtitleMode;
+    final text = mode == 'off'
+        ? ''
+        : (activeItem?.getDisplayText(mode) ?? '');
 
     if (text.isEmpty && !settings.isBlackBoxEnabled) {
       return const SizedBox.shrink();
@@ -30,6 +33,9 @@ class SubtitleOverlay extends StatelessWidget {
     final opacity = settings.blackBoxOpacity.clamp(0.0, 1.0);
     final fontSize = settings.subtitleFontSize;
     final offsetY = settings.subtitleOffsetY;
+    final fontFamily = settings.selectedFontFamily.isNotEmpty
+        ? settings.selectedFontFamily
+        : null;
 
     return Positioned(
       left: 16,
@@ -60,9 +66,11 @@ class SubtitleOverlay extends StatelessWidget {
               text,
               textAlign: TextAlign.center,
               style: TextStyle(
+                fontFamily: fontFamily,
                 color: Colors.white,
                 fontSize: fontSize,
                 fontWeight: FontWeight.bold,
+                height: 1.3,
                 shadows: const [
                   Shadow(
                     color: Colors.black,

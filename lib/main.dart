@@ -7,8 +7,13 @@ import 'ui/settings/settings_screen.dart';
 import 'ui/theme/app_theme.dart';
 import 'ui/tts/tts_studio_screen.dart';
 
-void main() {
+import 'data/repository/settings_repository.dart';
+import 'domain/font/custom_font_manager.dart';
+
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  final settings = await SettingsRepository.getInstance();
+  await CustomFontManager.loadAllSavedFonts(settings);
   runApp(const CapSubApp());
 }
 

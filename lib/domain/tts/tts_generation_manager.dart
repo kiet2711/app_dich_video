@@ -452,9 +452,14 @@ class TtsGenerationManager {
     item.audioFilePath = file.path;
     item.audioDurationMs = durationMs;
     final srtDurationMs = max(200, item.endMs - item.startMs);
-    item.playbackSpeed = durationMs > srtDurationMs
-        ? ((durationMs / srtDurationMs).clamp(1.0, 2.2) * 10).round() / 10
-        : 1.0;
+    if (durationMs > srtDurationMs) {
+      final targetPlayDurationMs = max(180, srtDurationMs - 100);
+      item.playbackSpeed = ((durationMs / targetPlayDurationMs)
+              .clamp(1.05, 2.5) *
+          100).round() / 100;
+    } else {
+      item.playbackSpeed = 1.0;
+    }
   }
 
   static String _readableError(Object error) => error.toString().replaceFirst(
