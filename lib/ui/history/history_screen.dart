@@ -51,12 +51,14 @@ class _HistoryScreenState extends State<HistoryScreen> {
       return;
     }
 
+    final resolvedVideo = await HistoryRepository.resolvePath(item.videoPath);
+
     if (mounted) {
       Navigator.push(
         context,
         MaterialPageRoute(
           builder: (ctx) =>
-              VideoPlayerScreen(videoPath: item.videoPath, document: doc),
+              VideoPlayerScreen(videoPath: resolvedVideo, document: doc),
         ),
       );
     }
@@ -75,11 +77,13 @@ class _HistoryScreenState extends State<HistoryScreen> {
       return;
     }
 
-    widget.onOpenInTts!(item.videoPath, doc);
+    final resolvedVideo = await HistoryRepository.resolvePath(item.videoPath);
+    widget.onOpenInTts!(resolvedVideo, doc);
   }
 
   Future<void> _exportSrt(HistoryItem item) async {
-    final srtFile = File(item.srtPath);
+    final resolvedSrt = await HistoryRepository.resolvePath(item.srtPath);
+    final srtFile = File(resolvedSrt);
     if (!await srtFile.exists()) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

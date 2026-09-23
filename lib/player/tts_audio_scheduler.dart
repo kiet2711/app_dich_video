@@ -66,7 +66,11 @@ class TtsAudioScheduler {
       await _player.stop();
       await _player.setFilePath(audioPath);
       await _player.setSpeed(item.playbackSpeed);
-      await _player.setPitch(1.0);
+      if (!Platform.isIOS) {
+        try {
+          await _player.setPitch(1.0);
+        } catch (_) {}
+      }
       await _player.setVolume(_isMuted ? 0.0 : _volume);
       await _player.play();
     } catch (e) {

@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:capsub_flutter/data/model/history_item.dart';
 import 'package:capsub_flutter/data/model/subtitle_document.dart';
 import 'package:capsub_flutter/data/model/subtitle_item.dart';
 import 'package:capsub_flutter/data/repository/history_repository.dart';
@@ -91,5 +92,39 @@ void main() {
     // Delete item
     await repo.deleteItem(item.id);
     expect(repo.getHistory(), isEmpty);
+  });
+
+  test('self-heals paths when iOS container UUID changes after app update',
+      () async {
+    final repo = await HistoryRepository.getInstance();
+
+    // 1. Tạo file SRT và JSON thực sự trong Documents directory hiện tại
+    final savedDir = Directory('${tempDir.path}/saved_subtitles');
+    await savedDir.create(recursive: true);
+    final realSrt = File('${savedDir.path}/sub_uuid_test.srt');
+    await realSrt.writeAsString('1\n00:00:00,000 --> 00:00:01,000\nHello\n');
+
+    // 2. Giả lập một HistoryItem được lưu từ bản cài đặt cũ với UUID khác
+    const fakeOldUuidPath =
+        '/var/mobile/Containers/Data/Application/11111111-2222-3333-4444-555555555555/Documents/saved_subtitles/sub_uuid_test.srt';
+    final resolved = await HistoryRepository.resolvePath(fakeOldUuidPath);
+
+    // resolvePath phải tự động tìm thấy file thực tế ở container hiện tại
+    expect(resolved, realSrt.path);
+    expect(File(resolved).existsSync(), isTrue);
+
+    // 3. Kiểm tra loadSubtitleDocument tự động giải quyết đường dẫn cũ thành công
+    final oldItem = HistoryItem(
+      id: 'uuid_test',
+      title: 'UUID Test',
+      videoPath: '/old/video.mp4',
+      srtPath: fakeOldUuidPath,
+      timestamp: 1000,
+      durationMs: 5000,
+    );
+
+    final loadedDoc = await repo.loadSubtitleDocument(oldItem);
+    expect(loadedDoc, isNotNull);
+    expect(loadedDoc!.items.first.originalText, 'Hello');
   });
 }

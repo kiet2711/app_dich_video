@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../../data/repository/settings_repository.dart';
 import '../../domain/font/custom_font_manager.dart';
@@ -48,6 +51,39 @@ class _SettingsScreenState extends State<SettingsScreen> {
         backgroundColor: AppColors.primaryEmerald,
       ),
     );
+  }
+
+  Future<void> _clearTemporaryCache() async {
+    try {
+      final tempDir = await getTemporaryDirectory();
+      int freedBytes = 0;
+      if (await tempDir.exists()) {
+        final list = tempDir.listSync(recursive: true);
+        for (final file in list) {
+          if (file is File) {
+            try {
+              freedBytes += await file.length();
+              await file.delete();
+            } catch (_) {}
+          }
+        }
+      }
+      final freedMb = (freedBytes / (1024 * 1024)).toStringAsFixed(1);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Đã dọn dẹp bộ nhớ tạm: giải phóng $freedMb MB!'),
+            backgroundColor: AppColors.primaryEmerald,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Lỗi dọn dẹp bộ nhớ tạm: $e')),
+        );
+      }
+    }
   }
 
   @override
@@ -487,6 +523,49 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       borderRadius: BorderRadius.circular(8),
                     ),
                   ),
+                ),
+              ],
+            ),
+          ),
+          // Section 5: Quản lý bộ nhớ
+          const SizedBox(height: 16),
+          _buildSectionHeader('Quản lý bộ nhớ & Dọn dẹp cache'),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: AppColors.darkSurface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.cardBorder),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Bộ nhớ đệm video tạm (tmp):',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Trên iOS, khi chọn video từ máy hệ điều hành sẽ tạo bản sao tạm trong thư mục tmp. Bạn có thể dọn dẹp để giải phóng dung lượng máy bất cứ lúc nào.',
+                  style: TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.orangeAccent,
+                    side: const BorderSide(color: Colors.orangeAccent),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 10,
+                    ),
+                  ),
+                  icon: const Icon(Icons.cleaning_services_rounded, size: 18),
+                  label: const Text('Dọn dẹp bộ nhớ đệm video tạm'),
+                  onPressed: _clearTemporaryCache,
                 ),
               ],
             ),

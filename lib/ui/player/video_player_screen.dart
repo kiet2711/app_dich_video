@@ -257,9 +257,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
           }
         }
 
-        // Tốc độ phát và khóa cao độ 1.0 để giữ nguyên âm điệu tự nhiên không méo tiếng
+        // Tốc độ phát (AVPlayer trên iOS tự động bảo toàn pitch khi đổi speed, không gọi setPitch vì iOS ném PlatformException)
         await _ttsPlayer.setSpeed(speed);
-        await _ttsPlayer.setPitch(1.0);
+        if (!Platform.isIOS) {
+          try {
+            await _ttsPlayer.setPitch(1.0);
+          } catch (_) {}
+        }
         await _ttsPlayer.setVolume(_settings.ttsVolume);
 
         if (controller.value.isPlaying) {

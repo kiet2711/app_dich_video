@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../model/history_item.dart';
 import '../model/subtitle_document.dart';
+import '../../domain/tts/tts_cache_helper.dart';
 
 class HistoryRepository {
   static const String _key = 'capsub_history';
@@ -21,8 +22,90 @@ class HistoryRepository {
   static Future<HistoryRepository> getInstance() async {
     final sp = await SharedPreferences.getInstance();
     final repo = HistoryRepository(sp);
+    await repo.migrateHistoryPaths();
     historyNotifier.value = repo.getHistory();
     return repo;
+  }
+
+  /// Tự động sửa đường dẫn khi iOS thay đổi UUID sau mỗi lần cập nhật ứng dụng
+  static Future<String> resolvePath(String path) async {
+    if (path.isEmpty) return path;
+    final file = File(path);
+    if (await file.exists()) return path;
+
+    try {
+      final docs = await getApplicationDocumentsDirectory();
+      final docsPath = docs.path;
+
+      // 1. Kiểm tra nếu là file trong saved_subtitles
+      if (path.contains('saved_subtitles')) {
+        final filename = path.split(RegExp(r'[/\\]')).last;
+        final candidate = File('$docsPath/saved_subtitles/$filename');
+        if (await candidate.exists()) return candidate.path;
+      }
+
+      // 2. Kiểm tra nếu đường dẫn cũ có /Documents/
+      if (path.contains('/Documents/')) {
+        final relative =
+            path.substring(path.indexOf('/Documents/') + '/Documents/'.length);
+        final candidate = File('$docsPath/$relative');
+        if (await candidate.exists()) return candidate.path;
+      }
+
+      // 3. Kiểm tra nếu là video nằm trong thư mục media hoặc supportDir
+      final supportDir = await getApplicationSupportDirectory();
+      if (path.contains('/media/')) {
+        final filename = path.split(RegExp(r'[/\\]')).last;
+        final candidate = File('${supportDir.path}/media/$filename');
+        if (await candidate.exists()) return candidate.path;
+      }
+
+      // 4. Kiểm tra nếu là file trong tmp/ (iOS temporary directory)
+      final tempDir = await getTemporaryDirectory();
+      if (path.contains('/tmp/')) {
+        final filename = path.split(RegExp(r'[/\\]')).last;
+        final candidate = File('${tempDir.path}/$filename');
+        if (await candidate.exists()) return candidate.path;
+      }
+    } catch (_) {}
+
+    return path;
+  }
+
+  /// Tự động dò quét và khôi phục các đường dẫn file bị lệch UUID do iOS cập nhật
+  Future<void> migrateHistoryPaths() async {
+    final items = getHistory();
+    var hasChanges = false;
+    final updatedList = <HistoryItem>[];
+
+    for (final item in items) {
+      var updated = item;
+      final newSrt = await resolvePath(item.srtPath);
+      if (newSrt != item.srtPath && await File(newSrt).exists()) {
+        updated = updated.copyWith(srtPath: newSrt);
+        hasChanges = true;
+      }
+
+      if (item.documentPath != null) {
+        final newDoc = await resolvePath(item.documentPath!);
+        if (newDoc != item.documentPath && await File(newDoc).exists()) {
+          updated = updated.copyWith(documentPath: newDoc);
+          hasChanges = true;
+        }
+      }
+
+      final newVideo = await resolvePath(item.videoPath);
+      if (newVideo != item.videoPath && await File(newVideo).exists()) {
+        updated = updated.copyWith(videoPath: newVideo);
+        hasChanges = true;
+      }
+
+      updatedList.add(updated);
+    }
+
+    if (hasChanges) {
+      await _save(updatedList);
+    }
   }
 
   List<HistoryItem> getHistory() {
@@ -60,12 +143,14 @@ class HistoryRepository {
     final id = existing?.id ?? DateTime.now().millisecondsSinceEpoch.toString();
 
     final srtFile = existing != null
-        ? File(existing.srtPath)
+        ? File(await resolvePath(existing.srtPath))
         : File('${savedSubtitlesDir.path}/sub_$id.srt');
     final docFile = File('${savedSubtitlesDir.path}/sub_$id.capsub.json');
 
     await srtFile.writeAsString(document.toSrtString(), flush: true);
     await docFile.writeAsString(jsonEncode(document.toJson()), flush: true);
+
+    final docKey = TtsCacheHelper.getDocKey(document);
 
     final item = HistoryItem(
       id: id,
@@ -77,16 +162,18 @@ class HistoryRepository {
       durationMs: durationMs > 0 ? durationMs : (existing?.durationMs ?? 0),
       sentenceCount: document.items.length,
       ttsVoice: ttsVoice ?? existing?.ttsVoice,
+      docKey: docKey,
     );
 
     await addItem(item);
     return item;
   }
 
-  /// Nạp SubtitleDocument an toàn từ HistoryItem
+  /// Nạp SubtitleDocument an toàn từ HistoryItem (tự động khôi phục đường dẫn nếu iOS đổi UUID)
   Future<SubtitleDocument?> loadSubtitleDocument(HistoryItem item) async {
     if (item.documentPath != null) {
-      final docFile = File(item.documentPath!);
+      final resolvedDoc = await resolvePath(item.documentPath!);
+      final docFile = File(resolvedDoc);
       if (await docFile.exists()) {
         try {
           final content = await docFile.readAsString();
@@ -97,7 +184,8 @@ class HistoryRepository {
       }
     }
 
-    final srtFile = File(item.srtPath);
+    final resolvedSrt = await resolvePath(item.srtPath);
+    final srtFile = File(resolvedSrt);
     if (await srtFile.exists()) {
       try {
         final content = await srtFile.readAsString();
@@ -156,11 +244,16 @@ class HistoryRepository {
 
   Future<void> _deleteItemFiles(HistoryItem item) async {
     // 1. Xóa file phụ đề .srt
-    await _deleteIfExists(item.srtPath);
+    final resolvedSrt = await resolvePath(item.srtPath);
+    await _deleteIfExists(resolvedSrt);
 
-    // 2. Xóa các file âm thanh TTS (.mp3) liên kết với phụ đề này
+    // 2. Xóa toàn bộ thư mục cache âm thanh TTS (tts_cache/<docKey>) của video này
     try {
       final doc = await loadSubtitleDocument(item);
+      await TtsCacheHelper.deleteDocCache(
+        doc ?? SubtitleDocument(),
+        item.docKey,
+      );
       if (doc != null) {
         for (final sub in doc.items) {
           if (sub.audioFilePath != null && sub.audioFilePath!.isNotEmpty) {
@@ -172,7 +265,8 @@ class HistoryRepository {
 
     // 3. Xóa file tài liệu cấu trúc .capsub.json
     if (item.documentPath != null) {
-      await _deleteIfExists(item.documentPath!);
+      final resolvedDoc = await resolvePath(item.documentPath!);
+      await _deleteIfExists(resolvedDoc);
     }
 
     // 4. Xóa bản sao video nội bộ nếu video được lưu trong thư mục media của app

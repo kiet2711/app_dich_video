@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'audio_file_validator.dart';
+import 'tts_cache_helper.dart';
 
 import '../../data/api/capcut_tts_client.dart';
 import '../../data/model/device_config.dart';
@@ -122,10 +123,19 @@ class TtsGenerationManager {
         : item.originalText.trim();
   }
 
-  static Future<File> _audioFileFor(SubtitleItem item, String voiceType) async {
-    final cacheDir = await getCacheDir(voiceType);
+  static Future<File> _audioFileFor(
+    SubtitleItem item,
+    String voiceType, [
+    SubtitleDocument? document,
+  ]) async {
+    if (document != null) {
+      return TtsCacheHelper.getAudioFile(document, item, voiceType);
+    }
+    final docs = await getApplicationDocumentsDirectory();
+    final dir = Directory('${docs.path}/tts_cache_$voiceType');
+    if (!await dir.exists()) await dir.create(recursive: true);
     final hash = _md5Text(_textFor(item));
-    return File('${cacheDir.path}/sub_${item.id}_$hash.mp3');
+    return File('${dir.path}/sub_${item.id}_$hash.mp3');
   }
 
   static Future<bool> _validateAndAttach(SubtitleItem item, File file) async {
@@ -139,19 +149,7 @@ class TtsGenerationManager {
     SubtitleDocument document,
     String voiceType,
   ) async {
-    for (final item in document.items) {
-      final text = _textFor(item);
-      if (!isPronounceable(text)) {
-        item.audioFilePath = null;
-        item.audioDurationMs = 0;
-        continue;
-      }
-      final file = await _audioFileFor(item, voiceType);
-      if (!await _validateAndAttach(item, file)) {
-        item.audioFilePath = null;
-        item.audioDurationMs = 0;
-      }
-    }
+    await TtsCacheHelper.linkAudioFiles(document, voiceType);
   }
 
   Future<void> generateAll({
@@ -165,7 +163,7 @@ class TtsGenerationManager {
     final targets = <SubtitleItem>[];
     for (final item in document.items) {
       if (isTrulyBlankSubtitle(item)) continue;
-      final file = await _audioFileFor(item, voice.voiceType);
+      final file = await _audioFileFor(item, voice.voiceType, document);
       final valid = !forceRegenerate && await _validateAndAttach(item, file);
       if (!valid) targets.add(item);
     }
@@ -312,7 +310,8 @@ class TtsGenerationManager {
         }
 
         try {
-          final destination = await _audioFileFor(item, voice.voiceType);
+          final destination =
+              await _audioFileFor(item, voice.voiceType, document);
           final valid =
               !forceRegenerate && await _validateAndAttach(item, destination);
           if (!valid) {
@@ -381,7 +380,7 @@ class TtsGenerationManager {
       if (isTrulyBlankSubtitle(item)) continue;
       validTargetCount++;
       final text = _textFor(item);
-      final file = await _audioFileFor(item, voice.voiceType);
+      final file = await _audioFileFor(item, voice.voiceType, document);
       if (isPronounceable(text) && await _validateAndAttach(item, file)) {
         successCount++;
         continue;
@@ -430,10 +429,11 @@ class TtsGenerationManager {
   Future<File?> generateSingle({
     required SubtitleItem item,
     required VoiceItem voice,
+    SubtitleDocument? document,
   }) async {
     final text = _textFor(item);
     if (!isPronounceable(text)) return null;
-    final destination = await _audioFileFor(item, voice.voiceType);
+    final destination = await _audioFileFor(item, voice.voiceType, document);
     await CapCutTtsClient(device: DeviceConfig().randomize())
         .generateSpeechToFile(
           text: text,
