@@ -123,6 +123,14 @@ class SubtitlingPipeline {
               );
             }
           }
+        } on BilibiliSubtitleLoginRequiredException catch (error) {
+          _emit(
+            ProcessProgress(
+              stage: ProcessStage.extractingAudio,
+              progress: 0.03,
+              message: '$error Đang chuyển sang nhận diện âm thanh.',
+            ),
+          );
         } catch (_) {}
 
         if (sourceDocument == null) {

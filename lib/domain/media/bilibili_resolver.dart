@@ -21,12 +21,28 @@ class BilibiliTarget {
   });
 }
 
+class BilibiliPageInfo {
+  final int page;
+  final int cid;
+  final String part;
+  final int durationSeconds;
+
+  const BilibiliPageInfo({
+    required this.page,
+    required this.cid,
+    required this.part,
+    required this.durationSeconds,
+  });
+}
+
 class BilibiliVideoDetails {
   final String bvid;
   final int aid;
   final int cid;
   final String title;
   final int durationSeconds;
+  final List<BilibiliPageInfo> pages;
+  final int selectedPageIndex;
 
   const BilibiliVideoDetails({
     required this.bvid,
@@ -34,6 +50,8 @@ class BilibiliVideoDetails {
     required this.cid,
     required this.title,
     required this.durationSeconds,
+    this.pages = const [],
+    this.selectedPageIndex = 1,
   });
 }
 
@@ -49,6 +67,14 @@ class BilibiliSubtitleInfo {
     required this.isAi,
     required this.url,
   });
+}
+
+class BilibiliSubtitleLoginRequiredException implements Exception {
+  const BilibiliSubtitleLoginRequiredException();
+
+  @override
+  String toString() =>
+      'P này có phụ đề nhưng Bilibili yêu cầu đăng nhập. Hãy nhập SESSDATA trong Cài đặt.';
 }
 
 class BilibiliResolver {
@@ -233,30 +259,58 @@ class BilibiliResolver {
       params,
       cookie,
     );
-    final pages = (data['pages'] as List<dynamic>? ?? const []);
+    final rawPages = (data['pages'] as List<dynamic>? ?? const []);
+    final pages = <BilibiliPageInfo>[];
     var cid = (data['cid'] as num?)?.toInt() ?? 0;
     var pageDuration = 0;
-    for (final raw in pages) {
-      final page = raw as Map<String, dynamic>;
-      if ((page['page'] as num?)?.toInt() == target.pageIndex) {
-        cid = (page['cid'] as num?)?.toInt() ?? cid;
-        pageDuration = (page['duration'] as num?)?.toInt() ?? 0;
+    var partTitle = '';
+
+    for (final raw in rawPages) {
+      if (raw is! Map<String, dynamic>) continue;
+      final pNum = (raw['page'] as num?)?.toInt() ?? 1;
+      final pCid = (raw['cid'] as num?)?.toInt() ?? 0;
+      final pPart = raw['part']?.toString() ?? '';
+      final pDuration = (raw['duration'] as num?)?.toInt() ?? 0;
+
+      pages.add(
+        BilibiliPageInfo(
+          page: pNum,
+          cid: pCid,
+          part: pPart,
+          durationSeconds: pDuration,
+        ),
+      );
+
+      if (pNum == target.pageIndex) {
+        cid = pCid > 0 ? pCid : cid;
+        pageDuration = pDuration;
+        partTitle = pPart;
       }
     }
+
     if (cid == 0 && pages.isNotEmpty) {
-      cid =
-          ((pages.first as Map<String, dynamic>)['cid'] as num?)?.toInt() ?? 0;
+      cid = pages.first.cid;
+      pageDuration = pages.first.durationSeconds;
+      partTitle = pages.first.part;
     }
     if (cid == 0) throw StateError('Bilibili không trả CID của video.');
+
+    final mainTitle = data['title']?.toString() ?? 'Video Bilibili';
+    final fullTitle =
+        (pages.length > 1 && partTitle.isNotEmpty && !mainTitle.contains(partTitle))
+            ? '$mainTitle - P${target.pageIndex} ($partTitle)'
+            : mainTitle;
 
     return BilibiliVideoDetails(
       bvid: data['bvid']?.toString() ?? target.bvid ?? '',
       aid: (data['aid'] as num?)?.toInt() ?? 0,
       cid: cid,
-      title: data['title']?.toString() ?? 'Video Bilibili',
+      title: fullTitle,
       durationSeconds: pageDuration > 0
           ? pageDuration
           : ((data['duration'] as num?)?.toInt() ?? 0),
+      pages: pages,
+      selectedPageIndex: target.pageIndex,
     );
   }
 
@@ -323,44 +377,124 @@ class BilibiliResolver {
     BilibiliVideoDetails details, [
     String cookie = '',
   ]) async {
+    var loginRequired = false;
+
+    // 1. Thử endpoint x/player/v2
     try {
-      final data = await _getWbiJson(
-        'https://api.bilibili.com/x/player/wbi/v2',
-        {'bvid': details.bvid, 'cid': details.cid.toString()},
-        cookie,
+      final response = await dio.get<Map<String, dynamic>>(
+        'https://api.bilibili.com/x/player/v2',
+        queryParameters: {
+          'aid': details.aid.toString(),
+          'cid': details.cid.toString(),
+        },
+        options: Options(headers: requestHeaders(cookie)),
       );
-      final subtitle = data['subtitle'] as Map<String, dynamic>?;
-      final list = subtitle?['subtitles'] as List<dynamic>? ?? const [];
-      return list
-          .map((raw) {
-            final item = raw as Map<String, dynamic>;
-            var url = item['subtitle_url']?.toString() ?? '';
-            if (url.startsWith('//')) url = 'https:$url';
-            final language = item['lan']?.toString() ?? '';
-            return BilibiliSubtitleInfo(
-              language: language,
-              languageName: item['lan_doc']?.toString() ?? language,
-              isAi:
-                  language.startsWith('ai-') ||
-                  (item['ai_type'] as num?)?.toInt() == 1,
-              url: url,
-            );
-          })
-          .where((item) => item.url.isNotEmpty)
-          .toList();
+      final json = response.data ?? const <String, dynamic>{};
+      if ((json['code'] as num?)?.toInt() == 0 &&
+          json['data'] is Map<String, dynamic>) {
+        final data = json['data'] as Map<String, dynamic>;
+        if (data['need_login_subtitle'] == true) {
+          loginRequired = true;
+        }
+        final list = parseSubtitles(data, throwOnLoginRequired: false);
+        if (list.isNotEmpty) return list;
+      }
     } catch (_) {
-      return const [];
+      // Tiếp tục thử fallback
     }
+
+    // 2. Thử endpoint Danmaku & Subtitle (x/v2/dm/view)
+    // Endpoint này được web/app Bilibili sử dụng công khai, trả về phụ đề CC/AI mà không yêu cầu login
+    try {
+      final response = await dio.get<Map<String, dynamic>>(
+        'https://api.bilibili.com/x/v2/dm/view',
+        queryParameters: {
+          'type': '1',
+          'oid': details.cid.toString(),
+          'pid': details.aid.toString(),
+        },
+        options: Options(headers: requestHeaders(cookie)),
+      );
+      final json = response.data ?? const <String, dynamic>{};
+      if ((json['code'] as num?)?.toInt() == 0 &&
+          json['data'] is Map<String, dynamic>) {
+        final data = json['data'] as Map<String, dynamic>;
+        final list = parseSubtitles(data, throwOnLoginRequired: false);
+        if (list.isNotEmpty) return list;
+      }
+    } catch (_) {
+      // Tiếp tục thử fallback
+    }
+
+    // 3. Thử endpoint WBI v2
+    try {
+      final data = await _getWbiJson('https://api.bilibili.com/x/player/wbi/v2', {
+        'aid': details.aid.toString(),
+        'bvid': details.bvid,
+        'cid': details.cid.toString(),
+      }, cookie);
+      if (data['need_login_subtitle'] == true) {
+        loginRequired = true;
+      }
+      final list = parseSubtitles(data, throwOnLoginRequired: false);
+      if (list.isNotEmpty) return list;
+    } catch (_) {
+      // Bỏ qua
+    }
+
+    if (loginRequired) {
+      throw const BilibiliSubtitleLoginRequiredException();
+    }
+    return const [];
+  }
+
+  static List<BilibiliSubtitleInfo> parseSubtitles(
+    Map<String, dynamic> data, {
+    bool throwOnLoginRequired = true,
+  }) {
+    final subtitle = data['subtitle'] as Map<String, dynamic>?;
+    final list = subtitle?['subtitles'] as List<dynamic>? ?? const [];
+    if (list.isEmpty &&
+        data['need_login_subtitle'] == true &&
+        throwOnLoginRequired) {
+      throw const BilibiliSubtitleLoginRequiredException();
+    }
+    return list
+        .whereType<Map<String, dynamic>>()
+        .map((item) {
+          var url = item['subtitle_url']?.toString() ?? '';
+          if (url.startsWith('//')) url = 'https:$url';
+          final language = item['lan']?.toString() ?? '';
+          final aiType = (item['ai_type'] as num?)?.toInt() ?? 0;
+          final type = (item['type'] as num?)?.toInt() ?? 0;
+          return BilibiliSubtitleInfo(
+            language: language,
+            languageName: item['lan_doc']?.toString() ?? language,
+            isAi:
+                language.startsWith('ai-') ||
+                aiType == 1 ||
+                type == 1,
+            url: url,
+          );
+        })
+        .where((item) => item.url.isNotEmpty)
+        .toList();
   }
 
   Future<SubtitleDocument?> downloadSubtitle(
     BilibiliSubtitleInfo subtitle,
   ) async {
-    final response = await dio.get<Map<String, dynamic>>(
+    final response = await dio.get<dynamic>(
       subtitle.url,
       options: Options(headers: requestHeaders()),
     );
-    final body = response.data?['body'] as List<dynamic>? ?? const [];
+    dynamic data = response.data;
+    if (data is String) {
+      try {
+        data = jsonDecode(data);
+      } catch (_) {}
+    }
+    final body = (data as Map<String, dynamic>?)?['body'] as List<dynamic>? ?? const [];
     final items = <SubtitleItem>[];
     for (final raw in body) {
       final item = raw as Map<String, dynamic>;

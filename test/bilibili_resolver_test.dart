@@ -37,4 +37,62 @@ void main() {
       isEmpty,
     );
   });
+
+  test('reports when Bilibili hides subtitles until login', () {
+    expect(
+      () => BilibiliResolver.parseSubtitles({
+        'need_login_subtitle': true,
+        'subtitle': {'subtitles': <dynamic>[]},
+      }),
+      throwsA(isA<BilibiliSubtitleLoginRequiredException>()),
+    );
+  });
+
+  test('parses subtitle metadata and protocol-relative URLs', () {
+    final subtitles = BilibiliResolver.parseSubtitles({
+      'subtitle': {
+        'subtitles': [
+          {
+            'lan': 'ai-zh',
+            'lan_doc': '中文（自动生成）',
+            'ai_type': 1,
+            'subtitle_url': '//aisubtitle.hdslb.com/subtitle.json',
+          },
+        ],
+      },
+    });
+
+    expect(subtitles, hasLength(1));
+    expect(subtitles.single.isAi, isTrue);
+    expect(subtitles.single.url, 'https://aisubtitle.hdslb.com/subtitle.json');
+  });
+
+  test('does not throw when throwOnLoginRequired is false', () {
+    final subtitles = BilibiliResolver.parseSubtitles({
+      'need_login_subtitle': true,
+      'subtitle': {'subtitles': <dynamic>[]},
+    }, throwOnLoginRequired: false);
+
+    expect(subtitles, isEmpty);
+  });
+
+  test('parses dm/view style subtitles with type 1 as AI', () {
+    final subtitles = BilibiliResolver.parseSubtitles({
+      'subtitle': {
+        'subtitles': [
+          {
+            'lan': 'zh-CN',
+            'lan_doc': '中文（简体）',
+            'type': 1,
+            'ai_type': 0,
+            'subtitle_url': 'http://aisubtitle.hdslb.com/subtitle.json',
+          },
+        ],
+      },
+    });
+
+    expect(subtitles, hasLength(1));
+    expect(subtitles.single.isAi, isTrue);
+    expect(subtitles.single.url, 'http://aisubtitle.hdslb.com/subtitle.json');
+  });
 }

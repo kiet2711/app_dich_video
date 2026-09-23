@@ -48,6 +48,8 @@ class _HomeScreenState extends State<HomeScreen> {
   final _urlController = TextEditingController();
   bool _isProbingUrl = false;
   String? _probeStatusMessage;
+  List<BilibiliPageInfo> _bilibiliPages = [];
+  int _selectedBilibiliPage = 1;
 
   String _selectedSourceLang = 'zh-CN';
   String _selectedEngine = 'capcut';
@@ -164,6 +166,8 @@ class _HomeScreenState extends State<HomeScreen> {
             ? '${(picked.sizeBytes / (1024 * 1024)).toStringAsFixed(1)} MB'
             : 'Không rõ';
         _fileDurationMs = durationMs;
+        _bilibiliPages = [];
+        _selectedBilibiliPage = 1;
         _probeStatusMessage = '✅ Đã đọc media: ${_formatDuration(durationMs)}';
       });
     } catch (e) {
@@ -209,6 +213,8 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       var durationMs = 0;
       var resolvedName = NetworkHeaderHelper.getSuggestedTitle(clean);
+      List<BilibiliPageInfo> pages = [];
+      var selectedPage = 1;
 
       if (BilibiliResolver.isBilibiliPageUrl(clean)) {
         final resolver = BilibiliResolver();
@@ -219,6 +225,8 @@ class _HomeScreenState extends State<HomeScreen> {
         );
         durationMs = details.durationSeconds * 1000;
         resolvedName = '${details.title}.mp4';
+        pages = details.pages;
+        selectedPage = details.selectedPageIndex;
 
         // Tự động kiểm tra phụ đề Bilibili có sẵn
         try {
@@ -227,10 +235,15 @@ class _HomeScreenState extends State<HomeScreen> {
             _settings?.bilibiliSessData ?? '',
           );
           if (subs.isNotEmpty) {
-            _probeStatusMessage = '✨ Video có sẵn phụ đề Bilibili! Bấm "Bắt đầu" để nạp và dịch ngay.';
+            final partInfo = pages.length > 1 ? ' (P$selectedPage)' : '';
+            _probeStatusMessage =
+                '✨ Video$partInfo có sẵn phụ đề Bilibili (${subs.first.languageName})! Bấm "Bắt đầu" để nạp và dịch ngay.';
           } else {
-            _probeStatusMessage = '✅ Đã tìm thấy audio DASH Bilibili (~30-50MB). Sẵn sàng tạo sub!';
+            _probeStatusMessage =
+                '✅ Đã tìm thấy audio DASH Bilibili (~30-50MB). Sẵn sàng tạo sub!';
           }
+        } on BilibiliSubtitleLoginRequiredException catch (error) {
+          _probeStatusMessage = '⚠️ $error';
         } catch (_) {
           _probeStatusMessage =
               '✅ Đã tìm thấy audio DASH Bilibili (~30-50MB). Sẵn sàng tạo sub!';
@@ -247,6 +260,8 @@ class _HomeScreenState extends State<HomeScreen> {
         _fileDurationMs = durationMs;
         _fileName = resolvedName.isNotEmpty ? resolvedName : 'video_online.mp4';
         _fileSizeMb = 'Trực tuyến';
+        _bilibiliPages = pages;
+        _selectedBilibiliPage = selectedPage;
       });
     } catch (e) {
       if (!mounted) return;
@@ -256,9 +271,26 @@ class _HomeScreenState extends State<HomeScreen> {
         _fileDurationMs = 0;
         _fileName = NetworkHeaderHelper.getSuggestedTitle(clean);
         _fileSizeMb = 'Trực tuyến';
+        _bilibiliPages = [];
+        _selectedBilibiliPage = 1;
         _probeStatusMessage = '✅ Đã nhận link (sẵn sàng tạo sub & xem)';
       });
     }
+  }
+
+  void _onSelectBilibiliPage(int pageIndex) {
+    if (_selectedVideoPath == null || _bilibiliPages.isEmpty) return;
+    var url = _selectedVideoPath!;
+    final uri = Uri.tryParse(url);
+    if (uri != null) {
+      final params = Map<String, String>.from(uri.queryParameters);
+      params['p'] = pageIndex.toString();
+      final newUri = uri.replace(queryParameters: params);
+      url = newUri.toString();
+    } else {
+      url = url.contains('?') ? '$url&p=$pageIndex' : '$url?p=$pageIndex';
+    }
+    _probeUrl(url);
   }
 
   Future<void> _startProcessing() async {
@@ -747,6 +779,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                     _fileName = '';
                                     _fileDurationMs = 0;
                                     _fileSizeMb = '';
+                                    _bilibiliPages = [];
+                                    _selectedBilibiliPage = 1;
                                     _probeStatusMessage = null;
                                   });
                                 },
@@ -859,39 +893,110 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           ),
                         ),
-                        child: Row(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Icon(
-                              Icons.check_circle,
-                              color: AppColors.primaryEmerald,
-                              size: 28,
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    _fileName,
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 14,
-                                      color: Colors.white,
-                                    ),
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
+                            Row(
+                              children: [
+                                const Icon(
+                                  Icons.check_circle,
+                                  color: AppColors.primaryEmerald,
+                                  size: 28,
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        _fileName,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 14,
+                                          color: Colors.white,
+                                        ),
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        '⏱️ Thời lượng: ${_fileDurationMs > 0 ? _formatDuration(_fileDurationMs) : "Tự động"}  •  🌐 Stream trực tiếp',
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          color: AppColors.primaryEmerald,
+                                        ),
+                                      ),
+                                    ],
                                   ),
-                                  const SizedBox(height: 2),
+                                ),
+                              ],
+                            ),
+                            if (_bilibiliPages.length > 1) ...[
+                              const Divider(
+                                color: Color(0xFF2C3E32),
+                                height: 20,
+                              ),
+                              Row(
+                                children: [
+                                  const Icon(
+                                    Icons.video_library,
+                                    size: 14,
+                                    color: AppColors.primaryEmerald,
+                                  ),
+                                  const SizedBox(width: 6),
                                   Text(
-                                    '⏱️ Thời lượng: ${_fileDurationMs > 0 ? _formatDuration(_fileDurationMs) : "Tự động"}  •  🌐 Stream trực tiếp',
+                                    'Chọn tập / phần video (${_bilibiliPages.length} phần):',
                                     style: const TextStyle(
                                       fontSize: 12,
-                                      color: AppColors.primaryEmerald,
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.white70,
                                     ),
                                   ),
                                 ],
                               ),
-                            ),
+                              const SizedBox(height: 8),
+                              SizedBox(
+                                height: 36,
+                                child: ListView.separated(
+                                  scrollDirection: Axis.horizontal,
+                                  itemCount: _bilibiliPages.length,
+                                  separatorBuilder: (_, _) =>
+                                      const SizedBox(width: 6),
+                                  itemBuilder: (context, index) {
+                                    final page = _bilibiliPages[index];
+                                    final isSelected =
+                                        page.page == _selectedBilibiliPage;
+                                    final partName = page.part.isNotEmpty
+                                        ? page.part
+                                        : 'Phần ${page.page}';
+                                    return ChoiceChip(
+                                      label: Text(
+                                        'P${page.page}: $partName',
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: isSelected
+                                              ? FontWeight.bold
+                                              : FontWeight.normal,
+                                          color: isSelected
+                                              ? Colors.black
+                                              : Colors.white70,
+                                        ),
+                                      ),
+                                      selected: isSelected,
+                                      selectedColor: AppColors.primaryEmerald,
+                                      backgroundColor: const Color(0xFF1E202A),
+                                      onSelected: (selected) {
+                                        if (selected &&
+                                            page.page !=
+                                                _selectedBilibiliPage) {
+                                          _onSelectBilibiliPage(page.page);
+                                        }
+                                      },
+                                    );
+                                  },
+                                ),
+                              ),
+                            ],
                           ],
                         ),
                       ),
