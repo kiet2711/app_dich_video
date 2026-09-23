@@ -155,10 +155,43 @@ class HistoryRepository {
   }
 
   Future<void> _deleteItemFiles(HistoryItem item) async {
+    // 1. Xóa file phụ đề .srt
     await _deleteIfExists(item.srtPath);
+
+    // 2. Xóa các file âm thanh TTS (.mp3) liên kết với phụ đề này
+    try {
+      final doc = await loadSubtitleDocument(item);
+      if (doc != null) {
+        for (final sub in doc.items) {
+          if (sub.audioFilePath != null && sub.audioFilePath!.isNotEmpty) {
+            await _deleteIfExists(sub.audioFilePath!);
+          }
+        }
+      }
+    } catch (_) {}
+
+    // 3. Xóa file tài liệu cấu trúc .capsub.json
     if (item.documentPath != null) {
       await _deleteIfExists(item.documentPath!);
     }
+
+    // 4. Xóa bản sao video nội bộ nếu video được lưu trong thư mục media của app
+    // và không còn bản ghi lịch sử nào khác đang dùng video này
+    try {
+      final remaining = getHistory();
+      final isVideoStillUsed = remaining.any(
+        (it) => it.id != item.id && it.videoPath == item.videoPath,
+      );
+      if (!isVideoStillUsed) {
+        final supportDir = await getApplicationSupportDirectory();
+        final mediaDir = Directory(
+          '${supportDir.path}${Platform.pathSeparator}media',
+        );
+        if (item.videoPath.startsWith(mediaDir.path)) {
+          await _deleteIfExists(item.videoPath);
+        }
+      }
+    } catch (_) {}
   }
 
   Future<void> _deleteIfExists(String path) async {

@@ -133,6 +133,35 @@ class _HistoryScreenState extends State<HistoryScreen> {
     }
   }
 
+  Future<void> _confirmClearAll() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.darkCard,
+        title: const Text('Xóa toàn bộ lịch sử', style: TextStyle(color: Colors.white)),
+        content: const Text(
+          'Thao tác này sẽ xóa toàn bộ danh sách lịch sử, các file phụ đề và dữ liệu âm thanh đã tạo. Bạn có chắc chắn không?',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Hủy', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Xóa tất cả', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await _historyRepo?.clearAll();
+    }
+  }
+
   void _showImportSubtitleDialog() {
     showDialog(
       context: context,
@@ -244,18 +273,42 @@ class _HistoryScreenState extends State<HistoryScreen> {
             ),
             const SizedBox(height: 18),
 
-            // Tiêu đề danh sách
+            // Tiêu đề danh sách & Nút xóa tất cả
             ValueListenableBuilder<List<HistoryItem>>(
               valueListenable: HistoryRepository.historyNotifier,
               builder: (context, items, _) {
-                return Text(
-                  'DANH SÁCH ĐÃ DỊCH (${items.length})',
-                  style: const TextStyle(
-                    color: Colors.grey,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 1,
-                  ),
+                return Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'DANH SÁCH ĐÃ DỊCH (${items.length})',
+                      style: const TextStyle(
+                        color: Colors.grey,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 1,
+                      ),
+                    ),
+                    if (items.isNotEmpty)
+                      TextButton.icon(
+                        onPressed: _confirmClearAll,
+                        icon: const Icon(
+                          Icons.delete_sweep_outlined,
+                          size: 16,
+                          color: Colors.grey,
+                        ),
+                        label: const Text(
+                          'Xóa tất cả',
+                          style: TextStyle(color: Colors.grey, fontSize: 12),
+                        ),
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                        ),
+                      ),
+                  ],
                 );
               },
             ),
