@@ -1,4 +1,5 @@
 import 'dart:async';
+
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -106,6 +107,11 @@ class SettingsRepository {
   double get ttsVolume => prefs.getDouble('tts_volume') ?? 1.0;
   set ttsVolume(double v) => prefs.setDouble('tts_volume', v.clamp(0.0, 1.0));
 
+  double get videoPlaybackSpeed =>
+      (prefs.getDouble('video_playback_speed') ?? 1.0).clamp(0.5, 2.0);
+  set videoPlaybackSpeed(double v) =>
+      prefs.setDouble('video_playback_speed', v.clamp(0.5, 2.0));
+
   String get geminiCustomPrompt =>
       prefs.getString('gemini_custom_prompt') ?? '';
   set geminiCustomPrompt(String v) =>
@@ -116,8 +122,7 @@ class SettingsRepository {
 
   String get targetLanguageLabel =>
       prefs.getString('target_lang_label') ?? '🇻🇳 Tiếng Việt (Mặc định)';
-  set targetLanguageLabel(String v) =>
-      prefs.setString('target_lang_label', v);
+  set targetLanguageLabel(String v) => prefs.setString('target_lang_label', v);
 
   int get geminiThreadCount =>
       (prefs.getInt('gemini_thread_count') ?? 2).clamp(1, 10);

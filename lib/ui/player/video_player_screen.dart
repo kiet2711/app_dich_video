@@ -22,18 +22,27 @@ import 'transcript_sheet.dart';
 class VideoPlayerScreen extends StatefulWidget {
   final String videoPath;
   final SubtitleDocument document;
+  final int initialPositionMs;
+  final Future<void> Function(int positionMs)? onPlaybackPositionChanged;
 
   const VideoPlayerScreen({
     super.key,
     required this.videoPath,
     required this.document,
+    this.initialPositionMs = 0,
+    this.onPlaybackPositionChanged,
   });
 
   @override
   State<VideoPlayerScreen> createState() => _VideoPlayerScreenState();
 }
 
-class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
+class _VideoPlayerScreenState extends State<VideoPlayerScreen>
+    with WidgetsBindingObserver {
+  static const _playbackSpeeds = <double>[0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
+  static const _stallThreshold = Duration(milliseconds: 700);
+  static const _positionSaveInterval = Duration(seconds: 3);
+
   VideoPlayerController? _controller;
   late final TtsAudioScheduler _ttsScheduler;
   late SettingsRepository _settings;
@@ -45,16 +54,25 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   bool _isScrubbing = false;
   int _scrubMs = 0;
   bool _wasPlayingBeforeScrub = false;
+  Timer? _playbackMonitor;
+  int _lastObservedPositionMs = 0;
+  DateTime _lastPositionAdvanceAt = DateTime.now();
+  bool _isPlaybackStalled = false;
+  double _playbackSpeed = 1.0;
+  DateTime _lastPositionSaveAt = DateTime.fromMillisecondsSinceEpoch(0);
+  int _lastSavedPositionMs = -1;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _ttsScheduler = TtsAudioScheduler(widget.document);
     _initSettingsAndPlayer();
   }
 
   Future<void> _initSettingsAndPlayer() async {
     _settings = await SettingsRepository.getInstance();
+    _playbackSpeed = _settings.videoPlaybackSpeed;
 
     try {
       var playablePath = widget.videoPath;
@@ -105,10 +123,23 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         await _controller!.dispose();
         return;
       }
+      final durationMs = _controller!.value.duration.inMilliseconds;
+      final resumePositionMs = widget.initialPositionMs.clamp(0, durationMs);
+      if (resumePositionMs > 0 && resumePositionMs < durationMs) {
+        await _controller!.seekTo(Duration(milliseconds: resumePositionMs));
+      }
+      await _controller!.setPlaybackSpeed(_playbackSpeed);
+      _currentPosMs = resumePositionMs;
+      _lastObservedPositionMs = resumePositionMs;
+      _lastPositionAdvanceAt = DateTime.now();
       _controller!.addListener(_onPlayerUpdate);
+      _playbackMonitor = Timer.periodic(
+        const Duration(milliseconds: 250),
+        (_) => _monitorPlaybackStall(),
+      );
       await _calibratePlaybackSpeeds();
       await _applyAudioVolumes();
-      await _ttsScheduler.warmUp(_controller!.value.position.inMilliseconds);
+      await _ttsScheduler.warmUp(resumePositionMs);
       setState(() {
         _isInitialized = true;
       });
@@ -125,24 +156,91 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       return;
     }
     final now = DateTime.now();
+    final positionMs = controller.value.position.inMilliseconds;
+    if (controller.value.isPlaying && positionMs != _lastObservedPositionMs) {
+      _lastPositionAdvanceAt = now;
+    }
+    _lastObservedPositionMs = positionMs;
+    final stallChanged = _refreshPlaybackStall(now);
     if (!_isScrubbing && now.difference(_lastUiUpdate).inMilliseconds >= 50) {
       _lastUiUpdate = now;
       setState(() {
-        _currentPosMs = controller.value.position.inMilliseconds;
+        _currentPosMs = positionMs;
       });
+    } else if (stallChanged) {
+      setState(() {});
     }
+    unawaited(_persistPlaybackPosition());
+    _syncTtsWithVideo();
+  }
+
+  bool _refreshPlaybackStall(DateTime now) {
+    final value = _controller?.value;
+    if (value == null) return false;
+    final stalled =
+        value.isPlaying &&
+        value.isBuffering &&
+        now.difference(_lastPositionAdvanceAt) >= _stallThreshold;
+    if (stalled == _isPlaybackStalled) return false;
+    _isPlaybackStalled = stalled;
+    return true;
+  }
+
+  void _monitorPlaybackStall() {
+    if (!mounted || _controller?.value.isInitialized != true) return;
+    if (_refreshPlaybackStall(DateTime.now())) {
+      setState(() {});
+      _syncTtsWithVideo();
+    }
+  }
+
+  void _syncTtsWithVideo() {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return;
     unawaited(
       _ttsScheduler.onVideoStateUpdate(
         positionMs: controller.value.position.inMilliseconds,
         isPlaying: controller.value.isPlaying,
-        isBuffering: controller.value.isBuffering,
+        isBuffering: _isPlaybackStalled,
         isScrubbing: _isScrubbing,
+        playbackSpeed: controller.value.playbackSpeed,
       ),
     );
   }
 
+  Future<void> _persistPlaybackPosition({bool force = false}) async {
+    final callback = widget.onPlaybackPositionChanged;
+    final controller = _controller;
+    if (callback == null || controller?.value.isInitialized != true) return;
+    final now = DateTime.now();
+    if (!force && now.difference(_lastPositionSaveAt) < _positionSaveInterval) {
+      return;
+    }
+    final durationMs = controller!.value.duration.inMilliseconds;
+    final currentMs = controller.value.position.inMilliseconds;
+    final positionMs = durationMs > 0 && durationMs - currentMs <= 1000
+        ? 0
+        : currentMs.clamp(0, durationMs);
+    if (!force && positionMs == _lastSavedPositionMs) return;
+    _lastPositionSaveAt = now;
+    _lastSavedPositionMs = positionMs;
+    await callback(positionMs);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      unawaited(_persistPlaybackPosition(force: true));
+    }
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _playbackMonitor?.cancel();
+    unawaited(_persistPlaybackPosition(force: true));
     _controller?.removeListener(_onPlayerUpdate);
     _controller?.dispose();
     unawaited(_ttsScheduler.dispose());
@@ -151,6 +249,17 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
   void _seekTo(int targetMs) {
     unawaited(_seekAndRestorePlayback(targetMs));
+  }
+
+  void _skipBy(int deltaMs) {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return;
+    final durationMs = controller.value.duration.inMilliseconds;
+    final targetMs = (controller.value.position.inMilliseconds + deltaMs).clamp(
+      0,
+      durationMs,
+    );
+    _seekTo(targetMs);
   }
 
   Future<void> _seekAndRestorePlayback(int targetMs) async {
@@ -163,6 +272,17 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       _ttsScheduler.onSeek(targetMs),
     ]);
     if (shouldResume) await controller.play();
+  }
+
+  Future<void> _setPlaybackSpeed(double speed) async {
+    final controller = _controller;
+    if (controller == null) return;
+    await controller.setPlaybackSpeed(speed);
+    _settings.videoPlaybackSpeed = speed;
+    if (mounted) {
+      setState(() => _playbackSpeed = speed);
+    }
+    _syncTtsWithVideo();
   }
 
   Future<void> _applyAudioVolumes() async {
@@ -271,7 +391,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
               ),
 
               // Vòng xoay chờ tải mạng (Buffering indicator)
-              if (controller.value.isBuffering)
+              if (_isPlaybackStalled)
                 const Center(
                   child: CircularProgressIndicator(
                     color: AppTheme.primaryEmerald,
@@ -344,8 +464,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                             await _ttsScheduler.onVideoStateUpdate(
                               positionMs: positionMs,
                               isPlaying: controller.value.isPlaying,
-                              isBuffering: controller.value.isBuffering,
+                              isBuffering: _isPlaybackStalled,
                               isScrubbing: _isScrubbing,
+                              playbackSpeed: controller.value.playbackSpeed,
                             );
                           }
                         },
@@ -437,23 +558,45 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                   ),
                 ),
 
-                // Nút Play / Pause ở giữa màn hình
+                // Điều khiển tua 10 giây và Play / Pause ở giữa màn hình
                 Center(
-                  child: IconButton(
-                    iconSize: 56,
-                    icon: Icon(
-                      controller.value.isPlaying
-                          ? Icons.pause_circle_filled
-                          : Icons.play_circle_filled,
-                      color: Colors.white.withValues(alpha: 0.85),
-                    ),
-                    onPressed: () {
-                      setState(() {
-                        controller.value.isPlaying
-                            ? controller.pause()
-                            : controller.play();
-                      });
-                    },
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        iconSize: 38,
+                        tooltip: 'Lùi 10 giây',
+                        icon: const Icon(Icons.replay_10, color: Colors.white),
+                        onPressed: () => _skipBy(-10000),
+                      ),
+                      const SizedBox(width: 18),
+                      IconButton(
+                        iconSize: 56,
+                        tooltip: controller.value.isPlaying
+                            ? 'Tạm dừng'
+                            : 'Phát',
+                        icon: Icon(
+                          controller.value.isPlaying
+                              ? Icons.pause_circle_filled
+                              : Icons.play_circle_filled,
+                          color: Colors.white.withValues(alpha: 0.9),
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            controller.value.isPlaying
+                                ? controller.pause()
+                                : controller.play();
+                          });
+                        },
+                      ),
+                      const SizedBox(width: 18),
+                      IconButton(
+                        iconSize: 38,
+                        tooltip: 'Tới 10 giây',
+                        icon: const Icon(Icons.forward_10, color: Colors.white),
+                        onPressed: () => _skipBy(10000),
+                      ),
+                    ],
                   ),
                 ),
 
@@ -480,6 +623,65 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                               color: Colors.white70,
                               fontSize: 12,
                               fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          PopupMenuButton<double>(
+                            tooltip: 'Tốc độ phát',
+                            initialValue: _playbackSpeed,
+                            onSelected: _setPlaybackSpeed,
+                            color: const Color(0xFF252631),
+                            itemBuilder: (context) => _playbackSpeeds
+                                .map(
+                                  (speed) => PopupMenuItem<double>(
+                                    value: speed,
+                                    child: Row(
+                                      children: [
+                                        SizedBox(
+                                          width: 24,
+                                          child: speed == _playbackSpeed
+                                              ? const Icon(
+                                                  Icons.check,
+                                                  size: 18,
+                                                  color:
+                                                      AppTheme.primaryEmerald,
+                                                )
+                                              : null,
+                                        ),
+                                        Text(
+                                          '${_formatSpeed(speed)}x',
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                )
+                                .toList(),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 6,
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(
+                                    Icons.speed,
+                                    color: Colors.white70,
+                                    size: 16,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    '${_formatSpeed(_playbackSpeed)}x',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
                           Text(
@@ -602,5 +804,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     final seconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
     final hours = duration.inHours > 0 ? '${duration.inHours}:' : '';
     return '$hours$minutes:$seconds';
+  }
+
+  String _formatSpeed(double speed) {
+    return speed == speed.roundToDouble()
+        ? speed.toInt().toString()
+        : speed.toStringAsFixed(2).replaceFirst(RegExp(r'0$'), '');
   }
 }

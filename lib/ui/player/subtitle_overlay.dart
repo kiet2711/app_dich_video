@@ -21,15 +21,12 @@ class SubtitleOverlay extends StatelessWidget {
   Widget build(BuildContext context) {
     final activeItem = document.getActiveItem(currentPositionMs);
     final mode = settings.subtitleMode;
-    final text = mode == 'off'
-        ? ''
-        : (activeItem?.getDisplayText(mode) ?? '');
+    final text = mode == 'off' ? '' : (activeItem?.getDisplayText(mode) ?? '');
 
-    if (text.isEmpty && !settings.isBlackBoxEnabled) {
+    if (text.trim().isEmpty) {
       return const SizedBox.shrink();
     }
 
-    final boxHeight = settings.blackBoxHeight;
     final opacity = settings.blackBoxOpacity.clamp(0.0, 1.0);
     final fontSize = settings.subtitleFontSize;
     final offsetY = settings.subtitleOffsetY;
@@ -41,27 +38,22 @@ class SubtitleOverlay extends StatelessWidget {
       left: 16,
       right: 16,
       bottom: 24 + offsetY,
-      child: GestureDetector(
-        onVerticalDragUpdate: (details) {
-          onDragOffset?.call(offsetY - details.delta.dy);
-        },
-        child: Container(
-          constraints: BoxConstraints(minHeight: boxHeight),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          decoration: settings.isBlackBoxEnabled
-              ? BoxDecoration(
-                  color: Colors.black.withValues(alpha: opacity),
-                  borderRadius: BorderRadius.circular(8),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.4),
-                      blurRadius: 8,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                )
-              : null,
-          child: Center(
+      child: Center(
+        child: GestureDetector(
+          onVerticalDragUpdate: (details) {
+            onDragOffset?.call(offsetY - details.delta.dy);
+          },
+          child: Container(
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.sizeOf(context).width - 32,
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: settings.isBlackBoxEnabled
+                ? BoxDecoration(
+                    color: Colors.black.withValues(alpha: opacity),
+                    borderRadius: BorderRadius.circular(5),
+                  )
+                : null,
             child: Text(
               text,
               textAlign: TextAlign.center,

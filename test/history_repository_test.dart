@@ -60,6 +60,9 @@ void main() {
     expect(list.length, 1);
     expect(list.first.title, 'video.mp4');
 
+    await repo.updatePlaybackPosition(item.id, 3200);
+    expect(repo.getHistory().first.lastPositionMs, 3200);
+
     // Updating existing video does not lose the item or crash
     final updatedDoc = SubtitleDocument([
       SubtitleItem(
@@ -82,6 +85,7 @@ void main() {
     final listAfterUpdate = repo.getHistory();
     expect(listAfterUpdate.length, 1);
     expect(listAfterUpdate.first.ttsVoice, 'Minh Quang');
+    expect(listAfterUpdate.first.lastPositionMs, 3200);
 
     // Load subtitle document
     final loadedDoc = await repo.loadSubtitleDocument(listAfterUpdate.first);

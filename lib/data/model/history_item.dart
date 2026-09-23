@@ -9,6 +9,7 @@ class HistoryItem {
   final int sentenceCount;
   final String? ttsVoice;
   final String? docKey;
+  final int lastPositionMs;
 
   const HistoryItem({
     required this.id,
@@ -21,6 +22,7 @@ class HistoryItem {
     this.sentenceCount = 0,
     this.ttsVoice,
     this.docKey,
+    this.lastPositionMs = 0,
   });
 
   HistoryItem copyWith({
@@ -34,6 +36,7 @@ class HistoryItem {
     int? sentenceCount,
     String? ttsVoice,
     String? docKey,
+    int? lastPositionMs,
   }) {
     return HistoryItem(
       id: id ?? this.id,
@@ -46,6 +49,7 @@ class HistoryItem {
       sentenceCount: sentenceCount ?? this.sentenceCount,
       ttsVoice: ttsVoice ?? this.ttsVoice,
       docKey: docKey ?? this.docKey,
+      lastPositionMs: lastPositionMs ?? this.lastPositionMs,
     );
   }
 
@@ -60,6 +64,7 @@ class HistoryItem {
     'sentenceCount': sentenceCount,
     if (ttsVoice != null) 'ttsVoice': ttsVoice,
     if (docKey != null) 'docKey': docKey,
+    'lastPositionMs': lastPositionMs,
   };
 
   factory HistoryItem.fromJson(Map<String, dynamic> json) => HistoryItem(
@@ -73,5 +78,6 @@ class HistoryItem {
     sentenceCount: json['sentenceCount'] as int? ?? 0,
     ttsVoice: json['ttsVoice'] as String?,
     docKey: json['docKey'] as String?,
+    lastPositionMs: json['lastPositionMs'] as int? ?? 0,
   );
 }

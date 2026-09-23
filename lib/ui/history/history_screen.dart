@@ -57,8 +57,13 @@ class _HistoryScreenState extends State<HistoryScreen> {
       Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (ctx) =>
-              VideoPlayerScreen(videoPath: resolvedVideo, document: doc),
+          builder: (ctx) => VideoPlayerScreen(
+            videoPath: resolvedVideo,
+            document: doc,
+            initialPositionMs: item.lastPositionMs,
+            onPlaybackPositionChanged: (positionMs) =>
+                repo.updatePlaybackPosition(item.id, positionMs),
+          ),
         ),
       );
     }
@@ -71,7 +76,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
     if (doc == null || doc.items.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Không tìm thấy tệp phụ đề để lồng tiếng')),
+          const SnackBar(
+            content: Text('Không tìm thấy tệp phụ đề để lồng tiếng'),
+          ),
         );
       }
       return;
@@ -95,15 +102,13 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
     try {
       // ignore: deprecated_member_use
-      await Share.shareXFiles(
-        [XFile(srtFile.path)],
-        subject: 'Phụ đề: ${item.title}',
-      );
+      await Share.shareXFiles([
+        XFile(srtFile.path),
+      ], subject: 'Phụ đề: ${item.title}');
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Lỗi chia sẻ file: $e')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Lỗi chia sẻ file: $e')));
       }
     }
   }
@@ -142,7 +147,10 @@ class _HistoryScreenState extends State<HistoryScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: AppTheme.darkCard,
-        title: const Text('Xóa toàn bộ lịch sử', style: TextStyle(color: Colors.white)),
+        title: const Text(
+          'Xóa toàn bộ lịch sử',
+          style: TextStyle(color: Colors.white),
+        ),
         content: const Text(
           'Thao tác này sẽ xóa toàn bộ danh sách lịch sử, các file phụ đề và dữ liệu âm thanh đã tạo. Bạn có chắc chắn không?',
           style: TextStyle(color: Colors.white70),
@@ -155,7 +163,10 @@ class _HistoryScreenState extends State<HistoryScreen> {
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Xóa tất cả', style: TextStyle(color: Colors.white)),
+            child: const Text(
+              'Xóa tất cả',
+              style: TextStyle(color: Colors.white),
+            ),
           ),
         ],
       ),
@@ -328,11 +339,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     alignment: Alignment.center,
                     child: Column(
                       children: const [
-                        Icon(
-                          Icons.history,
-                          color: Colors.white24,
-                          size: 56,
-                        ),
+                        Icon(Icons.history, color: Colors.white24, size: 56),
                         SizedBox(height: 12),
                         Text(
                           'Chưa có video nào trong lịch sử',
@@ -513,7 +520,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
                                           color: AppTheme.cardBorder,
                                         ),
                                         shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(8),
+                                          borderRadius: BorderRadius.circular(
+                                            8,
+                                          ),
                                         ),
                                         padding: const EdgeInsets.symmetric(
                                           horizontal: 12,

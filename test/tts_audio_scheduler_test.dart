@@ -75,4 +75,23 @@ void main() {
       );
     });
   });
+
+  group('TtsAudioScheduler.calculateAudioPlaybackSpeed', () {
+    test('keeps TTS synchronized with the selected video speed', () {
+      expect(
+        TtsAudioScheduler.calculateAudioPlaybackSpeed(
+          ttsSpeed: 1.5,
+          videoSpeed: 0.5,
+        ),
+        0.75,
+      );
+      expect(
+        TtsAudioScheduler.calculateAudioPlaybackSpeed(
+          ttsSpeed: 1.5,
+          videoSpeed: 2.0,
+        ),
+        3.0,
+      );
+    });
+  });
 }

@@ -172,6 +172,7 @@ class HistoryRepository {
       sentenceCount: document.items.length,
       ttsVoice: ttsVoice ?? existing?.ttsVoice,
       docKey: docKey,
+      lastPositionMs: existing?.lastPositionMs ?? 0,
     );
 
     await addItem(item);
@@ -224,6 +225,19 @@ class HistoryRepository {
         await _deleteIfExists(old.documentPath!);
       }
     }
+  }
+
+  Future<void> updatePlaybackPosition(String id, int positionMs) async {
+    final items = getHistory();
+    final index = items.indexWhere((item) => item.id == id);
+    if (index == -1) return;
+    final nonNegativePosition = positionMs < 0 ? 0 : positionMs;
+    final safePosition = items[index].durationMs > 0
+        ? nonNegativePosition.clamp(0, items[index].durationMs)
+        : nonNegativePosition;
+    if (items[index].lastPositionMs == safePosition) return;
+    items[index] = items[index].copyWith(lastPositionMs: safePosition);
+    await _save(items);
   }
 
   Future<void> deleteItem(String id) async {

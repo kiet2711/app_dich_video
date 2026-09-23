@@ -27,12 +27,14 @@ class _VideoState {
   final bool isPlaying;
   final bool isBuffering;
   final bool isScrubbing;
+  final double playbackSpeed;
 
   const _VideoState({
     required this.positionMs,
     required this.isPlaying,
     required this.isBuffering,
     required this.isScrubbing,
+    required this.playbackSpeed,
   });
 }
 
@@ -100,12 +102,14 @@ class TtsAudioScheduler {
     required bool isPlaying,
     required bool isBuffering,
     required bool isScrubbing,
+    required double playbackSpeed,
   }) async {
     _pendingVideoState = _VideoState(
       positionMs: positionMs,
       isPlaying: isPlaying,
       isBuffering: isBuffering,
       isScrubbing: isScrubbing,
+      playbackSpeed: playbackSpeed,
     );
     if (_isHandlingUpdate) return;
     _isHandlingUpdate = true;
@@ -143,6 +147,16 @@ class TtsAudioScheduler {
 
     if (_activeItemId == item.id && _currentPlayerIndex >= 0) {
       final player = _players[_currentPlayerIndex];
+      final prepared = _prepared[_currentPlayerIndex];
+      if (prepared != null) {
+        final effectiveSpeed = calculateAudioPlaybackSpeed(
+          ttsSpeed: prepared.speed,
+          videoSpeed: state.playbackSpeed,
+        );
+        if ((player.speed - effectiveSpeed).abs() > 0.001) {
+          await player.setSpeed(effectiveSpeed);
+        }
+      }
       if (_needsResyncAfterInterruption) {
         _needsResyncAfterInterruption = false;
         await _resyncOnce(player, item, state.positionMs);
@@ -197,7 +211,12 @@ class TtsAudioScheduler {
     } else if (player.position != Duration.zero) {
       await player.seek(Duration.zero);
     }
-    await player.setSpeed(prepared.speed);
+    await player.setSpeed(
+      calculateAudioPlaybackSpeed(
+        ttsSpeed: prepared.speed,
+        videoSpeed: state.playbackSpeed,
+      ),
+    );
     await player.setVolume(_volume);
     unawaited(player.play());
     _preloadAfter(item);
@@ -384,6 +403,14 @@ class TtsAudioScheduler {
     }
     final factor = (audioDurationMs / safeSubtitleDuration).clamp(1.0, 2.2);
     return (factor * 10).round() / 10;
+  }
+
+  @visibleForTesting
+  static double calculateAudioPlaybackSpeed({
+    required double ttsSpeed,
+    required double videoSpeed,
+  }) {
+    return ttsSpeed.clamp(0.5, 2.2) * videoSpeed.clamp(0.5, 2.0);
   }
 
   @visibleForTesting
