@@ -146,7 +146,7 @@ class _ImportSubtitleDialogState extends State<ImportSubtitleDialog> {
         stylePreset: settings.selectedStyle,
         customPrompt: settings.geminiCustomPrompt,
         targetLanguage: settings.targetLanguage,
-        chunkSize: 45,
+        chunkSize: settings.geminiBatchSize,
         threadCount: settings.geminiThreadCount,
         progressCallback: (pct, msg) {
           if (mounted) {

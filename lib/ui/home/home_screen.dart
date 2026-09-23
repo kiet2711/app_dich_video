@@ -50,6 +50,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _probeStatusMessage;
   List<BilibiliPageInfo> _bilibiliPages = [];
   int _selectedBilibiliPage = 1;
+  BilibiliVideoDetails? _bilibiliDetails;
 
   String _selectedSourceLang = 'zh-CN';
   String _selectedEngine = 'capcut';
@@ -223,6 +224,7 @@ class _HomeScreenState extends State<HomeScreen> {
           target,
           _settings?.bilibiliSessData ?? '',
         );
+        _bilibiliDetails = details;
         durationMs = details.durationSeconds * 1000;
         resolvedName = '${details.title}.mp4';
         pages = details.pages;
@@ -251,12 +253,17 @@ class _HomeScreenState extends State<HomeScreen> {
       } else {
         durationMs = await AudioExtractor.probeDuration(clean);
         _probeStatusMessage = '✅ Video online đã sẵn sàng!';
+        _bilibiliDetails = null;
       }
 
       if (!mounted) return;
+      final canonicalUrl = (_bilibiliDetails != null && _bilibiliDetails!.bvid.isNotEmpty)
+          ? 'https://www.bilibili.com/video/${_bilibiliDetails!.bvid}?p=$selectedPage'
+          : clean;
       setState(() {
         _isProbingUrl = false;
-        _selectedVideoPath = clean;
+        _selectedVideoPath = canonicalUrl;
+        _urlController.text = canonicalUrl;
         _fileDurationMs = durationMs;
         _fileName = resolvedName.isNotEmpty ? resolvedName : 'video_online.mp4';
         _fileSizeMb = 'Trực tuyến';
@@ -273,24 +280,92 @@ class _HomeScreenState extends State<HomeScreen> {
         _fileSizeMb = 'Trực tuyến';
         _bilibiliPages = [];
         _selectedBilibiliPage = 1;
+        _bilibiliDetails = null;
         _probeStatusMessage = '✅ Đã nhận link (sẵn sàng tạo sub & xem)';
       });
     }
   }
 
-  void _onSelectBilibiliPage(int pageIndex) {
-    if (_selectedVideoPath == null || _bilibiliPages.isEmpty) return;
-    var url = _selectedVideoPath!;
-    final uri = Uri.tryParse(url);
-    if (uri != null) {
-      final params = Map<String, String>.from(uri.queryParameters);
-      params['p'] = pageIndex.toString();
-      final newUri = uri.replace(queryParameters: params);
-      url = newUri.toString();
-    } else {
-      url = url.contains('?') ? '$url&p=$pageIndex' : '$url?p=$pageIndex';
+  void _onSelectBilibiliPage(int pageIndex) async {
+    if (_bilibiliPages.isEmpty) return;
+
+    final selectedPageInfo = _bilibiliPages.firstWhere(
+      (p) => p.page == pageIndex,
+      orElse: () => _bilibiliPages.first,
+    );
+
+    final bvid = _bilibiliDetails?.bvid ??
+        RegExp(r'BV[a-zA-Z0-9]{10}', caseSensitive: false)
+            .firstMatch(_selectedVideoPath ?? '')
+            ?.group(0) ??
+        '';
+
+    final canonicalUrl = bvid.isNotEmpty
+        ? 'https://www.bilibili.com/video/$bvid?p=$pageIndex'
+        : (_selectedVideoPath ?? '');
+
+    final baseTitle = _bilibiliDetails?.rawTitle ??
+        (_bilibiliDetails?.title ?? _fileName)
+            .replaceAll(RegExp(r' - P\d+.*$'), '')
+            .replaceAll(RegExp(r'\.mp4$'), '');
+    final partName = selectedPageInfo.part.isNotEmpty
+        ? selectedPageInfo.part
+        : 'Phần $pageIndex';
+    final fullTitle = '$baseTitle - P$pageIndex ($partName).mp4';
+
+    // Cập nhật giao diện NGAY LẬP TỨC (0ms) - chip đổi màu ngay, thông tin cập nhật ngay
+    setState(() {
+      _selectedBilibiliPage = pageIndex;
+      _selectedVideoPath = canonicalUrl;
+      _urlController.text = canonicalUrl;
+      _fileDurationMs = selectedPageInfo.durationSeconds * 1000;
+      _fileName = fullTitle;
+      _probeStatusMessage = '⏳ Đang kiểm tra phụ đề P$pageIndex...';
+    });
+
+    // Kiểm tra phụ đề Bilibili cho phân đoạn này trong nền
+    if (_bilibiliDetails != null) {
+      final partDetails = BilibiliVideoDetails(
+        bvid: _bilibiliDetails!.bvid,
+        aid: _bilibiliDetails!.aid,
+        cid: selectedPageInfo.cid,
+        title: '$baseTitle - P$pageIndex ($partName)',
+        rawTitle: baseTitle,
+        durationSeconds: selectedPageInfo.durationSeconds,
+        pages: _bilibiliDetails!.pages,
+        selectedPageIndex: pageIndex,
+      );
+
+      try {
+        final resolver = BilibiliResolver();
+        final subs = await resolver.getSubtitles(
+          partDetails,
+          _settings?.bilibiliSessData ?? '',
+        );
+        if (mounted && _selectedBilibiliPage == pageIndex) {
+          setState(() {
+            if (subs.isNotEmpty) {
+              _probeStatusMessage =
+                  '✨ Video (P$pageIndex) có sẵn phụ đề Bilibili (${subs.first.languageName})! Bấm "Bắt đầu" để nạp và dịch ngay.';
+            } else {
+              _probeStatusMessage =
+                  '✅ Đã chọn P$pageIndex: $partName (${_formatDuration(selectedPageInfo.durationSeconds * 1000)}). Sẵn sàng tạo sub!';
+            }
+          });
+        }
+      } on BilibiliSubtitleLoginRequiredException catch (error) {
+        if (mounted && _selectedBilibiliPage == pageIndex) {
+          setState(() => _probeStatusMessage = '⚠️ $error');
+        }
+      } catch (_) {
+        if (mounted && _selectedBilibiliPage == pageIndex) {
+          setState(() {
+            _probeStatusMessage =
+                '✅ Đã chọn P$pageIndex: $partName (${_formatDuration(selectedPageInfo.durationSeconds * 1000)}). Sẵn sàng tạo sub!';
+          });
+        }
+      }
     }
-    _probeUrl(url);
   }
 
   Future<void> _startProcessing() async {
@@ -348,6 +423,7 @@ class _HomeScreenState extends State<HomeScreen> {
           : '',
       targetLanguage: _selectedTargetLang,
       geminiThreadCount: _settings!.geminiThreadCount,
+      geminiBatchSize: _settings!.geminiBatchSize,
     );
     _activePipeline = pipeline;
 
@@ -555,6 +631,9 @@ class _HomeScreenState extends State<HomeScreen> {
                             _fileName = '';
                             _fileDurationMs = 0;
                             _fileSizeMb = '';
+                            _bilibiliPages = [];
+                            _selectedBilibiliPage = 1;
+                            _bilibiliDetails = null;
                             _probeStatusMessage = null;
                           }
                         });
@@ -607,6 +686,9 @@ class _HomeScreenState extends State<HomeScreen> {
                             _fileName = '';
                             _fileDurationMs = 0;
                             _fileSizeMb = '';
+                            _bilibiliPages = [];
+                            _selectedBilibiliPage = 1;
+                            _bilibiliDetails = null;
                             _probeStatusMessage = null;
                           }
                         });
@@ -781,6 +863,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                     _fileSizeMb = '';
                                     _bilibiliPages = [];
                                     _selectedBilibiliPage = 1;
+                                    _bilibiliDetails = null;
                                     _probeStatusMessage = null;
                                   });
                                 },

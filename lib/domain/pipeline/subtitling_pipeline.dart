@@ -24,6 +24,7 @@ class SubtitlingPipeline {
   final String customPrompt;
   final String targetLanguage;
   final int geminiThreadCount;
+  final int? geminiBatchSize;
 
   final _progressController = StreamController<ProcessProgress>.broadcast();
   Stream<ProcessProgress> get progressStream => _progressController.stream;
@@ -37,6 +38,7 @@ class SubtitlingPipeline {
     this.customPrompt = '',
     this.targetLanguage = 'vi-VN',
     this.geminiThreadCount = 2,
+    this.geminiBatchSize,
   });
 
   void cancel() {
@@ -333,6 +335,7 @@ class SubtitlingPipeline {
           stylePreset: stylePreset,
           customPrompt: customPrompt,
           targetLanguage: targetLanguage,
+          chunkSize: geminiBatchSize ?? settings.geminiBatchSize,
           threadCount: geminiThreadCount,
           isCancelled: () => _isCancelled,
           progressCallback: (pct, msg) {

@@ -42,6 +42,7 @@ class BilibiliVideoDetails {
   final int aid;
   final int cid;
   final String title;
+  final String? rawTitle;
   final int durationSeconds;
   final List<BilibiliPageInfo> pages;
   final int selectedPageIndex;
@@ -51,6 +52,7 @@ class BilibiliVideoDetails {
     required this.aid,
     required this.cid,
     required this.title,
+    this.rawTitle,
     required this.durationSeconds,
     this.pages = const [],
     this.selectedPageIndex = 1,
@@ -209,6 +211,14 @@ class BilibiliResolver {
     var target =
         RegExp(r'https?://[^\s]+').firstMatch(input.trim())?.group(0) ??
         input.trim();
+
+    // Lưu lại số trang nếu đã được chỉ định trong input URL ban đầu (vd: b23.tv/xxx?p=2 hoặc input_p=2)
+    final inputPage = int.tryParse(
+      RegExp(r'[?&]p=(\d+)', caseSensitive: false).firstMatch(input)?.group(1) ??
+      RegExp(r'(?:index_|/p)(\d+)', caseSensitive: false).firstMatch(input)?.group(1) ??
+      '',
+    );
+
     if (target.toLowerCase().contains('b23.tv')) {
       final response = await dio.get<dynamic>(
         target,
@@ -229,23 +239,28 @@ class BilibiliResolver {
       r'av(\d+)',
       caseSensitive: false,
     ).firstMatch(target)?.group(1);
-    final page =
-        int.tryParse(
-          RegExp(
-                r'[?&]p=(\d+)',
-                caseSensitive: false,
-              ).firstMatch(target)?.group(1) ??
-              '',
-        ) ??
-        1;
+
+    final targetPage = int.tryParse(
+      RegExp(r'[?&]p=(\d+)', caseSensitive: false).firstMatch(target)?.group(1) ??
+      RegExp(r'(?:index_|/p)(\d+)', caseSensitive: false).firstMatch(target)?.group(1) ??
+      '',
+    );
+
+    final page = inputPage ?? targetPage ?? 1;
+
     if (bvid == null && aid == null) {
       throw FormatException('Không tìm thấy mã BV/av trong link Bilibili.');
     }
+
+    final canonicalTarget = bvid != null
+        ? 'https://www.bilibili.com/video/$bvid?p=$page'
+        : (aid != null ? 'https://www.bilibili.com/video/av$aid?p=$page' : target);
+
     return BilibiliTarget(
       bvid: bvid,
       aid: aid,
       pageIndex: page,
-      rawUrl: target,
+      rawUrl: canonicalTarget,
     );
   }
 
@@ -311,6 +326,7 @@ class BilibiliResolver {
       aid: (data['aid'] as num?)?.toInt() ?? 0,
       cid: cid,
       title: fullTitle,
+      rawTitle: mainTitle,
       durationSeconds: pageDuration > 0
           ? pageDuration
           : ((data['duration'] as num?)?.toInt() ?? 0),

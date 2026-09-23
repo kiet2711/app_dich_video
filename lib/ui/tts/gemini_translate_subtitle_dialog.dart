@@ -110,7 +110,7 @@ class _GeminiTranslateSubtitleDialogState
         stylePreset: _settings?.selectedStyle ?? 'Zhihu',
         customPrompt: promptToUse,
         targetLanguage: _selectedTargetLang,
-        chunkSize: 45,
+        chunkSize: _settings?.geminiBatchSize ?? 45,
         threadCount: _settings?.geminiThreadCount ?? 2,
         isCancelled: () => _isCancelled,
         progressCallback: (pct, msg) {

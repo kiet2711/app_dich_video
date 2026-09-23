@@ -59,6 +59,16 @@ void main() {
       expect(settings.customFonts, contains('Roboto-Custom'));
     });
 
+    test('Gemini batch size default and updating works properly', () {
+      expect(settings.geminiBatchSize, equals(45));
+
+      settings.geminiBatchSize = 80;
+      expect(settings.geminiBatchSize, equals(80));
+
+      settings.geminiBatchSize = 100;
+      expect(settings.geminiBatchSize, equals(100));
+    });
+
     test('SubtitleItem getDisplayText handles bilingual, translated, and original', () {
       final item = SubtitleItem(
         id: 1,

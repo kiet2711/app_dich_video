@@ -183,6 +183,92 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     });
                   },
                 ),
+                const SizedBox(height: 8),
+                const Text(
+                  'SỐ CÂU PHỤ ĐỀ / REQUEST (BATCH SIZE):',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Số câu phụ đề gửi lên Gemini trong mỗi lượt dịch. Số câu nhiều hơn giúp tăng tốc độ dịch và tiết kiệm lượt gọi API.',
+                  style: TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1E202A),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: AppColors.cardBorder),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<int>(
+                      value: [30, 45, 60, 80, 100].contains(_settings!.geminiBatchSize)
+                          ? _settings!.geminiBatchSize
+                          : 45,
+                      isExpanded: true,
+                      dropdownColor: const Color(0xFF1E202A),
+                      icon: const Icon(
+                        Icons.keyboard_arrow_down,
+                        color: AppColors.primaryEmerald,
+                      ),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      items: const [
+                        DropdownMenuItem<int>(
+                          value: 30,
+                          child: Text(
+                            '30 câu / request (Chia nhỏ, dịch rất kỹ)',
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        DropdownMenuItem<int>(
+                          value: 45,
+                          child: Text(
+                            '45 câu / request (Mặc định - Khuyên dùng)',
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        DropdownMenuItem<int>(
+                          value: 60,
+                          child: Text(
+                            '60 câu / request (Nhanh hơn, tiết kiệm request)',
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        DropdownMenuItem<int>(
+                          value: 80,
+                          child: Text(
+                            '80 câu / request (Tối ưu cho video dài)',
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        DropdownMenuItem<int>(
+                          value: 100,
+                          child: Text(
+                            '100 câu / request (Cực nhanh, ít gọi API)',
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                      onChanged: (val) {
+                        if (val != null) {
+                          setState(() {
+                            _settings!.geminiBatchSize = val;
+                          });
+                        }
+                      },
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
                 const Divider(color: AppColors.cardBorder),
                 const SizedBox(height: 6),
                 Row(

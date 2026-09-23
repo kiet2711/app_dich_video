@@ -174,4 +174,67 @@ Xin chào
 
     expect(translated, {7: 'Xin chào', 12: 'Tạm biệt'});
   });
+
+  test('verifies that translateSubtitles runs concurrent requests according to threadCount', () async {
+    final dio = Dio();
+    var currentConcurrent = 0;
+    var maxConcurrent = 0;
+
+    dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (options, handler) async {
+          currentConcurrent++;
+          if (currentConcurrent > maxConcurrent) {
+            maxConcurrent = currentConcurrent;
+          }
+          // Giả lập thời gian Gemini xử lý 50ms
+          await Future.delayed(const Duration(milliseconds: 50));
+          currentConcurrent--;
+
+          handler.resolve(
+            Response<Map<String, dynamic>>(
+              requestOptions: options,
+              statusCode: 200,
+              data: {
+                'candidates': [
+                  {
+                    'content': {
+                      'parts': [
+                        {
+                          'text': '''1\n00:00:00,000 --> 00:00:01,000\nĐã dịch''',
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            ),
+          );
+        },
+      ),
+    );
+
+    final translator = GeminiTranslator(apiKeys: const ['key1', 'key2', 'key3'], dio: dio);
+
+    // Tạo document có 10 câu, chunkSize = 1 -> 10 chunks
+    final items = List.generate(
+      10,
+      (i) => SubtitleItem(
+        id: i + 1,
+        startMs: i * 1000,
+        endMs: (i + 1) * 1000,
+        originalText: 'Câu $i',
+      ),
+    );
+    final doc = SubtitleDocument(items);
+
+    await translator.translateSubtitles(
+      document: doc,
+      chunkSize: 1,
+      threadCount: 5,
+    );
+
+    // Kiểm tra xem số luồng tối đa thực tế đạt được có phải là 5 không
+    expect(maxConcurrent, 5);
+  });
 }
