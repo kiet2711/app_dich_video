@@ -153,94 +153,75 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      'Số luồng dịch song song: ${_settings!.geminiThreadCount}',
-                      style: const TextStyle(color: Colors.white),
+                    const Text(
+                      'SỐ LUỒNG DỊCH SONG SONG (GEMINI):',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                      ),
                     ),
-                    Slider(
-                      value: _settings!.geminiThreadCount.toDouble(),
-                      min: 1,
-                      max: 8,
-                      divisions: 7,
-                      activeColor: AppColors.primaryEmerald,
-                      onChanged: (val) {
-                        setState(() {
-                          _settings!.geminiThreadCount = val.toInt();
-                        });
-                      },
+                    Text(
+                      '${_settings!.geminiThreadCount} LUỒNG',
+                      style: const TextStyle(
+                        color: AppColors.primaryEmerald,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                      ),
                     ),
                   ],
                 ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // Section 2: Hộp Đen (BlackBox) & Subtitle Player
-          _buildSectionHeader('Cấu hình Hộp Đen (BlackBox) & Trình Phát'),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: AppColors.darkSurface,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: AppColors.cardBorder),
-            ),
-            child: Column(
-              children: [
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text(
-                    'Bật Hộp Đen che phụ đề cứng',
-                    style: TextStyle(color: Colors.white),
-                  ),
-                  value: _settings!.isBlackBoxEnabled,
-                  activeThumbColor: AppColors.primaryEmerald,
+                Slider(
+                  value: _settings!.geminiThreadCount.toDouble(),
+                  min: 1,
+                  max: 8,
+                  divisions: 7,
+                  activeColor: AppColors.primaryEmerald,
                   onChanged: (val) {
                     setState(() {
-                      _settings!.isBlackBoxEnabled = val;
+                      _settings!.geminiThreadCount = val.toInt();
                     });
                   },
                 ),
                 const Divider(color: AppColors.cardBorder),
+                const SizedBox(height: 6),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      'Độ mờ: ${(_settings!.blackBoxOpacity * 100).toInt()}%',
-                      style: const TextStyle(color: Colors.white),
+                    const Text(
+                      'SỐ LUỒNG NHẬN DIỆN CAPCUT (STT):',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                      ),
                     ),
-                    Slider(
-                      value: _settings!.blackBoxOpacity,
-                      min: 0.3,
-                      max: 1.0,
-                      activeColor: AppColors.primaryEmerald,
-                      onChanged: (val) {
-                        setState(() {
-                          _settings!.blackBoxOpacity = val;
-                        });
-                      },
+                    Text(
+                      '${_settings!.capcutSttConcurrency} LUỒNG',
+                      style: const TextStyle(
+                        color: AppColors.primaryEmerald,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                      ),
                     ),
                   ],
                 ),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      'Cỡ chữ: ${_settings!.subtitleFontSize.toInt()} pt',
-                      style: const TextStyle(color: Colors.white),
-                    ),
-                    Slider(
-                      value: _settings!.subtitleFontSize.clamp(5.0, 30.0),
-                      min: 5.0,
-                      max: 30.0,
-                      activeColor: AppColors.primaryEmerald,
-                      onChanged: (val) {
-                        setState(() {
-                          _settings!.subtitleFontSize = val;
-                        });
-                      },
-                    ),
-                  ],
+                const SizedBox(height: 4),
+                const Text(
+                  'Xử lý song song nhiều phân đoạn âm thanh qua CapCut Cloud, giúp tạo sub cho video dài (1-3 tiếng) nhanh gấp 2-3 lần (Khuyên dùng: 2 - 4 luồng).',
+                  style: TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+                Slider(
+                  value: _settings!.capcutSttConcurrency.toDouble(),
+                  min: 1,
+                  max: 6,
+                  divisions: 5,
+                  activeColor: AppColors.primaryEmerald,
+                  onChanged: (val) {
+                    setState(() {
+                      _settings!.capcutSttConcurrency = val.toInt();
+                    });
+                  },
                 ),
               ],
             ),
@@ -459,7 +440,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     const Text(
-                      'SỐ LUỒNG TẢI SONG SONG:',
+                      'SỐ LUỒNG TẢI VIDEO & AUDIO SONG SONG:',
                       style: TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.bold,
@@ -478,7 +459,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 const SizedBox(height: 4),
                 const Text(
-                  'Tải đa luồng song song luân phiên qua các cụm máy chủ CDN (Tencent, Alibaba, Huawei, Bilibili) giúp tăng tốc độ tải lên gấp 5-10 lần (Khuyên dùng: 12 - 24 luồng).',
+                  'Tải đa luồng song song luân phiên qua các cụm máy chủ CDN (Tencent, Alibaba, Huawei, Bilibili) giúp tăng tốc độ tải video và âm thanh lên gấp 5-10 lần (Khuyên dùng: 12 - 24 luồng).',
                   style: TextStyle(color: Colors.white70, fontSize: 12),
                 ),
                 const SizedBox(height: 8),

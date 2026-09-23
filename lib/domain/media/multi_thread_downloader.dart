@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
@@ -153,9 +153,9 @@ class MultiThreadDownloader {
     for (var attempt = 0; attempt < maxRetries; attempt++) {
       try {
         var targetUrl = rawUrl;
-        if (rawUrl.contains('upos-')) {
-          final host = cdnFallbackHosts[(workerId + attempt) % cdnFallbackHosts.length];
-          targetUrl = rawUrl.replaceAll(RegExp(r'upos-[^/]+'), host);
+        if (attempt > 0 && rawUrl.contains('upos-')) {
+          final host = cdnFallbackHosts[(workerId + attempt - 1) % cdnFallbackHosts.length];
+          targetUrl = rawUrl.replaceFirst(RegExp(r'upos-[^/]+'), host);
         }
 
         final reqHeaders = Map<String, dynamic>.from(headers);

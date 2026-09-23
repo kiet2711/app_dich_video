@@ -129,6 +129,11 @@ class SettingsRepository {
   set downloadThreadCount(int v) =>
       prefs.setInt('download_thread_count', v.clamp(8, 32));
 
+  int get capcutSttConcurrency =>
+      (prefs.getInt('capcut_stt_concurrency') ?? 3).clamp(1, 6);
+  set capcutSttConcurrency(int v) =>
+      prefs.setInt('capcut_stt_concurrency', v.clamp(1, 6));
+
   int get ttsThreadCount =>
       (prefs.getInt('tts_thread_count') ?? 50).clamp(1, 100);
   set ttsThreadCount(int v) =>

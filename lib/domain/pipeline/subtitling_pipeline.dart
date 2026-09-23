@@ -79,12 +79,12 @@ class SubtitlingPipeline {
     await sessionDir.create(recursive: true);
 
     try {
+      final settings = await SettingsRepository.getInstance();
       var extractionPath = videoPath;
       SubtitleDocument? sourceDocument;
 
       if (BilibiliResolver.isBilibiliPageUrl(videoPath)) {
         final resolver = BilibiliResolver();
-        final settings = await SettingsRepository.getInstance();
         _emit(
           const ProcessProgress(
             stage: ProcessStage.extractingAudio,
@@ -145,6 +145,7 @@ class SubtitlingPipeline {
             audioUrl,
             downloadedAudio,
             settings.bilibiliSessData,
+            concurrency: settings.downloadThreadCount,
             onProgress: (progress, message) {
               _emit(
                 ProcessProgress(
@@ -182,7 +183,6 @@ class SubtitlingPipeline {
           final tempRemoteFile = File(
             '${sessionDir.path}${Platform.pathSeparator}downloaded_remote_stream.mp4',
           );
-          final settings = await SettingsRepository.getInstance();
           final headers = NetworkHeaderHelper.getHeadersForUrl(extractionPath, settings.bilibiliSessData);
           await MultiThreadDownloader.downloadFile(
             url: extractionPath,
@@ -228,84 +228,82 @@ class SubtitlingPipeline {
         );
 
         // -------------------------------------------------------------
-        // GIAI ĐOẠN 2 & 3: UPLOAD VOD VÀ STT CAPCUT CHO TỪNG CHUNK
+        // GIAI ĐOẠN 2 & 3: UPLOAD VOD VÀ STT CAPCUT ĐA LUỒNG SONG SONG
         // -------------------------------------------------------------
         final totalChunks = chunks.length;
+        final chunkResults = List<List<SubtitleItem>?>.filled(totalChunks, null);
+        var nextChunkIndex = 0;
+        var completedChunks = 0;
+        final concurrency = settings.capcutSttConcurrency.clamp(1, totalChunks);
+
+        _emit(
+          ProcessProgress(
+            stage: ProcessStage.uploadingVod,
+            progress: 0.20,
+            message: totalChunks > 1
+                ? 'Bắt đầu xử lý đa luồng ($concurrency luồng) cho $totalChunks phân đoạn...'
+                : 'Bắt đầu tải lên CapCut Cloud...',
+          ),
+        );
+
+        Future<void> sttWorker(int workerId) async {
+          while (nextChunkIndex < totalChunks) {
+            if (_isCancelled) throw Exception('Đã huỷ tác vụ');
+            final idx = nextChunkIndex++;
+            if (idx >= totalChunks) break;
+            final chunk = chunks[idx];
+
+            final device = DeviceConfig().randomize();
+            final uploader = CapCutVodUploader(device: device);
+
+            // 2. Upload VOD
+            final uploadResult = await uploader.uploadFile(
+              chunk.file,
+              isCancelled: () => _isCancelled,
+              progressCallback: (pct, msg) {},
+            );
+
+            // 3. STT CapCut
+            if (_isCancelled) throw Exception('Đã huỷ tác vụ');
+            final sttClient = CapCutSttClient(device: device);
+
+            final chunkDoc = await sttClient.transcribeAudio(
+              audioVid: uploadResult.vid,
+              audioMd5: uploadResult.md5,
+              durationMs: chunk.durationMs,
+              language: sourceLanguage,
+              useTranslation: translationEngine == 'capcut',
+              translationLanguage: targetLanguage,
+              timeOffsetMs: chunk.startMs,
+              isCancelled: () => _isCancelled,
+              progressCallback: (pct, msg) {},
+            );
+
+            chunkResults[idx] = chunkDoc.items;
+            completedChunks++;
+
+            final overallProgress =
+                (0.20 + (completedChunks / totalChunks) * 0.50).clamp(0.20, 0.70);
+            _emit(
+              ProcessProgress(
+                stage: ProcessStage.sttTranscribing,
+                progress: overallProgress,
+                message: totalChunks > 1
+                    ? 'CapCut STT: Đã hoàn tất $completedChunks/$totalChunks đoạn (${(completedChunks / totalChunks * 100).round()}%)...'
+                    : 'CapCut đã hoàn tất nhận diện âm thanh!',
+              ),
+            );
+          }
+        }
+
+        final activeWorkers = concurrency;
+        final workers = List.generate(activeWorkers, (id) => sttWorker(id + 1));
+        await Future.wait(workers);
+
         for (var i = 0; i < totalChunks; i++) {
-          if (_isCancelled) throw Exception('Đã huỷ tác vụ');
-          final chunk = chunks[i];
-
-          // 2. Upload VOD
-          final device = DeviceConfig().randomize();
-          final uploader = CapCutVodUploader(device: device);
-
-          _emit(
-            ProcessProgress(
-              stage: ProcessStage.uploadingVod,
-              progress: (0.20 + (i / totalChunks) * 0.20).clamp(0.20, 0.40),
-              message: totalChunks > 1
-                  ? 'Đang tải phân đoạn ${i + 1}/$totalChunks lên CapCut Cloud...'
-                  : 'Đang tải lên CapCut Cloud...',
-            ),
-          );
-
-          final uploadResult = await uploader.uploadFile(
-            chunk.file,
-            isCancelled: () => _isCancelled,
-            progressCallback: (pct, msg) {
-              final overall =
-                  0.20 +
-                  (i / totalChunks) * 0.20 +
-                  (pct * (0.20 / totalChunks));
-              _emit(
-                ProcessProgress(
-                  stage: ProcessStage.uploadingVod,
-                  progress: overall.clamp(0.20, 0.40),
-                  message: totalChunks > 1 ? '[Đoạn ${i + 1}/$totalChunks] $msg' : msg,
-                ),
-              );
-            },
-          );
-
-          // 3. STT CapCut
-          if (_isCancelled) throw Exception('Đã huỷ tác vụ');
-          final sttClient = CapCutSttClient(device: device);
-
-          _emit(
-            ProcessProgress(
-              stage: ProcessStage.sttTranscribing,
-              progress: (0.40 + (i / totalChunks) * 0.30).clamp(0.40, 0.70),
-              message: totalChunks > 1
-                  ? 'CapCut đang nhận diện giọng nói [Đoạn ${i + 1}/$totalChunks]...'
-                  : 'CapCut đang nhận diện giọng nói (STT)...',
-            ),
-          );
-
-          final chunkDoc = await sttClient.transcribeAudio(
-            audioVid: uploadResult.vid,
-            audioMd5: uploadResult.md5,
-            durationMs: chunk.durationMs,
-            language: sourceLanguage,
-            useTranslation: translationEngine == 'capcut',
-            translationLanguage: targetLanguage,
-            timeOffsetMs: chunk.startMs,
-            isCancelled: () => _isCancelled,
-            progressCallback: (pct, msg) {
-              final overall =
-                  0.40 +
-                  (i / totalChunks) * 0.30 +
-                  (pct * (0.30 / totalChunks));
-              _emit(
-                ProcessProgress(
-                  stage: ProcessStage.sttTranscribing,
-                  progress: overall.clamp(0.40, 0.70),
-                  message: totalChunks > 1 ? '[Đoạn ${i + 1}/$totalChunks] $msg' : msg,
-                ),
-              );
-            },
-          );
-
-          allItems.addAll(chunkDoc.items);
+          if (chunkResults[i] != null) {
+            allItems.addAll(chunkResults[i]!);
+          }
         }
       }
 

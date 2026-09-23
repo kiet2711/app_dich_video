@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 
+import 'multi_thread_downloader.dart';
+
 import '../../data/model/subtitle_document.dart';
 import '../../data/model/subtitle_item.dart';
 
@@ -188,15 +190,18 @@ class BilibiliResolver {
         : trimmed.contains('SESSDATA=')
         ? trimmed
         : 'SESSDATA=$trimmed';
+    final buvid = 'buvid3_infoc_${DateTime.now().millisecondsSinceEpoch}';
+    final defaultCookie =
+        'buvid3=$buvid; b_nut=${DateTime.now().millisecondsSinceEpoch ~/ 1000}; CURRENT_FNVAL=4048';
+    final finalCookie =
+        sessData.isEmpty ? defaultCookie : '$sessData; $defaultCookie';
     return {
       'User-Agent': _userAgent,
       'Referer': _referer,
       'Origin': 'https://www.bilibili.com',
       'Accept': 'application/json, text/plain, */*',
       'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-      'Cookie': sessData.isEmpty
-          ? 'CURRENT_FNVAL=4048'
-          : '$sessData; CURRENT_FNVAL=4048',
+      'Cookie': finalCookie,
     };
   }
 
@@ -517,20 +522,17 @@ class BilibiliResolver {
     String audioUrl,
     File destination,
     String cookie, {
+    int concurrency = 16,
     void Function(double progress, String message)? onProgress,
   }) async {
     await destination.parent.create(recursive: true);
-    await dio.download(
-      audioUrl,
-      destination.path,
-      options: Options(headers: requestHeaders(cookie)),
-      onReceiveProgress: (received, total) {
-        final progress = total > 0 ? received / total : 0.0;
-        onProgress?.call(
-          progress,
-          'Đang tải audio Bilibili ${(progress * 100).round()}%',
-        );
-      },
+    final headers = requestHeaders(cookie);
+    await MultiThreadDownloader.downloadFile(
+      url: audioUrl,
+      outputFile: destination,
+      headers: headers,
+      concurrency: concurrency,
+      progressCallback: onProgress,
     );
     if (!await destination.exists() || await destination.length() < 1024) {
       throw StateError('Audio tải từ Bilibili không hợp lệ.');
