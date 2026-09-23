@@ -72,10 +72,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
   Future<void> _initSettingsAndPlayer() async {
     _settings = await SettingsRepository.getInstance();
-    _playbackSpeed = _settings.videoPlaybackSpeed;
 
     try {
       var playablePath = widget.videoPath;
+      var playableUrls = <String>[playablePath];
       var httpHeaders = const <String, String>{};
       if (BilibiliResolver.isBilibiliPageUrl(playablePath)) {
         final resolver = BilibiliResolver();
@@ -84,10 +84,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           target,
           _settings.bilibiliSessData,
         );
-        playablePath = await resolver.getMuxedVideoUrl(
+        playableUrls = await resolver.getMuxedVideoUrls(
           details,
           _settings.bilibiliSessData,
         );
+        playablePath = playableUrls.first;
         httpHeaders = BilibiliResolver.requestHeaders(
           _settings.bilibiliSessData,
         );
@@ -101,36 +102,36 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         if (httpHeaders.isEmpty) {
           httpHeaders = NetworkHeaderHelper.getHeadersForUri(playablePath);
         }
-        _controller = VideoPlayerController.networkUrl(
-          Uri.parse(playablePath),
-          httpHeaders: httpHeaders,
-          videoPlayerOptions: videoOptions,
+        _controller = await _initializeNetworkController(
+          playableUrls,
+          httpHeaders,
+          videoOptions,
         );
       } else if (MediaStorage.isContentUri(playablePath)) {
         _controller = VideoPlayerController.contentUri(
           Uri.parse(playablePath),
           videoPlayerOptions: videoOptions,
         );
+        await _controller!.initialize();
       } else {
         _controller = VideoPlayerController.file(
           File(playablePath),
           videoPlayerOptions: videoOptions,
         );
+        await _controller!.initialize();
       }
 
-      await _controller!.initialize();
       if (!mounted) {
         await _controller!.dispose();
         return;
       }
       final durationMs = _controller!.value.duration.inMilliseconds;
       final resumePositionMs = widget.initialPositionMs.clamp(0, durationMs);
-      if (resumePositionMs > 0 && resumePositionMs < durationMs) {
-        await _controller!.seekTo(Duration(milliseconds: resumePositionMs));
-      }
-      await _controller!.setPlaybackSpeed(_playbackSpeed);
-      _currentPosMs = resumePositionMs;
-      _lastObservedPositionMs = resumePositionMs;
+      final shouldRestorePosition =
+          resumePositionMs > 0 && resumePositionMs < durationMs;
+      _isScrubbing = shouldRestorePosition;
+      _currentPosMs = 0;
+      _lastObservedPositionMs = 0;
       _lastPositionAdvanceAt = DateTime.now();
       _controller!.addListener(_onPlayerUpdate);
       _playbackMonitor = Timer.periodic(
@@ -144,10 +145,61 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         _isInitialized = true;
       });
       await _controller!.play();
+      if (shouldRestorePosition) {
+        try {
+          await Future.wait([
+            _controller!.seekTo(Duration(milliseconds: resumePositionMs)),
+            _ttsScheduler.onSeek(resumePositionMs),
+          ]);
+        } catch (error) {
+          debugPrint('Không thể khôi phục vị trí video online: $error');
+          await _ttsScheduler.onSeek(
+            _controller!.value.position.inMilliseconds,
+          );
+        } finally {
+          _isScrubbing = false;
+          _syncTtsWithVideo();
+        }
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() => _playerError = 'Không mở được video: $e');
     }
+  }
+
+  Future<VideoPlayerController> _initializeNetworkController(
+    List<String> urls,
+    Map<String, String> headers,
+    VideoPlayerOptions options,
+  ) async {
+    Object? lastError;
+    final candidates = urls
+        .map((url) => url.trim())
+        .where((url) => url.startsWith('http://') || url.startsWith('https://'))
+        .toSet();
+
+    for (final url in candidates) {
+      for (var attempt = 0; attempt < 2; attempt++) {
+        final controller = VideoPlayerController.networkUrl(
+          Uri.parse(url),
+          httpHeaders: headers,
+          videoPlayerOptions: options,
+        );
+        try {
+          await controller.initialize();
+          return controller;
+        } catch (error) {
+          lastError = error;
+          try {
+            await controller.dispose();
+          } catch (_) {}
+          if (attempt == 0) {
+            await Future<void>.delayed(const Duration(milliseconds: 300));
+          }
+        }
+      }
+    }
+    throw lastError ?? StateError('Không có URL video online hợp lệ.');
   }
 
   void _onPlayerUpdate() {
@@ -267,22 +319,38 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     if (controller == null) return;
     final shouldResume = controller.value.isPlaying;
     if (shouldResume) await controller.pause();
-    await Future.wait([
-      controller.seekTo(Duration(milliseconds: targetMs)),
-      _ttsScheduler.onSeek(targetMs),
-    ]);
-    if (shouldResume) await controller.play();
+    try {
+      await Future.wait([
+        controller.seekTo(Duration(milliseconds: targetMs)),
+        _ttsScheduler.onSeek(targetMs),
+      ]);
+    } finally {
+      if (shouldResume) await controller.play();
+    }
   }
 
   Future<void> _setPlaybackSpeed(double speed) async {
     final controller = _controller;
     if (controller == null) return;
-    await controller.setPlaybackSpeed(speed);
-    _settings.videoPlaybackSpeed = speed;
-    if (mounted) {
-      setState(() => _playbackSpeed = speed);
+    try {
+      await controller.setPlaybackSpeed(speed);
+      if (mounted) {
+        setState(() => _playbackSpeed = speed);
+      }
+      _syncTtsWithVideo();
+    } catch (error) {
+      try {
+        await controller.setPlaybackSpeed(1);
+      } catch (_) {}
+      if (!mounted) return;
+      setState(() => _playbackSpeed = 1);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Nguồn video này không hỗ trợ tốc độ đã chọn.'),
+        ),
+      );
+      _syncTtsWithVideo();
     }
-    _syncTtsWithVideo();
   }
 
   Future<void> _applyAudioVolumes() async {

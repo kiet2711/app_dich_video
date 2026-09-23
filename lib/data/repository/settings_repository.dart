@@ -107,11 +107,6 @@ class SettingsRepository {
   double get ttsVolume => prefs.getDouble('tts_volume') ?? 1.0;
   set ttsVolume(double v) => prefs.setDouble('tts_volume', v.clamp(0.0, 1.0));
 
-  double get videoPlaybackSpeed =>
-      (prefs.getDouble('video_playback_speed') ?? 1.0).clamp(0.5, 2.0);
-  set videoPlaybackSpeed(double v) =>
-      prefs.setDouble('video_playback_speed', v.clamp(0.5, 2.0));
-
   String get geminiCustomPrompt =>
       prefs.getString('gemini_custom_prompt') ?? '';
   set geminiCustomPrompt(String v) =>

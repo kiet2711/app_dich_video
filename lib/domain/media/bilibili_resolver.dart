@@ -283,14 +283,40 @@ class BilibiliResolver {
     BilibiliVideoDetails details, [
     String cookie = '',
   ]) async {
+    final urls = await getMuxedVideoUrls(details, cookie);
+    return urls.first;
+  }
+
+  Future<List<String>> getMuxedVideoUrls(
+    BilibiliVideoDetails details, [
+    String cookie = '',
+  ]) async {
     final data = await _getPlayData(details, cookie, fnval: '0', quality: '80');
-    final durl = data['durl'] as List<dynamic>? ?? const [];
-    if (durl.isEmpty) {
+    final urls = extractMuxedVideoUrls(data);
+    if (urls.isEmpty) {
       throw StateError('Bilibili không trả luồng video MP4 tương thích iOS.');
     }
-    final url = (durl.first as Map<String, dynamic>)['url']?.toString() ?? '';
-    if (url.isEmpty) throw StateError('Luồng video Bilibili không có URL.');
-    return url;
+    return urls;
+  }
+
+  static List<String> extractMuxedVideoUrls(Map<String, dynamic> data) {
+    final durl = data['durl'] as List<dynamic>? ?? const [];
+    if (durl.isEmpty || durl.first is! Map<String, dynamic>) return const [];
+    final first = durl.first as Map<String, dynamic>;
+    final urls = <String>[
+      first['url']?.toString() ?? '',
+      ...(first['backup_url'] as List<dynamic>? ?? const []).map(
+        (url) => url.toString(),
+      ),
+      ...(first['backupUrl'] as List<dynamic>? ?? const []).map(
+        (url) => url.toString(),
+      ),
+    ];
+    return urls
+        .map((url) => url.trim())
+        .where((url) => url.startsWith('http://') || url.startsWith('https://'))
+        .toSet()
+        .toList(growable: false);
   }
 
   Future<List<BilibiliSubtitleInfo>> getSubtitles(
