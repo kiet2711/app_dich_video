@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../model/history_item.dart';
 import '../model/subtitle_document.dart';
+import '../../domain/media/media_storage.dart';
 import '../../domain/tts/tts_cache_helper.dart';
 
 class HistoryRepository {
@@ -29,7 +30,12 @@ class HistoryRepository {
 
   /// Tự động sửa đường dẫn khi iOS thay đổi UUID sau mỗi lần cập nhật ứng dụng
   static Future<String> resolvePath(String path) async {
-    if (path.isEmpty) return path;
+    if (path.isEmpty ||
+        MediaStorage.isContentUri(path) ||
+        path.startsWith('http://') ||
+        path.startsWith('https://')) {
+      return path;
+    }
     final file = File(path);
     if (await file.exists()) return path;
 
@@ -46,8 +52,9 @@ class HistoryRepository {
 
       // 2. Kiểm tra nếu đường dẫn cũ có /Documents/
       if (path.contains('/Documents/')) {
-        final relative =
-            path.substring(path.indexOf('/Documents/') + '/Documents/'.length);
+        final relative = path.substring(
+          path.indexOf('/Documents/') + '/Documents/'.length,
+        );
         final candidate = File('$docsPath/$relative');
         if (await candidate.exists()) return candidate.path;
       }
@@ -95,7 +102,9 @@ class HistoryRepository {
       }
 
       final newVideo = await resolvePath(item.videoPath);
-      if (newVideo != item.videoPath && await File(newVideo).exists()) {
+      if (newVideo != item.videoPath &&
+          !MediaStorage.isContentUri(newVideo) &&
+          await File(newVideo).exists()) {
         updated = updated.copyWith(videoPath: newVideo);
         hasChanges = true;
       }
@@ -276,7 +285,7 @@ class HistoryRepository {
       final isVideoStillUsed = remaining.any(
         (it) => it.id != item.id && it.videoPath == item.videoPath,
       );
-      if (!isVideoStillUsed) {
+      if (!isVideoStillUsed && !MediaStorage.isContentUri(item.videoPath)) {
         final supportDir = await getApplicationSupportDirectory();
         final mediaDir = Directory(
           '${supportDir.path}${Platform.pathSeparator}media',
@@ -289,6 +298,12 @@ class HistoryRepository {
   }
 
   Future<void> _deleteIfExists(String path) async {
+    if (path.isEmpty ||
+        MediaStorage.isContentUri(path) ||
+        path.startsWith('http://') ||
+        path.startsWith('https://')) {
+      return;
+    }
     try {
       final file = File(path);
       if (await file.exists()) {

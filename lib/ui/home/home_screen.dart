@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
@@ -18,6 +17,7 @@ import '../../domain/media/bilibili_resolver.dart';
 import '../../domain/media/media_storage.dart';
 import '../../domain/media/network_header_helper.dart';
 import '../../domain/pipeline/subtitling_pipeline.dart';
+import '../../domain/service/foreground_service_manager.dart';
 import '../theme/app_theme.dart';
 import 'progress_bottom_sheet.dart';
 
@@ -70,8 +70,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
   static const _engineOptions = [
     MapEntry('capcut', '⚡ CapCut Dịch Sẵn (Miễn phí 100% - Không cần Key)'),
-    MapEntry('gemini-3.5-flash-lite', '🤖 Gemini 3.5 Flash-Lite (RPD cao - Cần API Key)'),
-    MapEntry('gemini-3.1-flash-lite', '🤖 Gemini 3.1 Flash-Lite (Khuyên dùng - Cần API Key)'),
+    MapEntry(
+      'gemini-3.5-flash-lite',
+      '🤖 Gemini 3.5 Flash-Lite (RPD cao - Cần API Key)',
+    ),
+    MapEntry(
+      'gemini-3.1-flash-lite',
+      '🤖 Gemini 3.1 Flash-Lite (Khuyên dùng - Cần API Key)',
+    ),
     MapEntry('none', '🚫 Giữ Nguyên Tiếng Gốc (Không dịch)'),
   ];
 
@@ -118,48 +124,44 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _activePipeline?.cancel();
     unawaited(WakelockPlus.disable());
+    unawaited(ForegroundServiceManager.stop());
     _urlController.dispose();
     _customPromptController.dispose();
     super.dispose();
   }
 
   Future<void> _pickFile() async {
-    final files = await FilePicker.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: const [
-        'mp4',
-        'mov',
-        'm4v',
-        'mkv',
-        'webm',
-        'mp3',
-        'm4a',
-        'aac',
-        'wav',
-        'flac',
-      ],
-    );
-    if (files.isEmpty || files.first.path == null) return;
-
-    final pickedFile = File(files.first.path!);
     try {
       if (mounted) {
-        setState(
-          () => _probeStatusMessage =
-              '⏳ Đang nhập media vào vùng lưu trữ của ứng dụng...',
-        );
+        setState(() => _probeStatusMessage = '⏳ Đang mở media...');
       }
-      final file = await MediaStorage.importForPersistentAccess(
-        pickedFile,
-        files.first.name,
+      final picked = await MediaStorage.pickPersistentMedia(
+        videoOnly: false,
+        allowedExtensions: const [
+          'mp4',
+          'mov',
+          'm4v',
+          'mkv',
+          'webm',
+          'mp3',
+          'm4a',
+          'aac',
+          'wav',
+          'flac',
+        ],
       );
-      final bytes = await file.length();
-      final durationMs = await AudioExtractor.probeDuration(file.path);
+      if (picked == null) {
+        if (mounted) setState(() => _probeStatusMessage = null);
+        return;
+      }
+      final durationMs = await AudioExtractor.probeDuration(picked.location);
       if (!mounted) return;
       setState(() {
-        _selectedVideoPath = file.path;
-        _fileName = files.first.name;
-        _fileSizeMb = '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+        _selectedVideoPath = picked.location;
+        _fileName = picked.name;
+        _fileSizeMb = picked.sizeBytes > 0
+            ? '${(picked.sizeBytes / (1024 * 1024)).toStringAsFixed(1)} MB'
+            : 'Không rõ';
         _fileDurationMs = durationMs;
         _probeStatusMessage = '✅ Đã đọc media: ${_formatDuration(durationMs)}';
       });
@@ -192,8 +194,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final clean = NetworkHeaderHelper.extractCleanUrl(rawUrl);
     if (clean.isEmpty || !NetworkHeaderHelper.isRemoteUrl(clean)) {
       setState(() {
-        _probeStatusMessage =
-            '⚠️ Vui lòng nhập đường link hợp lệ (http://, https:// hoặc link Bilibili/b23.tv)';
+        _probeStatusMessage = '⚠️ Vui lòng nhập đường link hợp lệ (http://, https:// hoặc link Bilibili/b23.tv)';
       });
       return;
     }
@@ -225,11 +226,9 @@ class _HomeScreenState extends State<HomeScreen> {
             _settings?.bilibiliSessData ?? '',
           );
           if (subs.isNotEmpty) {
-            _probeStatusMessage =
-                '✨ Video có sẵn phụ đề Bilibili! Bấm "Bắt đầu" để nạp và dịch ngay.';
+            _probeStatusMessage = '✨ Video có sẵn phụ đề Bilibili! Bấm "Bắt đầu" để nạp và dịch ngay.';
           } else {
-            _probeStatusMessage =
-                '✅ Đã tìm thấy audio DASH Bilibili (~30-50MB). Sẵn sàng tạo sub!';
+            _probeStatusMessage = '✅ Đã tìm thấy audio DASH Bilibili (~30-50MB). Sẵn sàng tạo sub!';
           }
         } catch (_) {
           _probeStatusMessage =
@@ -262,7 +261,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _startProcessing() async {
-    if (_selectedVideoPath == null || _settings == null || _isProcessing) return;
+    if (_selectedVideoPath == null || _settings == null || _isProcessing) {
+      return;
+    }
 
     // Kiểm tra Gemini API Key trước khi xử lý giống bản gốc Android
     if (_selectedEngine.startsWith('gemini') &&
@@ -297,6 +298,12 @@ class _HomeScreenState extends State<HomeScreen> {
       _cancelRequested = false;
     });
     await WakelockPlus.enable();
+    await ForegroundServiceManager.start(
+      title: 'CapSub AI - Tạo phụ đề',
+      message: 'Đang chuẩn bị xử lý video...',
+      progress: 5,
+      maxProgress: 100,
+    );
     if (!mounted) return;
 
     final pipeline = SubtitlingPipeline(
@@ -321,6 +328,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final sub = pipeline.progressStream.listen((p) {
       progressNotifier.value = p;
+      final pct = (p.progress * 100).toInt().clamp(0, 100);
+      unawaited(
+        ForegroundServiceManager.update(
+          message: p.message,
+          progress: pct,
+          maxProgress: 100,
+        ),
+      );
     });
 
     // Mở ModalBottomSheet toàn màn hình che BottomNavigationBar giống Compose ModalBottomSheet bản gốc
@@ -342,7 +357,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 onCancel: () {
                   _cancelRequested = true;
                   _activePipeline?.cancel();
-                  if (Navigator.of(sheetContext, rootNavigator: true).canPop()) {
+                  unawaited(ForegroundServiceManager.stop());
+                  if (Navigator.of(
+                    sheetContext,
+                    rootNavigator: true,
+                  ).canPop()) {
                     Navigator.of(sheetContext, rootNavigator: true).pop();
                   }
                 },
@@ -419,6 +438,7 @@ class _HomeScreenState extends State<HomeScreen> {
       pipeline.dispose();
       progressNotifier.dispose();
       await WakelockPlus.disable();
+      await ForegroundServiceManager.stop();
       if (mounted) {
         setState(() {
           _isProcessing = false;
@@ -531,8 +551,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                 fontSize: 13,
                                 fontWeight: FontWeight.bold,
                                 color: _inputMode == 0
-                                  ? Colors.black
-                                  : Colors.grey,
+                                    ? Colors.black
+                                    : Colors.grey,
                               ),
                             ),
                           ],
@@ -583,8 +603,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                 fontSize: 13,
                                 fontWeight: FontWeight.bold,
                                 color: _inputMode == 1
-                                  ? Colors.black
-                                  : Colors.grey,
+                                    ? Colors.black
+                                    : Colors.grey,
                               ),
                             ),
                           ],
@@ -681,10 +701,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     const SizedBox(height: 12),
                     TextField(
                       controller: _urlController,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 13,
-                      ),
+                      style: const TextStyle(color: Colors.white, fontSize: 13),
                       onChanged: (val) {
                         setState(() {
                           _probeStatusMessage = null;
@@ -692,7 +709,10 @@ class _HomeScreenState extends State<HomeScreen> {
                       },
                       decoration: InputDecoration(
                         hintText: 'https://.../video.mp4',
-                        hintStyle: const TextStyle(color: Colors.grey, fontSize: 13),
+                        hintStyle: const TextStyle(
+                          color: Colors.grey,
+                          fontSize: 13,
+                        ),
                         filled: true,
                         fillColor: const Color(0xFF1E202A),
                         border: OutlineInputBorder(
@@ -754,7 +774,10 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                             label: const Text(
                               'Dán Link',
-                              style: TextStyle(fontSize: 13, color: Colors.white),
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Colors.white,
+                              ),
                             ),
                           ),
                         ),
@@ -764,13 +787,16 @@ class _HomeScreenState extends State<HomeScreen> {
                             style: ElevatedButton.styleFrom(
                               backgroundColor: AppColors.primaryEmerald,
                               foregroundColor: Colors.black,
-                              disabledBackgroundColor: AppColors.primaryEmerald.withValues(alpha: 0.5),
+                              disabledBackgroundColor: AppColors.primaryEmerald
+                                  .withValues(alpha: 0.5),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(8),
                               ),
                               padding: const EdgeInsets.symmetric(vertical: 12),
                             ),
-                            onPressed: (_urlController.text.isNotEmpty && !_isProbingUrl)
+                            onPressed:
+                                (_urlController.text.isNotEmpty &&
+                                    !_isProbingUrl)
                                 ? () => _probeUrl(_urlController.text)
                                 : null,
                             icon: _isProbingUrl
@@ -816,7 +842,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
                     // Preview khi video online đã sẵn sàng giống bản gốc Android
                     if (_selectedVideoPath != null &&
-                        NetworkHeaderHelper.isRemoteUrl(_selectedVideoPath!)) ...[
+                        NetworkHeaderHelper.isRemoteUrl(
+                          _selectedVideoPath!,
+                        )) ...[
                       const SizedBox(height: 12),
                       Container(
                         width: double.infinity,
@@ -825,7 +853,9 @@ class _HomeScreenState extends State<HomeScreen> {
                           color: const Color(0xFF1E2E24),
                           borderRadius: BorderRadius.circular(10),
                           border: Border.all(
-                            color: AppColors.primaryEmerald.withValues(alpha: 0.5),
+                            color: AppColors.primaryEmerald.withValues(
+                              alpha: 0.5,
+                            ),
                           ),
                         ),
                         child: Row(
@@ -942,14 +972,13 @@ class _HomeScreenState extends State<HomeScreen> {
                     _settings?.geminiCustomPrompt = val;
                   },
                   maxLines: 4,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 13,
-                  ),
+                  style: const TextStyle(color: Colors.white, fontSize: 13),
                   decoration: InputDecoration(
-                    hintText:
-                        'Nhập hướng dẫn prompt dịch cho Gemini (vd: Dịch theo lối cổ trang, xưng hô huynh/muội, giữ câu ngắn...)',
-                    hintStyle: const TextStyle(color: Colors.grey, fontSize: 13),
+                    hintText: 'Nhập hướng dẫn prompt dịch cho Gemini (vd: Dịch theo lối cổ trang, xưng hô huynh/muội, giữ câu ngắn...)',
+                    hintStyle: const TextStyle(
+                      color: Colors.grey,
+                      fontSize: 13,
+                    ),
                     filled: true,
                     fillColor: AppColors.darkSurface,
                     border: OutlineInputBorder(
@@ -962,7 +991,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(10),
-                      borderSide: const BorderSide(color: AppColors.primaryEmerald),
+                      borderSide: const BorderSide(
+                        color: AppColors.primaryEmerald,
+                      ),
                     ),
                   ),
                 ),
@@ -979,7 +1010,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primaryEmerald,
                   foregroundColor: Colors.black,
-                  disabledBackgroundColor: AppColors.primaryEmerald.withValues(alpha: 0.3),
+                  disabledBackgroundColor: AppColors.primaryEmerald.withValues(
+                    alpha: 0.3,
+                  ),
                   disabledForegroundColor: Colors.black38,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
@@ -1029,8 +1062,8 @@ class SettingDropdown extends StatelessWidget {
     final currentKey = options.any((e) => e.key == currentValue)
         ? currentValue
         : (options.any((e) => e.value == currentValue)
-            ? options.firstWhere((e) => e.value == currentValue).key
-            : (options.isNotEmpty ? options.first.key : null));
+              ? options.firstWhere((e) => e.value == currentValue).key
+              : (options.isNotEmpty ? options.first.key : null));
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

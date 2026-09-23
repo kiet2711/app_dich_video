@@ -2,6 +2,18 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 
+class ContentMediaMetadata {
+  const ContentMediaMetadata({
+    required this.name,
+    required this.sizeBytes,
+    required this.durationMs,
+  });
+
+  final String name;
+  final int sizeBytes;
+  final int durationMs;
+}
+
 class AudioExtractor {
   static const MethodChannel _channel = MethodChannel(
     'com.capcut.capsub/media',
@@ -16,6 +28,21 @@ class AudioExtractor {
       throw StateError('Không đọc được thời lượng của tệp media.');
     }
     return durationMs;
+  }
+
+  static Future<ContentMediaMetadata> getContentMetadata(String uri) async {
+    final result = await _channel.invokeMapMethod<String, dynamic>(
+      'getContentMetadata',
+      {'uri': uri},
+    );
+    if (result == null) {
+      throw StateError('Không đọc được thông tin media.');
+    }
+    return ContentMediaMetadata(
+      name: (result['name'] as String?)?.trim() ?? '',
+      sizeBytes: (result['sizeBytes'] as num?)?.toInt() ?? 0,
+      durationMs: (result['durationMs'] as num?)?.toInt() ?? 0,
+    );
   }
 
   static Future<int> extractAudio({

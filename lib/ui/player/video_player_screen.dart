@@ -9,6 +9,7 @@ import 'package:video_player/video_player.dart';
 import '../../data/model/subtitle_document.dart';
 import '../../data/repository/settings_repository.dart';
 import '../../domain/media/bilibili_resolver.dart';
+import '../../domain/media/media_storage.dart';
 import '../../domain/media/network_header_helper.dart';
 import '../../domain/tts/audio_file_validator.dart';
 import '../../player/tts_audio_scheduler.dart';
@@ -85,6 +86,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         _controller = VideoPlayerController.networkUrl(
           Uri.parse(playablePath),
           httpHeaders: httpHeaders,
+          videoPlayerOptions: videoOptions,
+        );
+      } else if (MediaStorage.isContentUri(playablePath)) {
+        _controller = VideoPlayerController.contentUri(
+          Uri.parse(playablePath),
           videoPlayerOptions: videoOptions,
         );
       } else {

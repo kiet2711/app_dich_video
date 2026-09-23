@@ -7,6 +7,7 @@ import '../../data/api/gemini_translator.dart';
 import '../../data/model/subtitle_document.dart';
 import '../../data/repository/history_repository.dart';
 import '../../data/repository/settings_repository.dart';
+import '../../domain/media/media_storage.dart';
 import '../theme/app_theme.dart';
 
 class ImportSubtitleDialog extends StatefulWidget {
@@ -28,13 +29,11 @@ class _ImportSubtitleDialogState extends State<ImportSubtitleDialog> {
   String _translationProgressText = '';
 
   Future<void> _pickVideo() async {
-    final files = await FilePicker.pickFiles(type: FileType.video);
-    if (files.isNotEmpty && files.first.path != null) {
-      final path = files.first.path!;
-      final name = File(path).uri.pathSegments.last;
+    final picked = await MediaStorage.pickPersistentMedia(videoOnly: true);
+    if (picked != null) {
       setState(() {
-        _selectedVideoPath = path;
-        _selectedVideoName = name.isNotEmpty ? name : 'video.mp4';
+        _selectedVideoPath = picked.location;
+        _selectedVideoName = picked.name.isNotEmpty ? picked.name : 'video.mp4';
       });
     }
   }
@@ -86,9 +85,8 @@ class _ImportSubtitleDialogState extends State<ImportSubtitleDialog> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Lỗi nạp file: $e')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Lỗi nạp file: $e')));
       }
     }
   }
@@ -103,7 +101,9 @@ class _ImportSubtitleDialogState extends State<ImportSubtitleDialog> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Vui lòng cấu hình Gemini API Key trong Cài đặt trước!'),
+            content: Text(
+              'Vui lòng cấu hình Gemini API Key trong Cài đặt trước!',
+            ),
           ),
         );
       }
@@ -122,7 +122,9 @@ class _ImportSubtitleDialogState extends State<ImportSubtitleDialog> {
         if (mounted) {
           setState(() => _isTranslating = false);
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('File phụ đề rỗng hoặc không đúng định dạng.')),
+            const SnackBar(
+              content: Text('File phụ đề rỗng hoặc không đúng định dạng.'),
+            ),
           );
         }
         return;
@@ -168,7 +170,9 @@ class _ImportSubtitleDialogState extends State<ImportSubtitleDialog> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Đã dịch xong ${translatedDoc.items.length} câu thoại!'),
+              content: Text(
+                'Đã dịch xong ${translatedDoc.items.length} câu thoại!',
+              ),
             ),
           );
           Navigator.pop(context);
@@ -177,9 +181,8 @@ class _ImportSubtitleDialogState extends State<ImportSubtitleDialog> {
     } catch (e) {
       if (mounted) {
         setState(() => _isTranslating = false);
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Lỗi dịch phụ đề: $e')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Lỗi dịch phụ đề: $e')));
       }
     }
   }
@@ -275,7 +278,11 @@ class _ImportSubtitleDialogState extends State<ImportSubtitleDialog> {
                       ),
                       if (hasVideo && !_isTranslating)
                         IconButton(
-                          icon: const Icon(Icons.close, size: 18, color: Colors.grey),
+                          icon: const Icon(
+                            Icons.close,
+                            size: 18,
+                            color: Colors.grey,
+                          ),
                           onPressed: () {
                             setState(() {
                               _selectedVideoPath = null;
@@ -317,7 +324,8 @@ class _ImportSubtitleDialogState extends State<ImportSubtitleDialog> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              _selectedSrtName ?? 'Chọn file Phụ đề (.srt, .vtt)',
+                              _selectedSrtName ??
+                                  'Chọn file Phụ đề (.srt, .vtt)',
                               style: TextStyle(
                                 color: hasSrt ? Colors.white : Colors.grey,
                                 fontSize: 14,
@@ -343,7 +351,11 @@ class _ImportSubtitleDialogState extends State<ImportSubtitleDialog> {
                       ),
                       if (hasSrt && !_isTranslating)
                         IconButton(
-                          icon: const Icon(Icons.close, size: 18, color: Colors.grey),
+                          icon: const Icon(
+                            Icons.close,
+                            size: 18,
+                            color: Colors.grey,
+                          ),
                           onPressed: () {
                             setState(() {
                               _selectedSrtPath = null;

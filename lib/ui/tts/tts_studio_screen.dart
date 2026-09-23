@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 
 import '../../domain/media/audio_extractor.dart';
+import '../../domain/media/media_storage.dart';
 import '../../domain/media/network_header_helper.dart';
 
 import 'package:file_picker/file_picker.dart';
@@ -15,6 +16,7 @@ import '../../data/model/subtitle_document.dart';
 import '../../data/model/voice_model.dart';
 import '../../data/repository/history_repository.dart';
 import '../../data/repository/settings_repository.dart';
+import '../../domain/service/foreground_service_manager.dart';
 import '../../domain/tts/tts_generation_manager.dart';
 import '../player/video_player_screen.dart';
 import '../settings/settings_screen.dart';
@@ -60,12 +62,32 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
   @override
   void dispose() {
     _ttsManager.progress.removeListener(_onTtsProgressChanged);
+    unawaited(ForegroundServiceManager.stop());
     super.dispose();
   }
 
   void _onTtsProgressChanged() {
     if (!mounted) return;
     final state = _ttsManager.progress.value;
+    if (state.isRunning) {
+      final pct = state.totalCount > 0
+          ? ((state.completedCount / state.totalCount) * 100)
+              .toInt()
+              .clamp(0, 100)
+          : 0;
+      final msg =
+          'Đã tạo: ${state.completedCount}/${state.totalCount} câu ($pct%)';
+      unawaited(
+        ForegroundServiceManager.update(
+          title: 'CapSub AI - Lồng tiếng TTS',
+          message: msg,
+          progress: pct,
+          maxProgress: 100,
+        ),
+      );
+    } else {
+      unawaited(ForegroundServiceManager.stop());
+    }
     if (state.isRunning != _wasRunning) {
       _wasRunning = state.isRunning;
       setState(() {});
@@ -117,10 +139,10 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
   }
 
   Future<void> _pickVideoFromFiles() async {
-    final files = await FilePicker.pickFiles(type: FileType.video);
-    if (files.isNotEmpty && files.first.path != null) {
+    final picked = await MediaStorage.pickPersistentMedia(videoOnly: true);
+    if (picked != null) {
       setState(() {
-        _videoPath = files.first.path!;
+        _videoPath = picked.location;
       });
       await _refreshVideoMetadata();
       if (_doc != null && _doc!.items.isNotEmpty) {
@@ -143,20 +165,38 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
     }
 
     final isOnline = NetworkHeaderHelper.isRemoteUrl(path);
-    var name = isOnline
-        ? NetworkHeaderHelper.getSuggestedTitle(path)
-        : File(path).uri.pathSegments.last;
+    final isContent = MediaStorage.isContentUri(path);
+    var name = 'video.mp4';
     var sizeLabel = isOnline ? 'Trực tuyến' : '';
     var durationMs = 0;
-    if (!isOnline) {
+
+    if (isOnline) {
+      name = NetworkHeaderHelper.getSuggestedTitle(path);
+    } else if (isContent) {
+      try {
+        final meta = await AudioExtractor.getContentMetadata(path);
+        name = meta.name.isNotEmpty ? meta.name : 'video.mp4';
+        if (meta.sizeBytes > 0) {
+          sizeLabel =
+              '${(meta.sizeBytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+        }
+        durationMs = meta.durationMs;
+      } catch (_) {}
+    } else {
+      try {
+        name = File(path).uri.pathSegments.last;
+      } catch (_) {}
       try {
         final bytes = await File(path).length();
         sizeLabel = '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
       } catch (_) {}
     }
-    try {
-      durationMs = await AudioExtractor.probeDuration(path);
-    } catch (_) {}
+
+    if (durationMs <= 0) {
+      try {
+        durationMs = await AudioExtractor.probeDuration(path);
+      } catch (_) {}
+    }
     if (name.trim().isEmpty) name = 'video.mp4';
     if (!mounted || _videoPath != path) return;
     setState(() {
@@ -471,6 +511,12 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
     }
 
     await WakelockPlus.enable();
+    await ForegroundServiceManager.start(
+      title: 'CapSub AI - Lồng tiếng TTS',
+      message: 'Đang chuẩn bị sinh giọng đọc...',
+      progress: 0,
+      maxProgress: 100,
+    );
     try {
       await _ttsManager.generateAll(
         document: _doc!,
@@ -487,6 +533,7 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
       }
     } finally {
       await WakelockPlus.disable();
+      await ForegroundServiceManager.stop();
     }
   }
 
@@ -947,7 +994,10 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
         ),
         const SizedBox(height: 14),
         OutlinedButton.icon(
-          onPressed: _ttsManager.cancel,
+          onPressed: () {
+            _ttsManager.cancel();
+            unawaited(ForegroundServiceManager.stop());
+          },
           icon: const Icon(Icons.cancel, size: 16),
           label: const Text('Hủy tiến trình'),
           style: OutlinedButton.styleFrom(

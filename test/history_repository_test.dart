@@ -94,8 +94,7 @@ void main() {
     expect(repo.getHistory(), isEmpty);
   });
 
-  test('self-heals paths when iOS container UUID changes after app update',
-      () async {
+  test('self-heals paths when iOS container UUID changes after app update', () async {
     final repo = await HistoryRepository.getInstance();
 
     // 1. Tạo file SRT và JSON thực sự trong Documents directory hiện tại
@@ -126,5 +125,44 @@ void main() {
     final loadedDoc = await repo.loadSubtitleDocument(oldItem);
     expect(loadedDoc, isNotNull);
     expect(loadedDoc!.items.first.originalText, 'Hello');
+  });
+
+  test('handles content:// URIs safely in resolvePath and history lifecycle', () async {
+    final repo = await HistoryRepository.getInstance();
+    const contentUri =
+        'content://com.android.providers.media.documents/document/video%3A12345';
+
+    // resolvePath should return the content URI as-is
+    final resolved = await HistoryRepository.resolvePath(contentUri);
+    expect(resolved, contentUri);
+
+    final doc = SubtitleDocument([
+      SubtitleItem(
+        id: 1,
+        startMs: 0,
+        endMs: 2000,
+        originalText: 'Content URI video test',
+      ),
+    ]);
+
+    final item = await repo.saveHistory(
+      videoPath: contentUri,
+      title: 'Gallery Video',
+      document: doc,
+      durationMs: 120000,
+    );
+
+    expect(item.videoPath, contentUri);
+
+    final list = repo.getHistory();
+    expect(list.any((it) => it.videoPath == contentUri), isTrue);
+
+    final loadedDoc = await repo.loadSubtitleDocument(item);
+    expect(loadedDoc, isNotNull);
+    expect(loadedDoc!.items.first.originalText, 'Content URI video test');
+
+    // Deleting should not throw or attempt to delete content:// URI
+    await repo.deleteItem(item.id);
+    expect(repo.getHistory().any((it) => it.videoPath == contentUri), isFalse);
   });
 }
