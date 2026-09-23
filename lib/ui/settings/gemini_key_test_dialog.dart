@@ -6,11 +6,13 @@ import '../theme/app_theme.dart';
 
 class GeminiKeyTestDialog extends StatefulWidget {
   final List<String> apiKeys;
+  final String initialModelId;
   final ValueChanged<List<String>>? onRemoveDeadKeys;
 
   const GeminiKeyTestDialog({
     super.key,
     required this.apiKeys,
+    this.initialModelId = 'gemini-3.5-flash-lite',
     this.onRemoveDeadKeys,
   });
 
@@ -20,12 +22,16 @@ class GeminiKeyTestDialog extends StatefulWidget {
 
 class _GeminiKeyTestDialogState extends State<GeminiKeyTestDialog> {
   bool _isLoading = true;
+  late String _selectedModel;
   List<GeminiKeyCheckResult> _results = [];
   final Set<int> _recheckingIndices = {};
 
   @override
   void initState() {
     super.initState();
+    _selectedModel = widget.initialModelId.trim().isEmpty
+        ? 'gemini-3.5-flash-lite'
+        : widget.initialModelId.trim();
     _startCheckAll();
   }
 
@@ -35,7 +41,10 @@ class _GeminiKeyTestDialogState extends State<GeminiKeyTestDialog> {
       _results = [];
     });
 
-    final res = await GeminiKeyChecker.checkAllKeys(widget.apiKeys);
+    final res = await GeminiKeyChecker.checkAllKeys(
+      widget.apiKeys,
+      modelId: _selectedModel,
+    );
     if (!mounted) return;
 
     setState(() {
@@ -50,7 +59,10 @@ class _GeminiKeyTestDialogState extends State<GeminiKeyTestDialog> {
       _recheckingIndices.add(index);
     });
 
-    final updated = await GeminiKeyChecker.checkKey(_results[index].key);
+    final updated = await GeminiKeyChecker.checkKey(
+      _results[index].key,
+      modelId: _selectedModel,
+    );
     if (!mounted) return;
 
     setState(() {
@@ -73,7 +85,7 @@ class _GeminiKeyTestDialogState extends State<GeminiKeyTestDialog> {
       SnackBar(
         content: Text(
           removedCount > 0
-              ? 'Đã loại bỏ $removedCount key chết, giữ lại ${aliveKeys.length} key hoạt động!'
+              ? 'Đã loại bỏ $removedCount key không khả dụng, giữ lại ${aliveKeys.length} key sẵn sàng dịch!'
               : 'Tất cả các key đều đang hoạt động tốt!',
         ),
         backgroundColor: AppColors.primaryEmerald,
@@ -131,7 +143,7 @@ class _GeminiKeyTestDialogState extends State<GeminiKeyTestDialog> {
                         ),
                         SizedBox(height: 2),
                         Text(
-                          'Xác thực trạng thái sống / chết với máy chủ Google',
+                          'Gọi thử AI thực tế để phát hiện key chết hoặc lỗi 429',
                           style: TextStyle(color: Colors.white60, fontSize: 12),
                         ),
                       ],
@@ -143,7 +155,79 @@ class _GeminiKeyTestDialogState extends State<GeminiKeyTestDialog> {
                   ),
                 ],
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 12),
+
+              // Model selector row
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF13141B),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.cardBorder),
+                ),
+                child: Row(
+                  children: [
+                    const Text(
+                      'Model kiểm tra:',
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          value: ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite']
+                                  .contains(_selectedModel)
+                              ? _selectedModel
+                              : 'gemini-3.5-flash-lite',
+                          isExpanded: true,
+                          dropdownColor: const Color(0xFF1E202A),
+                          icon: const Icon(
+                            Icons.keyboard_arrow_down,
+                            color: AppColors.primaryEmerald,
+                            size: 18,
+                          ),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          items: const [
+                            DropdownMenuItem(
+                              value: 'gemini-3.5-flash-lite',
+                              child: Text(
+                                '🤖 Gemini 3.5 Flash-Lite (RPD cao)',
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            DropdownMenuItem(
+                              value: 'gemini-3.1-flash-lite',
+                              child: Text(
+                                '🤖 Gemini 3.1 Flash-Lite (Khuyên dùng)',
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                          onChanged: _isLoading
+                              ? null
+                              : (val) {
+                                  if (val != null && val != _selectedModel) {
+                                    setState(() {
+                                      _selectedModel = val;
+                                    });
+                                    _startCheckAll();
+                                  }
+                                },
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 10),
 
               // Summary Bar
               if (!_isLoading && _results.isNotEmpty)
@@ -164,13 +248,13 @@ class _GeminiKeyTestDialogState extends State<GeminiKeyTestDialog> {
                       ),
                       Container(width: 1, height: 24, color: AppColors.cardBorder),
                       _buildSummaryItem(
-                        label: '🟢 Hoạt động',
+                        label: '🟢 Sẵn sàng',
                         count: '$aliveCount',
                         color: AppColors.primaryEmerald,
                       ),
                       Container(width: 1, height: 24, color: AppColors.cardBorder),
                       _buildSummaryItem(
-                        label: '🔴 Chết / Lỗi',
+                        label: '🔴 Lỗi / Hết ngạch',
                         count: '$deadCount',
                         color: deadCount > 0 ? Colors.redAccent : Colors.white38,
                       ),
@@ -178,22 +262,25 @@ class _GeminiKeyTestDialogState extends State<GeminiKeyTestDialog> {
                   ),
                 ),
 
-              const SizedBox(height: 12),
+              const SizedBox(height: 10),
 
               // Main Body (List or Loading)
               Expanded(
                 child: _isLoading
-                    ? const Center(
+                    ? Center(
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            CircularProgressIndicator(
+                            const CircularProgressIndicator(
                               color: AppColors.primaryEmerald,
                             ),
-                            SizedBox(height: 16),
+                            const SizedBox(height: 16),
                             Text(
-                              'Đang kiểm tra kết nối với Google...',
-                              style: TextStyle(color: Colors.white70, fontSize: 13),
+                              'Đang gọi thử AI Google ($_selectedModel)...',
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 13,
+                              ),
                             ),
                           ],
                         ),
@@ -210,7 +297,8 @@ class _GeminiKeyTestDialogState extends State<GeminiKeyTestDialog> {
                             separatorBuilder: (_, _) => const SizedBox(height: 8),
                             itemBuilder: (context, index) {
                               final item = _results[index];
-                              final isChecking = _recheckingIndices.contains(index);
+                              final isChecking =
+                                  _recheckingIndices.contains(index);
                               return _buildKeyItemCard(index, item, isChecking);
                             },
                           ),
@@ -235,7 +323,7 @@ class _GeminiKeyTestDialogState extends State<GeminiKeyTestDialog> {
                         ),
                         icon: const Icon(Icons.delete_sweep_rounded, size: 18),
                         label: Text(
-                          'Xoá $deadCount key chết',
+                          'Xoá $deadCount key lỗi',
                           style: const TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.bold,

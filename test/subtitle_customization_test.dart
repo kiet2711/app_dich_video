@@ -69,6 +69,27 @@ void main() {
       expect(settings.geminiBatchSize, equals(100));
     });
 
+    test('Audio slice concurrency and chunk duration getters/setters work properly', () {
+      expect(settings.audioSliceConcurrency, equals(3));
+      settings.audioSliceConcurrency = 5;
+      expect(settings.audioSliceConcurrency, equals(5));
+      settings.audioSliceConcurrency = 10;
+      expect(settings.audioSliceConcurrency, equals(6));
+      settings.audioSliceConcurrency = 0;
+      expect(settings.audioSliceConcurrency, equals(1));
+
+      expect(settings.audioChunkDurationMin, equals(10));
+      expect(settings.audioChunkDurationSec, equals(600));
+      settings.audioChunkDurationMin = 15;
+      expect(settings.audioChunkDurationMin, equals(15));
+      expect(settings.audioChunkDurationSec, equals(900));
+      settings.audioChunkDurationMin = 20;
+      expect(settings.audioChunkDurationMin, equals(15));
+      settings.audioChunkDurationMin = 0;
+      expect(settings.audioChunkDurationMin, equals(1));
+      expect(settings.audioChunkDurationSec, equals(60));
+    });
+
     test('SubtitleItem getDisplayText handles bilingual, translated, and original', () {
       final item = SubtitleItem(
         id: 1,

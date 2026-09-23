@@ -103,10 +103,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
       return;
     }
 
+    final currentModel = (_settings?.selectedModel.startsWith('gemini') == true)
+        ? _settings!.selectedModel
+        : 'gemini-3.5-flash-lite';
+
     showDialog(
       context: context,
       builder: (_) => GeminiKeyTestDialog(
         apiKeys: keys,
+        initialModelId: currentModel,
         onRemoveDeadKeys: (aliveKeys) {
           setState(() {
             _apiKeysController.text = aliveKeys.join('\n');
@@ -400,6 +405,139 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   onChanged: (val) {
                     setState(() {
                       _settings!.capcutSttConcurrency = val.toInt();
+                    });
+                  },
+                ),
+                const SizedBox(height: 12),
+                const Divider(color: AppColors.cardBorder),
+                const SizedBox(height: 6),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'SỐ LUỒNG CẮT ÂM THANH ĐỒNG THỜI:',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                      ),
+                    ),
+                    Text(
+                      '${_settings!.audioSliceConcurrency} LUỒNG',
+                      style: const TextStyle(
+                        color: AppColors.primaryEmerald,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Số luồng trích xuất các phân đoạn âm thanh song song từ file âm thanh tổng (Khuyên dùng: 2 - 4 luồng).',
+                  style: TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+                Slider(
+                  value: _settings!.audioSliceConcurrency.toDouble(),
+                  min: 1,
+                  max: 6,
+                  divisions: 5,
+                  activeColor: AppColors.primaryEmerald,
+                  onChanged: (val) {
+                    setState(() {
+                      _settings!.audioSliceConcurrency = val.toInt();
+                    });
+                  },
+                ),
+                const SizedBox(height: 12),
+                const Divider(color: AppColors.cardBorder),
+                const SizedBox(height: 6),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'THỜI LƯỢNG MỖI PHÂN ĐOẠN (GỬI CAPCUT):',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1E202A),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: AppColors.cardBorder),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            visualDensity: VisualDensity.compact,
+                            icon: const Icon(
+                              Icons.remove_circle_outline_rounded,
+                              size: 20,
+                              color: AppColors.primaryEmerald,
+                            ),
+                            tooltip: 'Giảm 1 phút',
+                            onPressed: _settings!.audioChunkDurationMin > 1
+                                ? () {
+                                    setState(() {
+                                      _settings!.audioChunkDurationMin--;
+                                    });
+                                  }
+                                : null,
+                          ),
+                          Container(
+                            constraints: const BoxConstraints(minWidth: 64),
+                            alignment: Alignment.center,
+                            padding: const EdgeInsets.symmetric(horizontal: 4),
+                            child: Text(
+                              '${_settings!.audioChunkDurationMin} PHÚT',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ),
+                          IconButton(
+                            visualDensity: VisualDensity.compact,
+                            icon: const Icon(
+                              Icons.add_circle_outline_rounded,
+                              size: 20,
+                              color: AppColors.primaryEmerald,
+                            ),
+                            tooltip: 'Tăng 1 phút',
+                            onPressed: _settings!.audioChunkDurationMin < 15
+                                ? () {
+                                    setState(() {
+                                      _settings!.audioChunkDurationMin++;
+                                    });
+                                  }
+                                : null,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Thời lượng tối đa của mỗi đoạn âm thanh khi gửi nhận diện CapCut Cloud (từ 1 đến 15 phút, mặc định: 10 phút). Video ngắn hơn mốc này sẽ gửi nguyên file.',
+                  style: TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+                Slider(
+                  value: _settings!.audioChunkDurationMin.toDouble(),
+                  min: 1,
+                  max: 15,
+                  divisions: 14,
+                  activeColor: AppColors.primaryEmerald,
+                  onChanged: (val) {
+                    setState(() {
+                      _settings!.audioChunkDurationMin = val.toInt();
                     });
                   },
                 ),

@@ -1,27 +1,6 @@
-import 'dart:convert';
-import 'dart:typed_data';
-
 import 'package:capsub_flutter/data/api/gemini_key_checker.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
-
-class _MockHttpAdapter implements HttpClientAdapter {
-  final Future<ResponseBody> Function(RequestOptions options) handler;
-
-  _MockHttpAdapter(this.handler);
-
-  @override
-  Future<ResponseBody> fetch(
-    RequestOptions options,
-    Stream<Uint8List>? requestStream,
-    Future<void>? cancelFuture,
-  ) {
-    return handler(options);
-  }
-
-  @override
-  void close({bool force = false}) {}
-}
 
 void main() {
   group('GeminiKeyChecker Tests', () {
@@ -53,51 +32,70 @@ void main() {
       );
     });
 
-    test('HTTP 200 returns alive status with available models', () async {
+    test('HTTP 200 returns alive status with tested model info', () async {
       final dio = Dio();
-      dio.httpClientAdapter = _MockHttpAdapter((options) async {
-        expect(options.queryParameters['key'], 'valid_key_123');
-        final jsonResponse = jsonEncode({
-          'models': [
-            {'name': 'models/gemini-1.5-flash'},
-            {'name': 'models/gemini-2.0-flash'},
-          ],
-        });
-        return ResponseBody.fromString(
-          jsonResponse,
-          200,
-          headers: {
-            Headers.contentTypeHeader: [Headers.jsonContentType],
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            expect(options.queryParameters['key'], 'valid_key_123');
+            expect(options.path, contains('gemini-3.5-flash-lite:generateContent'));
+            handler.resolve(
+              Response(
+                requestOptions: options,
+                statusCode: 200,
+                data: {
+                  'candidates': [
+                    {
+                      'content': {
+                        'parts': [
+                          {'text': 'Hello'}
+                        ]
+                      }
+                    }
+                  ]
+                },
+              ),
+            );
           },
-        );
-      });
+        ),
+      );
 
-      final result = await GeminiKeyChecker.checkKey('valid_key_123', dio: dio);
+      final result = await GeminiKeyChecker.checkKey(
+        'valid_key_123',
+        modelId: 'gemini-3.5-flash-lite',
+        dio: dio,
+      );
       expect(result.status, GeminiKeyStatus.alive);
       expect(result.isAlive, isTrue);
       expect(result.statusCode, 200);
-      expect(result.availableModels, contains('gemini-1.5-flash'));
-      expect(result.availableModels, contains('gemini-2.0-flash'));
+      expect(result.testedModel, 'gemini-3.5-flash-lite');
+      expect(result.message, contains('Sống & Sẵn sàng dịch'));
     });
 
     test('HTTP 400 returns dead status (API_KEY_INVALID)', () async {
       final dio = Dio();
-      dio.httpClientAdapter = _MockHttpAdapter((options) async {
-        final jsonResponse = jsonEncode({
-          'error': {
-            'code': 400,
-            'message': 'API key not valid. Please pass a valid API key.',
-            'status': 'INVALID_ARGUMENT',
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            handler.reject(
+              DioException(
+                requestOptions: options,
+                response: Response(
+                  requestOptions: options,
+                  statusCode: 400,
+                  data: {
+                    'error': {
+                      'code': 400,
+                      'message': 'API key not valid. Please pass a valid API key.',
+                      'status': 'INVALID_ARGUMENT',
+                    },
+                  },
+                ),
+              ),
+            );
           },
-        });
-        return ResponseBody.fromString(
-          jsonResponse,
-          400,
-          headers: {
-            Headers.contentTypeHeader: [Headers.jsonContentType],
-          },
-        );
-      });
+        ),
+      );
 
       final result = await GeminiKeyChecker.checkKey('dead_key_456', dio: dio);
       expect(result.status, GeminiKeyStatus.dead);
@@ -108,22 +106,28 @@ void main() {
 
     test('HTTP 403 returns permissionDenied status', () async {
       final dio = Dio();
-      dio.httpClientAdapter = _MockHttpAdapter((options) async {
-        final jsonResponse = jsonEncode({
-          'error': {
-            'code': 403,
-            'message': 'Generative Language API has not been used in project.',
-            'status': 'PERMISSION_DENIED',
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            handler.reject(
+              DioException(
+                requestOptions: options,
+                response: Response(
+                  requestOptions: options,
+                  statusCode: 403,
+                  data: {
+                    'error': {
+                      'code': 403,
+                      'message': 'Generative Language API has not been used in project.',
+                      'status': 'PERMISSION_DENIED',
+                    },
+                  },
+                ),
+              ),
+            );
           },
-        });
-        return ResponseBody.fromString(
-          jsonResponse,
-          403,
-          headers: {
-            Headers.contentTypeHeader: [Headers.jsonContentType],
-          },
-        );
-      });
+        ),
+      );
 
       final result = await GeminiKeyChecker.checkKey('forbidden_key_789', dio: dio);
       expect(result.status, GeminiKeyStatus.permissionDenied);
@@ -131,62 +135,85 @@ void main() {
       expect(result.statusCode, 403);
     });
 
-    test('HTTP 429 returns quotaExceeded status', () async {
+    test('HTTP 429 returns quotaExceeded status with helpful message', () async {
       final dio = Dio();
-      dio.httpClientAdapter = _MockHttpAdapter((options) async {
-        final jsonResponse = jsonEncode({
-          'error': {
-            'code': 429,
-            'message': 'Resource has been exhausted.',
-            'status': 'RESOURCE_EXHAUSTED',
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            handler.reject(
+              DioException(
+                requestOptions: options,
+                response: Response(
+                  requestOptions: options,
+                  statusCode: 429,
+                  data: {
+                    'error': {
+                      'code': 429,
+                      'message': 'Resource has been exhausted (e.g. check quota).',
+                      'status': 'RESOURCE_EXHAUSTED',
+                    },
+                  },
+                ),
+              ),
+            );
           },
-        });
-        return ResponseBody.fromString(
-          jsonResponse,
-          429,
-          headers: {
-            Headers.contentTypeHeader: [Headers.jsonContentType],
-          },
-        );
-      });
+        ),
+      );
 
       final result = await GeminiKeyChecker.checkKey('rate_limited_key', dio: dio);
       expect(result.status, GeminiKeyStatus.quotaExceeded);
       expect(result.isAlive, isFalse);
       expect(result.statusCode, 429);
+      expect(result.message, contains('Rate limit 429'));
     });
 
-    test('checkAllKeys processes multiple keys in parallel', () async {
+    test('checkAllKeys processes multiple keys in parallel with chosen model', () async {
       final dio = Dio();
-      dio.httpClientAdapter = _MockHttpAdapter((options) async {
-        final key = options.queryParameters['key'];
-        if (key == 'good_key') {
-          return ResponseBody.fromString(
-            jsonEncode({'models': []}),
-            200,
-            headers: {Headers.contentTypeHeader: [Headers.jsonContentType]},
-          );
-        } else {
-          return ResponseBody.fromString(
-            jsonEncode({
-              'error': {'code': 400, 'message': 'API_KEY_INVALID'},
-            }),
-            400,
-            headers: {Headers.contentTypeHeader: [Headers.jsonContentType]},
-          );
-        }
-      });
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            expect(options.path, contains('gemini-3.1-flash-lite:generateContent'));
+            final key = options.queryParameters['key'];
+            if (key == 'good_key') {
+              handler.resolve(
+                Response(
+                  requestOptions: options,
+                  statusCode: 200,
+                  data: {'candidates': []},
+                ),
+              );
+            } else {
+              handler.reject(
+                DioException(
+                  requestOptions: options,
+                  response: Response(
+                    requestOptions: options,
+                    statusCode: 429,
+                    data: {
+                      'error': {'code': 429, 'message': 'RESOURCE_EXHAUSTED'},
+                    },
+                  ),
+                ),
+              );
+            }
+          },
+        ),
+      );
 
       final results = await GeminiKeyChecker.checkAllKeys(
-        ['good_key', 'bad_key', '  '],
+        ['good_key', 'exhausted_key', '  '],
+        modelId: 'gemini-3.1-flash-lite',
         dio: dio,
       );
 
       expect(results.length, 2);
       expect(results[0].key, 'good_key');
       expect(results[0].isAlive, isTrue);
-      expect(results[1].key, 'bad_key');
+      expect(results[0].testedModel, 'gemini-3.1-flash-lite');
+
+      expect(results[1].key, 'exhausted_key');
       expect(results[1].isAlive, isFalse);
+      expect(results[1].status, GeminiKeyStatus.quotaExceeded);
     });
   });
 }

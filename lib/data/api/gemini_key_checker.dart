@@ -15,6 +15,7 @@ class GeminiKeyCheckResult {
   final int? statusCode;
   final int latencyMs;
   final String message;
+  final String testedModel;
   final List<String> availableModels;
 
   const GeminiKeyCheckResult({
@@ -23,6 +24,7 @@ class GeminiKeyCheckResult {
     this.statusCode,
     this.latencyMs = 0,
     required this.message,
+    this.testedModel = '',
     this.availableModels = const [],
   });
 
@@ -57,6 +59,7 @@ class GeminiKeyCheckResult {
 class GeminiKeyChecker {
   static Future<GeminiKeyCheckResult> checkKey(
     String apiKey, {
+    String modelId = 'gemini-3.5-flash-lite',
     Dio? dio,
   }) async {
     final cleanKey = apiKey.trim();
@@ -68,32 +71,44 @@ class GeminiKeyChecker {
       );
     }
 
+    final targetModel = modelId.trim().isEmpty
+        ? 'gemini-3.5-flash-lite'
+        : modelId.trim();
+
     final client = dio ??
         Dio(
           BaseOptions(
-            connectTimeout: const Duration(seconds: 12),
-            receiveTimeout: const Duration(seconds: 15),
+            connectTimeout: const Duration(seconds: 15),
+            receiveTimeout: const Duration(seconds: 25),
           ),
         );
 
     final stopwatch = Stopwatch()..start();
     try {
-      final response = await client.get<Map<String, dynamic>>(
-        'https://generativelanguage.googleapis.com/v1beta/models',
+      // Gửi request inference thực tế (ping 1 token) vào chính model được chọn để phát hiện lỗi 429
+      final url =
+          'https://generativelanguage.googleapis.com/v1beta/models/$targetModel:generateContent';
+
+      await client.post<dynamic>(
+        url,
         queryParameters: {'key': cleanKey},
+        data: {
+          'contents': [
+            {
+              'role': 'user',
+              'parts': [
+                {'text': 'Ping'}
+              ]
+            }
+          ],
+          'generationConfig': {
+            'maxOutputTokens': 2,
+            'temperature': 0.1,
+          }
+        },
+        options: Options(headers: {'Content-Type': 'application/json'}),
       );
       stopwatch.stop();
-
-      final modelsList = <String>[];
-      final data = response.data;
-      if (data != null && data['models'] is List) {
-        for (final m in data['models'] as List) {
-          if (m is Map && m['name'] != null) {
-            final name = m['name'].toString().replaceFirst('models/', '');
-            modelsList.add(name);
-          }
-        }
-      }
 
       final latency = stopwatch.elapsedMilliseconds;
       return GeminiKeyCheckResult(
@@ -101,8 +116,8 @@ class GeminiKeyChecker {
         status: GeminiKeyStatus.alive,
         statusCode: 200,
         latencyMs: latency,
-        message: 'Phản hồi thành công (${latency}ms)',
-        availableModels: modelsList,
+        testedModel: targetModel,
+        message: 'Sống & Sẵn sàng dịch (${latency}ms) - Model: $targetModel',
       );
     } on DioException catch (e) {
       stopwatch.stop();
@@ -122,12 +137,22 @@ class GeminiKeyChecker {
         }
       }
 
-      if (statusCode == 400) {
+      if (statusCode == 429) {
+        return GeminiKeyCheckResult(
+          key: cleanKey,
+          status: GeminiKeyStatus.quotaExceeded,
+          statusCode: 429,
+          latencyMs: latency,
+          testedModel: targetModel,
+          message: 'Hết hạn ngạch hoặc bị giới hạn tốc độ (Rate limit 429): $errorMsg',
+        );
+      } else if (statusCode == 400) {
         return GeminiKeyCheckResult(
           key: cleanKey,
           status: GeminiKeyStatus.dead,
           statusCode: 400,
           latencyMs: latency,
+          testedModel: targetModel,
           message: 'Key không tồn tại hoặc đã bị Google thu hồi ($errorMsg)',
         );
       } else if (statusCode == 403) {
@@ -136,15 +161,17 @@ class GeminiKeyChecker {
           status: GeminiKeyStatus.permissionDenied,
           statusCode: 403,
           latencyMs: latency,
+          testedModel: targetModel,
           message: 'Bị từ chối truy cập (Kiểm tra API đã bật chưa): $errorMsg',
         );
-      } else if (statusCode == 429) {
+      } else if (statusCode == 404) {
         return GeminiKeyCheckResult(
           key: cleanKey,
-          status: GeminiKeyStatus.quotaExceeded,
-          statusCode: 429,
+          status: GeminiKeyStatus.unknown,
+          statusCode: 404,
           latencyMs: latency,
-          message: 'Hết hạn ngạch hoặc bị giới hạn tần suất (Rate limit 429): $errorMsg',
+          testedModel: targetModel,
+          message: 'Model "$targetModel" không tồn tại hoặc tài khoản không có quyền truy cập',
         );
       } else if (e.type == DioExceptionType.connectionTimeout ||
           e.type == DioExceptionType.receiveTimeout ||
@@ -155,7 +182,8 @@ class GeminiKeyChecker {
           status: GeminiKeyStatus.networkError,
           statusCode: statusCode,
           latencyMs: latency,
-          message: 'Lỗi mạng hoặc không thể kết nối tới máy chủ Google: ${e.message ?? 'Timeout'}',
+          testedModel: targetModel,
+          message: 'Lỗi mạng hoặc timeout kết nối tới máy chủ Google: ${e.message ?? 'Timeout'}',
         );
       }
 
@@ -164,6 +192,7 @@ class GeminiKeyChecker {
         status: GeminiKeyStatus.unknown,
         statusCode: statusCode,
         latencyMs: latency,
+        testedModel: targetModel,
         message: 'Lỗi HTTP $statusCode: $errorMsg',
       );
     } catch (e) {
@@ -172,6 +201,7 @@ class GeminiKeyChecker {
         key: cleanKey,
         status: GeminiKeyStatus.unknown,
         latencyMs: stopwatch.elapsedMilliseconds,
+        testedModel: targetModel,
         message: 'Lỗi ngoại lệ: $e',
       );
     }
@@ -179,6 +209,7 @@ class GeminiKeyChecker {
 
   static Future<List<GeminiKeyCheckResult>> checkAllKeys(
     List<String> keys, {
+    String modelId = 'gemini-3.5-flash-lite',
     Dio? dio,
   }) async {
     final cleanKeys = keys
@@ -188,7 +219,9 @@ class GeminiKeyChecker {
 
     if (cleanKeys.isEmpty) return const [];
 
-    final futures = cleanKeys.map((k) => checkKey(k, dio: dio));
+    final futures = cleanKeys.map(
+      (k) => checkKey(k, modelId: modelId, dio: dio),
+    );
     return Future.wait(futures);
   }
 }

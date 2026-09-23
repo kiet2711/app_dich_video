@@ -218,6 +218,8 @@ class SubtitlingPipeline {
           videoPath: extractionPath,
           totalDurationMs: totalDurationMs,
           tempDir: sessionDir,
+          chunkDurationSec: settings.audioChunkDurationSec,
+          concurrency: settings.audioSliceConcurrency,
           progressCallback: (pct, msg) {
             _emit(
               ProcessProgress(

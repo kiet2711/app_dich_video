@@ -139,6 +139,18 @@ class SettingsRepository {
   set capcutSttConcurrency(int v) =>
       prefs.setInt('capcut_stt_concurrency', v.clamp(1, 6));
 
+  int get audioSliceConcurrency =>
+      (prefs.getInt('audio_slice_concurrency') ?? 3).clamp(1, 6);
+  set audioSliceConcurrency(int v) =>
+      prefs.setInt('audio_slice_concurrency', v.clamp(1, 6));
+
+  int get audioChunkDurationMin =>
+      (prefs.getInt('audio_chunk_duration_min') ?? 10).clamp(1, 15);
+  set audioChunkDurationMin(int v) =>
+      prefs.setInt('audio_chunk_duration_min', v.clamp(1, 15));
+
+  int get audioChunkDurationSec => audioChunkDurationMin * 60;
+
   int get ttsThreadCount =>
       (prefs.getInt('tts_thread_count') ?? 50).clamp(1, 100);
   set ttsThreadCount(int v) =>
