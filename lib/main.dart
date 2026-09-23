@@ -59,7 +59,15 @@ class _MainNavigationState extends State<MainNavigation> {
         initialDoc: _latestDoc,
         initialVideoPath: _latestVideoPath,
       ),
-      const HistoryScreen(),
+      HistoryScreen(
+        onOpenInTts: (videoPath, doc) {
+          setState(() {
+            _latestDoc = doc;
+            _latestVideoPath = videoPath;
+            _currentIndex = 1;
+          });
+        },
+      ),
     ];
 
     return Scaffold(

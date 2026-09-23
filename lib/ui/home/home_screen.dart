@@ -1,8 +1,6 @@
-import '../../domain/media/network_header_helper.dart';
-
-import 'dart:io';
-import 'dart:convert';
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -15,10 +13,11 @@ import '../../data/model/process_progress.dart';
 import '../../data/model/subtitle_document.dart';
 import '../../data/repository/history_repository.dart';
 import '../../data/repository/settings_repository.dart';
-import '../../domain/pipeline/subtitling_pipeline.dart';
 import '../../domain/media/audio_extractor.dart';
-import '../../domain/media/media_storage.dart';
 import '../../domain/media/bilibili_resolver.dart';
+import '../../domain/media/media_storage.dart';
+import '../../domain/media/network_header_helper.dart';
+import '../../domain/pipeline/subtitling_pipeline.dart';
 import '../theme/app_theme.dart';
 import 'progress_bottom_sheet.dart';
 
@@ -57,9 +56,44 @@ class _HomeScreenState extends State<HomeScreen> {
   final _customPromptController = TextEditingController();
 
   bool _isProcessing = false;
-  ProcessProgress _currentProgress = const ProcessProgress();
   SubtitlingPipeline? _activePipeline;
   bool _cancelRequested = false;
+
+  // Danh mục tuỳ chọn đồng bộ 100% bản gốc Android HomeScreen.kt
+  static const _sourceLanguageOptions = [
+    MapEntry('zh-CN', '🇨🇳 Tiếng Trung (zh-CN)'),
+    MapEntry('en-US', '🇺🇸 Tiếng Anh (en-US)'),
+    MapEntry('vi-VN', '🇻🇳 Tiếng Việt (vi-VN)'),
+    MapEntry('ja-JP', '🇯🇵 Tiếng Nhật (ja-JP)'),
+    MapEntry('ko-KR', '🇰🇷 Tiếng Hàn (ko-KR)'),
+  ];
+
+  static const _engineOptions = [
+    MapEntry('capcut', '⚡ CapCut Dịch Sẵn (Miễn phí 100% - Không cần Key)'),
+    MapEntry('gemini-3.5-flash-lite', '🤖 Gemini 3.5 Flash-Lite (RPD cao - Cần API Key)'),
+    MapEntry('gemini-3.1-flash-lite', '🤖 Gemini 3.1 Flash-Lite (Khuyên dùng - Cần API Key)'),
+    MapEntry('none', '🚫 Giữ Nguyên Tiếng Gốc (Không dịch)'),
+  ];
+
+  static const _targetLanguageOptions = [
+    MapEntry('vi-VN', '🇻🇳 Tiếng Việt (Mặc định)'),
+    MapEntry('en-US', '🇺🇸 Tiếng Anh (English)'),
+    MapEntry('zh-CN', '🇨🇳 Tiếng Trung (Giản thể)'),
+    MapEntry('ja-JP', '🇯🇵 Tiếng Nhật (日本語)'),
+    MapEntry('ko-KR', '🇰🇷 Tiếng Hàn (한국어)'),
+    MapEntry('fr-FR', '🇫🇷 Tiếng Pháp (Français)'),
+    MapEntry('ru-RU', '🇷🇺 Tiếng Nga (Русский)'),
+    MapEntry('es-ES', '🇪🇸 Tiếng Tây Ban Nha (Español)'),
+    MapEntry('th-TH', '🇹🇭 Tiếng Thái (ไทย)'),
+  ];
+
+  static const _styleOptions = [
+    MapEntry('Zhihu', '🎬 Phim Ngắn Zhihu (Vả mặt, kịch tính)'),
+    MapEntry('ThuanViet', '📖 Thuần Việt Văn Học (Trau chuốt, mượt mà)'),
+    MapEntry('CoTrang', '⚔️ Cổ Trang Tiên Hiệp (Hán Việt chuẩn)'),
+    MapEntry('Auto', '✨ Tự Động AI (Theo ngữ cảnh)'),
+    MapEntry('custom', '✍️ Tự nhập Prompt tùy chỉnh...'),
+  ];
 
   @override
   void initState() {
@@ -158,7 +192,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final clean = NetworkHeaderHelper.extractCleanUrl(rawUrl);
     if (clean.isEmpty || !NetworkHeaderHelper.isRemoteUrl(clean)) {
       setState(() {
-        _probeStatusMessage = '⚠️ Vui lòng nhập link hợp lệ (http://, https:// hoặc link Bilibili/b23.tv)';
+        _probeStatusMessage =
+            '⚠️ Vui lòng nhập đường link hợp lệ (http://, https:// hoặc link Bilibili/b23.tv)';
       });
       return;
     }
@@ -190,18 +225,19 @@ class _HomeScreenState extends State<HomeScreen> {
             _settings?.bilibiliSessData ?? '',
           );
           if (subs.isNotEmpty) {
-            _probeStatusMessage = '✨ Video có sẵn phụ đề Bilibili! Bấm "Bắt đầu" để nạp và dịch ngay.';
+            _probeStatusMessage =
+                '✨ Video có sẵn phụ đề Bilibili! Bấm "Bắt đầu" để nạp và dịch ngay.';
           } else {
             _probeStatusMessage =
-                '✅ Đã tìm thấy audio Bilibili. Sẵn sàng tạo sub!';
+                '✅ Đã tìm thấy audio DASH Bilibili (~30-50MB). Sẵn sàng tạo sub!';
           }
         } catch (_) {
           _probeStatusMessage =
-              '✅ Đã tìm thấy audio Bilibili. Sẵn sàng tạo sub!';
+              '✅ Đã tìm thấy audio DASH Bilibili (~30-50MB). Sẵn sàng tạo sub!';
         }
       } else {
         durationMs = await AudioExtractor.probeDuration(clean);
-        _probeStatusMessage = '✅ Link video online hợp lệ!';
+        _probeStatusMessage = '✅ Video online đã sẵn sàng!';
       }
 
       if (!mounted) return;
@@ -226,7 +262,26 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _startProcessing() async {
-    if (_selectedVideoPath == null || _settings == null) return;
+    if (_selectedVideoPath == null || _settings == null || _isProcessing) return;
+
+    // Kiểm tra Gemini API Key trước khi xử lý giống bản gốc Android
+    if (_selectedEngine.startsWith('gemini') &&
+        _settings!.geminiApiKeys.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Vui lòng nhập Gemini API Key trong Cài đặt trước khi dùng Gemini!',
+          ),
+          duration: Duration(seconds: 3),
+        ),
+      );
+      if (widget.onNavigateToSettings != null) {
+        widget.onNavigateToSettings!();
+      } else {
+        Navigator.pushNamed(context, '/settings').then((_) => _loadSettings());
+      }
+      return;
+    }
 
     _settings!
       ..defaultSourceLanguage = _selectedSourceLang
@@ -240,12 +295,9 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _isProcessing = true;
       _cancelRequested = false;
-      _currentProgress = const ProcessProgress(
-        stage: ProcessStage.extractingAudio,
-        message: 'Khởi động...',
-      );
     });
     await WakelockPlus.enable();
+    if (!mounted) return;
 
     final pipeline = SubtitlingPipeline(
       apiKeys: _settings!.geminiApiKeys,
@@ -259,13 +311,47 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     _activePipeline = pipeline;
 
+    final progressNotifier = ValueNotifier<ProcessProgress>(
+      const ProcessProgress(
+        stage: ProcessStage.extractingAudio,
+        progress: 0.05,
+        message: 'Đang chuẩn bị xử lý...',
+      ),
+    );
+
     final sub = pipeline.progressStream.listen((p) {
-      if (mounted) {
-        setState(() {
-          _currentProgress = p;
-        });
-      }
+      progressNotifier.value = p;
     });
+
+    // Mở ModalBottomSheet toàn màn hình che BottomNavigationBar giống Compose ModalBottomSheet bản gốc
+    showModalBottomSheet(
+      context: context,
+      useRootNavigator: true,
+      isScrollControlled: true,
+      isDismissible: false,
+      enableDrag: false,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return PopScope(
+          canPop: false,
+          child: ValueListenableBuilder<ProcessProgress>(
+            valueListenable: progressNotifier,
+            builder: (ctx, progress, _) {
+              return ProgressBottomSheet(
+                progress: progress,
+                onCancel: () {
+                  _cancelRequested = true;
+                  _activePipeline?.cancel();
+                  if (Navigator.of(sheetContext, rootNavigator: true).canPop()) {
+                    Navigator.of(sheetContext, rootNavigator: true).pop();
+                  }
+                },
+              );
+            },
+          ),
+        );
+      },
+    );
 
     try {
       final docDir = await getApplicationDocumentsDirectory();
@@ -312,10 +398,18 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       );
 
+      // Đóng Bottom Sheet
+      if (mounted && Navigator.of(context, rootNavigator: true).canPop()) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+
       if (mounted) {
         widget.onProcessCompleted?.call(resultDoc, _selectedVideoPath!);
       }
     } catch (e) {
+      if (mounted && Navigator.of(context, rootNavigator: true).canPop()) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
       if (mounted && !_cancelRequested) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text('Lỗi: $e')));
@@ -323,6 +417,7 @@ class _HomeScreenState extends State<HomeScreen> {
     } finally {
       await sub.cancel();
       pipeline.dispose();
+      progressNotifier.dispose();
       await WakelockPlus.disable();
       if (mounted) {
         setState(() {
@@ -335,12 +430,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   String _formatDuration(int durationMs) {
     final totalSeconds = durationMs ~/ 1000;
-    final hours = totalSeconds ~/ 3600;
-    final minutes = (totalSeconds % 3600) ~/ 60;
+    final minutes = totalSeconds ~/ 60;
     final seconds = totalSeconds % 60;
-    if (hours > 0) {
-      return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
-    }
     return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
   }
 
@@ -367,6 +458,7 @@ class _HomeScreenState extends State<HomeScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.settings, color: Colors.white),
+            tooltip: 'Cài đặt',
             onPressed: () {
               if (widget.onNavigateToSettings != null) {
                 widget.onNavigateToSettings!();
@@ -380,662 +472,621 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      body: Stack(
-        children: [
-          SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const SizedBox(height: 12),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const SizedBox(height: 12),
 
-                // 1. TABS CHUYỂN ĐỔI: FILE MÁY / NHẬP LINK
-                Container(
-                  decoration: BoxDecoration(
-                    color: AppColors.darkSurface,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: AppColors.cardBorder),
-                  ),
-                  padding: const EdgeInsets.all(4),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: GestureDetector(
-                          onTap: () {
-                            setState(() {
-                              _inputMode = 0;
-                            });
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(vertical: 10),
-                            decoration: BoxDecoration(
+            // 1. NGUỒN VIDEO: TABS CHUYỂN ĐỔI (FILE MÁY / NHẬP LINK)
+            Container(
+              decoration: BoxDecoration(
+                color: AppColors.darkSurface,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.cardBorder),
+              ),
+              padding: const EdgeInsets.all(4),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () {
+                        setState(() {
+                          _inputMode = 0;
+                          if (_selectedVideoPath != null &&
+                              NetworkHeaderHelper.isRemoteUrl(
+                                _selectedVideoPath!,
+                              )) {
+                            _selectedVideoPath = null;
+                            _fileName = '';
+                            _fileDurationMs = 0;
+                            _fileSizeMb = '';
+                            _probeStatusMessage = null;
+                          }
+                        });
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        decoration: BoxDecoration(
+                          color: _inputMode == 0
+                              ? AppColors.primaryEmerald
+                              : Colors.transparent,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.video_file,
+                              size: 18,
                               color: _inputMode == 0
-                                  ? AppColors.primaryEmerald
-                                  : Colors.transparent,
-                              borderRadius: BorderRadius.circular(8),
+                                  ? Colors.black
+                                  : Colors.grey,
                             ),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  Icons.video_file,
-                                  size: 18,
-                                  color: _inputMode == 0
-                                      ? Colors.black
-                                      : Colors.grey,
-                                ),
-                                const SizedBox(width: 6),
-                                Text(
-                                  '📁 File Trên Máy',
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.bold,
-                                    color: _inputMode == 0
-                                        ? Colors.black
-                                        : Colors.grey,
-                                  ),
-                                ),
-                              ],
+                            const SizedBox(width: 6),
+                            Text(
+                              '📁 File Trên Máy',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                                color: _inputMode == 0
+                                  ? Colors.black
+                                  : Colors.grey,
+                              ),
                             ),
-                          ),
+                          ],
                         ),
                       ),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: GestureDetector(
-                          onTap: () {
-                            setState(() {
-                              _inputMode = 1;
-                            });
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(vertical: 10),
-                            decoration: BoxDecoration(
-                              color: _inputMode == 1
-                                  ? AppColors.primaryEmerald
-                                  : Colors.transparent,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  Icons.link,
-                                  size: 18,
-                                  color: _inputMode == 1
-                                      ? Colors.black
-                                      : Colors.grey,
-                                ),
-                                const SizedBox(width: 6),
-                                Text(
-                                  '🔗 Nhập Link Video',
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.bold,
-                                    color: _inputMode == 1
-                                        ? Colors.black
-                                        : Colors.grey,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
-                ),
-                const SizedBox(height: 14),
-
-                // 2. NỘI DUNG CHỌN NGUỒN VIDEO
-                if (_inputMode == 0)
-                  // CARD CHỌN FILE TỪ THIẾT BỊ
-                  InkWell(
-                    onTap: _pickFile,
-                    borderRadius: BorderRadius.circular(16),
-                    child: Container(
-                      padding: const EdgeInsets.all(24),
-                      decoration: BoxDecoration(
-                        color: AppColors.darkSurface,
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: AppColors.cardBorder),
-                      ),
-                      child: Column(
-                        children: [
-                          const Icon(
-                            Icons.video_file,
-                            size: 48,
-                            color: AppColors.primaryEmerald,
-                          ),
-                          const SizedBox(height: 12),
-                          Text(
-                            _selectedVideoPath != null
-                                ? _fileName
-                                : 'Chạm để chọn Video hoặc Âm thanh',
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                              color: Colors.white,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            _selectedVideoPath != null
-                                ? '💾 $_fileSizeMb'
-                                : 'Hỗ trợ MP4, MKV, MOV, MP3, M4A',
-                            style: const TextStyle(
-                              fontSize: 13,
-                              color: Colors.grey,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  )
-                else
-                  // CARD NHẬP LINK ONLINE
-                  Container(
-                    padding: const EdgeInsets.all(18),
-                    decoration: BoxDecoration(
-                      color: AppColors.darkSurface,
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: AppColors.cardBorder),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Row(
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () {
+                        setState(() {
+                          _inputMode = 1;
+                          if (_selectedVideoPath != null &&
+                              !NetworkHeaderHelper.isRemoteUrl(
+                                _selectedVideoPath!,
+                              )) {
+                            _selectedVideoPath = null;
+                            _fileName = '';
+                            _fileDurationMs = 0;
+                            _fileSizeMb = '';
+                            _probeStatusMessage = null;
+                          }
+                        });
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        decoration: BoxDecoration(
+                          color: _inputMode == 1
+                              ? AppColors.primaryEmerald
+                              : Colors.transparent,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             Icon(
                               Icons.link,
-                              color: AppColors.primaryEmerald,
-                              size: 22,
+                              size: 18,
+                              color: _inputMode == 1
+                                  ? Colors.black
+                                  : Colors.grey,
                             ),
-                            SizedBox(width: 8),
+                            const SizedBox(width: 6),
                             Text(
-                              'Dán Link Video Trực Tiếp',
+                              '🔗 Nhập Link Video',
                               style: TextStyle(
-                                fontSize: 15,
+                                fontSize: 13,
                                 fontWeight: FontWeight.bold,
-                                color: Colors.white,
+                                color: _inputMode == 1
+                                  ? Colors.black
+                                  : Colors.grey,
                               ),
                             ),
                           ],
                         ),
-                        const SizedBox(height: 6),
-                        const Text(
-                          'Hỗ trợ link Bilibili, Douyin, MP4, M3U8...',
-                          style: TextStyle(fontSize: 12, color: Colors.grey),
-                        ),
-                        const SizedBox(height: 12),
-                        TextField(
-                          controller: _urlController,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 13,
-                          ),
-                          decoration: InputDecoration(
-                            hintText:
-                                'https://.../video.mp4 hoặc link Bilibili',
-                            hintStyle: const TextStyle(color: Colors.white38),
-                            filled: true,
-                            fillColor: const Color(0xFF1E202A),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              borderSide: const BorderSide(
-                                color: AppColors.cardBorder,
-                              ),
-                            ),
-                            enabledBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              borderSide: const BorderSide(
-                                color: AppColors.cardBorder,
-                              ),
-                            ),
-                            focusedBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              borderSide: const BorderSide(
-                                color: AppColors.primaryEmerald,
-                              ),
-                            ),
-                            suffixIcon: _urlController.text.isNotEmpty
-                                ? IconButton(
-                                    icon: const Icon(
-                                      Icons.clear,
-                                      color: Colors.grey,
-                                    ),
-                                    onPressed: () {
-                                      setState(() {
-                                        _urlController.clear();
-                                        _selectedVideoPath = null;
-                                        _probeStatusMessage = null;
-                                      });
-                                    },
-                                  )
-                                : null,
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: ElevatedButton.icon(
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: const Color(0xFF2A2C38),
-                                  foregroundColor: Colors.white,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                ),
-                                onPressed: _pasteFromClipboard,
-                                icon: const Icon(
-                                  Icons.paste,
-                                  color: AppColors.primaryEmerald,
-                                  size: 16,
-                                ),
-                                label: const Text(
-                                  'Dán Link',
-                                  style: TextStyle(fontSize: 13),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: ElevatedButton.icon(
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: AppColors.primaryEmerald,
-                                  foregroundColor: Colors.black,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                ),
-                                onPressed: _isProbingUrl
-                                    ? null
-                                    : () => _probeUrl(_urlController.text),
-                                icon: _isProbingUrl
-                                    ? const SizedBox(
-                                        width: 16,
-                                        height: 16,
-                                        child: CircularProgressIndicator(
-                                          color: Colors.black,
-                                          strokeWidth: 2,
-                                        ),
-                                      )
-                                    : const Icon(
-                                        Icons.search,
-                                        color: Colors.black,
-                                        size: 16,
-                                      ),
-                                label: Text(
-                                  _isProbingUrl
-                                      ? 'Đang kiểm tra...'
-                                      : 'Kiểm Tra Link',
-                                  style: const TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        if (_probeStatusMessage != null) ...[
-                          const SizedBox(height: 10),
-                          Text(
-                            _probeStatusMessage!,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: _selectedVideoPath != null
-                                  ? AppColors.primaryEmerald
-                                  : const Color(0xFFFFB74D),
-                            ),
-                          ),
-                        ],
-                      ],
+                      ),
                     ),
                   ),
-                const SizedBox(height: 16),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
 
-                // 3. CẤU HÌNH NHẬN DIỆN GIỌNG NÓI & DỊCH THUẬT
-                Container(
-                  padding: const EdgeInsets.all(18),
+            // 2. NỘI DUNG CHỌN NGUỒN VIDEO
+            if (_inputMode == 0)
+              // CARD CHỌN FILE TỪ THIẾT BỊ
+              InkWell(
+                onTap: _pickFile,
+                borderRadius: BorderRadius.circular(16),
+                child: Container(
+                  padding: const EdgeInsets.all(24),
                   decoration: BoxDecoration(
                     color: AppColors.darkSurface,
                     borderRadius: BorderRadius.circular(16),
                     border: Border.all(color: AppColors.cardBorder),
                   ),
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'Cấu hình nhận diện giọng nói & Dịch thuật',
-                        style: TextStyle(
-                          color: Colors.white,
+                      const Icon(
+                        Icons.video_file,
+                        size: 48,
+                        color: AppColors.primaryEmerald,
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        _selectedVideoPath != null
+                            ? _fileName
+                            : 'Chạm để chọn Video hoặc Âm thanh',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
                           fontWeight: FontWeight.bold,
-                          fontSize: 15,
+                          fontSize: 16,
+                          color: Colors.white,
                         ),
-                      ),
-                      const SizedBox(height: 14),
-
-                      // 1. Ngôn ngữ nguồn
-                      const Text(
-                        '1. Ngôn ngữ nguồn trong video',
-                        style: TextStyle(color: Colors.white70, fontSize: 12),
                       ),
                       const SizedBox(height: 4),
-                      DropdownButtonFormField<String>(
-                        key: ValueKey(_selectedSourceLang),
-                        initialValue: _selectedSourceLang,
-                        dropdownColor: const Color(0xFF222430),
+                      Text(
+                        _selectedVideoPath != null
+                            ? '⏱️ ${_formatDuration(_fileDurationMs)}  •  💾 $_fileSizeMb'
+                            : 'Hỗ trợ MP4, MKV, MOV, MP3, M4A',
                         style: const TextStyle(
-                          color: Colors.white,
                           fontSize: 13,
+                          color: Colors.grey,
                         ),
-                        decoration: InputDecoration(
-                          filled: true,
-                          fillColor: const Color(0xFF1E202A),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 10,
-                          ),
-                        ),
-                        items: const [
-                          DropdownMenuItem(
-                            value: 'zh-CN',
-                            child: Text('🇨🇳 Tiếng Trung (zh-CN)'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'en-US',
-                            child: Text('🇺🇸 Tiếng Anh (en-US)'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'vi-VN',
-                            child: Text('🇻🇳 Tiếng Việt (vi-VN)'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'ja-JP',
-                            child: Text('🇯🇵 Tiếng Nhật (ja-JP)'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'ko-KR',
-                            child: Text('🇰🇷 Tiếng Hàn (ko-KR)'),
-                          ),
-                        ],
-                        onChanged: (val) {
-                          if (val != null) {
-                            setState(() => _selectedSourceLang = val);
-                            _settings?.defaultSourceLanguage = val;
-                          }
-                        },
                       ),
-                      const SizedBox(height: 12),
-
-                      // 2. Công cụ dịch thuật
-                      const Text(
-                        '2. Công cụ Dịch thuật',
-                        style: TextStyle(color: Colors.white70, fontSize: 12),
-                      ),
-                      const SizedBox(height: 4),
-                      DropdownButtonFormField<String>(
-                        key: ValueKey(_selectedEngine),
-                        initialValue: _selectedEngine,
-                        dropdownColor: const Color(0xFF222430),
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 13,
-                        ),
-                        decoration: InputDecoration(
-                          filled: true,
-                          fillColor: const Color(0xFF1E202A),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 10,
-                          ),
-                        ),
-                        items: const [
-                          DropdownMenuItem(
-                            value: 'capcut',
-                            child: Text(
-                              '⚡ CapCut Dịch Sẵn (Miễn phí 100% - Không cần Key)',
-                            ),
-                          ),
-                          DropdownMenuItem(
-                            value: 'gemini-3.5-flash-lite',
-                            child: Text(
-                              '🚀 Gemini 3.5 Flash-Lite (RPD cao - Cần API Key)',
-                            ),
-                          ),
-                          DropdownMenuItem(
-                            value: 'gemini-3.1-flash-lite',
-                            child: Text(
-                              '🌟 Gemini 3.1 Flash-Lite (Khuyên dùng - Cần API Key)',
-                            ),
-                          ),
-                          DropdownMenuItem(
-                            value: 'none',
-                            child: Text('🔒 Giữ Nguyên Tiếng Gốc (Không dịch)'),
-                          ),
-                        ],
-                        onChanged: (val) {
-                          if (val != null) {
-                            setState(() => _selectedEngine = val);
-                            _settings?.selectedModel = val;
-                          }
-                        },
-                      ),
-                      const SizedBox(height: 12),
-
-                      // 3. Ngôn ngữ đích
-                      const Text(
-                        '3. Ngôn ngữ đích',
-                        style: TextStyle(color: Colors.white70, fontSize: 12),
-                      ),
-                      const SizedBox(height: 4),
-                      DropdownButtonFormField<String>(
-                        key: ValueKey(_selectedTargetLang),
-                        initialValue: _selectedTargetLang,
-                        dropdownColor: const Color(0xFF222430),
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 13,
-                        ),
-                        decoration: InputDecoration(
-                          filled: true,
-                          fillColor: const Color(0xFF1E202A),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 10,
-                          ),
-                        ),
-                        items: const [
-                          DropdownMenuItem(
-                            value: 'vi-VN',
-                            child: Text('🇻🇳 Tiếng Việt (Mặc định)'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'en-US',
-                            child: Text('🇺🇸 Tiếng Anh (English)'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'zh-CN',
-                            child: Text('🇨🇳 Tiếng Trung (Chinese)'),
-                          ),
-                        ],
-                        onChanged: (val) {
-                          if (val != null) {
-                            setState(() => _selectedTargetLang = val);
-                            _settings?.targetLanguage = val;
-                          }
-                        },
-                      ),
-                      const SizedBox(height: 12),
-
-                      // 4. Phong cách dịch
-                      const Text(
-                        '4. Phong cách dịch thuật',
-                        style: TextStyle(color: Colors.white70, fontSize: 12),
-                      ),
-                      const SizedBox(height: 4),
-                      DropdownButtonFormField<String>(
-                        key: ValueKey(_selectedStyle),
-                        initialValue: _selectedStyle,
-                        dropdownColor: const Color(0xFF222430),
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 13,
-                        ),
-                        decoration: InputDecoration(
-                          filled: true,
-                          fillColor: const Color(0xFF1E202A),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 10,
-                          ),
-                        ),
-                        items: const [
-                          DropdownMenuItem(
-                            value: 'Zhihu',
-                            child: Text(
-                              '🎬 Phim Ngắn Zhihu (Vả mặt, kịch tính)',
-                            ),
-                          ),
-                          DropdownMenuItem(
-                            value: 'ThuanViet',
-                            child: Text(
-                              '📖 Thuần Việt Văn Học (Trau chuốt, mượt mà)',
-                            ),
-                          ),
-                          DropdownMenuItem(
-                            value: 'CoTrang',
-                            child: Text(
-                              '⚔️ Cổ Trang Tiên Hiệp (Hán Việt chuẩn)',
-                            ),
-                          ),
-                          DropdownMenuItem(
-                            value: 'Auto',
-                            child: Text('✨ Tự Động AI (Theo ngữ cảnh)'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'custom',
-                            child: Text('✍️ Tự nhập Prompt tùy chỉnh...'),
-                          ),
-                        ],
-                        onChanged: (val) {
-                          if (val != null) {
-                            setState(() => _selectedStyle = val);
-                            _settings?.selectedStyle = val;
-                          }
-                        },
-                      ),
-
-                      if (_selectedStyle == 'custom') ...[
-                        const SizedBox(height: 10),
-                        TextField(
-                          controller: _customPromptController,
-                          onChanged: (value) {
-                            _settings?.geminiCustomPrompt = value;
-                          },
-                          maxLines: 3,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 13,
-                          ),
-                          decoration: InputDecoration(
-                            hintText: 'Nhập hướng dẫn dịch thuật cho AI...',
-                            hintStyle: const TextStyle(color: Colors.white38),
-                            filled: true,
-                            fillColor: const Color(0xFF1E202A),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                          ),
-                        ),
-                      ],
                     ],
                   ),
                 ),
-                const SizedBox(height: 20),
-
-                // 4. NÚT BẮT ĐẦU TẠO PHỤ ĐỀ (MÀU XANH EMERALD #00E676)
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primaryEmerald,
-                    foregroundColor: Colors.black,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+              )
+            else
+              // CARD NHẬP LINK VIDEO ONLINE
+              Container(
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  color: AppColors.darkSurface,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: AppColors.cardBorder),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(
+                          Icons.link,
+                          color: AppColors.primaryEmerald,
+                          size: 22,
+                        ),
+                        SizedBox(width: 8),
+                        Text(
+                          'Dán Link Video Trực Tiếp',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ],
                     ),
-                    elevation: 2,
-                  ),
-                  onPressed: (_selectedVideoPath != null && !_isProcessing)
-                      ? _startProcessing
-                      : null,
-                  child: _isProcessing
-                      ? const Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                color: Colors.black,
-                                strokeWidth: 2,
+                    const SizedBox(height: 6),
+                    const Text(
+                      'Hỗ trợ link Bilibili, Douyin, MP4, M3U8... (Tự động vượt chặn 403)',
+                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _urlController,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                      ),
+                      onChanged: (val) {
+                        setState(() {
+                          _probeStatusMessage = null;
+                        });
+                      },
+                      decoration: InputDecoration(
+                        hintText: 'https://.../video.mp4',
+                        hintStyle: const TextStyle(color: Colors.grey, fontSize: 13),
+                        filled: true,
+                        fillColor: const Color(0xFF1E202A),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: const BorderSide(
+                            color: AppColors.cardBorder,
+                          ),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: const BorderSide(
+                            color: AppColors.cardBorder,
+                          ),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: const BorderSide(
+                            color: AppColors.primaryEmerald,
+                          ),
+                        ),
+                        suffixIcon: _urlController.text.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(
+                                  Icons.clear,
+                                  color: Colors.grey,
+                                ),
+                                onPressed: () {
+                                  setState(() {
+                                    _urlController.clear();
+                                    _selectedVideoPath = null;
+                                    _fileName = '';
+                                    _fileDurationMs = 0;
+                                    _fileSizeMb = '';
+                                    _probeStatusMessage = null;
+                                  });
+                                },
+                              )
+                            : null,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF2A2A2A),
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
                               ),
+                              padding: const EdgeInsets.symmetric(vertical: 12),
                             ),
-                            SizedBox(width: 12),
-                            Text(
-                              'Đang xử lý phụ đề...',
-                              style: TextStyle(
-                                fontSize: 16,
+                            onPressed: _pasteFromClipboard,
+                            icon: const Icon(
+                              Icons.content_paste,
+                              color: AppColors.primaryEmerald,
+                              size: 16,
+                            ),
+                            label: const Text(
+                              'Dán Link',
+                              style: TextStyle(fontSize: 13, color: Colors.white),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.primaryEmerald,
+                              foregroundColor: Colors.black,
+                              disabledBackgroundColor: AppColors.primaryEmerald.withValues(alpha: 0.5),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                            ),
+                            onPressed: (_urlController.text.isNotEmpty && !_isProbingUrl)
+                                ? () => _probeUrl(_urlController.text)
+                                : null,
+                            icon: _isProbingUrl
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      color: Colors.black,
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(
+                                    Icons.search,
+                                    color: Colors.black,
+                                    size: 16,
+                                  ),
+                            label: Text(
+                              _isProbingUrl
+                                  ? 'Đang kiểm tra...'
+                                  : 'Kiểm Tra Link',
+                              style: const TextStyle(
+                                fontSize: 13,
                                 fontWeight: FontWeight.bold,
                                 color: Colors.black,
                               ),
                             ),
-                          ],
-                        )
-                      : const Text(
-                          '⚡ Bắt Đầu Tạo & Dịch Phụ Đề',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.black,
                           ),
                         ),
-                ),
+                      ],
+                    ),
+                    if (_probeStatusMessage != null) ...[
+                      const SizedBox(height: 10),
+                      Text(
+                        _probeStatusMessage!,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: _selectedVideoPath != null
+                              ? AppColors.primaryEmerald
+                              : const Color(0xFFFFB74D),
+                        ),
+                      ),
+                    ],
 
-                const SizedBox(height: 24),
-              ],
+                    // Preview khi video online đã sẵn sàng giống bản gốc Android
+                    if (_selectedVideoPath != null &&
+                        NetworkHeaderHelper.isRemoteUrl(_selectedVideoPath!)) ...[
+                      const SizedBox(height: 12),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1E2E24),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: AppColors.primaryEmerald.withValues(alpha: 0.5),
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(
+                              Icons.check_circle,
+                              color: AppColors.primaryEmerald,
+                              size: 28,
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    _fileName,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 14,
+                                      color: Colors.white,
+                                    ),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    '⏱️ Thời lượng: ${_fileDurationMs > 0 ? _formatDuration(_fileDurationMs) : "Tự động"}  •  🌐 Stream trực tiếp',
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      color: AppColors.primaryEmerald,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+
+            const SizedBox(height: 24),
+
+            // 3. CẤU HÌNH NHẬN DIỆN & DỊCH THUẬT (ĐỒNG BỘ 100% BẢN GỐC ANDROID)
+            const Text(
+              'CẤU HÌNH NHẬN DIỆN & DỊCH THUẬT',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey,
+                letterSpacing: 1.0,
+              ),
             ),
-          ),
-          if (_isProcessing)
-            Positioned.fill(
-              child: Container(
-                color: Colors.black.withValues(alpha: 0.65),
-                alignment: Alignment.bottomCenter,
-                child: ProgressBottomSheet(
-                  progress: _currentProgress,
-                  onCancel: () {
-                    _cancelRequested = true;
-                    _activePipeline?.cancel();
+            const SizedBox(height: 12),
+
+            // Ngôn ngữ lời thoại gốc
+            SettingDropdown(
+              label: '🌐 Ngôn ngữ lời thoại gốc:',
+              currentValue: _selectedSourceLang,
+              options: _sourceLanguageOptions,
+              onSelect: (code, label) {
+                setState(() => _selectedSourceLang = code);
+                _settings?.defaultSourceLanguage = code;
+              },
+            ),
+            const SizedBox(height: 16),
+
+            // Bộ máy Dịch thuật phụ đề
+            SettingDropdown(
+              label: '🤖 Bộ máy Dịch thuật phụ đề:',
+              currentValue: _selectedEngine,
+              options: _engineOptions,
+              onSelect: (code, label) {
+                setState(() => _selectedEngine = code);
+                _settings?.selectedModel = code;
+              },
+            ),
+
+            // Ngôn ngữ dịch sang (Ngôn ngữ đích - chỉ hiện khi không chọn "none")
+            if (_selectedEngine != 'none') ...[
+              const SizedBox(height: 16),
+              SettingDropdown(
+                label: '🎯 Dịch sang ngôn ngữ:',
+                currentValue: _selectedTargetLang,
+                options: _targetLanguageOptions,
+                onSelect: (code, label) {
+                  setState(() => _selectedTargetLang = code);
+                  _settings?.targetLanguage = code;
+                  _settings?.targetLanguageLabel = label;
+                },
+              ),
+            ],
+
+            // Phong cách dịch ngữ cảnh (Gemini - chỉ hiện khi chọn gemini)
+            if (_selectedEngine.startsWith('gemini')) ...[
+              const SizedBox(height: 16),
+              SettingDropdown(
+                label: '🎭 Phong cách dịch ngữ cảnh (Gemini):',
+                currentValue: _selectedStyle,
+                options: _styleOptions,
+                onSelect: (code, label) {
+                  setState(() => _selectedStyle = code);
+                  _settings?.selectedStyle = code;
+                },
+              ),
+
+              if (_selectedStyle == 'custom') ...[
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _customPromptController,
+                  onChanged: (val) {
+                    _settings?.geminiCustomPrompt = val;
                   },
+                  maxLines: 4,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                  ),
+                  decoration: InputDecoration(
+                    hintText:
+                        'Nhập hướng dẫn prompt dịch cho Gemini (vd: Dịch theo lối cổ trang, xưng hô huynh/muội, giữ câu ngắn...)',
+                    hintStyle: const TextStyle(color: Colors.grey, fontSize: 13),
+                    filled: true,
+                    fillColor: AppColors.darkSurface,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: const BorderSide(color: Color(0xFF333544)),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: const BorderSide(color: Color(0xFF333544)),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: const BorderSide(color: AppColors.primaryEmerald),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+
+            const SizedBox(height: 36),
+
+            // 4. NÚT BẮT ĐẦU TẠO PHỤ ĐỀ (ĐỒNG BỘ 100% BẢN GỐC ANDROID)
+            SizedBox(
+              width: double.infinity,
+              height: 54,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primaryEmerald,
+                  foregroundColor: Colors.black,
+                  disabledBackgroundColor: AppColors.primaryEmerald.withValues(alpha: 0.3),
+                  disabledForegroundColor: Colors.black38,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  elevation: 0,
+                ),
+                onPressed: (_selectedVideoPath != null && !_isProcessing)
+                    ? _startProcessing
+                    : null,
+                child: const Text(
+                  '🚀 BẮT ĐẦU TẠO PHỤ ĐỀ & DỊCH THUẬT',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black,
+                  ),
                 ),
               ),
             ),
-        ],
+
+            const SizedBox(height: 30),
+          ],
+        ),
       ),
+    );
+  }
+}
+
+/// Dropdown custom đồng bộ 100% style của SettingDropdown.kt trên Jetpack Compose
+class SettingDropdown extends StatelessWidget {
+  final String label;
+  final String currentValue;
+  final List<MapEntry<String, String>> options;
+  final void Function(String code, String label) onSelect;
+
+  const SettingDropdown({
+    super.key,
+    required this.label,
+    required this.currentValue,
+    required this.options,
+    required this.onSelect,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // Xác định key hợp lệ
+    final currentKey = options.any((e) => e.key == currentValue)
+        ? currentValue
+        : (options.any((e) => e.value == currentValue)
+            ? options.firstWhere((e) => e.value == currentValue).key
+            : (options.isNotEmpty ? options.first.key : null));
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 13,
+            color: Color(0xFFC0C0C0),
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          decoration: BoxDecoration(
+            color: AppColors.darkSurface,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: AppColors.cardBorder),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<String>(
+              value: currentKey,
+              isExpanded: true,
+              dropdownColor: AppColors.darkSurface,
+              icon: const Icon(Icons.arrow_drop_down, color: Colors.grey),
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+              items: options.map((entry) {
+                return DropdownMenuItem<String>(
+                  value: entry.key,
+                  child: Text(
+                    entry.value,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                );
+              }).toList(),
+              onChanged: (val) {
+                if (val != null) {
+                  final opt = options.firstWhere((e) => e.key == val);
+                  onSelect(val, opt.value);
+                }
+              },
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

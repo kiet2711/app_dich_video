@@ -1,8 +1,6 @@
-﻿import 'package:shared_preferences/shared_preferences.dart';
-
 import 'dart:async';
-
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class SettingsRepository {
   static SettingsRepository? _instance;
@@ -105,13 +103,20 @@ class SettingsRepository {
   String get targetLanguage => prefs.getString('target_lang') ?? 'vi-VN';
   set targetLanguage(String v) => prefs.setString('target_lang', v);
 
+  String get targetLanguageLabel =>
+      prefs.getString('target_lang_label') ?? '🇻🇳 Tiếng Việt (Mặc định)';
+  set targetLanguageLabel(String v) =>
+      prefs.setString('target_lang_label', v);
+
   int get geminiThreadCount =>
       (prefs.getInt('gemini_thread_count') ?? 2).clamp(1, 10);
   set geminiThreadCount(int v) =>
       prefs.setInt('gemini_thread_count', v.clamp(1, 10));
 
-  int get downloadThreadCount => (prefs.getInt('download_thread_count') ?? 16).clamp(8, 32);
-  set downloadThreadCount(int v) => prefs.setInt('download_thread_count', v.clamp(8, 32));
+  int get downloadThreadCount =>
+      (prefs.getInt('download_thread_count') ?? 16).clamp(8, 32);
+  set downloadThreadCount(int v) =>
+      prefs.setInt('download_thread_count', v.clamp(8, 32));
 
   int get ttsThreadCount =>
       (prefs.getInt('tts_thread_count') ?? 50).clamp(1, 100);

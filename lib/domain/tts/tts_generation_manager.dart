@@ -5,8 +5,9 @@ import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
-import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
+
+import 'audio_file_validator.dart';
 
 import '../../data/api/capcut_tts_client.dart';
 import '../../data/model/device_config.dart';
@@ -128,19 +129,10 @@ class TtsGenerationManager {
   }
 
   static Future<bool> _validateAndAttach(SubtitleItem item, File file) async {
-    if (!await file.exists() || await file.length() < 200) return false;
-    final player = AudioPlayer();
-    try {
-      final duration = await player.setFilePath(file.path);
-      final durationMs = duration?.inMilliseconds ?? 0;
-      if (durationMs <= 0) return false;
-      _attachAudio(item, file, durationMs);
-      return true;
-    } catch (_) {
-      return false;
-    } finally {
-      await player.dispose();
-    }
+    final result = await AudioFileValidator.validate(file);
+    if (!result.isValid || result.durationMs <= 0) return false;
+    _attachAudio(item, file, result.durationMs);
+    return true;
   }
 
   static Future<void> linkAudioFiles(
@@ -283,6 +275,21 @@ class TtsGenerationManager {
           'Đang khởi tạo $effectiveThreads luồng tổng hợp (${voice.displayName})...',
     );
 
+    void notifyProgress({required String text, bool force = false}) {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      if (force || now - lastUiUpdate >= 200 || processed >= total) {
+        lastUiUpdate = now;
+        _updateRunningProgress(
+          processed: processed,
+          total: total,
+          succeeded: succeeded,
+          text: text,
+          startedAt: startedAt,
+          force: true,
+        );
+      }
+    }
+
     Future<void> worker(int workerIndex) async {
       final client = CapCutTtsClient(device: DeviceConfig().randomize());
       if (workerIndex > 0) {
@@ -300,14 +307,7 @@ class TtsGenerationManager {
           failureReasons[item.id] =
               'Bản dịch bị nuốt/chỉ chứa dấu câu (${text.isEmpty ? 'trống' : text})';
           processed++;
-          _updateRunningProgress(
-            processed: processed,
-            total: total,
-            succeeded: succeeded,
-            text: text,
-            startedAt: startedAt,
-            force: processed == total,
-          );
+          notifyProgress(text: text, force: processed >= total);
           continue;
         }
 
@@ -334,18 +334,7 @@ class TtsGenerationManager {
           failureReasons[item.id] = _readableError(error);
         } finally {
           processed++;
-          final now = DateTime.now().millisecondsSinceEpoch;
-          if (now - lastUiUpdate >= 200 || processed == total) {
-            lastUiUpdate = now;
-            _updateRunningProgress(
-              processed: processed,
-              total: total,
-              succeeded: succeeded,
-              text: text,
-              startedAt: startedAt,
-              force: true,
-            );
-          }
+          notifyProgress(text: text, force: processed >= total);
         }
       }
     }

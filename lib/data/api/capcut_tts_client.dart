@@ -1,9 +1,10 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../domain/tts/audio_file_validator.dart';
 import '../model/device_config.dart';
 import 'capcut_signer.dart';
 
@@ -31,15 +32,16 @@ class CapCutTtsClient {
   final DeviceConfig device;
   final Dio dio;
 
+  static final Dio _sharedDio = Dio(
+    BaseOptions(
+      connectTimeout: const Duration(seconds: 15),
+      receiveTimeout: const Duration(seconds: 25),
+    ),
+  );
+
   CapCutTtsClient({DeviceConfig? device, Dio? dio})
       : device = device ?? DeviceConfig(),
-        dio = dio ??
-            Dio(
-              BaseOptions(
-                connectTimeout: const Duration(seconds: 15),
-                receiveTimeout: const Duration(seconds: 25),
-              ),
-            );
+        dio = dio ?? _sharedDio;
 
   Future<File> generateSpeechToFile({
     required String text,
@@ -82,6 +84,7 @@ class CapCutTtsClient {
 
         if (await destFile.exists()) await destFile.delete();
         await partFile.rename(destFile.path);
+        AudioFileValidator.invalidate(destFile);
         return destFile;
       } catch (e) {
         lastException = e;
@@ -255,21 +258,17 @@ class CapCutTtsClient {
     audioBase64 ??= taskObj['audio'] as String?;
 
     if (audioUrl != null && audioUrl.isNotEmpty) {
-      final resp = await dio.get<List<int>>(
-        audioUrl,
-        options: Options(responseType: ResponseType.bytes),
-      );
-      if (resp.data != null && resp.data!.isNotEmpty) {
-        await destFile.writeAsBytes(resp.data!);
-        return;
-      }
+      await dio.download(audioUrl, destFile.path);
+      AudioFileValidator.invalidate(destFile);
+      return;
     }
 
     if (audioBase64 != null && audioBase64.isNotEmpty) {
       final clean = audioBase64.contains('base64,')
           ? audioBase64.split('base64,').last
           : audioBase64;
-      await destFile.writeAsBytes(base64Decode(clean));
+      await destFile.writeAsBytes(base64Decode(clean), flush: true);
+      AudioFileValidator.invalidate(destFile);
       return;
     }
 

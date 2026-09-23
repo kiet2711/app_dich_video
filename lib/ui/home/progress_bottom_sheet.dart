@@ -22,27 +22,19 @@ class ProgressBottomSheet extends StatelessWidget {
 
     return Container(
       decoration: const BoxDecoration(
-        color: Color(0xFF181920),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        color: AppColors.darkSurface,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+      padding: EdgeInsets.fromLTRB(
+        24,
+        24,
+        24,
+        MediaQuery.of(context).padding.bottom + 24,
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Drag handle
-          Center(
-            child: Container(
-              width: 36,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.white24,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-
           // Header
           const Text(
             'TIẾN TRÌNH TỰ ĐỘNG',
@@ -62,13 +54,13 @@ class ProgressBottomSheet extends StatelessWidget {
               color: Colors.white,
             ),
           ),
-          const SizedBox(height: 18),
+          const SizedBox(height: 20),
 
           // Linear Progress
           ClipRRect(
             borderRadius: BorderRadius.circular(4),
             child: LinearProgressIndicator(
-              value: pct > 0 ? pct : null,
+              value: pct,
               color: AppColors.primaryEmerald,
               backgroundColor: const Color(0xFF2A2B36),
               minHeight: 8,
@@ -78,6 +70,7 @@ class ProgressBottomSheet extends StatelessWidget {
 
           // Message & Percentage
           Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Expanded(
                 child: Text(
@@ -86,7 +79,7 @@ class ProgressBottomSheet extends StatelessWidget {
                       : 'Đang xử lý...',
                   style: const TextStyle(
                     fontSize: 13,
-                    color: Colors.white70,
+                    color: Color(0xFFD6D6D6),
                   ),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
@@ -103,12 +96,12 @@ class ProgressBottomSheet extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 22),
+          const SizedBox(height: 24),
 
-          // 4 Step Items
+          // 4 BƯỚC TIẾN TRÌNH
           _buildStepItem(
             stepNumber: 1,
-            title: 'Tách âm thanh M4A (hoặc Nạp phụ đề Bilibili)',
+            title: 'Tách âm thanh M4A (Không re-encode)',
             isCompleted: pct >= 0.20,
             isCurrent: progress.stage == ProcessStage.extractingAudio,
           ),
@@ -133,13 +126,13 @@ class ProgressBottomSheet extends StatelessWidget {
             isCompleted: progress.stage == ProcessStage.completed,
             isCurrent: progress.stage == ProcessStage.aiTranslating,
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 28),
 
-          // Cancel button
+          // Nút Huỷ Tác Vụ
           if (progress.isRunning)
             SizedBox(
               width: double.infinity,
-              height: 46,
+              height: 48,
               child: OutlinedButton(
                 onPressed: onCancel,
                 style: OutlinedButton.styleFrom(
@@ -158,7 +151,6 @@ class ProgressBottomSheet extends StatelessWidget {
                 ),
               ),
             ),
-          const SizedBox(height: 8),
         ],
       ),
     );
@@ -198,9 +190,11 @@ class ProgressBottomSheet extends StatelessWidget {
           child: Text(
             '$stepNumber. $title',
             style: TextStyle(
-              fontSize: 13,
+              fontSize: 14,
               fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
-              color: isCompleted || isCurrent ? Colors.white : const Color(0xFF7A7D91),
+              color: (isCompleted || isCurrent)
+                  ? Colors.white
+                  : const Color(0xFF7A7D91),
             ),
           ),
         ),

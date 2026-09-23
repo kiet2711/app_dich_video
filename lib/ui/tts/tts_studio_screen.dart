@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
@@ -46,6 +45,7 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
 
   final TtsGenerationManager _ttsManager = TtsGenerationManager();
   bool _errorDialogOpen = false;
+  bool _wasRunning = false;
 
   @override
   void initState() {
@@ -65,8 +65,11 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
 
   void _onTtsProgressChanged() {
     if (!mounted) return;
-    setState(() {});
     final state = _ttsManager.progress.value;
+    if (state.isRunning != _wasRunning) {
+      _wasRunning = state.isRunning;
+      setState(() {});
+    }
     if (!state.isRunning && state.failedItems.isNotEmpty && !_errorDialogOpen) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && !_errorDialogOpen) _showErrorReviewDialog();
@@ -120,6 +123,9 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
         _videoPath = files.first.path!;
       });
       await _refreshVideoMetadata();
+      if (_doc != null && _doc!.items.isNotEmpty) {
+        await _persistDocumentToHistory();
+      }
     }
   }
 
@@ -295,6 +301,9 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                 }
                 setState(() => _videoPath = clean);
                 unawaited(_refreshVideoMetadata());
+                if (_doc != null && _doc!.items.isNotEmpty) {
+                  unawaited(_persistDocumentToHistory());
+                }
                 Navigator.pop(ctx);
               },
               child: const Text(
@@ -320,6 +329,7 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
         if (doc.items.isNotEmpty) {
           setState(() => _doc = doc);
           await _linkExistingAudio();
+          await _persistDocumentToHistory();
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
@@ -486,17 +496,13 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
     if (document == null || videoPath == null || videoPath.isEmpty) return;
     try {
       final repository = await HistoryRepository.getInstance();
-      final matches = repository.getHistory().where(
-        (item) => item.videoPath == videoPath,
+      await repository.saveHistory(
+        videoPath: videoPath,
+        title: _videoFileName.isNotEmpty ? _videoFileName : 'Video',
+        document: document,
+        durationMs: _videoDurationMs,
+        ttsVoice: _selectedVoice.displayName,
       );
-      if (matches.isEmpty) return;
-      final historyItem = matches.first;
-      await File(historyItem.srtPath)
-          .writeAsString(document.toSrtString(), flush: true);
-      if (historyItem.documentPath != null) {
-        await File(historyItem.documentPath!)
-            .writeAsString(jsonEncode(document.toJson()), flush: true);
-      }
     } catch (_) {}
   }
 
