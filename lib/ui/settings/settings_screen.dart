@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import '../../data/repository/settings_repository.dart';
 import '../../domain/font/custom_font_manager.dart';
 import '../theme/app_theme.dart';
+import 'gemini_key_test_dialog.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -86,6 +87,38 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  void _openKeyTestDialog() {
+    final keys = _apiKeysController.text
+        .split(RegExp(r'[,;\n]'))
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+
+    if (keys.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Vui lòng nhập ít nhất 1 Gemini API Key để kiểm tra!'),
+        ),
+      );
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (_) => GeminiKeyTestDialog(
+        apiKeys: keys,
+        onRemoveDeadKeys: (aliveKeys) {
+          setState(() {
+            _apiKeysController.text = aliveKeys.join('\n');
+            if (_settings != null) {
+              _settings!.geminiApiKeys = aliveKeys;
+            }
+          });
+        },
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _apiKeysController.dispose();
@@ -148,6 +181,67 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       borderRadius: BorderRadius.circular(8),
                     ),
                   ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    ValueListenableBuilder<TextEditingValue>(
+                      valueListenable: _apiKeysController,
+                      builder: (context, val, _) {
+                        final count = val.text
+                            .split(RegExp(r'[,;\n]'))
+                            .map((e) => e.trim())
+                            .where((e) => e.isNotEmpty)
+                            .length;
+                        return Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 7,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1E202A),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: AppColors.cardBorder),
+                          ),
+                          child: Text(
+                            '$count key',
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.primaryEmerald,
+                          side: const BorderSide(
+                            color: AppColors.primaryEmerald,
+                          ),
+                          padding: const EdgeInsets.symmetric(
+                            vertical: 10,
+                            horizontal: 12,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                        icon: const Icon(Icons.bolt_rounded, size: 18),
+                        label: const Text(
+                          'Kiểm tra Key (Sống / Chết)',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        onPressed: _openKeyTestDialog,
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 12),
                 Row(
