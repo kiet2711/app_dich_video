@@ -1,3 +1,4 @@
+import 'package:capsub_flutter/domain/media/media_storage.dart';
 import 'package:capsub_flutter/domain/service/foreground_service_manager.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -32,4 +33,17 @@ void main() {
       await expectLater(ForegroundServiceManager.stop(), completes);
     },
   );
+
+  test('MediaStorage.isContentUri correctly identifies content scheme', () {
+    expect(
+      MediaStorage.isContentUri('content://media/external/video/media/123'),
+      isTrue,
+    );
+    expect(
+      MediaStorage.isContentUri('/var/mobile/Containers/Data/video.mp4'),
+      isFalse,
+    );
+    expect(MediaStorage.isContentUri('https://example.com/video.mp4'), isFalse);
+    expect(MediaStorage.isContentUri(''), isFalse);
+  });
 }

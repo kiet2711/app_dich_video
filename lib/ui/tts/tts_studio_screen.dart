@@ -71,9 +71,10 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
     final state = _ttsManager.progress.value;
     if (state.isRunning) {
       final pct = state.totalCount > 0
-          ? ((state.completedCount / state.totalCount) * 100)
-              .toInt()
-              .clamp(0, 100)
+          ? ((state.completedCount / state.totalCount) * 100).toInt().clamp(
+              0,
+              100,
+            )
           : 0;
       final msg =
           'Đã tạo: ${state.completedCount}/${state.totalCount} câu ($pct%)';
@@ -139,7 +140,10 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
   }
 
   Future<void> _pickVideoFromFiles() async {
-    final picked = await MediaStorage.pickPersistentMedia(videoOnly: true);
+    final picked = await MediaStorage.pickPersistentMedia(
+      context: context,
+      videoOnly: true,
+    );
     if (picked != null) {
       setState(() {
         _videoPath = picked.location;

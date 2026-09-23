@@ -132,10 +132,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _pickFile() async {
     try {
-      if (mounted) {
-        setState(() => _probeStatusMessage = '⏳ Đang mở media...');
-      }
       final picked = await MediaStorage.pickPersistentMedia(
+        context: context,
         videoOnly: false,
         allowedExtensions: const [
           'mp4',
@@ -153,6 +151,9 @@ class _HomeScreenState extends State<HomeScreen> {
       if (picked == null) {
         if (mounted) setState(() => _probeStatusMessage = null);
         return;
+      }
+      if (mounted) {
+        setState(() => _probeStatusMessage = '⏳ Đang đọc media...');
       }
       final durationMs = await AudioExtractor.probeDuration(picked.location);
       if (!mounted) return;

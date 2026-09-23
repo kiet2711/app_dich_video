@@ -29,7 +29,10 @@ class _ImportSubtitleDialogState extends State<ImportSubtitleDialog> {
   String _translationProgressText = '';
 
   Future<void> _pickVideo() async {
-    final picked = await MediaStorage.pickPersistentMedia(videoOnly: true);
+    final picked = await MediaStorage.pickPersistentMedia(
+      context: context,
+      videoOnly: true,
+    );
     if (picked != null) {
       setState(() {
         _selectedVideoPath = picked.location;
