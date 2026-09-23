@@ -1,10 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math';
 
 import 'package:flutter/material.dart';
-import 'package:just_audio/just_audio.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:video_player/video_player.dart';
 
@@ -13,6 +11,7 @@ import '../../data/repository/settings_repository.dart';
 import '../../domain/media/bilibili_resolver.dart';
 import '../../domain/media/network_header_helper.dart';
 import '../../domain/tts/audio_file_validator.dart';
+import '../../player/tts_audio_scheduler.dart';
 import '../theme/app_theme.dart';
 import 'dual_volume_sheet.dart';
 import 'subtitle_control_sheet.dart';
@@ -35,23 +34,21 @@ class VideoPlayerScreen extends StatefulWidget {
 
 class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   VideoPlayerController? _controller;
-  final AudioPlayer _ttsPlayer = AudioPlayer();
+  late final TtsAudioScheduler _ttsScheduler;
   late SettingsRepository _settings;
   bool _isInitialized = false;
   bool _showControls = true;
   String? _playerError;
   int _currentPosMs = 0;
-  int? _activeTtsItemId;
-  bool _isSyncingTts = false;
   DateTime _lastUiUpdate = DateTime.fromMillisecondsSinceEpoch(0);
   bool _isScrubbing = false;
   int _scrubMs = 0;
   bool _wasPlayingBeforeScrub = false;
-  bool _wasSeeked = false;
 
   @override
   void initState() {
     super.initState();
+    _ttsScheduler = TtsAudioScheduler(widget.document);
     _initSettingsAndPlayer();
   }
 
@@ -80,6 +77,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       final isRemote =
           playablePath.startsWith('http://') ||
           playablePath.startsWith('https://');
+      final videoOptions = VideoPlayerOptions(mixWithOthers: true);
       if (isRemote) {
         if (httpHeaders.isEmpty) {
           httpHeaders = NetworkHeaderHelper.getHeadersForUri(playablePath);
@@ -87,9 +85,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         _controller = VideoPlayerController.networkUrl(
           Uri.parse(playablePath),
           httpHeaders: httpHeaders,
+          videoPlayerOptions: videoOptions,
         );
       } else {
-        _controller = VideoPlayerController.file(File(playablePath));
+        _controller = VideoPlayerController.file(
+          File(playablePath),
+          videoPlayerOptions: videoOptions,
+        );
       }
 
       await _controller!.initialize();
@@ -100,6 +102,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       _controller!.addListener(_onPlayerUpdate);
       await _calibratePlaybackSpeeds();
       await _applyAudioVolumes();
+      await _ttsScheduler.warmUp(_controller!.value.position.inMilliseconds);
       setState(() {
         _isInitialized = true;
       });
@@ -122,22 +125,38 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         _currentPosMs = controller.value.position.inMilliseconds;
       });
     }
-    _syncTtsAudio(controller);
+    unawaited(
+      _ttsScheduler.onVideoStateUpdate(
+        positionMs: controller.value.position.inMilliseconds,
+        isPlaying: controller.value.isPlaying,
+        isBuffering: controller.value.isBuffering,
+        isScrubbing: _isScrubbing,
+      ),
+    );
   }
 
   @override
   void dispose() {
     _controller?.removeListener(_onPlayerUpdate);
     _controller?.dispose();
-    _ttsPlayer.dispose();
+    unawaited(_ttsScheduler.dispose());
     super.dispose();
   }
 
   void _seekTo(int targetMs) {
-    _wasSeeked = true;
-    _activeTtsItemId = null;
-    unawaited(_ttsPlayer.stop());
-    _controller?.seekTo(Duration(milliseconds: targetMs));
+    unawaited(_seekAndRestorePlayback(targetMs));
+  }
+
+  Future<void> _seekAndRestorePlayback(int targetMs) async {
+    final controller = _controller;
+    if (controller == null) return;
+    final shouldResume = controller.value.isPlaying;
+    if (shouldResume) await controller.pause();
+    await Future.wait([
+      controller.seekTo(Duration(milliseconds: targetMs)),
+      _ttsScheduler.onSeek(targetMs),
+    ]);
+    if (shouldResume) await controller.play();
   }
 
   Future<void> _applyAudioVolumes() async {
@@ -147,7 +166,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     );
     final useTts = hasTts && _settings.isTtsPlaybackEnabled;
     await _controller?.setVolume(useTts ? _settings.originalVideoVolume : 1.0);
-    await _ttsPlayer.setVolume(_settings.ttsVolume);
+    await _ttsScheduler.setVolume(_settings.ttsVolume);
+    await _ttsScheduler.setEnabled(useTts);
   }
 
   Future<void> _calibratePlaybackSpeeds() async {
@@ -161,132 +181,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
               item.audioDurationMs = val.durationMs;
             }
           }
-          final srtDurationMs = max(200, item.endMs - item.startMs);
-          if (item.audioDurationMs > srtDurationMs) {
-            final factor =
-                (item.audioDurationMs / srtDurationMs).clamp(1.0, 2.2);
-            item.playbackSpeed = (factor * 10).round() / 10.0;
-          } else {
-            item.playbackSpeed = 1.0;
-          }
+          item.playbackSpeed = TtsAudioScheduler.calculatePlaybackSpeed(
+            audioDurationMs: item.audioDurationMs,
+            subtitleDurationMs: item.endMs - item.startMs,
+          );
         }
       }
-    }
-  }
-
-  Future<void> _syncTtsAudio(VideoPlayerController controller) async {
-    if (_isSyncingTts || !_settings.isTtsPlaybackEnabled) return;
-    // Tạm dừng ngay giọng đọc khi video đang quay tròn tải mạng hoặc đang kéo tua
-    if (_isScrubbing || controller.value.isBuffering) {
-      if (_ttsPlayer.playing) {
-        await _ttsPlayer.pause();
-      }
-      return;
-    }
-    _isSyncingTts = true;
-    try {
-      final positionMs = controller.value.position.inMilliseconds;
-      final item = widget.document.getActiveItem(positionMs);
-      final path = item?.audioFilePath;
-
-      if (item == null || path == null || !File(path).existsSync()) {
-        if (!controller.value.isPlaying && _ttsPlayer.playing) {
-          await _ttsPlayer.pause();
-        }
-        if (_activeTtsItemId != null) {
-          final activeItem = widget.document.items
-              .where((it) => it.id == _activeTtsItemId)
-              .firstOrNull;
-          // Nếu video đã trôi quá 800ms sau khi câu kết thúc hoặc trước startMs:
-          if (activeItem == null ||
-              positionMs < activeItem.startMs ||
-              positionMs > activeItem.endMs + 800) {
-            _activeTtsItemId = null;
-            await _ttsPlayer.stop();
-          }
-        }
-        return;
-      }
-
-      // Đảm bảo tốc độ phát được tính chuẩn xác theo công thức của app gốc
-      if (item.playbackSpeed <= 1.0 && item.audioDurationMs > 0) {
-        final srtDurationMs = max(200, item.endMs - item.startMs);
-        if (item.audioDurationMs > srtDurationMs) {
-          final factor =
-              (item.audioDurationMs / srtDurationMs).clamp(1.0, 2.2);
-          item.playbackSpeed = (factor * 10).round() / 10.0;
-        }
-      }
-
-      var speed = item.playbackSpeed.clamp(0.5, 2.2);
-
-      if (_activeTtsItemId != item.id) {
-        _activeTtsItemId = item.id;
-        await _ttsPlayer.stop();
-
-        Duration? initialPos;
-        if (_wasSeeked) {
-          _wasSeeked = false;
-          final timelineOffsetMs = max(0, positionMs - item.startMs);
-          final sourceOffsetMs = (timelineOffsetMs * speed).round();
-          if (item.audioDurationMs > 0 &&
-              sourceOffsetMs >= item.audioDurationMs) {
-            return;
-          }
-          // Chỉ seek vào giữa câu nếu người dùng tua sâu vào trong câu (> 400ms)
-          if (sourceOffsetMs > 400) {
-            initialPos = Duration(milliseconds: sourceOffsetMs);
-          }
-        }
-
-        final duration = await _ttsPlayer.setFilePath(
-          path,
-          initialPosition: initialPos,
-        );
-        if (duration != null && duration.inMilliseconds > 0) {
-          item.audioDurationMs = duration.inMilliseconds;
-          final srtDurationMs = max(200, item.endMs - item.startMs);
-          if (item.audioDurationMs > srtDurationMs) {
-            final factor =
-                (item.audioDurationMs / srtDurationMs).clamp(1.0, 2.2);
-            speed = (factor * 10).round() / 10.0;
-            item.playbackSpeed = speed;
-          } else {
-            speed = 1.0;
-            item.playbackSpeed = 1.0;
-          }
-        }
-
-        // Tốc độ phát (AVPlayer trên iOS tự động bảo toàn pitch khi đổi speed, không gọi setPitch vì iOS ném PlatformException)
-        await _ttsPlayer.setSpeed(speed);
-        if (!Platform.isIOS) {
-          try {
-            await _ttsPlayer.setPitch(1.0);
-          } catch (_) {}
-        }
-        await _ttsPlayer.setVolume(_settings.ttsVolume);
-
-        if (controller.value.isPlaying) {
-          await _ttsPlayer.play();
-        }
-      } else {
-        // Đang phát câu thoại này:
-        // GIỐNG APP GỐC ANDROID: Tuyệt đối KHÔNG chạy seek định kỳ để tránh nuốt âm đầu câu.
-        // Chỉ đồng bộ trạng thái Play/Pause theo video.
-        if (controller.value.isPlaying) {
-          if (!_ttsPlayer.playing &&
-              _ttsPlayer.processingState != ProcessingState.completed) {
-            unawaited(_ttsPlayer.play());
-          }
-        } else if (_ttsPlayer.playing) {
-          await _ttsPlayer.pause();
-        }
-      }
-    } catch (_) {
-      _activeTtsItemId = null;
-      await _ttsPlayer.stop();
-    } finally {
-      _isSyncingTts = false;
     }
   }
 
@@ -307,7 +207,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
           ),
         ],
         fileNameOverrides: ['${baseName.isEmpty ? 'capsub' : baseName}.srt'],
-      subject: 'Phụ đề CapSub',
+        subject: 'Phụ đề CapSub',
         sharePositionOrigin: renderBox == null
             ? null
             : renderBox.localToGlobal(Offset.zero) & renderBox.size,
@@ -429,10 +329,19 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                           setState(() {
                             _settings.isTtsPlaybackEnabled =
                                 !_settings.isTtsPlaybackEnabled;
-                            _activeTtsItemId = null;
                           });
-                          await _ttsPlayer.stop();
                           await _applyAudioVolumes();
+                          if (_settings.isTtsPlaybackEnabled) {
+                            final positionMs =
+                                controller.value.position.inMilliseconds;
+                            await _ttsScheduler.onSeek(positionMs);
+                            await _ttsScheduler.onVideoStateUpdate(
+                              positionMs: positionMs,
+                              isPlaying: controller.value.isPlaying,
+                              isBuffering: controller.value.isBuffering,
+                              isScrubbing: _isScrubbing,
+                            );
+                          }
                         },
                       ),
                       IconButton(
@@ -459,7 +368,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                                     setState(() {
                                       _settings.ttsVolume = val;
                                     });
-                                    await _ttsPlayer.setVolume(val);
+                                    await _ttsScheduler.setVolume(val);
                                     setSheetState(() {});
                                   },
                                 );
@@ -554,11 +463,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text(
-                            _formatDuration(Duration(
-                              milliseconds: _isScrubbing
-                                  ? _scrubMs
-                                  : controller.value.position.inMilliseconds,
-                            )),
+                            _formatDuration(
+                              Duration(
+                                milliseconds: _isScrubbing
+                                    ? _scrubMs
+                                    : controller.value.position.inMilliseconds,
+                              ),
+                            ),
                             style: const TextStyle(
                               color: Colors.white70,
                               fontSize: 12,
@@ -617,7 +528,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                     child: Container(color: Colors.white30),
                   ),
                   Flexible(
-                    flex: ((1.0 - bufferedFraction) * 1000).toInt().clamp(0, 1000),
+                    flex: ((1.0 - bufferedFraction) * 1000).toInt().clamp(
+                      0,
+                      1000,
+                    ),
                     child: Container(color: Colors.white12),
                   ),
                 ],
@@ -645,8 +559,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                   _scrubMs = val.toInt();
                   _wasPlayingBeforeScrub = controller.value.isPlaying;
                 });
-                _activeTtsItemId = null;
-                unawaited(_ttsPlayer.stop());
+                unawaited(_ttsScheduler.pause());
                 if (_wasPlayingBeforeScrub) {
                   controller.pause();
                 }
@@ -658,17 +571,17 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
               },
               onChangeEnd: (val) async {
                 final targetMs = val.toInt();
-                _wasSeeked = true;
-                _activeTtsItemId = null;
-                unawaited(_ttsPlayer.stop());
-                await controller.seekTo(Duration(milliseconds: targetMs));
-                if (_wasPlayingBeforeScrub) {
-                  await controller.play();
-                }
+                await Future.wait([
+                  controller.seekTo(Duration(milliseconds: targetMs)),
+                  _ttsScheduler.onSeek(targetMs),
+                ]);
                 if (mounted) {
                   setState(() {
                     _isScrubbing = false;
                   });
+                }
+                if (_wasPlayingBeforeScrub) {
+                  await controller.play();
                 }
               },
             ),

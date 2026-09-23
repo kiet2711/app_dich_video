@@ -20,15 +20,16 @@ class TtsCacheHelper {
     final lastText = last.getDisplayText('translated').trim().isNotEmpty
         ? last.getDisplayText('translated').trim()
         : last.originalText.trim();
-    final prefix =
-        firstText.length > 20 ? firstText.substring(0, 20) : firstText;
+    final prefix = firstText.length > 20
+        ? firstText.substring(0, 20)
+        : firstText;
     final suffix = lastText.length > 20 ? lastText.substring(0, 20) : lastText;
     final signature =
         '${doc.items.length}_${first.startMs}_${prefix}_${last.endMs}_$suffix';
     return md5.convert(utf8.encode(signature)).toString();
   }
 
-  /// Thư mục cache TTS riêng biệt của tài liệu: tts_cache/<docKey>/<voiceType>
+  /// Thư mục cache TTS riêng biệt: `tts_cache/<docKey>/<voiceType>`.
   static Future<Directory> getCacheDir(
     SubtitleDocument doc, [
     String? voiceType,
@@ -43,7 +44,7 @@ class TtsCacheHelper {
     return dir;
   }
 
-  /// File âm thanh cho từng câu: sub_<itemId>.mp3
+  /// File âm thanh cho từng câu: `sub_<itemId>.mp3`.
   static Future<File> getAudioFile(
     SubtitleDocument doc,
     SubtitleItem item,
