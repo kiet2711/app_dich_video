@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../../data/api/gemini_translator.dart';
-import '../../data/api/groq_translator.dart';
 import '../../data/model/subtitle_document.dart';
 import '../../data/repository/settings_repository.dart';
 import '../../domain/ai/ai_model_registry.dart';

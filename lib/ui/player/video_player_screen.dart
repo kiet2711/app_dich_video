@@ -21,14 +21,16 @@ import 'transcript_sheet.dart';
 
 class VideoPlayerScreen extends StatefulWidget {
   final String videoPath;
-  final SubtitleDocument document;
+  final SubtitleDocument? document;
+  final String? title;
   final int initialPositionMs;
   final Future<void> Function(int positionMs)? onPlaybackPositionChanged;
 
   const VideoPlayerScreen({
     super.key,
     required this.videoPath,
-    required this.document,
+    this.document,
+    this.title,
     this.initialPositionMs = 0,
     this.onPlaybackPositionChanged,
   });
@@ -66,7 +68,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _ttsScheduler = TtsAudioScheduler(widget.document);
+    _ttsScheduler = TtsAudioScheduler(
+      widget.document ?? SubtitleDocument(),
+    );
     _initSettingsAndPlayer();
   }
 
@@ -354,7 +358,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   }
 
   Future<void> _applyAudioVolumes() async {
-    final hasTts = widget.document.items.any(
+    final hasTts = (widget.document?.items ?? []).any(
       (item) =>
           item.audioFilePath != null && File(item.audioFilePath!).existsSync(),
     );
@@ -365,7 +369,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   }
 
   Future<void> _calibratePlaybackSpeeds() async {
-    for (final item in widget.document.items) {
+    for (final item in (widget.document?.items ?? [])) {
       if (item.audioFilePath != null && item.audioFilePath!.isNotEmpty) {
         final file = File(item.audioFilePath!);
         if (file.existsSync()) {
@@ -385,6 +389,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   }
 
   Future<void> _shareSubtitle() async {
+    final doc = widget.document;
+    if (doc == null || doc.items.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Không có phụ đề để xuất!')),
+      );
+      return;
+    }
     final rawName = widget.videoPath
         .split(RegExp(r'[/\\]'))
         .last
@@ -396,7 +407,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       ShareParams(
         files: [
           XFile.fromData(
-            utf8.encode(widget.document.toSrtString()),
+            utf8.encode(doc.toSrtString()),
             mimeType: 'application/x-subrip',
           ),
         ],
@@ -468,7 +479,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
               // 2. Lớp Hộp Đen (BlackBox) và Phụ đề nổi
               SubtitleOverlay(
-                document: widget.document,
+                document: widget.document ?? SubtitleDocument(),
                 currentPositionMs: _currentPosMs,
                 settings: _settings,
                 onDragOffset: (newOffset) {
@@ -491,7 +502,23 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                         icon: const Icon(Icons.arrow_back, color: Colors.white),
                         onPressed: () => Navigator.pop(context),
                       ),
-                      const Spacer(),
+                      if (widget.title != null && widget.title!.isNotEmpty) ...[
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            widget.title!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                      ] else
+                        const Spacer(),
                       IconButton(
                         icon: Icon(
                           _settings.isBlackBoxEnabled
@@ -609,7 +636,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                       FractionallySizedBox(
                                         heightFactor: 0.6,
                                         child: TranscriptSheet(
-                                          document: widget.document,
+                                          document: widget.document ?? SubtitleDocument(),
                                           currentPositionMs:
                                               value.position.inMilliseconds,
                                           onSeekTo: (ms) {

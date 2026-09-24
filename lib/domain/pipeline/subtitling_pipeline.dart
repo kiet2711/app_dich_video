@@ -8,8 +8,6 @@ import 'package:uuid/uuid.dart';
 
 import '../../data/api/capcut_stt_client.dart';
 import '../../data/api/capcut_vod_uploader.dart';
-import '../../data/api/gemini_translator.dart';
-import '../../data/api/groq_translator.dart';
 import '../../data/model/device_config.dart';
 import '../../data/model/process_progress.dart';
 import '../../data/model/subtitle_document.dart';
@@ -19,6 +17,7 @@ import '../ai/ai_model_registry.dart';
 import '../ai/smart_ai_translator.dart';
 import '../media/audio_chunker.dart';
 import '../media/bilibili_resolver.dart';
+import '../media/hongguo_resolver.dart';
 
 class SubtitlingPipeline {
   final List<String> apiKeys;
@@ -184,6 +183,53 @@ class SubtitlingPipeline {
           );
           extractionPath = downloadedAudio.path;
         }
+      } else if (HongguoResolver.isHongguoUrl(videoPath)) {
+        _emit(
+          const ProcessProgress(
+            stage: ProcessStage.extractingAudio,
+            progress: 0.02,
+            message: 'Đang phân tích liên kết phim Hồng Quả...',
+          ),
+        );
+        final resolver = HongguoResolver();
+        var directMp4 = videoPath;
+
+        // Nếu videoPath là link trang web/chia sẻ (chưa phải direct mp4 link)
+        if (!videoPath.contains('.mp4') && !videoPath.contains('qznovelvod.com')) {
+          final seriesId = await resolver.resolveSeriesId(videoPath);
+          final vidMatch = RegExp(r'/player/\d+/(\d+)').firstMatch(videoPath);
+          final vid = vidMatch?.group(1) ?? seriesId;
+          directMp4 = await resolver.getEpisodePlayUrl(seriesId, vid);
+        }
+
+        _emit(
+          const ProcessProgress(
+            stage: ProcessStage.extractingAudio,
+            progress: 0.04,
+            message: 'Đang tải video Hồng Quả để bóc tách âm thanh...',
+          ),
+        );
+
+        final downloadedVideo = File(
+          '${sessionDir.path}${Platform.pathSeparator}hongguo_video.mp4',
+        );
+        final headers = NetworkHeaderHelper.getHeadersForUrl(directMp4);
+        await MultiThreadDownloader.downloadFile(
+          url: directMp4,
+          outputFile: downloadedVideo,
+          headers: headers,
+          concurrency: settings.downloadThreadCount,
+          progressCallback: (progress, message) {
+            _emit(
+              ProcessProgress(
+                stage: ProcessStage.extractingAudio,
+                progress: 0.04 + progress * 0.14,
+                message: message,
+              ),
+            );
+          },
+        );
+        extractionPath = downloadedVideo.path;
       }
 
       final allItems = <SubtitleItem>[];

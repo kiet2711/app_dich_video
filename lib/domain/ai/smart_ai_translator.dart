@@ -168,7 +168,6 @@ class SmartAiTranslator {
   }) async {
     if (document.isEmpty) return document;
 
-    final initialProvider = AiModelRegistry.detectProvider(initialModelId);
     if (geminiKeys.isEmpty && groqKeys.isEmpty) {
       throw StateError(
         'Chưa có API Key nào được cấu hình! Vui lòng vào Cài đặt để thêm Gemini hoặc Groq Key.',

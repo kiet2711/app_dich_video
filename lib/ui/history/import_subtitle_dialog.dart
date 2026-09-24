@@ -3,12 +3,9 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
-import '../../data/api/gemini_translator.dart';
-import '../../data/api/groq_translator.dart';
 import '../../data/model/subtitle_document.dart';
 import '../../data/repository/history_repository.dart';
 import '../../data/repository/settings_repository.dart';
-import '../../domain/ai/ai_model_registry.dart';
 import '../../domain/ai/smart_ai_translator.dart';
 import '../../domain/media/media_storage.dart';
 import '../theme/app_theme.dart';
@@ -139,7 +136,6 @@ class _ImportSubtitleDialogState extends State<ImportSubtitleDialog> {
       }
 
       final model = settings.selectedModel;
-      final provider = AiModelRegistry.detectProvider(model);
       if (settings.geminiApiKeys.isEmpty && settings.groqApiKeys.isEmpty) {
         throw StateError(
           'Chưa có API Key nào được cấu hình! Vui lòng vào Cài đặt để thêm Gemini hoặc Groq Key.',

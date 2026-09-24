@@ -34,12 +34,25 @@ class HomeScreen extends StatefulWidget {
   });
 
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  State<HomeScreen> createState() => HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class HomeScreenState extends State<HomeScreen> {
   SettingsRepository? _settings;
   int _inputMode = 0; // 0: File máy, 1: Link video online
+
+  void loadOnlineVideo(String url, {String? title}) {
+    setState(() {
+      _inputMode = 1; // Tự động chọn tab Link video online
+      _urlController.text = url;
+      if (title != null && title.isNotEmpty) {
+        _fileName = title.endsWith('.mp4') ? title : '$title.mp4';
+      }
+      _selectedVideoPath = url;
+      _probeStatusMessage = '⏳ Đang nạp video tập phim...';
+    });
+    _probeUrl(url, suggestedTitle: title);
+  }
 
   String? _selectedVideoPath;
   String _fileName = '';
@@ -210,7 +223,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _probeUrl(String rawUrl) async {
+  Future<void> _probeUrl(String rawUrl, {String? suggestedTitle}) async {
     final clean = NetworkHeaderHelper.extractCleanUrl(rawUrl);
     if (clean.isEmpty || !NetworkHeaderHelper.isRemoteUrl(clean)) {
       setState(() {
@@ -227,7 +240,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
     try {
       var durationMs = 0;
-      var resolvedName = NetworkHeaderHelper.getSuggestedTitle(clean);
+      var resolvedName = (suggestedTitle != null && suggestedTitle.isNotEmpty)
+          ? (suggestedTitle.endsWith('.mp4') ? suggestedTitle : '$suggestedTitle.mp4')
+          : NetworkHeaderHelper.getSuggestedTitle(clean);
       List<BilibiliPageInfo> pages = [];
       var selectedPage = 1;
 
@@ -286,11 +301,14 @@ class _HomeScreenState extends State<HomeScreen> {
       });
     } catch (e) {
       if (!mounted) return;
+      final defaultName = (suggestedTitle != null && suggestedTitle.isNotEmpty)
+          ? (suggestedTitle.endsWith('.mp4') ? suggestedTitle : '$suggestedTitle.mp4')
+          : NetworkHeaderHelper.getSuggestedTitle(clean);
       setState(() {
         _isProbingUrl = false;
         _selectedVideoPath = clean;
         _fileDurationMs = 0;
-        _fileName = NetworkHeaderHelper.getSuggestedTitle(clean);
+        _fileName = defaultName;
         _fileSizeMb = 'Trực tuyến';
         _bilibiliPages = [];
         _selectedBilibiliPage = 1;

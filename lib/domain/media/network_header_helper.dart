@@ -71,6 +71,13 @@ class NetworkHeaderHelper {
             cookie.contains('=') ? cookie.trim() : 'SESSDATA=${cookie.trim()}';
         headers['Cookie'] = formatted;
       }
+    } else if (lower.contains('hongguoduanju.com') ||
+        lower.contains('novelquickapp.com') ||
+        lower.contains('qznovelvod.com') ||
+        lower.contains('fanqiesc.com') ||
+        lower.contains('fqnovel.com')) {
+      headers['Referer'] = 'https://www.hongguoduanju.com/';
+      headers['Origin'] = 'https://www.hongguoduanju.com';
     } else if (lower.contains('douyin.com') ||
         lower.contains('douyinvod.com') ||
         lower.contains('iesdouyin.com')) {
@@ -95,6 +102,7 @@ class NetworkHeaderHelper {
 
       final sourceTag = switch (host) {
         _ when host.contains('bilivideo') || host.contains('bilibili') => 'Bilibili',
+        _ when host.contains('hongguo') || host.contains('qznovel') || host.contains('novelquickapp') => 'Hồng Quả',
         _ when host.contains('douyin') => 'Douyin',
         _ when host.contains('tiktok') => 'TikTok',
         _ when host.contains('kuaishou') => 'Kuaishou',

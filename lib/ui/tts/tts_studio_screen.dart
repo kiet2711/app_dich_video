@@ -11,7 +11,6 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
-import '../../data/api/gemini_translator.dart';
 import '../../domain/ai/smart_ai_translator.dart';
 import '../../data/model/subtitle_document.dart';
 import '../../data/model/voice_model.dart';
