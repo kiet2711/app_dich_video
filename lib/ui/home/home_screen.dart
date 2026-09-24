@@ -12,6 +12,7 @@ import '../../data/model/process_progress.dart';
 import '../../data/model/subtitle_document.dart';
 import '../../data/repository/history_repository.dart';
 import '../../data/repository/settings_repository.dart';
+import '../../domain/ai/ai_model_registry.dart';
 import '../../domain/media/audio_extractor.dart';
 import '../../domain/media/bilibili_resolver.dart';
 import '../../domain/media/media_storage.dart';
@@ -71,17 +72,30 @@ class _HomeScreenState extends State<HomeScreen> {
     MapEntry('ko-KR', '🇰🇷 Tiếng Hàn (ko-KR)'),
   ];
 
-  static const _engineOptions = [
-    MapEntry('capcut', '⚡ CapCut Dịch Sẵn (Miễn phí 100% - Không cần Key)'),
-    MapEntry(
-      'gemini-3.5-flash-lite',
-      '🤖 Gemini 3.5 Flash-Lite (RPD cao - Cần API Key)',
-    ),
+  static const _geminiEngineOptions = [
     MapEntry(
       'gemini-3.1-flash-lite',
-      '🤖 Gemini 3.1 Flash-Lite (Khuyên dùng - Cần API Key)',
+      '🤖 Gemini 3.1 Flash-Lite (Khuyên dùng)',
     ),
-    MapEntry('none', '🚫 Giữ Nguyên Tiếng Gốc (Không dịch)'),
+    MapEntry(
+      'gemini-3.5-flash-lite',
+      '🤖 Gemini 3.5 Flash-Lite (RPD cao)',
+    ),
+  ];
+
+  static const _groqEngineOptions = [
+    MapEntry(
+      'openai/gpt-oss-120b',
+      '⭐ GPT-OSS 120B (OpenAI - Dịch SRT đỉnh cao)',
+    ),
+    MapEntry(
+      'openai/gpt-oss-20b',
+      '⚡ GPT-OSS 20B (OpenAI - Siêu tốc & Gọn nhẹ)',
+    ),
+    MapEntry(
+      'qwen/qwen3.8-27b',
+      '🇨🇳 Qwen 3.8 27B (Alibaba - Chuyên Trung ➔ Việt)',
+    ),
   ];
 
   static const _targetLanguageOptions = [
@@ -373,13 +387,30 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    // Kiểm tra Gemini API Key trước khi xử lý giống bản gốc Android
-    if (_selectedEngine.startsWith('gemini') &&
-        _settings!.geminiApiKeys.isEmpty) {
+    // Kiểm tra API Key tương ứng trước khi xử lý
+    final provider = AiModelRegistry.detectProvider(_selectedEngine);
+    if (provider == AiProvider.gemini && _settings!.geminiApiKeys.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
             'Vui lòng nhập Gemini API Key trong Cài đặt trước khi dùng Gemini!',
+          ),
+          duration: Duration(seconds: 3),
+        ),
+      );
+      if (widget.onNavigateToSettings != null) {
+        widget.onNavigateToSettings!();
+      } else {
+        Navigator.pushNamed(context, '/settings').then((_) => _loadSettings());
+      }
+      return;
+    }
+
+    if (provider == AiProvider.groq && _settings!.groqApiKeys.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Vui lòng nhập Groq API Key trong Cài đặt trước khi dùng Groq AI!',
           ),
           duration: Duration(seconds: 3),
         ),
@@ -416,6 +447,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final pipeline = SubtitlingPipeline(
       apiKeys: _settings!.geminiApiKeys,
+      groqApiKeys: _settings!.groqApiKeys,
       translationEngine: _selectedEngine,
       stylePreset: _selectedStyle,
       customPrompt: _selectedStyle == 'custom'
@@ -424,6 +456,8 @@ class _HomeScreenState extends State<HomeScreen> {
       targetLanguage: _selectedTargetLang,
       geminiThreadCount: _settings!.geminiThreadCount,
       geminiBatchSize: _settings!.geminiBatchSize,
+      groqThreadCount: _settings!.groqThreadCount,
+      groqBatchSize: _settings!.groqBatchSize,
     );
     _activePipeline = pipeline;
 
@@ -1114,16 +1148,23 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(height: 16),
 
-            // Bộ máy Dịch thuật phụ đề
-            SettingDropdown(
-              label: '🤖 Bộ máy Dịch thuật phụ đề:',
-              currentValue: _selectedEngine,
-              options: _engineOptions,
-              onSelect: (code, label) {
-                setState(() => _selectedEngine = code);
-                _settings?.selectedModel = code;
-              },
+            // Bộ máy Dịch thuật phụ đề: 2 Tầng siêu gọn (Provider Chips + Model Selector)
+            const Text(
+              '🤖 Bộ máy Dịch thuật phụ đề:',
+              style: TextStyle(
+                fontSize: 13,
+                color: Color(0xFFC0C0C0),
+                fontWeight: FontWeight.w500,
+              ),
             ),
+            const SizedBox(height: 8),
+
+            // Tầng 1: Chọn Nền tảng (Provider Chips)
+            _buildEngineProviderChips(),
+            const SizedBox(height: 8),
+
+            // Tầng 2: Model selector tương ứng hoặc thông tin
+            _buildEngineModelSelector(),
 
             // Ngôn ngữ dịch sang (Ngôn ngữ đích - chỉ hiện khi không chọn "none")
             if (_selectedEngine != 'none') ...[
@@ -1140,11 +1181,11 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ],
 
-            // Phong cách dịch ngữ cảnh (Gemini - chỉ hiện khi chọn gemini)
-            if (_selectedEngine.startsWith('gemini')) ...[
+            // Phong cách dịch ngữ cảnh (Chỉ hiện khi chọn AI: Gemini hoặc Groq)
+            if (AiModelRegistry.isAiTranslationModel(_selectedEngine)) ...[
               const SizedBox(height: 16),
               SettingDropdown(
-                label: '🎭 Phong cách dịch ngữ cảnh (Gemini):',
+                label: '🎭 Phong cách dịch ngữ cảnh (AI):',
                 currentValue: _selectedStyle,
                 options: _styleOptions,
                 onSelect: (code, label) {
@@ -1163,7 +1204,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   maxLines: 4,
                   style: const TextStyle(color: Colors.white, fontSize: 13),
                   decoration: InputDecoration(
-                    hintText: 'Nhập hướng dẫn prompt dịch cho Gemini (vd: Dịch theo lối cổ trang, xưng hô huynh/muội, giữ câu ngắn...)',
+                    hintText: 'Nhập hướng dẫn prompt dịch cho AI (vd: Dịch theo lối cổ trang, xưng hô huynh/muội, giữ câu ngắn...)',
                     hintStyle: const TextStyle(
                       color: Colors.grey,
                       fontSize: 13,
@@ -1225,6 +1266,334 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(height: 30),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildEngineProviderChips() {
+    final currentProvider = AiModelRegistry.detectProvider(_selectedEngine);
+    return Row(
+      children: [
+        _buildProviderChip(
+          label: 'CapCut',
+          icon: Icons.bolt_rounded,
+          color: AppColors.primaryEmerald,
+          isSelected: currentProvider == AiProvider.capcut,
+          onTap: () {
+            setState(() => _selectedEngine = 'capcut');
+            _settings?.selectedModel = 'capcut';
+          },
+        ),
+        const SizedBox(width: 6),
+        _buildProviderChip(
+          label: 'Gemini',
+          icon: Icons.auto_awesome,
+          color: const Color(0xFF4285F4),
+          isSelected: currentProvider == AiProvider.gemini,
+          onTap: () {
+            final model = _settings?.selectedGeminiModel.isNotEmpty == true
+                ? _settings!.selectedGeminiModel
+                : 'gemini-3.1-flash-lite';
+            setState(() => _selectedEngine = model);
+            _settings?.selectedModel = model;
+          },
+        ),
+        const SizedBox(width: 6),
+        _buildProviderChip(
+          label: 'Groq AI',
+          icon: Icons.electric_bolt_rounded,
+          color: Colors.amber,
+          isSelected: currentProvider == AiProvider.groq,
+          onTap: () {
+            final model = _settings?.selectedGroqModel.isNotEmpty == true
+                ? _settings!.selectedGroqModel
+                : 'openai/gpt-oss-120b';
+            setState(() => _selectedEngine = model);
+            _settings?.selectedModel = model;
+          },
+        ),
+        const SizedBox(width: 6),
+        _buildProviderChip(
+          label: 'Không dịch',
+          icon: Icons.block_rounded,
+          color: Colors.white54,
+          isSelected: currentProvider == AiProvider.none,
+          onTap: () {
+            setState(() => _selectedEngine = 'none');
+            _settings?.selectedModel = 'none';
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildProviderChip({
+    required String label,
+    required IconData icon,
+    required Color color,
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(vertical: 7),
+          decoration: BoxDecoration(
+            color: isSelected ? color.withValues(alpha: 0.18) : const Color(0xFF1E202A),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: isSelected ? color : AppColors.cardBorder,
+              width: isSelected ? 1.5 : 1,
+            ),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 14, color: isSelected ? color : Colors.white60),
+              const SizedBox(width: 4),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                    color: isSelected ? Colors.white : Colors.white70,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEngineModelSelector() {
+    final currentProvider = AiModelRegistry.detectProvider(_selectedEngine);
+
+    if (currentProvider == AiProvider.gemini) {
+      final hasKey = _settings?.geminiApiKeys.isNotEmpty == true;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+            decoration: BoxDecoration(
+              color: AppColors.darkSurface,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: const Color(0xFF4285F4).withValues(alpha: 0.4),
+              ),
+            ),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<String>(
+                value: _geminiEngineOptions.any((e) => e.key == _selectedEngine)
+                    ? _selectedEngine
+                    : _geminiEngineOptions.first.key,
+                isExpanded: true,
+                dropdownColor: AppColors.darkSurface,
+                icon: const Icon(Icons.arrow_drop_down, color: Color(0xFF4285F4)),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+                items: _geminiEngineOptions.map((entry) {
+                  return DropdownMenuItem<String>(
+                    value: entry.key,
+                    child: Text(
+                      entry.value,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  );
+                }).toList(),
+                onChanged: (code) {
+                  if (code != null) {
+                    setState(() => _selectedEngine = code);
+                    _settings?.selectedModel = code;
+                    _settings?.selectedGeminiModel = code;
+                  }
+                },
+              ),
+            ),
+          ),
+          if (!hasKey) ...[
+            const SizedBox(height: 6),
+            _buildMissingKeyAlert(
+              title: 'Chưa có Gemini API Key',
+              providerName: 'Gemini',
+            ),
+          ],
+        ],
+      );
+    }
+
+    if (currentProvider == AiProvider.groq) {
+      final hasKey = _settings?.groqApiKeys.isNotEmpty == true;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+            decoration: BoxDecoration(
+              color: AppColors.darkSurface,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: Colors.amber.withValues(alpha: 0.4),
+              ),
+            ),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<String>(
+                value: _groqEngineOptions.any((e) => e.key == _selectedEngine)
+                    ? _selectedEngine
+                    : _groqEngineOptions.first.key,
+                isExpanded: true,
+                dropdownColor: AppColors.darkSurface,
+                icon: const Icon(Icons.arrow_drop_down, color: Colors.amber),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+                items: _groqEngineOptions.map((entry) {
+                  return DropdownMenuItem<String>(
+                    value: entry.key,
+                    child: Text(
+                      entry.value,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  );
+                }).toList(),
+                onChanged: (code) {
+                  if (code != null) {
+                    setState(() => _selectedEngine = code);
+                    _settings?.selectedModel = code;
+                    _settings?.selectedGroqModel = code;
+                  }
+                },
+              ),
+            ),
+          ),
+          if (!hasKey) ...[
+            const SizedBox(height: 6),
+            _buildMissingKeyAlert(
+              title: 'Chưa có Groq API Key',
+              providerName: 'Groq',
+            ),
+          ],
+        ],
+      );
+    }
+
+    if (currentProvider == AiProvider.capcut) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: const Color(0xFF13141B),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppColors.cardBorder),
+        ),
+        child: const Row(
+          children: [
+            Icon(Icons.check_circle_outline, size: 16, color: AppColors.primaryEmerald),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Dịch trực tiếp qua CapCut Cloud (Miễn phí 100% - Không cần API Key)',
+                style: TextStyle(color: Colors.white70, fontSize: 12),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF13141B),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.cardBorder),
+      ),
+      child: const Row(
+        children: [
+          Icon(Icons.info_outline, size: 16, color: Colors.white54),
+          SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Giữ nguyên phụ đề tiếng gốc, không qua bước dịch thuật',
+              style: TextStyle(color: Colors.white54, fontSize: 12),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMissingKeyAlert({
+    required String title,
+    required String providerName,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.amber.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.amber.withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.warning_amber_rounded, size: 16, color: Colors.amber),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '$title! Vui lòng cấu hình key.',
+              style: const TextStyle(color: Colors.amber, fontSize: 12),
+            ),
+          ),
+          InkWell(
+            onTap: () {
+              if (widget.onNavigateToSettings != null) {
+                widget.onNavigateToSettings!();
+              } else {
+                Navigator.pushNamed(context, '/settings').then((_) => _loadSettings());
+              }
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: Colors.amber,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: const Text(
+                'Cài đặt',
+                style: TextStyle(
+                  color: Colors.black,
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

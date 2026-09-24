@@ -7,6 +7,7 @@ import '../../data/repository/settings_repository.dart';
 import '../../domain/font/custom_font_manager.dart';
 import '../theme/app_theme.dart';
 import 'gemini_key_test_dialog.dart';
+import 'groq_key_test_dialog.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -18,8 +19,10 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   SettingsRepository? _settings;
   final _apiKeysController = TextEditingController();
+  final _groqApiKeysController = TextEditingController();
   final _customPromptController = TextEditingController();
   final _bilibiliSessDataController = TextEditingController();
+  int _selectedAiProviderTab = 0; // 0: Gemini, 1: Groq
 
   @override
   void initState() {
@@ -32,6 +35,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() {
       _settings = s;
       _apiKeysController.text = s.geminiApiKeys.join('\n');
+      _groqApiKeysController.text = s.groqApiKeys.join('\n');
       _customPromptController.text = s.geminiCustomPrompt;
       _bilibiliSessDataController.text = s.bilibiliSessData;
     });
@@ -40,6 +44,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void _save() {
     if (_settings == null) return;
     _settings!.geminiApiKeys = _apiKeysController.text
+        .split(RegExp(r'[,;\n]'))
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+    _settings!.groqApiKeys = _groqApiKeysController.text
         .split(RegExp(r'[,;\n]'))
         .map((e) => e.trim())
         .where((e) => e.isNotEmpty)
@@ -124,9 +133,47 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  void _openGroqKeyTestDialog() {
+    final keys = _groqApiKeysController.text
+        .split(RegExp(r'[,;\n]'))
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+
+    if (keys.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Vui lòng nhập ít nhất 1 Groq API Key để kiểm tra!'),
+        ),
+      );
+      return;
+    }
+
+    final currentModel = (_settings?.selectedGroqModel.isNotEmpty == true)
+        ? _settings!.selectedGroqModel
+        : 'openai/gpt-oss-120b';
+
+    showDialog(
+      context: context,
+      builder: (_) => GroqKeyTestDialog(
+        apiKeys: keys,
+        initialModelId: currentModel,
+        onRemoveDeadKeys: (aliveKeys) {
+          setState(() {
+            _groqApiKeysController.text = aliveKeys.join('\n');
+            if (_settings != null) {
+              _settings!.groqApiKeys = aliveKeys;
+            }
+          });
+        },
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _apiKeysController.dispose();
+    _groqApiKeysController.dispose();
     _customPromptController.dispose();
     _bilibiliSessDataController.dispose();
     super.dispose();
@@ -156,8 +203,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          // Section 1: Gemini AI
-          _buildSectionHeader('Google Gemini AI (Dịch thuật đa luồng)'),
+          // Section 1: AI Translation (Gemini & Groq Tabbed)
+          _buildSectionHeader('Trí tuệ nhân tạo dịch thuật (Gemini & Groq AI)'),
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
@@ -168,205 +215,535 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Danh sách Gemini API Key (mỗi dòng 1 key để xoay vòng):',
-                  style: TextStyle(color: Colors.white70, fontSize: 13),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _apiKeysController,
-                  maxLines: 4,
-                  style: const TextStyle(color: Colors.white, fontSize: 13),
-                  decoration: InputDecoration(
-                    filled: true,
-                    fillColor: const Color(0xFF1E202A),
-                    hintText: 'Dán các API Key tại đây...',
-                    hintStyle: const TextStyle(color: Colors.white38),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    ValueListenableBuilder<TextEditingValue>(
-                      valueListenable: _apiKeysController,
-                      builder: (context, val, _) {
-                        final count = val.text
-                            .split(RegExp(r'[,;\n]'))
-                            .map((e) => e.trim())
-                            .where((e) => e.isNotEmpty)
-                            .length;
-                        return Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 7,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF1E202A),
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: AppColors.cardBorder),
-                          ),
-                          child: Text(
-                            '$count key',
-                            style: const TextStyle(
-                              color: Colors.white70,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: AppColors.primaryEmerald,
-                          side: const BorderSide(
-                            color: AppColors.primaryEmerald,
-                          ),
-                          padding: const EdgeInsets.symmetric(
-                            vertical: 10,
-                            horizontal: 12,
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                        ),
-                        icon: const Icon(Icons.bolt_rounded, size: 18),
-                        label: const Text(
-                          'Kiểm tra Key (Sống / Chết)',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        onPressed: _openKeyTestDialog,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      'SỐ LUỒNG DỊCH SONG SONG (GEMINI):',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13,
-                      ),
-                    ),
-                    Text(
-                      '${_settings!.geminiThreadCount} LUỒNG',
-                      style: const TextStyle(
-                        color: AppColors.primaryEmerald,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13,
-                      ),
-                    ),
-                  ],
-                ),
-                Slider(
-                  value: _settings!.geminiThreadCount.toDouble(),
-                  min: 1,
-                  max: 8,
-                  divisions: 7,
-                  activeColor: AppColors.primaryEmerald,
-                  onChanged: (val) {
-                    setState(() {
-                      _settings!.geminiThreadCount = val.toInt();
-                    });
-                  },
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'SỐ CÂU PHỤ ĐỀ / REQUEST (BATCH SIZE):',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 13,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                const Text(
-                  'Số câu phụ đề gửi lên Gemini trong mỗi lượt dịch. Số câu nhiều hơn giúp tăng tốc độ dịch và tiết kiệm lượt gọi API.',
-                  style: TextStyle(color: Colors.white70, fontSize: 12),
-                ),
-                const SizedBox(height: 8),
+                // Tab Pill Selector giữa Gemini và Groq
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+                  margin: const EdgeInsets.only(bottom: 16),
+                  padding: const EdgeInsets.all(4),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF1E202A),
-                    borderRadius: BorderRadius.circular(10),
+                    color: const Color(0xFF13141B),
+                    borderRadius: BorderRadius.circular(12),
                     border: Border.all(color: AppColors.cardBorder),
                   ),
-                  child: DropdownButtonHideUnderline(
-                    child: DropdownButton<int>(
-                      value: [30, 45, 60, 80, 100].contains(_settings!.geminiBatchSize)
-                          ? _settings!.geminiBatchSize
-                          : 45,
-                      isExpanded: true,
-                      dropdownColor: const Color(0xFF1E202A),
-                      icon: const Icon(
-                        Icons.keyboard_arrow_down,
-                        color: AppColors.primaryEmerald,
+                  child: Row(
+                    children: [
+                      // Tab Google Gemini
+                      Expanded(
+                        child: GestureDetector(
+                          onTap: () => setState(() => _selectedAiProviderTab = 0),
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 200),
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            decoration: BoxDecoration(
+                              color: _selectedAiProviderTab == 0
+                                  ? AppColors.primaryEmerald.withValues(alpha: 0.18)
+                                  : Colors.transparent,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: _selectedAiProviderTab == 0
+                                    ? AppColors.primaryEmerald
+                                    : Colors.transparent,
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.auto_awesome,
+                                  size: 15,
+                                  color: _selectedAiProviderTab == 0
+                                      ? AppColors.primaryEmerald
+                                      : Colors.white54,
+                                ),
+                                const SizedBox(width: 6),
+                                ValueListenableBuilder<TextEditingValue>(
+                                  valueListenable: _apiKeysController,
+                                  builder: (context, val, _) {
+                                    final count = val.text
+                                        .split(RegExp(r'[,;\n]'))
+                                        .map((e) => e.trim())
+                                        .where((e) => e.isNotEmpty)
+                                        .length;
+                                    return Text(
+                                      'Gemini ($count)',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                        color: _selectedAiProviderTab == 0
+                                            ? Colors.white
+                                            : Colors.white54,
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
                       ),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
+                      const SizedBox(width: 4),
+                      // Tab Groq Cloud
+                      Expanded(
+                        child: GestureDetector(
+                          onTap: () => setState(() => _selectedAiProviderTab = 1),
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 200),
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            decoration: BoxDecoration(
+                              color: _selectedAiProviderTab == 1
+                                  ? Colors.amber.withValues(alpha: 0.18)
+                                  : Colors.transparent,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: _selectedAiProviderTab == 1
+                                    ? Colors.amber
+                                    : Colors.transparent,
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.electric_bolt_rounded,
+                                  size: 15,
+                                  color: _selectedAiProviderTab == 1
+                                      ? Colors.amber
+                                      : Colors.white54,
+                                ),
+                                const SizedBox(width: 6),
+                                ValueListenableBuilder<TextEditingValue>(
+                                  valueListenable: _groqApiKeysController,
+                                  builder: (context, val, _) {
+                                    final count = val.text
+                                        .split(RegExp(r'[,;\n]'))
+                                        .map((e) => e.trim())
+                                        .where((e) => e.isNotEmpty)
+                                        .length;
+                                    return Text(
+                                      'Groq AI ($count)',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                        color: _selectedAiProviderTab == 1
+                                            ? Colors.white
+                                            : Colors.white54,
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
                       ),
-                      items: const [
-                        DropdownMenuItem<int>(
-                          value: 30,
-                          child: Text(
-                            '30 câu / request (Chia nhỏ, dịch rất kỹ)',
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        DropdownMenuItem<int>(
-                          value: 45,
-                          child: Text(
-                            '45 câu / request (Mặc định - Khuyên dùng)',
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        DropdownMenuItem<int>(
-                          value: 60,
-                          child: Text(
-                            '60 câu / request (Nhanh hơn, tiết kiệm request)',
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        DropdownMenuItem<int>(
-                          value: 80,
-                          child: Text(
-                            '80 câu / request (Tối ưu cho video dài)',
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        DropdownMenuItem<int>(
-                          value: 100,
-                          child: Text(
-                            '100 câu / request (Cực nhanh, ít gọi API)',
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                      onChanged: (val) {
-                        if (val != null) {
-                          setState(() {
-                            _settings!.geminiBatchSize = val;
-                          });
-                        }
-                      },
-                    ),
+                    ],
                   ),
                 ),
+
+                // NỘI DUNG TAB 0: GOOGLE GEMINI
+                if (_selectedAiProviderTab == 0) ...[
+                  const Text(
+                    'Danh sách Gemini API Key (mỗi dòng 1 key để xoay vòng):',
+                    style: TextStyle(color: Colors.white70, fontSize: 13),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _apiKeysController,
+                    maxLines: 4,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    decoration: InputDecoration(
+                      filled: true,
+                      fillColor: const Color(0xFF1E202A),
+                      hintText: 'Dán các API Key tại đây...',
+                      hintStyle: const TextStyle(color: Colors.white38),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      ValueListenableBuilder<TextEditingValue>(
+                        valueListenable: _apiKeysController,
+                        builder: (context, val, _) {
+                          final count = val.text
+                              .split(RegExp(r'[,;\n]'))
+                              .map((e) => e.trim())
+                              .where((e) => e.isNotEmpty)
+                              .length;
+                          return Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 7,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF1E202A),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: AppColors.cardBorder),
+                            ),
+                            child: Text(
+                              '$count key',
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.primaryEmerald,
+                            side: const BorderSide(
+                              color: AppColors.primaryEmerald,
+                            ),
+                            padding: const EdgeInsets.symmetric(
+                              vertical: 10,
+                              horizontal: 12,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                          icon: const Icon(Icons.bolt_rounded, size: 18),
+                          label: const Text(
+                            'Kiểm tra Key Gemini (Sống / Chết)',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          onPressed: _openKeyTestDialog,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'SỐ LUỒNG DỊCH SONG SONG (GEMINI):',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
+                      ),
+                      Text(
+                        '${_settings!.geminiThreadCount} LUỒNG',
+                        style: const TextStyle(
+                          color: AppColors.primaryEmerald,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
+                  Slider(
+                    value: _settings!.geminiThreadCount.toDouble(),
+                    min: 1,
+                    max: 8,
+                    divisions: 7,
+                    activeColor: AppColors.primaryEmerald,
+                    onChanged: (val) {
+                      setState(() {
+                        _settings!.geminiThreadCount = val.toInt();
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'SỐ CÂU PHỤ ĐỀ / REQUEST (BATCH SIZE):',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Số câu phụ đề gửi lên Gemini trong mỗi lượt dịch (Khuyên dùng: 45 câu).',
+                    style: TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1E202A),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: AppColors.cardBorder),
+                    ),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<int>(
+                        value: [30, 45, 60, 80, 100].contains(_settings!.geminiBatchSize)
+                            ? _settings!.geminiBatchSize
+                            : 45,
+                        isExpanded: true,
+                        dropdownColor: const Color(0xFF1E202A),
+                        icon: const Icon(
+                          Icons.keyboard_arrow_down,
+                          color: AppColors.primaryEmerald,
+                        ),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        items: const [
+                          DropdownMenuItem<int>(
+                            value: 30,
+                            child: Text(
+                              '30 câu / request (Chia nhỏ, dịch rất kỹ)',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          DropdownMenuItem<int>(
+                            value: 45,
+                            child: Text(
+                              '45 câu / request (Mặc định - Khuyên dùng)',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          DropdownMenuItem<int>(
+                            value: 60,
+                            child: Text(
+                              '60 câu / request (Nhanh hơn, tiết kiệm request)',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          DropdownMenuItem<int>(
+                            value: 80,
+                            child: Text(
+                              '80 câu / request (Tối ưu cho video dài)',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          DropdownMenuItem<int>(
+                            value: 100,
+                            child: Text(
+                              '100 câu / request (Cực nhanh, ít gọi API)',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                        onChanged: (val) {
+                          if (val != null) {
+                            setState(() {
+                              _settings!.geminiBatchSize = val;
+                            });
+                          }
+                        },
+                      ),
+                    ),
+                  ),
+                ],
+
+                // NỘI DUNG TAB 1: GROQ CLOUD
+                if (_selectedAiProviderTab == 1) ...[
+                  const Text(
+                    'Danh sách Groq API Key (bắt đầu bằng "gsk_...", mỗi dòng 1 key):',
+                    style: TextStyle(color: Colors.white70, fontSize: 13),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _groqApiKeysController,
+                    maxLines: 4,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    decoration: InputDecoration(
+                      filled: true,
+                      fillColor: const Color(0xFF1E202A),
+                      hintText: 'Dán các Groq API Key (gsk_...) tại đây...',
+                      hintStyle: const TextStyle(color: Colors.white38),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      ValueListenableBuilder<TextEditingValue>(
+                        valueListenable: _groqApiKeysController,
+                        builder: (context, val, _) {
+                          final count = val.text
+                              .split(RegExp(r'[,;\n]'))
+                              .map((e) => e.trim())
+                              .where((e) => e.isNotEmpty)
+                              .length;
+                          return Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 7,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF1E202A),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: AppColors.cardBorder),
+                            ),
+                            child: Text(
+                              '$count key',
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.amber,
+                            side: const BorderSide(
+                              color: Colors.amber,
+                            ),
+                            padding: const EdgeInsets.symmetric(
+                              vertical: 10,
+                              horizontal: 12,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                          icon: const Icon(Icons.electric_bolt_rounded, size: 18),
+                          label: const Text(
+                            'Kiểm tra Key Groq (Sống / Chết)',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          onPressed: _openGroqKeyTestDialog,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'SỐ LUỒNG DỊCH SONG SONG (GROQ):',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
+                      ),
+                      Text(
+                        '${_settings!.groqThreadCount} LUỒNG',
+                        style: const TextStyle(
+                          color: Colors.amber,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
+                  Slider(
+                    value: _settings!.groqThreadCount.toDouble(),
+                    min: 1,
+                    max: 8,
+                    divisions: 7,
+                    activeColor: Colors.amber,
+                    onChanged: (val) {
+                      setState(() {
+                        _settings!.groqThreadCount = val.toInt();
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'SỐ CÂU PHỤ ĐỀ / REQUEST (BATCH SIZE):',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Số câu phụ đề gửi lên Groq trong mỗi lượt dịch (Groq xử lý siêu nhanh trên LPU).',
+                    style: TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1E202A),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: AppColors.cardBorder),
+                    ),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<int>(
+                        value: [30, 45, 60, 80, 100].contains(_settings!.groqBatchSize)
+                            ? _settings!.groqBatchSize
+                            : 45,
+                        isExpanded: true,
+                        dropdownColor: const Color(0xFF1E202A),
+                        icon: const Icon(
+                          Icons.keyboard_arrow_down,
+                          color: Colors.amber,
+                        ),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        items: const [
+                          DropdownMenuItem<int>(
+                            value: 30,
+                            child: Text(
+                              '30 câu / request (Chia nhỏ, dịch rất kỹ)',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          DropdownMenuItem<int>(
+                            value: 45,
+                            child: Text(
+                              '45 câu / request (Mặc định - Khuyên dùng)',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          DropdownMenuItem<int>(
+                            value: 60,
+                            child: Text(
+                              '60 câu / request (Nhanh hơn, tiết kiệm request)',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          DropdownMenuItem<int>(
+                            value: 80,
+                            child: Text(
+                              '80 câu / request (Tối ưu cho video dài)',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          DropdownMenuItem<int>(
+                            value: 100,
+                            child: Text(
+                              '100 câu / request (Cực nhanh trên LPU Groq)',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                        onChanged: (val) {
+                          if (val != null) {
+                            setState(() {
+                              _settings!.groqBatchSize = val;
+                            });
+                          }
+                        },
+                      ),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 12),
                 const Divider(color: AppColors.cardBorder),
                 const SizedBox(height: 6),

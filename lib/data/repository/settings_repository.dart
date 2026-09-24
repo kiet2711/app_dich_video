@@ -8,11 +8,13 @@ class SettingsRepository {
   static const FlutterSecureStorage _secureStorage = FlutterSecureStorage();
   final SharedPreferences prefs;
   String _geminiApiKeysRaw;
+  String _groqApiKeysRaw;
   String _bilibiliSessData;
 
   SettingsRepository._(
     this.prefs,
     this._geminiApiKeysRaw,
+    this._groqApiKeysRaw,
     this._bilibiliSessData,
   );
 
@@ -20,6 +22,7 @@ class SettingsRepository {
     if (_instance == null) {
       final sp = await SharedPreferences.getInstance();
       var apiKeys = await _secureStorage.read(key: 'gemini_api_keys') ?? '';
+      var groqKeys = await _secureStorage.read(key: 'groq_api_keys') ?? '';
       var sessData = await _secureStorage.read(key: 'bilibili_sessdata') ?? '';
 
       final legacyApiKeys = sp.getString('gemini_api_keys') ?? '';
@@ -34,7 +37,7 @@ class SettingsRepository {
         await _secureStorage.write(key: 'bilibili_sessdata', value: sessData);
         await sp.remove('bilibili_sessdata');
       }
-      _instance = SettingsRepository._(sp, apiKeys, sessData);
+      _instance = SettingsRepository._(sp, apiKeys, groqKeys, sessData);
     }
     return _instance!;
   }
@@ -54,8 +57,33 @@ class SettingsRepository {
     );
   }
 
+  List<String> get groqApiKeys {
+    return _groqApiKeysRaw
+        .split(RegExp(r'[,;\n]'))
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .toList();
+  }
+
+  set groqApiKeys(List<String> value) {
+    _groqApiKeysRaw = value.join('\n');
+    unawaited(
+      _secureStorage.write(key: 'groq_api_keys', value: _groqApiKeysRaw),
+    );
+  }
+
   String get selectedModel => prefs.getString('selected_model') ?? 'capcut';
   set selectedModel(String v) => prefs.setString('selected_model', v);
+
+  String get selectedGroqModel =>
+      prefs.getString('selected_groq_model') ?? 'openai/gpt-oss-120b';
+  set selectedGroqModel(String v) =>
+      prefs.setString('selected_groq_model', v.trim());
+
+  String get selectedGeminiModel =>
+      prefs.getString('selected_gemini_model') ?? 'gemini-3.1-flash-lite';
+  set selectedGeminiModel(String v) =>
+      prefs.setString('selected_gemini_model', v.trim());
 
   String get selectedStyle => prefs.getString('selected_style') ?? 'Zhihu';
   set selectedStyle(String v) => prefs.setString('selected_style', v);
@@ -128,6 +156,16 @@ class SettingsRepository {
       (prefs.getInt('gemini_batch_size') ?? 45).clamp(10, 200);
   set geminiBatchSize(int v) =>
       prefs.setInt('gemini_batch_size', v.clamp(10, 200));
+
+  int get groqThreadCount =>
+      (prefs.getInt('groq_thread_count') ?? 3).clamp(1, 10);
+  set groqThreadCount(int v) =>
+      prefs.setInt('groq_thread_count', v.clamp(1, 10));
+
+  int get groqBatchSize =>
+      (prefs.getInt('groq_batch_size') ?? 45).clamp(10, 200);
+  set groqBatchSize(int v) =>
+      prefs.setInt('groq_batch_size', v.clamp(10, 200));
 
   int get downloadThreadCount =>
       (prefs.getInt('download_thread_count') ?? 16).clamp(8, 32);

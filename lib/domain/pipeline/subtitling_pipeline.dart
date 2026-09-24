@@ -9,22 +9,27 @@ import 'package:uuid/uuid.dart';
 import '../../data/api/capcut_stt_client.dart';
 import '../../data/api/capcut_vod_uploader.dart';
 import '../../data/api/gemini_translator.dart';
+import '../../data/api/groq_translator.dart';
 import '../../data/model/device_config.dart';
 import '../../data/model/process_progress.dart';
 import '../../data/model/subtitle_document.dart';
 import '../../data/model/subtitle_item.dart';
 import '../../data/repository/settings_repository.dart';
+import '../ai/ai_model_registry.dart';
 import '../media/audio_chunker.dart';
 import '../media/bilibili_resolver.dart';
 
 class SubtitlingPipeline {
   final List<String> apiKeys;
-  final String translationEngine; // "capcut", "gemini-2.5-flash-lite", "none"
+  final List<String> groqApiKeys;
+  final String translationEngine; // "capcut", "gemini-...", "openai/...", "none"
   final String stylePreset;
   final String customPrompt;
   final String targetLanguage;
   final int geminiThreadCount;
   final int? geminiBatchSize;
+  final int groqThreadCount;
+  final int? groqBatchSize;
 
   final _progressController = StreamController<ProcessProgress>.broadcast();
   Stream<ProcessProgress> get progressStream => _progressController.stream;
@@ -33,12 +38,15 @@ class SubtitlingPipeline {
 
   SubtitlingPipeline({
     required this.apiKeys,
+    this.groqApiKeys = const [],
     this.translationEngine = 'gemini-3.5-flash-lite',
     this.stylePreset = 'Zhihu',
     this.customPrompt = '',
     this.targetLanguage = 'vi-VN',
     this.geminiThreadCount = 2,
     this.geminiBatchSize,
+    this.groqThreadCount = 3,
+    this.groqBatchSize,
   });
 
   void cancel() {
@@ -315,9 +323,10 @@ class SubtitlingPipeline {
       fullDoc.reindex();
 
       // -------------------------------------------------------------
-      // GIAI ĐOẠN 4: DỊCH PHỤ ĐỀ BẰNG GEMINI AI
+      // GIAI ĐOẠN 4: DỊCH PHỤ ĐỀ BẰNG AI (GEMINI HOẶC GROQ)
       // -------------------------------------------------------------
-      if (translationEngine.startsWith('gemini') && fullDoc.isNotEmpty) {
+      final provider = AiModelRegistry.detectProvider(translationEngine);
+      if (provider == AiProvider.gemini && fullDoc.isNotEmpty) {
         if (_isCancelled) throw Exception('Đã huỷ tác vụ');
         _emit(
           const ProcessProgress(
@@ -339,6 +348,44 @@ class SubtitlingPipeline {
           targetLanguage: targetLanguage,
           chunkSize: geminiBatchSize ?? settings.geminiBatchSize,
           threadCount: geminiThreadCount,
+          isCancelled: () => _isCancelled,
+          progressCallback: (pct, msg) {
+            final overall = 0.70 + (pct * 0.28);
+            _emit(
+              ProcessProgress(
+                stage: ProcessStage.aiTranslating,
+                progress: overall.clamp(0.70, 0.98),
+                message: msg,
+              ),
+            );
+          },
+        );
+      } else if (provider == AiProvider.groq && fullDoc.isNotEmpty) {
+        if (_isCancelled) throw Exception('Đã huỷ tác vụ');
+        _emit(
+          const ProcessProgress(
+            stage: ProcessStage.aiTranslating,
+            progress: 0.70,
+            message: 'Bắt đầu dịch phụ đề siêu tốc với Groq Cloud AI...',
+          ),
+        );
+
+        final effectiveGroqKeys = groqApiKeys.isNotEmpty
+            ? groqApiKeys
+            : settings.groqApiKeys;
+
+        final translator = GroqTranslator(
+          apiKeys: effectiveGroqKeys,
+          modelId: translationEngine,
+        );
+
+        await translator.translateSubtitles(
+          document: fullDoc,
+          stylePreset: stylePreset,
+          customPrompt: customPrompt,
+          targetLanguage: targetLanguage,
+          chunkSize: groqBatchSize ?? settings.groqBatchSize,
+          threadCount: groqThreadCount,
           isCancelled: () => _isCancelled,
           progressCallback: (pct, msg) {
             final overall = 0.70 + (pct * 0.28);

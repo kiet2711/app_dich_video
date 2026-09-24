@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../../data/api/gemini_translator.dart';
+import '../../data/api/groq_translator.dart';
 import '../../data/model/subtitle_document.dart';
 import '../../data/repository/settings_repository.dart';
+import '../../domain/ai/ai_model_registry.dart';
 import '../settings/settings_screen.dart';
 import '../theme/app_theme.dart';
 
@@ -36,8 +38,11 @@ class _GeminiTranslateSubtitleDialogState
   ];
 
   final List<MapEntry<String, String>> _modelOptions = const [
-    MapEntry('gemini-3.1-flash-lite', '🤖 Gemini 3.1 Flash-Lite (Khuyên dùng)'),
-    MapEntry('gemini-3.5-flash-lite', '🤖 Gemini 3.5 Flash-Lite (RPD cao)'),
+    MapEntry('gemini-3.1-flash-lite', '🌐 Gemini 3.1 Flash-Lite (Khuyên dùng)'),
+    MapEntry('gemini-3.5-flash-lite', '🌐 Gemini 3.5 Flash-Lite (RPD cao)'),
+    MapEntry('openai/gpt-oss-120b', '⚡ Groq: GPT-OSS 120B (OpenAI - SRT đỉnh)'),
+    MapEntry('openai/gpt-oss-20b', '⚡ Groq: GPT-OSS 20B (OpenAI - Siêu tốc)'),
+    MapEntry('qwen/qwen3.8-27b', '🇨🇳 Groq: Qwen 3.8 27B (Trung ➔ Việt)'),
   ];
 
   String _selectedTargetLang = 'Tiếng Việt';
@@ -61,9 +66,11 @@ class _GeminiTranslateSubtitleDialogState
     setState(() {
       _settings = s;
       _apiKeys = s.geminiApiKeys;
-      _selectedModel = (s.selectedModel == 'gemini-3.5-flash-lite')
-          ? 'gemini-3.5-flash-lite'
-          : 'gemini-3.1-flash-lite';
+      if (_modelOptions.any((e) => e.key == s.selectedModel)) {
+        _selectedModel = s.selectedModel;
+      } else {
+        _selectedModel = 'gemini-3.1-flash-lite';
+      }
       if (_langOptions.any((e) => e.key == s.targetLanguage)) {
         _selectedTargetLang = s.targetLanguage;
       }
@@ -79,13 +86,26 @@ class _GeminiTranslateSubtitleDialogState
   }
 
   Future<void> _startTranslation() async {
-    if (_apiKeys.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Vui lòng nhập Gemini API Key trong Cài Đặt!'),
-        ),
-      );
-      return;
+    final provider = AiModelRegistry.detectProvider(_selectedModel);
+
+    if (provider == AiProvider.groq) {
+      if (_settings?.groqApiKeys.isEmpty ?? true) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Vui lòng nhập Groq API Key trong Cài Đặt!'),
+          ),
+        );
+        return;
+      }
+    } else {
+      if (_apiKeys.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Vui lòng nhập Gemini API Key trong Cài Đặt!'),
+          ),
+        );
+        return;
+      }
     }
 
     setState(() {
@@ -96,32 +116,57 @@ class _GeminiTranslateSubtitleDialogState
     });
 
     try {
-      final translator = GeminiTranslator(
-        apiKeys: _apiKeys,
-        modelId: _selectedModel,
-      );
-
       final promptToUse = _contextPromptController.text.trim().isNotEmpty
           ? _contextPromptController.text.trim()
           : (_settings?.geminiCustomPrompt ?? '');
 
-      final resultDoc = await translator.translateSubtitles(
-        document: widget.subtitleDoc,
-        stylePreset: _settings?.selectedStyle ?? 'Zhihu',
-        customPrompt: promptToUse,
-        targetLanguage: _selectedTargetLang,
-        chunkSize: _settings?.geminiBatchSize ?? 45,
-        threadCount: _settings?.geminiThreadCount ?? 2,
-        isCancelled: () => _isCancelled,
-        progressCallback: (pct, msg) {
-          if (mounted && !_isCancelled) {
-            setState(() {
-              _progress = pct;
-              _progressMessage = msg;
-            });
-          }
-        },
-      );
+      final SubtitleDocument resultDoc;
+
+      if (provider == AiProvider.groq) {
+        final translator = GroqTranslator(
+          apiKeys: _settings!.groqApiKeys,
+          modelId: _selectedModel,
+        );
+        resultDoc = await translator.translateSubtitles(
+          document: widget.subtitleDoc,
+          stylePreset: _settings?.selectedStyle ?? 'Zhihu',
+          customPrompt: promptToUse,
+          targetLanguage: _selectedTargetLang,
+          chunkSize: _settings?.groqBatchSize ?? 45,
+          threadCount: _settings?.groqThreadCount ?? 3,
+          isCancelled: () => _isCancelled,
+          progressCallback: (pct, msg) {
+            if (mounted && !_isCancelled) {
+              setState(() {
+                _progress = pct;
+                _progressMessage = msg;
+              });
+            }
+          },
+        );
+      } else {
+        final translator = GeminiTranslator(
+          apiKeys: _apiKeys,
+          modelId: _selectedModel,
+        );
+        resultDoc = await translator.translateSubtitles(
+          document: widget.subtitleDoc,
+          stylePreset: _settings?.selectedStyle ?? 'Zhihu',
+          customPrompt: promptToUse,
+          targetLanguage: _selectedTargetLang,
+          chunkSize: _settings?.geminiBatchSize ?? 45,
+          threadCount: _settings?.geminiThreadCount ?? 2,
+          isCancelled: () => _isCancelled,
+          progressCallback: (pct, msg) {
+            if (mounted && !_isCancelled) {
+              setState(() {
+                _progress = pct;
+                _progressMessage = msg;
+              });
+            }
+          },
+        );
+      }
 
       if (mounted) {
         widget.onTranslationCompleted(resultDoc);
@@ -215,7 +260,7 @@ class _GeminiTranslateSubtitleDialogState
                   Icon(Icons.translate, color: AppColors.primaryEmerald, size: 22),
                   SizedBox(width: 8),
                   Text(
-                    'Dịch Phụ Đề (Gemini AI)',
+                    'Dịch Phụ Đề AI (Gemini / Groq)',
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 17,
@@ -251,9 +296,9 @@ class _GeminiTranslateSubtitleDialogState
               ),
               const SizedBox(height: 12),
 
-              // 2. Model Gemini
+              // 2. Model AI
               const Text(
-                '🤖 Model Gemini:',
+                '🤖 Model AI (Gemini / Groq):',
                 style: TextStyle(
                   color: Color(0xFFB0B0B8),
                   fontSize: 12,
