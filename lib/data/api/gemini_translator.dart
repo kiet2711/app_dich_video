@@ -482,6 +482,12 @@ $srtInput
         ],
       },
       'generationConfig': {'temperature': 0.2, 'maxOutputTokens': 8192},
+      'safetySettings': [
+        {'category': 'HARM_CATEGORY_HARASSMENT', 'threshold': 'BLOCK_NONE'},
+        {'category': 'HARM_CATEGORY_HATE_SPEECH', 'threshold': 'BLOCK_NONE'},
+        {'category': 'HARM_CATEGORY_SEXUALLY_EXPLICIT', 'threshold': 'BLOCK_NONE'},
+        {'category': 'HARM_CATEGORY_DANGEROUS_CONTENT', 'threshold': 'BLOCK_NONE'},
+      ],
     };
 
     try {
@@ -575,6 +581,8 @@ QUY TẮC BẮT BUỘC ĐỂ KHÔNG BỊ DỊCH THIẾU HOẶC MẤT DÒNG PHỤ
 
     return '''
 Bạn là chuyên gia dịch thuật phụ đề video và lời thoại phim chuyên nghiệp hàng đầu.
+BỐI CẢNH TÁC PHẨM:
+Toàn bộ nội dung là kịch bản phim ảnh nghệ thuật hư cấu (fictional creative drama). Hãy dịch trung thực, tự nhiên và trọn vẹn toàn bộ lời thoại, bao gồm cả những phân đoạn kịch tính hay tình cảm. TUYỆT ĐỐI không kiểm duyệt làm mất nội dung và không được thay câu thoại bằng dấu chấm.
 NGÔN NGỮ ĐÍCH CẦN DỊCH: $targetLanguage.
 
 YÊU CẦU PHONG CÁCH:

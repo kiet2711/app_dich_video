@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../data/api/gemini_translator.dart';
+import '../../domain/ai/smart_ai_translator.dart';
 import '../../data/model/subtitle_document.dart';
 import '../../data/model/voice_model.dart';
 import '../../data/repository/history_repository.dart';
@@ -578,14 +579,15 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
     return item?.originalText ?? currentText;
   }
 
-  GeminiTranslator _createGeminiTranslator() {
+  SmartAiTranslator _createSmartAiTranslator() {
     final settings = _settings!;
-    final selectedModel = settings.selectedModel.startsWith('gemini')
-        ? settings.selectedModel
-        : 'gemini-3.5-flash-lite';
-    return GeminiTranslator(
-      apiKeys: settings.geminiApiKeys,
-      modelId: selectedModel,
+    return SmartAiTranslator(
+      geminiKeys: settings.geminiApiKeys,
+      groqKeys: settings.groqApiKeys,
+      initialModelId: settings.selectedModel,
+      enableSmartModelFallback: settings.enableSmartModelFallback,
+      enableCrossProviderFallback: settings.enableCrossProviderFallback,
+      enableDualModelBalancing: settings.enableDualModelBalancing,
     );
   }
 
@@ -600,14 +602,37 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
       return;
     }
     _errorDialogOpen = true;
+
+    final hasAiKeys =
+        settings.geminiApiKeys.isNotEmpty || settings.groqApiKeys.isNotEmpty;
+    final effectiveAiThreads = settings.selectedModel.startsWith('gemini')
+        ? settings.geminiThreadCount
+        : settings.groqThreadCount;
+
+    final displayFailedItems = state.failedItems.map((failure) {
+      final text = failure.text.trim();
+      final hasLetters =
+          RegExp(r'[\p{L}\p{N}]', unicode: true).hasMatch(text);
+      if (!hasLetters) {
+        final source = _translationSourceFor(failure.itemId, text);
+        return TtsFailedItem(
+          itemId: failure.itemId,
+          text: source,
+          reason: failure.reason,
+          filePath: failure.filePath,
+        );
+      }
+      return failure;
+    }).toList();
+
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) => TtsErrorReviewDialog(
-        failedItems: state.failedItems,
+        failedItems: displayFailedItems,
         threadCount: _threadCount,
-        geminiThreadCount: settings.geminiThreadCount,
-        geminiApiKeysAvailable: settings.geminiApiKeys.isNotEmpty,
+        geminiThreadCount: effectiveAiThreads,
+        geminiApiKeysAvailable: hasAiKeys,
         onRetryOne: (itemId, editedText) async {
           await _ttsManager.retryFailedItem(
             document: document,
@@ -630,17 +655,18 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
           await _persistDocumentToHistory();
         },
         onTranslateWithGemini: (items, onProgress) async {
-          if (settings.geminiApiKeys.isEmpty) return const {};
+          if (!hasAiKeys) return const {};
           final sourceItems = {
             for (final entry in items.entries)
               entry.key: _translationSourceFor(entry.key, entry.value),
           };
-          final translated = await _createGeminiTranslator().translateItems(
+          final smartTranslator = _createSmartAiTranslator();
+          final translated = await smartTranslator.translateItems(
             items: sourceItems,
             stylePreset: settings.selectedStyle,
             customPrompt: settings.geminiCustomPrompt,
             targetLanguage: _targetLanguageLabel(settings.targetLanguage),
-            threadCount: settings.geminiThreadCount,
+            threadCount: effectiveAiThreads,
             progressCallback: onProgress,
           );
           for (final entry in translated.entries) {
@@ -656,22 +682,22 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
           return translated;
         },
         onTranslateSingleWithGemini: (itemId, text) async {
-          if (settings.geminiApiKeys.isEmpty) return text;
-          final translated = await _createGeminiTranslator()
-              .translateSingleText(
-                text: _translationSourceFor(itemId, text),
-                stylePreset: settings.selectedStyle,
-                customPrompt: settings.geminiCustomPrompt,
-                targetLanguage: _targetLanguageLabel(settings.targetLanguage),
-              );
+          if (!hasAiKeys) return text;
+          final smartTranslator = _createSmartAiTranslator();
+          final translated = await smartTranslator.translateSingleText(
+            text: _translationSourceFor(itemId, text),
+            stylePreset: settings.selectedStyle,
+            customPrompt: settings.geminiCustomPrompt,
+            targetLanguage: _targetLanguageLabel(settings.targetLanguage),
+          );
           final item = document.items
               .where((candidate) => candidate.id == itemId)
               .firstOrNull;
           if (item != null) {
             item.translatedText = translated;
             item.normalizeTranslation();
+            await _persistDocumentToHistory();
           }
-          await _persistDocumentToHistory();
           return translated;
         },
         onSkipErrors: () async {

@@ -314,9 +314,9 @@ class _TtsErrorReviewDialogState extends State<TtsErrorReviewDialog> {
               icon: const Icon(Icons.auto_awesome, size: 17),
               label: Text(
                 widget.geminiApiKeysAvailable
-                    ? 'Dịch lại tất cả bằng Gemini '
+                    ? 'Dịch lại tất cả bằng AI thông minh '
                           '(${widget.geminiThreadCount} luồng)'
-                    : 'Dịch Gemini (Chưa cấu hình API Key)',
+                    : 'Dịch AI (Chưa cấu hình API Key)',
               ),
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF5965D8),

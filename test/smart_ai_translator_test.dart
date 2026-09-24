@@ -259,5 +259,110 @@ void main() {
       expect(providersCalled, contains('gemini'));
       expect(providersCalled, contains('groq'));
     });
+
+    test('Punctuation-only response (. or ?) automatically falls back to original text or interjection', () async {
+      final dio = Dio();
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            return handler.resolve(
+              Response(
+                requestOptions: options,
+                statusCode: 200,
+                data: {
+                  'candidates': [
+                    {
+                      'content': {
+                        'parts': [
+                          {
+                            'text':
+                                '1\n00:00:01,000 --> 00:00:03,000\n.\n\n'
+                                '2\n00:00:03,500 --> 00:00:05,000\n...\n\n',
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                },
+              ),
+            );
+          },
+        ),
+      );
+
+      final translator = SmartAiTranslator(
+        geminiKeys: ['gem-key-1'],
+        initialModelId: 'gemini-3.1-flash-lite',
+        dio: dio,
+      );
+
+      final doc = SubtitleDocument([
+        SubtitleItem(
+          id: 1,
+          startMs: 1000,
+          endMs: 3000,
+          originalText: '你到底想怎么样！', // Câu thoại dài bị Gemini trả về dấu "."
+        ),
+        SubtitleItem(
+          id: 2,
+          startMs: 3500,
+          endMs: 5000,
+          originalText: '啊', // Thán từ ngắn bị trả về "..."
+        ),
+      ]);
+
+      final result = await translator.translateSubtitles(
+        document: doc,
+        threadCount: 1,
+      );
+
+      // Câu thoại dài không bị để lại dấu chấm "." mà fallback về câu gốc
+      expect(result.items[0].translatedText, equals('你到底想怎么样！'));
+      // Thán từ ngắn "啊" được tra bảng interjection thành "A!"
+      expect(result.items[1].translatedText, equals('A!'));
+    });
+
+    test('translateItems translates a map of failed items properly', () async {
+      final dio = Dio();
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            return handler.resolve(
+              Response(
+                requestOptions: options,
+                statusCode: 200,
+                data: {
+                  'candidates': [
+                    {
+                      'content': {
+                        'parts': [
+                          {
+                            'text':
+                                '1\n00:00:00,000 --> 00:00:01,000\nTôi hiểu rồi\n\n'
+                                '2\n00:00:00,000 --> 00:00:01,000\nĐược thôi\n\n',
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                },
+              ),
+            );
+          },
+        ),
+      );
+
+      final translator = SmartAiTranslator(
+        geminiKeys: ['gem-key-1'],
+        initialModelId: 'gemini-3.1-flash-lite',
+        dio: dio,
+      );
+
+      final map = {1: '我明白了', 2: '好吧'};
+      final results = await translator.translateItems(items: map);
+
+      expect(results[1], equals('Tôi hiểu rồi'));
+      expect(results[2], equals('Được thôi'));
+    });
   });
 }

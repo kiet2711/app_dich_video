@@ -237,6 +237,80 @@ class SmartAiTranslator {
     return document;
   }
 
+  /// Dịch danh sách các câu đơn lẻ có ID (dành cho bảng sửa lỗi TTS hoặc các câu lỗi)
+  Future<Map<int, String>> translateItems({
+    required Map<int, String> items,
+    String stylePreset = 'Zhihu',
+    String customPrompt = '',
+    String targetLanguage = 'vi-VN',
+    int chunkSize = 15,
+    int threadCount = 2,
+    bool Function()? isCancelled,
+    void Function(double progress, String message)? progressCallback,
+  }) async {
+    if (items.isEmpty) return const {};
+
+    final subItems = items.entries
+        .map((e) => SubtitleItem(
+              id: e.key,
+              startMs: 0,
+              endMs: 1000,
+              originalText: e.value,
+            ))
+        .toList();
+    final doc = SubtitleDocument(subItems);
+
+    final translatedDoc = await translateSubtitles(
+      document: doc,
+      stylePreset: stylePreset,
+      customPrompt: customPrompt,
+      targetLanguage: targetLanguage,
+      chunkSize: chunkSize,
+      threadCount: threadCount,
+      isCancelled: isCancelled,
+      progressCallback: progressCallback,
+    );
+
+    final result = <int, String>{};
+    for (final item in translatedDoc.items) {
+      result[item.id] = item.translatedText;
+    }
+    return result;
+  }
+
+  /// Dịch một câu đơn lẻ với cơ chế xoay thông minh
+  Future<String> translateSingleText({
+    required String text,
+    String stylePreset = 'Zhihu',
+    String customPrompt = '',
+    String targetLanguage = 'vi-VN',
+    bool Function()? isCancelled,
+  }) async {
+    if (text.trim().isEmpty) return text;
+    final interjection = resolveInterjection(text);
+    if (interjection != null) return interjection;
+
+    final doc = SubtitleDocument([
+      SubtitleItem(id: 1, startMs: 0, endMs: 1000, originalText: text),
+    ]);
+
+    final translatedDoc = await translateSubtitles(
+      document: doc,
+      stylePreset: stylePreset,
+      customPrompt: customPrompt,
+      targetLanguage: targetLanguage,
+      chunkSize: 1,
+      threadCount: 1,
+      isCancelled: isCancelled,
+    );
+
+    final translated = translatedDoc.items.first.translatedText.trim();
+    if (translated.isNotEmpty && containsLetterOrNumber(translated)) {
+      return translated;
+    }
+    return text;
+  }
+
   /// Thực hiện dịch 1 chunk có xoay model trên cùng key, xoay key, và nhảy cross-provider
   Future<List<String>> _translateChunkWithSmartRotation({
     required List<SubtitleItem> items,
@@ -489,10 +563,21 @@ $srtInput
       }
     }
 
-    // Tầng 4: Điền fallback nếu câu bị rỗng
+    // Tầng 4: Điền fallback nếu câu bị rỗng hoặc chỉ toàn dấu câu trơ trọi (. ? , ...)
     for (var i = 0; i < items.length; i++) {
-      if (translatedResults[i].trim().isEmpty) {
-        translatedResults[i] = items[i].originalText;
+      final original = items[i].originalText.trim();
+      final translated = translatedResults[i].trim();
+      final originalHasContent = containsLetterOrNumber(original);
+      final translationHasContent = containsLetterOrNumber(translated);
+
+      if (translated.isEmpty || (originalHasContent && !translationHasContent)) {
+        final interjection = resolveInterjection(original);
+        if (interjection != null) {
+          translatedResults[i] = interjection;
+        } else {
+          // Lấy câu gốc từ SRT thay vì để lại dấu câu trơ trọi!
+          translatedResults[i] = original;
+        }
       }
     }
 
@@ -500,4 +585,39 @@ $srtInput
   }
 
   static String _normTc(String tc) => tc.replaceAll(' ', '').replaceAll('.', ',');
+
+  static final Map<String, String> _interjectionMap = {
+    '啊': 'A!',
+    '啊？': 'Hả?',
+    '啊!': 'A!',
+    '啊...': 'A...',
+    '呃': 'Ừm...',
+    '呃...': 'Ơ...',
+    '哦': 'Ồ!',
+    '哦！': 'Ồ!',
+    '哦...': 'Ra vậy...',
+    '嗯': 'Ừm',
+    '嗯！': 'Ừm!',
+    '嗯嗯': 'Vâng vâng',
+    '哎': 'Ai chà',
+    '哎呀': 'Trời ơi',
+    '哎哟': 'Ối chao',
+    '咦': 'Ủa?',
+    '咦？': 'Ủa sao?',
+    '哈': 'Haha',
+    '哈哈': 'Haha',
+    '哈哈哈': 'Hahaha',
+    '嘿': 'Này',
+    '嘿嘿': 'Hehe',
+    '哇': 'Woa!',
+    '哇塞': 'Woa trời!',
+  };
+
+  static String? resolveInterjection(String text) {
+    final clean = text.trim();
+    return _interjectionMap[clean];
+  }
+
+  static bool containsLetterOrNumber(String value) =>
+      RegExp(r'[\p{L}\p{N}]', unicode: true).hasMatch(value);
 }
