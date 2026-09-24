@@ -2,9 +2,12 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../../data/model/subtitle_document.dart';
+import '../../data/model/voice_model.dart';
 import '../../data/repository/history_repository.dart';
 import '../../data/repository/settings_repository.dart';
 import '../pipeline/subtitling_pipeline.dart';
+import '../tts/tts_cache_helper.dart';
+import '../tts/tts_generation_manager.dart';
 import 'hongguo_resolver.dart';
 
 class PrefetchState {
@@ -78,6 +81,8 @@ class HongguoPrefetchManager {
     if (_isDisposed) return;
     _currentPlayingIndex = episodeIndex;
 
+    final settings = await SettingsRepository.getInstance();
+
     // 1. Kiểm tra tập hiện tại đã có phụ đề chưa
     var currentDoc = _cachedDocs[episodeIndex];
     if (currentDoc == null) {
@@ -86,6 +91,15 @@ class HongguoPrefetchManager {
         _cachedDocs[episodeIndex] = currentDoc;
         onCurrentSubtitleReady?.call(currentDoc);
       }
+    }
+
+    // Nếu tập hiện tại đã có sub và đang bật lồng tiếng AI -> đảm bảo tạo file âm thanh
+    if (currentDoc != null && settings.isTtsPlaybackEnabled) {
+      unawaited(ensureTtsGenerated(currentDoc, episodeIndex: episodeIndex).then((_) {
+        if (!_isDisposed && _currentPlayingIndex == episodeIndex) {
+          onCurrentSubtitleReady?.call(currentDoc!);
+        }
+      }));
     }
 
     // Nếu tập hiện tại chưa có sub và người dùng yêu cầu dịch ngay
@@ -98,7 +112,6 @@ class HongguoPrefetchManager {
     }
 
     // 2. Tự động gối đầu dịch ngầm các tập tiếp theo theo cấu hình (1 hoặc 2 tập...)
-    final settings = await SettingsRepository.getInstance();
     if (!settings.autoPlayNextEpisode) {
       debugPrint('[Prefetch] Tự động chuyển tập đang TẮT, không chạy dịch ngầm.');
       return;
@@ -110,6 +123,55 @@ class HongguoPrefetchManager {
         : (detail.totalEpisodes > 0 ? detail.totalEpisodes : 100);
 
     unawaited(_runPrefetchQueue(episodeIndex, bufferCount, total));
+  }
+
+  /// Đảm bảo các câu phụ đề đã được tạo file âm thanh lồng tiếng AI (nếu đang bật TTS)
+  Future<VoiceItem?> ensureTtsGenerated(
+    SubtitleDocument doc, {
+    int? episodeIndex,
+  }) async {
+    if (_isDisposed) return null;
+    try {
+      final settings = await SettingsRepository.getInstance();
+      final voiceType = settings.selectedTtsVoice;
+      final voice = VoicePresets.vietnameseVoices.firstWhere(
+        (v) => v.voiceType == voiceType,
+        orElse: () => VoicePresets.defaultVoice,
+      );
+
+      // 1. Liên kết các file âm thanh đã có trong cache
+      await TtsCacheHelper.linkAudioFiles(doc, voice.voiceType);
+
+      // 2. Tìm các câu chưa có file âm thanh
+      final unlinked = doc.items.where(
+        (item) =>
+            (item.audioFilePath == null || item.audioFilePath!.isEmpty) &&
+            TtsGenerationManager.isPronounceable(item.translatedText),
+      ).toList();
+
+      if (unlinked.isNotEmpty) {
+        if (episodeIndex != null && !_isDisposed) {
+          prefetchStateNotifier.value = PrefetchState(
+            episodeIndex: episodeIndex,
+            status: 'translating',
+            progress: 0.92,
+            message:
+                'Đang tạo lồng tiếng AI Tập $episodeIndex (${voice.displayName})...',
+            document: doc,
+          );
+        }
+
+        await TtsGenerationManager().generateAll(
+          document: doc,
+          voice: voice,
+          threadCount: settings.ttsThreadCount,
+        );
+      }
+      return voice;
+    } catch (e) {
+      debugPrint('[Prefetch] Lỗi tạo lồng tiếng ngầm: $e');
+      return null;
+    }
   }
 
   /// Chạy hàng đợi dịch ngầm tuần tự theo số tập đệm đã cài đặt
@@ -133,15 +195,21 @@ class HongguoPrefetchManager {
   /// Tiến trình dịch ngầm tập tiếp theo
   Future<void> _prefetchNextEpisode(int nextIndex) async {
     if (_isDisposed) return;
+    final settings = await SettingsRepository.getInstance();
 
     // Nếu đã có trong cache
     if (_cachedDocs.containsKey(nextIndex)) {
+      final doc = _cachedDocs[nextIndex]!;
+      if (settings.isTtsPlaybackEnabled) {
+        await ensureTtsGenerated(doc, episodeIndex: nextIndex);
+      }
       prefetchStateNotifier.value = PrefetchState(
         episodeIndex: nextIndex,
         status: 'ready',
         progress: 1.0,
-        message: 'Tập $nextIndex đã có sẵn phụ đề',
-        document: _cachedDocs[nextIndex],
+        message:
+            'Tập $nextIndex đã có sẵn ${settings.isTtsPlaybackEnabled ? "lồng tiếng & vietsub" : "phụ đề"}',
+        document: doc,
         videoUrl: _cachedUrls[nextIndex],
       );
       return;
@@ -150,12 +218,16 @@ class HongguoPrefetchManager {
     // Nếu đã có trong Lịch sử trước đó
     final fromHistory = await _findInHistory(nextIndex);
     if (fromHistory != null) {
+      if (settings.isTtsPlaybackEnabled) {
+        await ensureTtsGenerated(fromHistory, episodeIndex: nextIndex);
+      }
       _cachedDocs[nextIndex] = fromHistory;
       prefetchStateNotifier.value = PrefetchState(
         episodeIndex: nextIndex,
         status: 'ready',
         progress: 1.0,
-        message: 'Tập $nextIndex đã có trong lịch sử',
+        message:
+            'Tập $nextIndex đã có trong lịch sử (${settings.isTtsPlaybackEnabled ? "lồng tiếng" : "vietsub"})',
         document: fromHistory,
         videoUrl: _cachedUrls[nextIndex],
       );
@@ -249,7 +321,20 @@ class HongguoPrefetchManager {
         return null;
       }
 
-      // Bước 4: Lưu vào Cache và Lịch sử
+      if (doc.isEmpty) {
+        throw StateError('Không thể tạo phụ đề cho tập $episodeIndex');
+      }
+
+      // Bước 4: Tự động tạo lồng tiếng nếu đang bật lồng tiếng AI
+      String? appliedTtsVoice;
+      if (settings.isTtsPlaybackEnabled) {
+        final voice = await ensureTtsGenerated(doc, episodeIndex: episodeIndex);
+        if (voice != null) {
+          appliedTtsVoice = voice.displayName;
+        }
+      }
+
+      // Bước 5: Lưu vào Cache và Lịch sử
       _cachedDocs[episodeIndex] = doc;
       final epTitle = '${detail.title} - Tập $episodeIndex';
       try {
@@ -259,6 +344,7 @@ class HongguoPrefetchManager {
           title: epTitle,
           document: doc,
           durationMs: 120000,
+          ttsVoice: appliedTtsVoice,
           seriesId: detail.seriesId,
           seriesCover: detail.cover,
           episodeIndex: episodeIndex,
@@ -274,7 +360,8 @@ class HongguoPrefetchManager {
         episodeIndex: episodeIndex,
         status: 'ready',
         progress: 1.0,
-        message: 'Tập $episodeIndex đã sẵn sàng!',
+        message:
+            'Tập $episodeIndex đã sẵn sàng ${settings.isTtsPlaybackEnabled ? "(Lồng tiếng & Sub)" : "(Vietsub)"}!',
         document: doc,
         videoUrl: playUrl,
       );

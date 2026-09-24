@@ -751,7 +751,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     color: const Color(0xFF161822),
                     borderRadius: BorderRadius.circular(10),
                     border: Border.all(
-                      color: AppColors.primaryEmerald.withOpacity(0.3),
+                      color: AppColors.primaryEmerald.withValues(alpha: 0.3),
                     ),
                   ),
                   child: Column(
@@ -781,7 +781,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               vertical: 2,
                             ),
                             decoration: BoxDecoration(
-                              color: AppColors.primaryEmerald.withOpacity(0.15),
+                              color: AppColors.primaryEmerald.withValues(alpha: 0.15),
                               borderRadius: BorderRadius.circular(4),
                             ),
                             child: const Text(
@@ -799,7 +799,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
                         dense: true,
-                        activeColor: AppColors.primaryEmerald,
+                        activeThumbColor: AppColors.primaryEmerald,
                         title: const Text(
                           'Đổi Model phụ trên cùng Key khi chạm Quota (429)',
                           style: TextStyle(
@@ -823,7 +823,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
                         dense: true,
-                        activeColor: AppColors.primaryEmerald,
+                        activeThumbColor: AppColors.primaryEmerald,
                         title: const Text(
                           'Chuyển sang Groq AI khi toàn bộ Key Gemini cạn',
                           style: TextStyle(
@@ -847,7 +847,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
                         dense: true,
-                        activeColor: AppColors.primaryEmerald,
+                        activeThumbColor: AppColors.primaryEmerald,
                         title: const Text(
                           'Cân bằng tải song song đa Model (Dual-Model)',
                           style: TextStyle(

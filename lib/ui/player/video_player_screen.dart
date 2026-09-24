@@ -31,6 +31,7 @@ class VideoPlayerScreen extends StatefulWidget {
   // Hỗ trợ phim bộ Hồng Quả & Gối đầu tập tiếp theo
   final HongguoDramaDetail? dramaDetail;
   final int? currentEpisodeIndex;
+  final bool? initialTtsEnabled;
 
   const VideoPlayerScreen({
     super.key,
@@ -41,6 +42,7 @@ class VideoPlayerScreen extends StatefulWidget {
     this.onPlaybackPositionChanged,
     this.dramaDetail,
     this.currentEpisodeIndex,
+    this.initialTtsEnabled,
   });
 
   @override
@@ -92,6 +94,20 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
     _ttsScheduler = TtsAudioScheduler(_currentDocument);
 
+    _initSettingsAndPlayer();
+  }
+
+  Future<void> _initSettingsAndPlayer() async {
+    _settings = await SettingsRepository.getInstance();
+    if (widget.initialTtsEnabled != null) {
+      _settings.isTtsPlaybackEnabled = widget.initialTtsEnabled!;
+    }
+    if (mounted) {
+      setState(() {
+        _autoPlayNextEpisode = _settings.autoPlayNextEpisode;
+      });
+    }
+
     // Khởi tạo HongguoPrefetchManager nếu có thông tin phim bộ
     if (widget.dramaDetail != null) {
       _prefetchManager = HongguoPrefetchManager(widget.dramaDetail!);
@@ -104,7 +120,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       _prefetchManager!.onEpisodePlaying(
         _currentEpisodeIndex,
         translateCurrentIfEmpty: _currentDocument.isEmpty,
-        onCurrentSubtitleReady: (newDoc) {
+        onCurrentSubtitleReady: (newDoc) async {
           if (!mounted || _currentEpisodeIndex != (widget.currentEpisodeIndex ?? 1)) {
             return;
           }
@@ -113,21 +129,16 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             _ttsScheduler.dispose();
             _ttsScheduler = TtsAudioScheduler(newDoc);
           });
-          _applyAudioVolumes();
+          await _applyAudioVolumes();
+          if (_settings.isTtsPlaybackEnabled) {
+            final pos = _controller?.value.position.inMilliseconds ?? 0;
+            await _ttsScheduler.onSeek(pos);
+            _syncTtsWithVideo();
+          }
         },
       );
     }
 
-    _initSettingsAndPlayer();
-  }
-
-  Future<void> _initSettingsAndPlayer() async {
-    _settings = await SettingsRepository.getInstance();
-    if (mounted) {
-      setState(() {
-        _autoPlayNextEpisode = _settings.autoPlayNextEpisode;
-      });
-    }
     await _initPlayerForPath(
       _currentVideoPath,
       startPosMs: widget.initialPositionMs,
@@ -324,6 +335,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             _ttsScheduler = TtsAudioScheduler(newDoc);
           });
           _applyAudioVolumes();
+          if (_settings.isTtsPlaybackEnabled) {
+            final pos = _controller?.value.position.inMilliseconds ?? 0;
+            _ttsScheduler.onSeek(pos);
+            _syncTtsWithVideo();
+          }
         },
       );
     } finally {
@@ -1022,16 +1038,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                           });
                           await _applyAudioVolumes();
                           if (_settings.isTtsPlaybackEnabled) {
+                            if (_prefetchManager != null && _currentDocument.items.isNotEmpty) {
+                              _prefetchManager!.ensureTtsGenerated(_currentDocument, episodeIndex: _currentEpisodeIndex);
+                            }
                             final positionMs =
                                 controller.value.position.inMilliseconds;
                             await _ttsScheduler.onSeek(positionMs);
-                            await _ttsScheduler.onVideoStateUpdate(
-                              positionMs: positionMs,
-                              isPlaying: controller.value.isPlaying,
-                              isBuffering: _isPlaybackStalled,
-                              isScrubbing: _isScrubbing,
-                              playbackSpeed: controller.value.playbackSpeed,
-                            );
+                            _syncTtsWithVideo();
                           }
                         },
                       ),

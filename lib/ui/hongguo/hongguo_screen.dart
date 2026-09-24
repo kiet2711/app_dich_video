@@ -1019,6 +1019,7 @@ class _EpisodeSelectorSheet extends StatefulWidget {
 class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
   int _selectedEpisodeIndex = 1;
   bool _isLoadingPlayUrl = false;
+  bool _loadingTts = false;
   String _statusMessage = '';
   int _selectedRangeChunk = 0; // Phân đoạn mỗi 30 tập: 0 (1-30), 1 (31-60), ...
 
@@ -1302,11 +1303,10 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                   ),
                   child: Row(
                     children: [
-                      // Nút Xem Online
+                      // Nút Xem Vietsub (Phụ đề)
                       Expanded(
-                        flex: 4,
                         child: OutlinedButton.icon(
-                          icon: _isLoadingPlayUrl
+                          icon: (_isLoadingPlayUrl && !_loadingTts)
                               ? const SizedBox(
                                   width: 16,
                                   height: 16,
@@ -1315,9 +1315,12 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                                     color: AppColors.textPrimary,
                                   ),
                                 )
-                              : const Icon(Icons.play_circle_fill_rounded,
-                                  size: 18),
-                          label: Text('Xem Tập $_selectedEpisodeIndex'),
+                              : const Icon(Icons.subtitles_rounded, size: 18),
+                          label: Text(
+                            'Vietsub Tập $_selectedEpisodeIndex',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                           style: OutlinedButton.styleFrom(
                             foregroundColor: AppColors.textPrimary,
                             side: const BorderSide(color: AppColors.cardBorder),
@@ -1328,17 +1331,30 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                           ),
                           onPressed: _isLoadingPlayUrl
                               ? null
-                              : () => _playEpisodeOnline(context),
+                              : () => _playEpisode(context, enableTts: false),
                         ),
                       ),
                       const SizedBox(width: 10),
 
-                      // Nút Dịch & Tạo Phụ Đề
+                      // Nút Xem Lồng Tiếng (AI Voice-over)
                       Expanded(
-                        flex: 5,
                         child: ElevatedButton.icon(
-                          icon: const Icon(Icons.auto_awesome_rounded, size: 18),
-                          label: Text('Dịch Tập $_selectedEpisodeIndex'),
+                          icon: (_isLoadingPlayUrl && _loadingTts)
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.black,
+                                  ),
+                                )
+                              : const Icon(Icons.record_voice_over_rounded,
+                                  size: 18),
+                          label: Text(
+                            'Lồng Tiếng Tập $_selectedEpisodeIndex',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: AppColors.primaryEmerald,
                             foregroundColor: Colors.black,
@@ -1350,7 +1366,7 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                           ),
                           onPressed: _isLoadingPlayUrl
                               ? null
-                              : () => _startTranslationForEpisode(context),
+                              : () => _playEpisode(context, enableTts: true),
                         ),
                       ),
                     ],
@@ -1399,8 +1415,11 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
     }
   }
 
-  Future<void> _playEpisodeOnline(BuildContext ctx) async {
+  Future<void> _playEpisode(BuildContext ctx, {required bool enableTts}) async {
     HapticFeedback.lightImpact();
+    setState(() {
+      _loadingTts = enableTts;
+    });
     final playUrl = await _resolveCurrentEpisodeUrl();
     if (playUrl == null || !mounted) return;
 
@@ -1413,19 +1432,9 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
           document: SubtitleDocument(),
           dramaDetail: widget.detail,
           currentEpisodeIndex: _selectedEpisodeIndex,
+          initialTtsEnabled: enableTts,
         ),
       ),
     );
-  }
-
-  Future<void> _startTranslationForEpisode(BuildContext ctx) async {
-    HapticFeedback.lightImpact();
-    final playUrl = await _resolveCurrentEpisodeUrl();
-    if (playUrl == null || !mounted) return;
-
-    Navigator.pop(context); // Đóng BottomSheet
-
-    final fullTitle = '${widget.detail.title} - Tập $_selectedEpisodeIndex';
-    widget.onStartTranslation?.call(playUrl, fullTitle, 120000);
   }
 }
