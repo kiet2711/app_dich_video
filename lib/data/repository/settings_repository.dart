@@ -148,9 +148,9 @@ class SettingsRepository {
   set targetLanguageLabel(String v) => prefs.setString('target_lang_label', v);
 
   int get geminiThreadCount =>
-      (prefs.getInt('gemini_thread_count') ?? 2).clamp(1, 10);
+      (prefs.getInt('gemini_thread_count') ?? 2).clamp(1, 20);
   set geminiThreadCount(int v) =>
-      prefs.setInt('gemini_thread_count', v.clamp(1, 10));
+      prefs.setInt('gemini_thread_count', v.clamp(1, 20));
 
   int get geminiBatchSize =>
       (prefs.getInt('gemini_batch_size') ?? 45).clamp(10, 200);
@@ -158,9 +158,9 @@ class SettingsRepository {
       prefs.setInt('gemini_batch_size', v.clamp(10, 200));
 
   int get groqThreadCount =>
-      (prefs.getInt('groq_thread_count') ?? 3).clamp(1, 10);
+      (prefs.getInt('groq_thread_count') ?? 3).clamp(1, 20);
   set groqThreadCount(int v) =>
-      prefs.setInt('groq_thread_count', v.clamp(1, 10));
+      prefs.setInt('groq_thread_count', v.clamp(1, 20));
 
   int get groqBatchSize =>
       (prefs.getInt('groq_batch_size') ?? 45).clamp(10, 200);
@@ -173,14 +173,14 @@ class SettingsRepository {
       prefs.setInt('download_thread_count', v.clamp(8, 32));
 
   int get capcutSttConcurrency =>
-      (prefs.getInt('capcut_stt_concurrency') ?? 3).clamp(1, 6);
+      (prefs.getInt('capcut_stt_concurrency') ?? 3).clamp(1, 20);
   set capcutSttConcurrency(int v) =>
-      prefs.setInt('capcut_stt_concurrency', v.clamp(1, 6));
+      prefs.setInt('capcut_stt_concurrency', v.clamp(1, 20));
 
   int get audioSliceConcurrency =>
-      (prefs.getInt('audio_slice_concurrency') ?? 3).clamp(1, 6);
+      (prefs.getInt('audio_slice_concurrency') ?? 3).clamp(1, 20);
   set audioSliceConcurrency(int v) =>
-      prefs.setInt('audio_slice_concurrency', v.clamp(1, 6));
+      prefs.setInt('audio_slice_concurrency', v.clamp(1, 20));
 
   int get audioChunkDurationMin =>
       (prefs.getInt('audio_chunk_duration_min') ?? 10).clamp(1, 15);

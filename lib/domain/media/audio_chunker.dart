@@ -76,7 +76,7 @@ class AudioChunker {
     // BƯỚC 2: Với video dài > chunkDuration, cắt song song từ file âm thanh tổng (cực nhẹ và nhanh)
     final numChunks = (totalDurationMs / chunkDurationMs).ceil();
     final chunkList = List<AudioChunkInfo?>.filled(numChunks, null);
-    final activeWorkers = concurrency.clamp(1, 6).clamp(1, numChunks);
+    final activeWorkers = concurrency.clamp(1, 20).clamp(1, numChunks);
 
     var nextChunkIndex = 0;
     var completed = 0;

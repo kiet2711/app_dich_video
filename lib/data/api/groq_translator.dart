@@ -72,7 +72,7 @@ class GroqTranslator {
       customPrompt,
     );
 
-    final workerCount = threadCount.clamp(1, 10).clamp(1, totalChunks);
+    final workerCount = threadCount.clamp(1, 20).clamp(1, totalChunks);
     progressCallback?.call(
       0.05,
       workerCount > 1
@@ -142,7 +142,7 @@ class GroqTranslator {
       customPrompt,
     );
     final results = List<String>.filled(items.length, '');
-    final workerCount = threadCount.clamp(1, 10).clamp(1, items.length);
+    final workerCount = threadCount.clamp(1, 20).clamp(1, items.length);
     var nextIndex = 0;
     var completed = 0;
 

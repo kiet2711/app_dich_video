@@ -74,7 +74,9 @@ void main() {
       settings.audioSliceConcurrency = 5;
       expect(settings.audioSliceConcurrency, equals(5));
       settings.audioSliceConcurrency = 10;
-      expect(settings.audioSliceConcurrency, equals(6));
+      expect(settings.audioSliceConcurrency, equals(10));
+      settings.audioSliceConcurrency = 25;
+      expect(settings.audioSliceConcurrency, equals(20));
       settings.audioSliceConcurrency = 0;
       expect(settings.audioSliceConcurrency, equals(1));
 
@@ -88,6 +90,33 @@ void main() {
       settings.audioChunkDurationMin = 0;
       expect(settings.audioChunkDurationMin, equals(1));
       expect(settings.audioChunkDurationSec, equals(60));
+    });
+
+    test('CapCut STT, Gemini, and Groq concurrency getters/setters clamp up to 20 threads', () {
+      // CapCut STT
+      expect(settings.capcutSttConcurrency, equals(3));
+      settings.capcutSttConcurrency = 20;
+      expect(settings.capcutSttConcurrency, equals(20));
+      settings.capcutSttConcurrency = 30;
+      expect(settings.capcutSttConcurrency, equals(20));
+      settings.capcutSttConcurrency = 0;
+      expect(settings.capcutSttConcurrency, equals(1));
+
+      // Gemini thread count
+      settings.geminiThreadCount = 20;
+      expect(settings.geminiThreadCount, equals(20));
+      settings.geminiThreadCount = 25;
+      expect(settings.geminiThreadCount, equals(20));
+      settings.geminiThreadCount = 0;
+      expect(settings.geminiThreadCount, equals(1));
+
+      // Groq thread count
+      settings.groqThreadCount = 20;
+      expect(settings.groqThreadCount, equals(20));
+      settings.groqThreadCount = 35;
+      expect(settings.groqThreadCount, equals(20));
+      settings.groqThreadCount = 0;
+      expect(settings.groqThreadCount, equals(1));
     });
 
     test('SubtitleItem getDisplayText handles bilingual, translated, and original', () {

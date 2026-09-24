@@ -446,8 +446,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   Slider(
                     value: _settings!.geminiThreadCount.toDouble(),
                     min: 1,
-                    max: 8,
-                    divisions: 7,
+                    max: 20,
+                    divisions: 19,
                     activeColor: AppColors.primaryEmerald,
                     onChanged: (val) {
                       setState(() {
@@ -649,8 +649,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   Slider(
                     value: _settings!.groqThreadCount.toDouble(),
                     min: 1,
-                    max: 8,
-                    divisions: 7,
+                    max: 20,
+                    divisions: 19,
                     activeColor: Colors.amber,
                     onChanged: (val) {
                       setState(() {
@@ -770,14 +770,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 const SizedBox(height: 4),
                 const Text(
-                  'Xử lý song song nhiều phân đoạn âm thanh qua CapCut Cloud, giúp tạo sub cho video dài (1-3 tiếng) nhanh gấp 2-3 lần (Khuyên dùng: 2 - 4 luồng).',
+                  'Xử lý song song nhiều phân đoạn âm thanh qua CapCut Cloud, giúp tạo sub cho video dài (1-3 tiếng) nhanh gấp nhiều lần (Tối đa 20 luồng).',
                   style: TextStyle(color: Colors.white70, fontSize: 12),
                 ),
                 Slider(
                   value: _settings!.capcutSttConcurrency.toDouble(),
                   min: 1,
-                  max: 6,
-                  divisions: 5,
+                  max: 20,
+                  divisions: 19,
                   activeColor: AppColors.primaryEmerald,
                   onChanged: (val) {
                     setState(() {
@@ -811,14 +811,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 const SizedBox(height: 4),
                 const Text(
-                  'Số luồng trích xuất các phân đoạn âm thanh song song từ file âm thanh tổng (Khuyên dùng: 2 - 4 luồng).',
+                  'Số luồng trích xuất các phân đoạn âm thanh song song từ file âm thanh tổng (Tối đa 20 luồng).',
                   style: TextStyle(color: Colors.white70, fontSize: 12),
                 ),
                 Slider(
                   value: _settings!.audioSliceConcurrency.toDouble(),
                   min: 1,
-                  max: 6,
-                  divisions: 5,
+                  max: 20,
+                  divisions: 19,
                   activeColor: AppColors.primaryEmerald,
                   onChanged: (val) {
                     setState(() {

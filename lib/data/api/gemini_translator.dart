@@ -72,7 +72,7 @@ class GeminiTranslator {
       customPrompt,
     );
 
-    final workerCount = threadCount.clamp(1, 10).clamp(1, totalChunks);
+    final workerCount = threadCount.clamp(1, 20).clamp(1, totalChunks);
     progressCallback?.call(
       0.05,
       workerCount > 1
@@ -163,7 +163,7 @@ class GeminiTranslator {
     final result = <int, String>{};
     var nextChunk = 0;
     var completed = 0;
-    final workerCount = threadCount.clamp(1, 10).clamp(1, chunks.length);
+    final workerCount = threadCount.clamp(1, 20).clamp(1, chunks.length);
 
     progressCallback?.call(
       0.05,
