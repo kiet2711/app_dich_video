@@ -744,6 +744,132 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                   ),
                 ],
+                const SizedBox(height: 14),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF161822),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: AppColors.primaryEmerald.withOpacity(0.3),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.auto_mode_rounded,
+                            color: AppColors.primaryEmerald,
+                            size: 18,
+                          ),
+                          const SizedBox(width: 8),
+                          const Expanded(
+                            child: Text(
+                              'CƠ CHẾ XOAY THÔNG MINH & CÂN BẰNG TẢI',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: AppColors.primaryEmerald.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: const Text(
+                              'AUTO RESILIENT',
+                              style: TextStyle(
+                                color: AppColors.primaryEmerald,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        activeColor: AppColors.primaryEmerald,
+                        title: const Text(
+                          'Đổi Model phụ trên cùng Key khi chạm Quota (429)',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        subtitle: const Text(
+                          'Khi model 3.1 chạm limit, tự đổi sang 3.5 trên cùng Key trước khi đổi sang Key khác.',
+                          style: TextStyle(color: Colors.white60, fontSize: 11),
+                        ),
+                        value: _settings!.enableSmartModelFallback,
+                        onChanged: (val) {
+                          setState(() {
+                            _settings!.enableSmartModelFallback = val;
+                          });
+                        },
+                      ),
+                      const Divider(color: Color(0xFF262A38)),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        activeColor: AppColors.primaryEmerald,
+                        title: const Text(
+                          'Chuyển sang Groq AI khi toàn bộ Key Gemini cạn',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        subtitle: const Text(
+                          'Tự động nhảy sang Groq Cloud (hoặc ngược lại) để đảm bảo không đứt gánh giữa chừng.',
+                          style: TextStyle(color: Colors.white60, fontSize: 11),
+                        ),
+                        value: _settings!.enableCrossProviderFallback,
+                        onChanged: (val) {
+                          setState(() {
+                            _settings!.enableCrossProviderFallback = val;
+                          });
+                        },
+                      ),
+                      const Divider(color: Color(0xFF262A38)),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        activeColor: AppColors.primaryEmerald,
+                        title: const Text(
+                          'Cân bằng tải song song đa Model (Dual-Model)',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        subtitle: const Text(
+                          'Chạy đồng thời các luồng giữa Model 3.1 & 3.5 trên các Key để nhân đôi tốc độ dịch.',
+                          style: TextStyle(color: Colors.white60, fontSize: 11),
+                        ),
+                        value: _settings!.enableDualModelBalancing,
+                        onChanged: (val) {
+                          setState(() {
+                            _settings!.enableDualModelBalancing = val;
+                          });
+                        },
+                      ),
+                    ],
+                  ),
+                ),
                 const SizedBox(height: 12),
                 const Divider(color: AppColors.cardBorder),
                 const SizedBox(height: 6),

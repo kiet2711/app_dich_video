@@ -16,6 +16,7 @@ import '../../data/model/subtitle_document.dart';
 import '../../data/model/subtitle_item.dart';
 import '../../data/repository/settings_repository.dart';
 import '../ai/ai_model_registry.dart';
+import '../ai/smart_ai_translator.dart';
 import '../media/audio_chunker.dart';
 import '../media/bilibili_resolver.dart';
 
@@ -323,69 +324,44 @@ class SubtitlingPipeline {
       fullDoc.reindex();
 
       // -------------------------------------------------------------
-      // GIAI ĐOẠN 4: DỊCH PHỤ ĐỀ BẰNG AI (GEMINI HOẶC GROQ)
+      // GIAI ĐOẠN 4: DỊCH PHỤ ĐỀ BẰNG AI THÔNG MINH ĐA TẦNG
       // -------------------------------------------------------------
-      final provider = AiModelRegistry.detectProvider(translationEngine);
-      if (provider == AiProvider.gemini && fullDoc.isNotEmpty) {
+      final isAi = AiModelRegistry.isAiTranslationModel(translationEngine);
+      if (isAi && fullDoc.isNotEmpty) {
         if (_isCancelled) throw Exception('Đã huỷ tác vụ');
         _emit(
           const ProcessProgress(
             stage: ProcessStage.aiTranslating,
             progress: 0.70,
-            message: 'Bắt đầu dịch phụ đề theo ngữ cảnh với Gemini AI...',
+            message: 'Bắt đầu dịch phụ đề thông minh với AI đa tầng...',
           ),
         );
 
-        final translator = GeminiTranslator(
-          apiKeys: apiKeys,
-          modelId: translationEngine,
+        final effectiveGeminiKeys = apiKeys.isNotEmpty ? apiKeys : settings.geminiApiKeys;
+        final effectiveGroqKeys = groqApiKeys.isNotEmpty ? groqApiKeys : settings.groqApiKeys;
+        final effectiveThreadCount = translationEngine.startsWith('gemini')
+            ? geminiThreadCount
+            : groqThreadCount;
+        final effectiveBatchSize = translationEngine.startsWith('gemini')
+            ? (geminiBatchSize ?? settings.geminiBatchSize)
+            : (groqBatchSize ?? settings.groqBatchSize);
+
+        final smartTranslator = SmartAiTranslator(
+          geminiKeys: effectiveGeminiKeys,
+          groqKeys: effectiveGroqKeys,
+          initialModelId: translationEngine,
+          enableSmartModelFallback: settings.enableSmartModelFallback,
+          enableCrossProviderFallback: settings.enableCrossProviderFallback,
+          enableDualModelBalancing: settings.enableDualModelBalancing,
         );
 
-        await translator.translateSubtitles(
+        await smartTranslator.translateSubtitles(
           document: fullDoc,
           stylePreset: stylePreset,
           customPrompt: customPrompt,
           targetLanguage: targetLanguage,
-          chunkSize: geminiBatchSize ?? settings.geminiBatchSize,
-          threadCount: geminiThreadCount,
-          isCancelled: () => _isCancelled,
-          progressCallback: (pct, msg) {
-            final overall = 0.70 + (pct * 0.28);
-            _emit(
-              ProcessProgress(
-                stage: ProcessStage.aiTranslating,
-                progress: overall.clamp(0.70, 0.98),
-                message: msg,
-              ),
-            );
-          },
-        );
-      } else if (provider == AiProvider.groq && fullDoc.isNotEmpty) {
-        if (_isCancelled) throw Exception('Đã huỷ tác vụ');
-        _emit(
-          const ProcessProgress(
-            stage: ProcessStage.aiTranslating,
-            progress: 0.70,
-            message: 'Bắt đầu dịch phụ đề siêu tốc với Groq Cloud AI...',
-          ),
-        );
-
-        final effectiveGroqKeys = groqApiKeys.isNotEmpty
-            ? groqApiKeys
-            : settings.groqApiKeys;
-
-        final translator = GroqTranslator(
-          apiKeys: effectiveGroqKeys,
-          modelId: translationEngine,
-        );
-
-        await translator.translateSubtitles(
-          document: fullDoc,
-          stylePreset: stylePreset,
-          customPrompt: customPrompt,
-          targetLanguage: targetLanguage,
-          chunkSize: groqBatchSize ?? settings.groqBatchSize,
-          threadCount: groqThreadCount,
+          chunkSize: effectiveBatchSize,
+          threadCount: effectiveThreadCount,
           isCancelled: () => _isCancelled,
           progressCallback: (pct, msg) {
             final overall = 0.70 + (pct * 0.28);

@@ -335,12 +335,13 @@ class GroqTranslator {
   Future<String> callGroqRestApi(
     String userPrompt,
     String systemPrompt,
-    String apiKey,
-  ) async {
+    String apiKey, {
+    String? overrideModelId,
+  }) async {
     const url = 'https://api.groq.com/openai/v1/chat/completions';
 
     final body = <String, dynamic>{
-      'model': modelId,
+      'model': overrideModelId ?? modelId,
       'messages': [
         {'role': 'system', 'content': systemPrompt},
         {'role': 'user', 'content': userPrompt},

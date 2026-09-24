@@ -167,6 +167,21 @@ class SettingsRepository {
   set groqBatchSize(int v) =>
       prefs.setInt('groq_batch_size', v.clamp(10, 200));
 
+  bool get enableSmartModelFallback =>
+      prefs.getBool('enable_smart_model_fallback') ?? true;
+  set enableSmartModelFallback(bool v) =>
+      prefs.setBool('enable_smart_model_fallback', v);
+
+  bool get enableCrossProviderFallback =>
+      prefs.getBool('enable_cross_provider_fallback') ?? true;
+  set enableCrossProviderFallback(bool v) =>
+      prefs.setBool('enable_cross_provider_fallback', v);
+
+  bool get enableDualModelBalancing =>
+      prefs.getBool('enable_dual_model_balancing') ?? true;
+  set enableDualModelBalancing(bool v) =>
+      prefs.setBool('enable_dual_model_balancing', v);
+
   int get downloadThreadCount =>
       (prefs.getInt('download_thread_count') ?? 16).clamp(8, 32);
   set downloadThreadCount(int v) =>

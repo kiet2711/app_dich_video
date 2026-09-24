@@ -459,11 +459,13 @@ $srtInput
   Future<String> callGeminiRestApi(
     String userPrompt,
     String systemPrompt,
-    String apiKey,
-  ) async {
+    String apiKey, {
+    String? overrideModelId,
+  }) async {
+    final effectiveModel = overrideModelId ?? modelId;
     final url =
         'https://generativelanguage.googleapis.com/v1beta/models/'
-        '$modelId:generateContent?key=$apiKey';
+        '$effectiveModel:generateContent?key=$apiKey';
 
     final body = <String, dynamic>{
       'contents': [

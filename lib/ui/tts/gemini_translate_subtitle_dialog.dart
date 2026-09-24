@@ -5,6 +5,7 @@ import '../../data/api/groq_translator.dart';
 import '../../data/model/subtitle_document.dart';
 import '../../data/repository/settings_repository.dart';
 import '../../domain/ai/ai_model_registry.dart';
+import '../../domain/ai/smart_ai_translator.dart';
 import '../settings/settings_screen.dart';
 import '../theme/app_theme.dart';
 
@@ -120,53 +121,38 @@ class _GeminiTranslateSubtitleDialogState
           ? _contextPromptController.text.trim()
           : (_settings?.geminiCustomPrompt ?? '');
 
-      final SubtitleDocument resultDoc;
+      final smartTranslator = SmartAiTranslator(
+        geminiKeys: _apiKeys,
+        groqKeys: _settings?.groqApiKeys ?? const [],
+        initialModelId: _selectedModel,
+        enableSmartModelFallback: _settings?.enableSmartModelFallback ?? true,
+        enableCrossProviderFallback: _settings?.enableCrossProviderFallback ?? true,
+        enableDualModelBalancing: _settings?.enableDualModelBalancing ?? true,
+      );
+      final effectiveThreadCount = _selectedModel.startsWith('gemini')
+          ? (_settings?.geminiThreadCount ?? 2)
+          : (_settings?.groqThreadCount ?? 3);
+      final effectiveBatchSize = _selectedModel.startsWith('gemini')
+          ? (_settings?.geminiBatchSize ?? 45)
+          : (_settings?.groqBatchSize ?? 45);
 
-      if (provider == AiProvider.groq) {
-        final translator = GroqTranslator(
-          apiKeys: _settings!.groqApiKeys,
-          modelId: _selectedModel,
-        );
-        resultDoc = await translator.translateSubtitles(
-          document: widget.subtitleDoc,
-          stylePreset: _settings?.selectedStyle ?? 'Zhihu',
-          customPrompt: promptToUse,
-          targetLanguage: _selectedTargetLang,
-          chunkSize: _settings?.groqBatchSize ?? 45,
-          threadCount: _settings?.groqThreadCount ?? 3,
-          isCancelled: () => _isCancelled,
-          progressCallback: (pct, msg) {
-            if (mounted && !_isCancelled) {
-              setState(() {
-                _progress = pct;
-                _progressMessage = msg;
-              });
-            }
-          },
-        );
-      } else {
-        final translator = GeminiTranslator(
-          apiKeys: _apiKeys,
-          modelId: _selectedModel,
-        );
-        resultDoc = await translator.translateSubtitles(
-          document: widget.subtitleDoc,
-          stylePreset: _settings?.selectedStyle ?? 'Zhihu',
-          customPrompt: promptToUse,
-          targetLanguage: _selectedTargetLang,
-          chunkSize: _settings?.geminiBatchSize ?? 45,
-          threadCount: _settings?.geminiThreadCount ?? 2,
-          isCancelled: () => _isCancelled,
-          progressCallback: (pct, msg) {
-            if (mounted && !_isCancelled) {
-              setState(() {
-                _progress = pct;
-                _progressMessage = msg;
-              });
-            }
-          },
-        );
-      }
+      final SubtitleDocument resultDoc = await smartTranslator.translateSubtitles(
+        document: widget.subtitleDoc,
+        stylePreset: _settings?.selectedStyle ?? 'Zhihu',
+        customPrompt: promptToUse,
+        targetLanguage: _selectedTargetLang,
+        chunkSize: effectiveBatchSize,
+        threadCount: effectiveThreadCount,
+        isCancelled: () => _isCancelled,
+        progressCallback: (pct, msg) {
+          if (mounted && !_isCancelled) {
+            setState(() {
+              _progress = pct;
+              _progressMessage = msg;
+            });
+          }
+        },
+      );
 
       if (mounted) {
         widget.onTranslationCompleted(resultDoc);

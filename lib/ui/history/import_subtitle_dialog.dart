@@ -9,6 +9,7 @@ import '../../data/model/subtitle_document.dart';
 import '../../data/repository/history_repository.dart';
 import '../../data/repository/settings_repository.dart';
 import '../../domain/ai/ai_model_registry.dart';
+import '../../domain/ai/smart_ai_translator.dart';
 import '../../domain/media/media_storage.dart';
 import '../theme/app_theme.dart';
 
@@ -137,58 +138,40 @@ class _ImportSubtitleDialogState extends State<ImportSubtitleDialog> {
 
       final model = settings.selectedModel;
       final provider = AiModelRegistry.detectProvider(model);
-      final SubtitleDocument translatedDoc;
-
-      if (provider == AiProvider.groq) {
-        if (settings.groqApiKeys.isEmpty) {
-          throw StateError(
-            'Chưa có Groq API Key! Vui lòng vào Cài đặt để thêm Key.',
-          );
-        }
-        final translator = GroqTranslator(
-          apiKeys: settings.groqApiKeys,
-          modelId: model,
-        );
-        translatedDoc = await translator.translateSubtitles(
-          document: doc,
-          stylePreset: settings.selectedStyle,
-          customPrompt: settings.geminiCustomPrompt,
-          targetLanguage: settings.targetLanguage,
-          chunkSize: settings.groqBatchSize,
-          threadCount: settings.groqThreadCount,
-          progressCallback: (pct, msg) {
-            if (mounted) {
-              setState(() => _translationProgressText = msg);
-            }
-          },
-        );
-      } else {
-        if (settings.geminiApiKeys.isEmpty) {
-          throw StateError(
-            'Chưa có Gemini API Key! Vui lòng vào Cài đặt để thêm Key.',
-          );
-        }
-        final effectiveGeminiModel = model.startsWith('gemini')
-            ? model
-            : 'gemini-3.5-flash-lite';
-        final translator = GeminiTranslator(
-          apiKeys: settings.geminiApiKeys,
-          modelId: effectiveGeminiModel,
-        );
-        translatedDoc = await translator.translateSubtitles(
-          document: doc,
-          stylePreset: settings.selectedStyle,
-          customPrompt: settings.geminiCustomPrompt,
-          targetLanguage: settings.targetLanguage,
-          chunkSize: settings.geminiBatchSize,
-          threadCount: settings.geminiThreadCount,
-          progressCallback: (pct, msg) {
-            if (mounted) {
-              setState(() => _translationProgressText = msg);
-            }
-          },
+      if (settings.geminiApiKeys.isEmpty && settings.groqApiKeys.isEmpty) {
+        throw StateError(
+          'Chưa có API Key nào được cấu hình! Vui lòng vào Cài đặt để thêm Gemini hoặc Groq Key.',
         );
       }
+
+      final smartTranslator = SmartAiTranslator(
+        geminiKeys: settings.geminiApiKeys,
+        groqKeys: settings.groqApiKeys,
+        initialModelId: model,
+        enableSmartModelFallback: settings.enableSmartModelFallback,
+        enableCrossProviderFallback: settings.enableCrossProviderFallback,
+        enableDualModelBalancing: settings.enableDualModelBalancing,
+      );
+      final effectiveThreadCount = model.startsWith('gemini')
+          ? settings.geminiThreadCount
+          : settings.groqThreadCount;
+      final effectiveBatchSize = model.startsWith('gemini')
+          ? settings.geminiBatchSize
+          : settings.groqBatchSize;
+
+      final SubtitleDocument translatedDoc = await smartTranslator.translateSubtitles(
+        document: doc,
+        stylePreset: settings.selectedStyle,
+        customPrompt: settings.geminiCustomPrompt,
+        targetLanguage: settings.targetLanguage,
+        chunkSize: effectiveBatchSize,
+        threadCount: effectiveThreadCount,
+        progressCallback: (pct, msg) {
+          if (mounted) {
+            setState(() => _translationProgressText = msg);
+          }
+        },
+      );
 
       if (vPath != null) {
         final historyRepo = await HistoryRepository.getInstance();
