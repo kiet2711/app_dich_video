@@ -97,14 +97,36 @@ class HongguoPrefetchManager {
       }
     }
 
-    // 2. Tự động gối đầu dịch ngầm tập tiếp theo (N + 1)
-    final nextIndex = episodeIndex + 1;
+    // 2. Tự động gối đầu dịch ngầm các tập tiếp theo theo cấu hình (1 hoặc 2 tập...)
+    final settings = await SettingsRepository.getInstance();
+    if (!settings.autoPlayNextEpisode) {
+      debugPrint('[Prefetch] Tự động chuyển tập đang TẮT, không chạy dịch ngầm.');
+      return;
+    }
+
+    final bufferCount = settings.prefetchEpisodeCount;
     final total = detail.episodes.isNotEmpty
         ? detail.episodes.length
         : (detail.totalEpisodes > 0 ? detail.totalEpisodes : 100);
 
-    if (nextIndex <= total) {
-      unawaited(_prefetchNextEpisode(nextIndex));
+    unawaited(_runPrefetchQueue(episodeIndex, bufferCount, total));
+  }
+
+  /// Chạy hàng đợi dịch ngầm tuần tự theo số tập đệm đã cài đặt
+  Future<void> _runPrefetchQueue(
+    int playingIndex,
+    int bufferCount,
+    int total,
+  ) async {
+    for (var i = 1; i <= bufferCount; i++) {
+      if (_isDisposed || _currentPlayingIndex != playingIndex) break;
+      final settings = await SettingsRepository.getInstance();
+      if (!settings.autoPlayNextEpisode) break;
+
+      final nextIndex = playingIndex + i;
+      if (nextIndex <= total) {
+        await _prefetchNextEpisode(nextIndex);
+      }
     }
   }
 
@@ -237,6 +259,12 @@ class HongguoPrefetchManager {
           title: epTitle,
           document: doc,
           durationMs: 120000,
+          seriesId: detail.seriesId,
+          seriesCover: detail.cover,
+          episodeIndex: episodeIndex,
+          totalEpisodes: detail.totalEpisodes > 0
+              ? detail.totalEpisodes
+              : detail.episodes.length,
         );
       } catch (e) {
         debugPrint('[Prefetch] Lỗi lưu history: $e');
@@ -310,16 +338,21 @@ class HongguoPrefetchManager {
   Future<SubtitleDocument?> _findInHistory(int episodeIndex) async {
     try {
       final historyRepo = await HistoryRepository.getInstance();
-      final epTitle = '${detail.title} - Tập $episodeIndex';
-      final item = historyRepo.getHistory().firstWhere(
-            (it) => it.title.trim() == epTitle.trim(),
-            orElse: () => historyRepo.getHistory().firstWhere(
-                  (it) =>
-                      it.title.contains(detail.title) &&
-                      it.title.contains('Tập $episodeIndex'),
-                  orElse: () => throw 'not_found',
-                ),
-          );
+      final list = historyRepo.getHistory();
+      final item = list.firstWhere(
+        (it) {
+          if (it.seriesId != null &&
+              it.seriesId == detail.seriesId &&
+              it.extractedEpisodeIndex == episodeIndex) {
+            return true;
+          }
+          final epTitle = '${detail.title} - Tập $episodeIndex';
+          if (it.title.trim() == epTitle.trim()) return true;
+          return it.title.contains(detail.title) &&
+              it.title.contains('Tập $episodeIndex');
+        },
+        orElse: () => throw 'not_found',
+      );
 
       return await historyRepo.loadSubtitleDocument(item);
     } catch (_) {
@@ -327,11 +360,18 @@ class HongguoPrefetchManager {
     }
   }
 
+  /// Dừng các tác vụ dịch ngầm hiện tại (khi người dùng tắt công tắc AutoPlay)
+  void cancelPrefetch() {
+    _activePipeline?.cancel();
+    _pipelineSub?.cancel();
+    _activePipeline = null;
+    prefetchStateNotifier.value = null;
+  }
+
   /// Huỷ bỏ các tác vụ ngầm khi đóng trình phát
   void dispose() {
     _isDisposed = true;
-    _activePipeline?.cancel();
-    _pipelineSub?.cancel();
+    cancelPrefetch();
     prefetchStateNotifier.dispose();
   }
 }

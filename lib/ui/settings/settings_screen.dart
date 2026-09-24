@@ -1329,8 +1329,90 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ],
             ),
           ),
-          // Section 5: Quản lý bộ nhớ
           const SizedBox(height: 16),
+
+          // Section: Cấu hình Phim Ngắn Hồng Quả
+          _buildSectionHeader('CẤU HÌNH PHIM NGẮN HỒNG QUẢ'),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: AppColors.darkSurface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.cardBorder),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  activeThumbColor: AppColors.primaryEmerald,
+                  title: const Text(
+                    'Tự động chuyển tập & dịch ngầm',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
+                  ),
+                  subtitle: const Text(
+                    'Tự động chuyển sang tập kế tiếp khi video kết thúc và chạy ngầm dịch trước',
+                    style: TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                  value: _settings!.autoPlayNextEpisode,
+                  onChanged: (val) {
+                    setState(() {
+                      _settings!.autoPlayNextEpisode = val;
+                    });
+                  },
+                ),
+                const Divider(color: AppColors.cardBorder, height: 20),
+                const Text(
+                  'Số tập dịch ngầm trước khi xem:',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Số lượng video tập tiếp theo được tải và dịch sẵn trong nền khi đang xem tập hiện tại (gối đầu).',
+                  style: TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [1, 2, 3].map((count) {
+                    final isSel = _settings!.prefetchEpisodeCount == count;
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: ChoiceChip(
+                        label: Text(
+                          '$count tập ${count == 1 ? "(Tiết kiệm)" : count == 2 ? "(Khuyên dùng)" : "(Liên tục)"}',
+                        ),
+                        selected: isSel,
+                        selectedColor: AppColors.primaryEmerald,
+                        labelStyle: TextStyle(
+                          color: isSel ? Colors.black : Colors.white70,
+                          fontWeight:
+                              isSel ? FontWeight.bold : FontWeight.normal,
+                          fontSize: 12,
+                        ),
+                        backgroundColor: AppColors.darkSurfaceVariant,
+                        onSelected: (_) {
+                          setState(() {
+                            _settings!.prefetchEpisodeCount = count;
+                          });
+                        },
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Section 5: Quản lý bộ nhớ
           _buildSectionHeader('Quản lý bộ nhớ & Dọn dẹp cache'),
           Container(
             padding: const EdgeInsets.all(16),

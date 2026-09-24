@@ -140,6 +140,10 @@ class HistoryRepository {
     required SubtitleDocument document,
     int durationMs = 0,
     String? ttsVoice,
+    String? seriesId,
+    String? seriesCover,
+    int? episodeIndex,
+    int? totalEpisodes,
   }) async {
     final docs = await getApplicationDocumentsDirectory();
     final savedSubtitlesDir = Directory('${docs.path}/saved_subtitles');
@@ -173,6 +177,10 @@ class HistoryRepository {
       ttsVoice: ttsVoice ?? existing?.ttsVoice,
       docKey: docKey,
       lastPositionMs: existing?.lastPositionMs ?? 0,
+      seriesId: seriesId ?? existing?.seriesId,
+      seriesCover: seriesCover ?? existing?.seriesCover,
+      episodeIndex: episodeIndex ?? existing?.episodeIndex,
+      totalEpisodes: totalEpisodes ?? existing?.totalEpisodes,
     );
 
     await addItem(item);

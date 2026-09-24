@@ -123,6 +123,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
   Future<void> _initSettingsAndPlayer() async {
     _settings = await SettingsRepository.getInstance();
+    if (mounted) {
+      setState(() {
+        _autoPlayNextEpisode = _settings.autoPlayNextEpisode;
+      });
+    }
     await _initPlayerForPath(
       _currentVideoPath,
       startPosMs: widget.initialPositionMs,
@@ -328,6 +333,148 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     }
   }
 
+  void _showEpisodeListSheet() {
+    final detail = widget.dramaDetail;
+    if (detail == null) return;
+    final total = detail.episodes.isNotEmpty
+        ? detail.episodes.length
+        : (detail.totalEpisodes > 0 ? detail.totalEpisodes : 1);
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) {
+        return Container(
+          height: MediaQuery.of(context).size.height * 0.7,
+          decoration: const BoxDecoration(
+            color: Color(0xFF1A1C24),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          child: Column(
+            children: [
+              Container(
+                margin: const EdgeInsets.only(top: 10, bottom: 8),
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Danh sách tập: ${detail.title}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: AppTheme.primaryEmerald.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        'Đang phát: Tập $_currentEpisodeIndex',
+                        style: const TextStyle(
+                          color: AppTheme.primaryEmerald,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(color: Colors.white12, height: 1),
+              Expanded(
+                child: GridView.builder(
+                  padding: const EdgeInsets.all(16),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 5,
+                    crossAxisSpacing: 8,
+                    mainAxisSpacing: 8,
+                    childAspectRatio: 1.3,
+                  ),
+                  itemCount: total,
+                  itemBuilder: (ctx, i) {
+                    final ep = i + 1;
+                    final isPlaying = ep == _currentEpisodeIndex;
+                    final isCached = _prefetchManager?.getCachedDocument(ep) != null;
+
+                    return InkWell(
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        if (ep != _currentEpisodeIndex) {
+                          _goToEpisode(ep);
+                        }
+                      },
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: isPlaying
+                              ? AppTheme.primaryEmerald.withValues(alpha: 0.25)
+                              : (isCached
+                                  ? const Color(0xFF132F24)
+                                  : const Color(0xFF252631)),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: isPlaying
+                                ? AppTheme.primaryEmerald
+                                : (isCached
+                                    ? AppTheme.primaryEmerald.withValues(alpha: 0.5)
+                                    : Colors.white12),
+                            width: isPlaying ? 1.8 : 1,
+                          ),
+                        ),
+                        alignment: Alignment.center,
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(
+                              '$ep',
+                              style: TextStyle(
+                                color: isPlaying
+                                    ? AppTheme.primaryEmerald
+                                    : Colors.white,
+                                fontWeight: isPlaying ? FontWeight.bold : FontWeight.w500,
+                                fontSize: 13,
+                              ),
+                            ),
+                            if (isCached && !isPlaying)
+                              const Text(
+                                'Đã sub',
+                                style: TextStyle(
+                                  color: AppTheme.primaryEmerald,
+                                  fontSize: 8,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> _switchVideo({
     required String newVideoPath,
     required SubtitleDocument newDocument,
@@ -393,6 +540,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             (!controller.value.isPlaying && positionMs >= durationMs - 1200))) {
       _playNextEpisode();
       return;
+    }
+
+    // Nếu tắt tự động chuyển tập: dừng video khi tới cuối video
+    if (!_autoPlayNextEpisode &&
+        durationMs > 2000 &&
+        positionMs >= durationMs - 200 &&
+        controller.value.isPlaying) {
+      controller.pause();
     }
 
     if (positionMs != _lastObservedPositionMs) {
@@ -743,36 +898,95 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                       ] else
                         const Spacer(),
 
-                      // Nút bật/tắt tự động chuyển tập tiếp theo
-                      if (widget.dramaDetail != null)
-                        IconButton(
-                          icon: Icon(
-                            _autoPlayNextEpisode
-                                ? Icons.playlist_play_rounded
-                                : Icons.playlist_remove_rounded,
-                            color: _autoPlayNextEpisode
-                                ? AppTheme.primaryEmerald
-                                : Colors.white60,
-                          ),
-                          tooltip: _autoPlayNextEpisode
-                              ? 'Tự động dịch & phát tiếp: BẬT'
-                              : 'Tự động dịch & phát tiếp: TẮT',
-                          onPressed: () {
+                      // Nút YouTube-style: Bật/Tắt Tự Động Chuyển Tập & Dịch Ngầm
+                      if (widget.dramaDetail != null) ...[
+                        InkWell(
+                          onTap: () {
+                            final newVal = !_autoPlayNextEpisode;
                             setState(() {
-                              _autoPlayNextEpisode = !_autoPlayNextEpisode;
+                              _autoPlayNextEpisode = newVal;
                             });
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(
-                                  _autoPlayNextEpisode
-                                      ? '✅ Đã BẬT tự động dịch & chuyển tập tiếp theo'
-                                      : '⏸️ Đã TẮT tự động chuyển tập',
+                            _settings.autoPlayNextEpisode = newVal;
+                            if (newVal) {
+                              _prefetchManager
+                                  ?.onEpisodePlaying(_currentEpisodeIndex);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                      '▶️ Đã BẬT tự chuyển tập & dịch ngầm'),
+                                  duration: Duration(seconds: 2),
                                 ),
-                                duration: const Duration(seconds: 2),
-                              ),
-                            );
+                              );
+                            } else {
+                              _prefetchManager?.cancelPrefetch();
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                      '⏸️ Đã TẮT tự chuyển tập (Dừng dịch ngầm)'),
+                                  duration: Duration(seconds: 2),
+                                ),
+                              );
+                            }
                           },
+                          borderRadius: BorderRadius.circular(20),
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 200),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 5,
+                            ),
+                            decoration: BoxDecoration(
+                              color: _autoPlayNextEpisode
+                                  ? AppTheme.primaryEmerald
+                                      .withValues(alpha: 0.25)
+                                  : Colors.black.withValues(alpha: 0.6),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: _autoPlayNextEpisode
+                                    ? AppTheme.primaryEmerald
+                                    : Colors.white24,
+                                width: 1.2,
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  _autoPlayNextEpisode
+                                      ? Icons.play_circle_fill_rounded
+                                      : Icons.pause_circle_outline_rounded,
+                                  size: 16,
+                                  color: _autoPlayNextEpisode
+                                      ? AppTheme.primaryEmerald
+                                      : Colors.white70,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  _autoPlayNextEpisode
+                                      ? 'Tự chuyển'
+                                      : 'Dừng tập',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                    color: _autoPlayNextEpisode
+                                        ? AppTheme.primaryEmerald
+                                        : Colors.white70,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
+                        const SizedBox(width: 4),
+                        IconButton(
+                          icon: const Icon(
+                            Icons.format_list_numbered_rounded,
+                            color: Colors.white,
+                          ),
+                          tooltip: 'Danh sách tập phim',
+                          onPressed: _showEpisodeListSheet,
+                        ),
+                      ],
 
                       IconButton(
                         icon: Icon(

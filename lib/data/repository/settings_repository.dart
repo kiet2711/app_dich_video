@@ -220,4 +220,14 @@ class SettingsRepository {
       _secureStorage.write(key: 'bilibili_sessdata', value: _bilibiliSessData),
     );
   }
+
+  int get prefetchEpisodeCount =>
+      (prefs.getInt('prefetch_episode_count') ?? 1).clamp(1, 5);
+  set prefetchEpisodeCount(int v) =>
+      prefs.setInt('prefetch_episode_count', v.clamp(1, 5));
+
+  bool get autoPlayNextEpisode =>
+      prefs.getBool('auto_play_next_episode') ?? true;
+  set autoPlayNextEpisode(bool v) =>
+      prefs.setBool('auto_play_next_episode', v);
 }
