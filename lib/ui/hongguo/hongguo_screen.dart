@@ -1176,6 +1176,8 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
           videoPath: playUrl,
           title: '${widget.detail.title} - Tập $_selectedEpisodeIndex',
           document: SubtitleDocument(),
+          dramaDetail: widget.detail,
+          currentEpisodeIndex: _selectedEpisodeIndex,
         ),
       ),
     );

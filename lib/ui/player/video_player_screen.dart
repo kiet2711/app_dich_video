@@ -9,6 +9,8 @@ import 'package:video_player/video_player.dart';
 import '../../data/model/subtitle_document.dart';
 import '../../data/repository/settings_repository.dart';
 import '../../domain/media/bilibili_resolver.dart';
+import '../../domain/media/hongguo_prefetch_manager.dart';
+import '../../domain/media/hongguo_resolver.dart';
 import '../../domain/media/media_storage.dart';
 import '../../domain/media/network_header_helper.dart';
 import '../../domain/tts/audio_file_validator.dart';
@@ -26,6 +28,10 @@ class VideoPlayerScreen extends StatefulWidget {
   final int initialPositionMs;
   final Future<void> Function(int positionMs)? onPlaybackPositionChanged;
 
+  // Hỗ trợ phim bộ Hồng Quả & Gối đầu tập tiếp theo
+  final HongguoDramaDetail? dramaDetail;
+  final int? currentEpisodeIndex;
+
   const VideoPlayerScreen({
     super.key,
     required this.videoPath,
@@ -33,6 +39,8 @@ class VideoPlayerScreen extends StatefulWidget {
     this.title,
     this.initialPositionMs = 0,
     this.onPlaybackPositionChanged,
+    this.dramaDetail,
+    this.currentEpisodeIndex,
   });
 
   @override
@@ -46,7 +54,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   static const _positionSaveInterval = Duration(seconds: 3);
 
   VideoPlayerController? _controller;
-  late final TtsAudioScheduler _ttsScheduler;
+  late TtsAudioScheduler _ttsScheduler;
   late SettingsRepository _settings;
   bool _isInitialized = false;
   bool _showControls = true;
@@ -64,26 +72,74 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   DateTime _lastPositionSaveAt = DateTime.fromMillisecondsSinceEpoch(0);
   int _lastSavedPositionMs = -1;
 
+  // Quản lý trạng thái phim bộ Hồng Quả
+  late int _currentEpisodeIndex;
+  late String _currentVideoPath;
+  late String _currentTitle;
+  late SubtitleDocument _currentDocument;
+  HongguoPrefetchManager? _prefetchManager;
+  bool _autoPlayNextEpisode = true;
+  bool _isSwitchingEpisode = false;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _ttsScheduler = TtsAudioScheduler(
-      widget.document ?? SubtitleDocument(),
-    );
+    _currentEpisodeIndex = widget.currentEpisodeIndex ?? 1;
+    _currentVideoPath = widget.videoPath;
+    _currentTitle = widget.title ?? '';
+    _currentDocument = widget.document ?? SubtitleDocument();
+
+    _ttsScheduler = TtsAudioScheduler(_currentDocument);
+
+    // Khởi tạo HongguoPrefetchManager nếu có thông tin phim bộ
+    if (widget.dramaDetail != null) {
+      _prefetchManager = HongguoPrefetchManager(widget.dramaDetail!);
+      _prefetchManager!.registerVideoUrl(_currentEpisodeIndex, widget.videoPath);
+      if (_currentDocument.isNotEmpty) {
+        _prefetchManager!.registerDocument(_currentEpisodeIndex, _currentDocument);
+      }
+
+      // Kích hoạt dịch ngay tập hiện tại (nếu trống) và gối đầu tập tiếp theo
+      _prefetchManager!.onEpisodePlaying(
+        _currentEpisodeIndex,
+        translateCurrentIfEmpty: _currentDocument.isEmpty,
+        onCurrentSubtitleReady: (newDoc) {
+          if (!mounted || _currentEpisodeIndex != (widget.currentEpisodeIndex ?? 1)) {
+            return;
+          }
+          setState(() {
+            _currentDocument = newDoc;
+            _ttsScheduler.dispose();
+            _ttsScheduler = TtsAudioScheduler(newDoc);
+          });
+          _applyAudioVolumes();
+        },
+      );
+    }
+
     _initSettingsAndPlayer();
   }
 
   Future<void> _initSettingsAndPlayer() async {
     _settings = await SettingsRepository.getInstance();
+    await _initPlayerForPath(
+      _currentVideoPath,
+      startPosMs: widget.initialPositionMs,
+    );
+  }
 
+  Future<void> _initPlayerForPath(
+    String playablePath, {
+    int startPosMs = 0,
+  }) async {
     try {
-      var playablePath = widget.videoPath;
-      var playableUrls = <String>[playablePath];
+      var targetPath = playablePath;
+      var playableUrls = <String>[targetPath];
       var httpHeaders = const <String, String>{};
-      if (BilibiliResolver.isBilibiliPageUrl(playablePath)) {
+      if (BilibiliResolver.isBilibiliPageUrl(targetPath)) {
         final resolver = BilibiliResolver();
-        final target = await resolver.resolveUrl(playablePath);
+        final target = await resolver.resolveUrl(targetPath);
         final details = await resolver.getVideoDetails(
           target,
           _settings.bilibiliSessData,
@@ -92,34 +148,33 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           details,
           _settings.bilibiliSessData,
         );
-        playablePath = playableUrls.first;
+        targetPath = playableUrls.first;
         httpHeaders = BilibiliResolver.requestHeaders(
           _settings.bilibiliSessData,
         );
       }
 
       final isRemote =
-          playablePath.startsWith('http://') ||
-          playablePath.startsWith('https://');
+          targetPath.startsWith('http://') || targetPath.startsWith('https://');
       final videoOptions = VideoPlayerOptions(mixWithOthers: true);
       if (isRemote) {
         if (httpHeaders.isEmpty) {
-          httpHeaders = NetworkHeaderHelper.getHeadersForUri(playablePath);
+          httpHeaders = NetworkHeaderHelper.getHeadersForUri(targetPath);
         }
         _controller = await _initializeNetworkController(
           playableUrls,
           httpHeaders,
           videoOptions,
         );
-      } else if (MediaStorage.isContentUri(playablePath)) {
+      } else if (MediaStorage.isContentUri(targetPath)) {
         _controller = VideoPlayerController.contentUri(
-          Uri.parse(playablePath),
+          Uri.parse(targetPath),
           videoPlayerOptions: videoOptions,
         );
         await _controller!.initialize();
       } else {
         _controller = VideoPlayerController.file(
-          File(playablePath),
+          File(targetPath),
           videoPlayerOptions: videoOptions,
         );
         await _controller!.initialize();
@@ -130,7 +185,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         return;
       }
       final durationMs = _controller!.value.duration.inMilliseconds;
-      final resumePositionMs = widget.initialPositionMs.clamp(0, durationMs);
+      final resumePositionMs = startPosMs.clamp(0, durationMs);
       final shouldRestorePosition =
           resumePositionMs > 0 && resumePositionMs < durationMs;
       _isScrubbing = shouldRestorePosition;
@@ -179,44 +234,171 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     Object? lastError;
     final candidates = urls
         .map((url) => url.trim())
-        .where((url) => url.startsWith('http://') || url.startsWith('https://'))
-        .toSet();
-
-    for (final url in candidates) {
-      for (var attempt = 0; attempt < 2; attempt++) {
-        final controller = VideoPlayerController.networkUrl(
-          Uri.parse(url),
-          httpHeaders: headers,
-          videoPlayerOptions: options,
-        );
-        try {
-          await controller.initialize();
-          return controller;
-        } catch (error) {
-          lastError = error;
-          try {
-            await controller.dispose();
-          } catch (_) {}
-          if (attempt == 0) {
-            await Future<void>.delayed(const Duration(milliseconds: 300));
-          }
-        }
+        .where((url) => url.isNotEmpty)
+        .toList();
+    if (candidates.isEmpty) {
+      throw StateError('Không tìm thấy link video mạng hợp lệ để phát.');
+    }
+    for (var i = 0; i < candidates.length; i++) {
+      final candidateUrl = candidates[i];
+      final controller = VideoPlayerController.networkUrl(
+        Uri.parse(candidateUrl),
+        httpHeaders: headers,
+        videoPlayerOptions: options,
+      );
+      try {
+        await controller.initialize();
+        return controller;
+      } catch (error) {
+        lastError = error;
+        await controller.dispose();
       }
     }
-    throw lastError ?? StateError('Không có URL video online hợp lệ.');
+    throw lastError ??
+        StateError('Không thể khởi tạo luồng video mạng nào trong danh sách.');
+  }
+
+  bool get _hasNextEpisode {
+    if (widget.dramaDetail == null) return false;
+    final total = widget.dramaDetail!.episodes.isNotEmpty
+        ? widget.dramaDetail!.episodes.length
+        : widget.dramaDetail!.totalEpisodes;
+    return _currentEpisodeIndex < total;
+  }
+
+  bool get _hasPreviousEpisode {
+    return widget.dramaDetail != null && _currentEpisodeIndex > 1;
+  }
+
+  Future<void> _playNextEpisode() async {
+    if (!_hasNextEpisode || _isSwitchingEpisode) return;
+    await _goToEpisode(_currentEpisodeIndex + 1);
+  }
+
+  Future<void> _playPreviousEpisode() async {
+    if (!_hasPreviousEpisode || _isSwitchingEpisode) return;
+    await _goToEpisode(_currentEpisodeIndex - 1);
+  }
+
+  Future<void> _goToEpisode(int targetIndex) async {
+    if (_isSwitchingEpisode) return;
+    setState(() => _isSwitchingEpisode = true);
+
+    try {
+      final playUrl = await _prefetchManager?.getOrResolveUrl(targetIndex);
+      if (playUrl == null) {
+        if (mounted) {
+          setState(() => _isSwitchingEpisode = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Không thể lấy đường dẫn Tập $targetIndex!')),
+          );
+        }
+        return;
+      }
+      if (!mounted) return;
+
+      var doc = _prefetchManager?.getCachedDocument(targetIndex);
+      final epTitle = '${widget.dramaDetail!.title} - Tập $targetIndex';
+
+      _currentEpisodeIndex = targetIndex;
+      await _switchVideo(
+        newVideoPath: playUrl,
+        newDocument: doc ?? SubtitleDocument(),
+        newTitle: epTitle,
+      );
+
+      // Kích hoạt dịch gối đầu tập tiếp theo
+      _prefetchManager?.onEpisodePlaying(
+        targetIndex,
+        translateCurrentIfEmpty: doc == null,
+        onCurrentSubtitleReady: (newDoc) {
+          if (!mounted || _currentEpisodeIndex != targetIndex) return;
+          setState(() {
+            _currentDocument = newDoc;
+            _ttsScheduler.dispose();
+            _ttsScheduler = TtsAudioScheduler(newDoc);
+          });
+          _applyAudioVolumes();
+        },
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isSwitchingEpisode = false);
+      }
+    }
+  }
+
+  Future<void> _switchVideo({
+    required String newVideoPath,
+    required SubtitleDocument newDocument,
+    required String newTitle,
+  }) async {
+    await _controller?.pause();
+    _controller?.removeListener(_onPlayerUpdate);
+    await _controller?.dispose();
+    _controller = null;
+
+    _playbackMonitor?.cancel();
+    _ttsScheduler.dispose();
+
+    setState(() {
+      _isInitialized = false;
+      _currentVideoPath = newVideoPath;
+      _currentDocument = newDocument;
+      _currentTitle = newTitle;
+      _currentPosMs = 0;
+      _lastObservedPositionMs = 0;
+      _isScrubbing = false;
+      _isPlaybackStalled = false;
+    });
+
+    _ttsScheduler = TtsAudioScheduler(newDocument);
+    await _initPlayerForPath(newVideoPath);
+  }
+
+  @override
+  void dispose() {
+    _prefetchManager?.dispose();
+    WidgetsBinding.instance.removeObserver(this);
+    _playbackMonitor?.cancel();
+    _controller?.removeListener(_onPlayerUpdate);
+    _controller?.dispose();
+    _ttsScheduler.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
+      _controller?.pause();
+      _ttsScheduler.onSeek(_currentPosMs);
+    }
   }
 
   void _onPlayerUpdate() {
     final controller = _controller;
-    if (!mounted || controller == null || !controller.value.isInitialized) {
+    if (controller == null || !controller.value.isInitialized) return;
+
+    final positionMs = controller.value.position.inMilliseconds;
+    final durationMs = controller.value.duration.inMilliseconds;
+    final now = DateTime.now();
+
+    // Tự động chuyển sang tập tiếp theo khi xem xong (video kết thúc và còn < 1s)
+    if (_autoPlayNextEpisode &&
+        _hasNextEpisode &&
+        !_isSwitchingEpisode &&
+        durationMs > 5000 &&
+        (positionMs >= durationMs - 500 ||
+            (!controller.value.isPlaying && positionMs >= durationMs - 1200))) {
+      _playNextEpisode();
       return;
     }
-    final now = DateTime.now();
-    final positionMs = controller.value.position.inMilliseconds;
-    if (controller.value.isPlaying && positionMs != _lastObservedPositionMs) {
+
+    if (positionMs != _lastObservedPositionMs) {
+      _lastObservedPositionMs = positionMs;
       _lastPositionAdvanceAt = now;
     }
-    _lastObservedPositionMs = positionMs;
     final stallChanged = _refreshPlaybackStall(now);
     if (!_isScrubbing && now.difference(_lastUiUpdate).inMilliseconds >= 50) {
       _lastUiUpdate = now;
@@ -264,88 +446,53 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     );
   }
 
-  Future<void> _persistPlaybackPosition({bool force = false}) async {
+  Future<void> _persistPlaybackPosition() async {
     final callback = widget.onPlaybackPositionChanged;
-    final controller = _controller;
-    if (callback == null || controller?.value.isInitialized != true) return;
+    if (callback == null || _isScrubbing) return;
     final now = DateTime.now();
-    if (!force && now.difference(_lastPositionSaveAt) < _positionSaveInterval) {
+    if (now.difference(_lastPositionSaveAt) < _positionSaveInterval) {
       return;
     }
-    final durationMs = controller!.value.duration.inMilliseconds;
-    final currentMs = controller.value.position.inMilliseconds;
-    final positionMs = durationMs > 0 && durationMs - currentMs <= 1000
-        ? 0
-        : currentMs.clamp(0, durationMs);
-    if (!force && positionMs == _lastSavedPositionMs) return;
+    final positionMs = _currentPosMs;
+    if (positionMs == _lastSavedPositionMs) return;
     _lastPositionSaveAt = now;
     _lastSavedPositionMs = positionMs;
-    await callback(positionMs);
+    try {
+      await callback(positionMs);
+    } catch (_) {}
   }
 
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.paused ||
-        state == AppLifecycleState.detached) {
-      unawaited(_persistPlaybackPosition(force: true));
-    }
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _playbackMonitor?.cancel();
-    unawaited(_persistPlaybackPosition(force: true));
-    _controller?.removeListener(_onPlayerUpdate);
-    _controller?.dispose();
-    unawaited(_ttsScheduler.dispose());
-    super.dispose();
-  }
-
-  void _seekTo(int targetMs) {
-    unawaited(_seekAndRestorePlayback(targetMs));
+  Future<void> _seekTo(int positionMs) async {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return;
+    final durationMs = controller.value.duration.inMilliseconds;
+    final clampedMs = positionMs.clamp(0, durationMs);
+    setState(() {
+      _currentPosMs = clampedMs;
+      _lastObservedPositionMs = clampedMs;
+      _lastPositionAdvanceAt = DateTime.now();
+      _isScrubbing = false;
+    });
+    await controller.seekTo(Duration(milliseconds: clampedMs));
+    await _ttsScheduler.onSeek(clampedMs);
+    _syncTtsWithVideo();
   }
 
   void _skipBy(int deltaMs) {
     final controller = _controller;
     if (controller == null || !controller.value.isInitialized) return;
-    final durationMs = controller.value.duration.inMilliseconds;
-    final targetMs = (controller.value.position.inMilliseconds + deltaMs).clamp(
-      0,
-      durationMs,
-    );
-    _seekTo(targetMs);
-  }
-
-  Future<void> _seekAndRestorePlayback(int targetMs) async {
-    final controller = _controller;
-    if (controller == null) return;
-    final shouldResume = controller.value.isPlaying;
-    if (shouldResume) await controller.pause();
-    try {
-      await Future.wait([
-        controller.seekTo(Duration(milliseconds: targetMs)),
-        _ttsScheduler.onSeek(targetMs),
-      ]);
-    } finally {
-      if (shouldResume) await controller.play();
-    }
+    final nextMs = controller.value.position.inMilliseconds + deltaMs;
+    _seekTo(nextMs);
   }
 
   Future<void> _setPlaybackSpeed(double speed) async {
     final controller = _controller;
-    if (controller == null) return;
+    if (controller == null || !controller.value.isInitialized) return;
     try {
       await controller.setPlaybackSpeed(speed);
-      if (mounted) {
-        setState(() => _playbackSpeed = speed);
-      }
+      setState(() => _playbackSpeed = speed);
       _syncTtsWithVideo();
-    } catch (error) {
-      try {
-        await controller.setPlaybackSpeed(1);
-      } catch (_) {}
+    } catch (_) {
       if (!mounted) return;
       setState(() => _playbackSpeed = 1);
       ScaffoldMessenger.of(context).showSnackBar(
@@ -358,7 +505,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   }
 
   Future<void> _applyAudioVolumes() async {
-    final hasTts = (widget.document?.items ?? []).any(
+    final hasTts = _currentDocument.items.any(
       (item) =>
           item.audioFilePath != null && File(item.audioFilePath!).existsSync(),
     );
@@ -369,7 +516,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   }
 
   Future<void> _calibratePlaybackSpeeds() async {
-    for (final item in (widget.document?.items ?? [])) {
+    for (final item in _currentDocument.items) {
       if (item.audioFilePath != null && item.audioFilePath!.isNotEmpty) {
         final file = File(item.audioFilePath!);
         if (file.existsSync()) {
@@ -389,14 +536,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   }
 
   Future<void> _shareSubtitle() async {
-    final doc = widget.document;
-    if (doc == null || doc.items.isEmpty) {
+    final doc = _currentDocument;
+    if (doc.items.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Không có phụ đề để xuất!')),
       );
       return;
     }
-    final rawName = widget.videoPath
+    final rawName = _currentVideoPath
         .split(RegExp(r'[/\\]'))
         .last
         .split('?')
@@ -448,6 +595,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     }
 
     final controller = _controller!;
+    final displayTitle = _currentTitle.isNotEmpty
+        ? _currentTitle
+        : (widget.title ?? '');
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -479,7 +629,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
               // 2. Lớp Hộp Đen (BlackBox) và Phụ đề nổi
               SubtitleOverlay(
-                document: widget.document ?? SubtitleDocument(),
+                document: _currentDocument,
                 currentPositionMs: _currentPosMs,
                 settings: _settings,
                 onDragOffset: (newOffset) {
@@ -489,7 +639,32 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                 },
               ),
 
-              // 3. Thanh điều khiển Video (Controls)
+              // 3. Lớp chuyển đổi tập phim (Khi đang tải tập kế tiếp)
+              if (_isSwitchingEpisode)
+                Container(
+                  color: Colors.black54,
+                  child: Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const CircularProgressIndicator(
+                          color: AppTheme.primaryEmerald,
+                        ),
+                        const SizedBox(height: 14),
+                        Text(
+                          'Đang mở Tập $_currentEpisodeIndex...',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
+              // 4. Thanh điều khiển Video (Controls)
               if (_showControls) ...[
                 // Nút quay lại & tiêu đề trên cùng
                 Positioned(
@@ -502,23 +677,103 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                         icon: const Icon(Icons.arrow_back, color: Colors.white),
                         onPressed: () => Navigator.pop(context),
                       ),
-                      if (widget.title != null && widget.title!.isNotEmpty) ...[
+                      if (displayTitle.isNotEmpty) ...[
                         const SizedBox(width: 4),
                         Expanded(
-                          child: Text(
-                            widget.title!,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14,
-                            ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                displayTitle,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 14,
+                                ),
+                              ),
+                              if (_prefetchManager != null)
+                                ValueListenableBuilder<PrefetchState?>(
+                                  valueListenable:
+                                      _prefetchManager!.prefetchStateNotifier,
+                                  builder: (context, state, _) {
+                                    if (state == null ||
+                                        state.status == 'idle') {
+                                      return const SizedBox.shrink();
+                                    }
+                                    final isReady = state.isReady;
+                                    return Padding(
+                                      padding: const EdgeInsets.only(top: 2),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            isReady
+                                                ? Icons.bolt_rounded
+                                                : Icons.hourglass_top_rounded,
+                                            size: 12,
+                                            color: isReady
+                                                ? AppTheme.primaryEmerald
+                                                : AppTheme.accentGold,
+                                          ),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            isReady
+                                                ? 'Sẵn sàng Tập ${state.episodeIndex}'
+                                                : 'Đang dịch Tập ${state.episodeIndex} (${(state.progress * 100).toInt()}%)',
+                                            style: TextStyle(
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.w600,
+                                              color: isReady
+                                                  ? AppTheme.primaryEmerald
+                                                  : AppTheme.accentGold,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    );
+                                  },
+                                ),
+                            ],
                           ),
                         ),
                         const SizedBox(width: 8),
                       ] else
                         const Spacer(),
+
+                      // Nút bật/tắt tự động chuyển tập tiếp theo
+                      if (widget.dramaDetail != null)
+                        IconButton(
+                          icon: Icon(
+                            _autoPlayNextEpisode
+                                ? Icons.playlist_play_rounded
+                                : Icons.playlist_remove_rounded,
+                            color: _autoPlayNextEpisode
+                                ? AppTheme.primaryEmerald
+                                : Colors.white60,
+                          ),
+                          tooltip: _autoPlayNextEpisode
+                              ? 'Tự động dịch & phát tiếp: BẬT'
+                              : 'Tự động dịch & phát tiếp: TẮT',
+                          onPressed: () {
+                            setState(() {
+                              _autoPlayNextEpisode = !_autoPlayNextEpisode;
+                            });
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  _autoPlayNextEpisode
+                                      ? '✅ Đã BẬT tự động dịch & chuyển tập tiếp theo'
+                                      : '⏸️ Đã TẮT tự động chuyển tập',
+                                ),
+                                duration: const Duration(seconds: 2),
+                              ),
+                            );
+                          },
+                        ),
+
                       IconButton(
                         icon: Icon(
                           _settings.isBlackBoxEnabled
@@ -618,7 +873,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                       ),
                       IconButton(
                         icon: const Icon(Icons.ios_share, color: Colors.white),
-                        tooltip: 'Xuáº¥t/Chia sáº» SRT',
+                        tooltip: 'Xuất/Chia sẻ SRT',
                         onPressed: _shareSubtitle,
                       ),
                       IconButton(
@@ -631,21 +886,20 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                             isScrollControlled: true,
                             builder: (ctx) =>
                                 ValueListenableBuilder<VideoPlayerValue>(
-                                  valueListenable: controller,
-                                  builder: (_, value, _) =>
-                                      FractionallySizedBox(
-                                        heightFactor: 0.6,
-                                        child: TranscriptSheet(
-                                          document: widget.document ?? SubtitleDocument(),
-                                          currentPositionMs:
-                                              value.position.inMilliseconds,
-                                          onSeekTo: (ms) {
-                                            _seekTo(ms);
-                                            Navigator.pop(ctx);
-                                          },
-                                        ),
-                                      ),
+                              valueListenable: controller,
+                              builder: (_, value, _) => FractionallySizedBox(
+                                heightFactor: 0.6,
+                                child: TranscriptSheet(
+                                  document: _currentDocument,
+                                  currentPositionMs:
+                                      value.position.inMilliseconds,
+                                  onSeekTo: (ms) {
+                                    _seekTo(ms);
+                                    Navigator.pop(ctx);
+                                  },
                                 ),
+                              ),
+                            ),
                           );
                         },
                       ),
@@ -653,28 +907,40 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                   ),
                 ),
 
-                // Điều khiển tua 10 giây và Play / Pause ở giữa màn hình
+                // Nút điều khiển trung tâm (Tập trước, Lùi 10s, Play/Pause, Tới 10s, Tập sau)
                 Center(
                   child: Row(
-                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
+                      if (widget.dramaDetail != null) ...[
+                        IconButton(
+                          iconSize: 36,
+                          tooltip: 'Tập trước',
+                          icon: Icon(
+                            Icons.skip_previous_rounded,
+                            color: _hasPreviousEpisode
+                                ? Colors.white
+                                : Colors.white38,
+                          ),
+                          onPressed:
+                              _hasPreviousEpisode ? _playPreviousEpisode : null,
+                        ),
+                        const SizedBox(width: 8),
+                      ],
                       IconButton(
                         iconSize: 38,
                         tooltip: 'Lùi 10 giây',
                         icon: const Icon(Icons.replay_10, color: Colors.white),
                         onPressed: () => _skipBy(-10000),
                       ),
-                      const SizedBox(width: 18),
+                      const SizedBox(width: 14),
                       IconButton(
-                        iconSize: 56,
-                        tooltip: controller.value.isPlaying
-                            ? 'Tạm dừng'
-                            : 'Phát',
+                        iconSize: 64,
                         icon: Icon(
                           controller.value.isPlaying
                               ? Icons.pause_circle_filled
                               : Icons.play_circle_filled,
-                          color: Colors.white.withValues(alpha: 0.9),
+                          color: Colors.white,
                         ),
                         onPressed: () {
                           setState(() {
@@ -684,13 +950,27 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                           });
                         },
                       ),
-                      const SizedBox(width: 18),
+                      const SizedBox(width: 14),
                       IconButton(
                         iconSize: 38,
                         tooltip: 'Tới 10 giây',
                         icon: const Icon(Icons.forward_10, color: Colors.white),
                         onPressed: () => _skipBy(10000),
                       ),
+                      if (widget.dramaDetail != null) ...[
+                        const SizedBox(width: 8),
+                        IconButton(
+                          iconSize: 36,
+                          tooltip: 'Tập kế tiếp',
+                          icon: Icon(
+                            Icons.skip_next_rounded,
+                            color: _hasNextEpisode
+                                ? Colors.white
+                                : Colors.white38,
+                          ),
+                          onPressed: _hasNextEpisode ? _playNextEpisode : null,
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -789,7 +1069,66 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                           ),
                         ],
                       ),
-                      _buildProgressBar(controller),
+                      SliderTheme(
+                        data: SliderTheme.of(context).copyWith(
+                          trackHeight: 3.5,
+                          thumbShape: const RoundSliderThumbShape(
+                            enabledThumbRadius: 6,
+                          ),
+                          overlayShape: const RoundSliderOverlayShape(
+                            overlayRadius: 14,
+                          ),
+                          activeTrackColor: AppTheme.primaryEmerald,
+                          inactiveTrackColor: Colors.white24,
+                          thumbColor: AppTheme.primaryEmerald,
+                          overlayColor: AppTheme.primaryEmerald.withValues(
+                            alpha: 0.2,
+                          ),
+                        ),
+                        child: Slider(
+                          value: (_isScrubbing
+                                  ? _scrubMs
+                                  : _currentPosMs.clamp(
+                                      0,
+                                      controller.value.duration.inMilliseconds,
+                                    ))
+                              .toDouble(),
+                          min: 0.0,
+                          max: controller.value.duration.inMilliseconds
+                              .toDouble(),
+                          onChangeStart: (val) {
+                            setState(() {
+                              _isScrubbing = true;
+                              _scrubMs = val.toInt();
+                              _wasPlayingBeforeScrub =
+                                  controller.value.isPlaying;
+                            });
+                            controller.pause();
+                          },
+                          onChanged: (val) {
+                            setState(() {
+                              _scrubMs = val.toInt();
+                            });
+                          },
+                          onChangeEnd: (val) async {
+                            final targetMs = val.toInt();
+                            setState(() {
+                              _isScrubbing = false;
+                              _currentPosMs = targetMs;
+                              _lastObservedPositionMs = targetMs;
+                              _lastPositionAdvanceAt = DateTime.now();
+                            });
+                            await controller.seekTo(
+                              Duration(milliseconds: targetMs),
+                            );
+                            await _ttsScheduler.onSeek(targetMs);
+                            if (_wasPlayingBeforeScrub) {
+                              await controller.play();
+                            }
+                            _syncTtsWithVideo();
+                          },
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -801,109 +1140,20 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     );
   }
 
-  Widget _buildProgressBar(VideoPlayerController controller) {
-    final durationMs = controller.value.duration.inMilliseconds;
-    if (durationMs <= 0) return const SizedBox(height: 28);
-
-    final currentMs = _isScrubbing
-        ? _scrubMs
-        : controller.value.position.inMilliseconds.clamp(0, durationMs);
-
-    final bufferedEnd = controller.value.buffered.isNotEmpty
-        ? controller.value.buffered.last.end.inMilliseconds.clamp(0, durationMs)
-        : 0;
-    final bufferedFraction = (bufferedEnd / durationMs).clamp(0.0, 1.0);
-
-    return SizedBox(
-      height: 28,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          // Thanh nền và thanh buffer (bộ nhớ đệm tải trước)
-          ClipRRect(
-            borderRadius: BorderRadius.circular(2),
-            child: SizedBox(
-              height: 4,
-              child: Row(
-                children: [
-                  Flexible(
-                    flex: (bufferedFraction * 1000).toInt().clamp(0, 1000),
-                    child: Container(color: Colors.white30),
-                  ),
-                  Flexible(
-                    flex: ((1.0 - bufferedFraction) * 1000).toInt().clamp(
-                      0,
-                      1000,
-                    ),
-                    child: Container(color: Colors.white12),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          // Thanh trượt tua thời gian mượt mà (Deferred Scrubbing)
-          SliderTheme(
-            data: SliderTheme.of(context).copyWith(
-              trackHeight: 4.0,
-              activeTrackColor: AppTheme.primaryEmerald,
-              inactiveTrackColor: Colors.transparent,
-              thumbColor: AppTheme.primaryEmerald,
-              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6.0),
-              overlayShape: const RoundSliderOverlayShape(overlayRadius: 14.0),
-              overlayColor: AppTheme.primaryEmerald.withValues(alpha: 0.2),
-            ),
-            child: Slider(
-              value: currentMs.toDouble().clamp(0.0, durationMs.toDouble()),
-              min: 0.0,
-              max: durationMs.toDouble(),
-              onChangeStart: (val) {
-                setState(() {
-                  _isScrubbing = true;
-                  _scrubMs = val.toInt();
-                  _wasPlayingBeforeScrub = controller.value.isPlaying;
-                });
-                unawaited(_ttsScheduler.pause());
-                if (_wasPlayingBeforeScrub) {
-                  controller.pause();
-                }
-              },
-              onChanged: (val) {
-                setState(() {
-                  _scrubMs = val.toInt();
-                });
-              },
-              onChangeEnd: (val) async {
-                final targetMs = val.toInt();
-                await Future.wait([
-                  controller.seekTo(Duration(milliseconds: targetMs)),
-                  _ttsScheduler.onSeek(targetMs),
-                ]);
-                if (mounted) {
-                  setState(() {
-                    _isScrubbing = false;
-                  });
-                }
-                if (_wasPlayingBeforeScrub) {
-                  await controller.play();
-                }
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   String _formatDuration(Duration duration) {
-    final minutes = duration.inMinutes.remainder(60).toString().padLeft(2, '0');
-    final seconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
-    final hours = duration.inHours > 0 ? '${duration.inHours}:' : '';
-    return '$hours$minutes:$seconds';
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
+    final minutes = twoDigits(duration.inMinutes.remainder(60));
+    final seconds = twoDigits(duration.inSeconds.remainder(60));
+    if (duration.inHours > 0) {
+      return '${twoDigits(duration.inHours)}:$minutes:$seconds';
+    }
+    return '$minutes:$seconds';
   }
 
   String _formatSpeed(double speed) {
-    return speed == speed.roundToDouble()
-        ? speed.toInt().toString()
-        : speed.toStringAsFixed(2).replaceFirst(RegExp(r'0$'), '');
+    if (speed == speed.roundToDouble()) {
+      return speed.toInt().toString();
+    }
+    return speed.toStringAsFixed(2).replaceAll(RegExp(r'0+$'), '');
   }
 }
