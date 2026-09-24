@@ -109,40 +109,55 @@ class SubtitlingPipeline {
           settings.bilibiliSessData,
         );
 
-        // Tự động kiểm tra phụ đề có sẵn không phụ thuộc engine
-        try {
-          final subtitles = await resolver.getSubtitles(
-            details,
-            settings.bilibiliSessData,
-          );
-          final manualSubtitles = subtitles
-              .where((item) => !item.isAi)
-              .toList();
-          final preferred = manualSubtitles.isNotEmpty
-              ? manualSubtitles.first
-              : (subtitles.isNotEmpty ? subtitles.first : null);
-          if (preferred != null) {
-            sourceDocument = await resolver.downloadSubtitle(preferred);
-            if (sourceDocument != null) {
-              _emit(
-                ProcessProgress(
-                  stage: ProcessStage.extractingAudio,
-                  progress: 0.20,
-                  message:
-        'Đã nạp ${sourceDocument.size} câu phụ đề Bilibili (${preferred.languageName}).',
-                ),
-              );
+        // Tự động kiểm tra phụ đề có sẵn:
+        // - Nếu chọn AI (Gemini/Groq) hoặc 'none': Dùng phụ đề Bilibili có sẵn để dịch siêu tốc mà không cần tải audio.
+        // - Nếu chọn 'capcut': Vì CapCut chỉ dịch được khi nghe audio (không hỗ trợ dịch text thuần),
+        //   ta bỏ qua phụ đề text có sẵn và tải audio DASH để CapCut STT bóc tách và dịch song ngữ sang tiếng Việt.
+        final shouldUseExistingSubtitles = translationEngine != 'capcut';
+        if (shouldUseExistingSubtitles) {
+          try {
+            final subtitles = await resolver.getSubtitles(
+              details,
+              settings.bilibiliSessData,
+            );
+            final manualSubtitles = subtitles
+                .where((item) => !item.isAi)
+                .toList();
+            final preferred = manualSubtitles.isNotEmpty
+                ? manualSubtitles.first
+                : (subtitles.isNotEmpty ? subtitles.first : null);
+            if (preferred != null) {
+              sourceDocument = await resolver.downloadSubtitle(preferred);
+              if (sourceDocument != null) {
+                _emit(
+                  ProcessProgress(
+                    stage: ProcessStage.extractingAudio,
+                    progress: 0.20,
+                    message:
+          'Đã nạp ${sourceDocument.size} câu phụ đề Bilibili (${preferred.languageName}).',
+                  ),
+                );
+              }
             }
-          }
-        } on BilibiliSubtitleLoginRequiredException catch (error) {
+          } on BilibiliSubtitleLoginRequiredException catch (error) {
+            _emit(
+              ProcessProgress(
+                stage: ProcessStage.extractingAudio,
+                progress: 0.03,
+                message: '$error Đang chuyển sang nhận diện âm thanh.',
+              ),
+            );
+          } catch (_) {}
+        } else {
           _emit(
-            ProcessProgress(
+            const ProcessProgress(
               stage: ProcessStage.extractingAudio,
               progress: 0.03,
-              message: '$error Đang chuyển sang nhận diện âm thanh.',
+              message:
+                  'Đã chọn CapCut: Đang tải luồng âm thanh để CapCut nghe & dịch song ngữ...',
             ),
           );
-        } catch (_) {}
+        }
 
         if (sourceDocument == null) {
           final audioUrl = await resolver.getAudioUrl(

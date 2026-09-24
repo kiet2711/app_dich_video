@@ -253,7 +253,7 @@ class _HomeScreenState extends State<HomeScreen> {
           if (subs.isNotEmpty) {
             final partInfo = pages.length > 1 ? ' (P$selectedPage)' : '';
             _probeStatusMessage =
-                '✨ Video$partInfo có sẵn phụ đề Bilibili (${subs.first.languageName})! Bấm "Bắt đầu" để nạp và dịch ngay.';
+                '✨ Video$partInfo có sẵn phụ đề Bilibili (${subs.first.languageName})! (Chọn AI để dịch nhanh từ phụ đề, hoặc chọn CapCut để nghe lại âm thanh).';
           } else {
             _probeStatusMessage =
                 '✅ Đã tìm thấy audio DASH Bilibili (~30-50MB). Sẵn sàng tạo sub!';
@@ -360,7 +360,7 @@ class _HomeScreenState extends State<HomeScreen> {
           setState(() {
             if (subs.isNotEmpty) {
               _probeStatusMessage =
-                  '✨ Video (P$pageIndex) có sẵn phụ đề Bilibili (${subs.first.languageName})! Bấm "Bắt đầu" để nạp và dịch ngay.';
+                  '✨ Video (P$pageIndex) có sẵn phụ đề Bilibili (${subs.first.languageName})! (Chọn AI để dịch nhanh từ phụ đề, hoặc chọn CapCut để nghe lại âm thanh).';
             } else {
               _probeStatusMessage =
                   '✅ Đã chọn P$pageIndex: $partName (${_formatDuration(selectedPageInfo.durationSeconds * 1000)}). Sẵn sàng tạo sub!';

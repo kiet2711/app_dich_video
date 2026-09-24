@@ -103,12 +103,14 @@ class _ImportSubtitleDialogState extends State<ImportSubtitleDialog> {
     if (sPath == null) return;
 
     final settings = await SettingsRepository.getInstance();
-    if (settings.geminiApiKeys.isEmpty) {
+    final hasGemini = settings.geminiApiKeys.isNotEmpty;
+    final hasGroq = settings.groqApiKeys.isNotEmpty;
+    if (!hasGemini && !hasGroq) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'Vui lòng cấu hình Gemini API Key trong Cài đặt trước!',
+              'Vui lòng cấu hình Gemini hoặc Groq API Key trong Cài đặt trước!',
             ),
           ),
         );

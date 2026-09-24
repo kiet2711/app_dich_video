@@ -88,9 +88,12 @@ class _GeminiTranslateSubtitleDialogState
 
   Future<void> _startTranslation() async {
     final provider = AiModelRegistry.detectProvider(_selectedModel);
+    final hasGemini = _apiKeys.isNotEmpty;
+    final hasGroq = _settings?.groqApiKeys.isNotEmpty ?? false;
+    final canFallback = _settings?.enableCrossProviderFallback ?? true;
 
     if (provider == AiProvider.groq) {
-      if (_settings?.groqApiKeys.isEmpty ?? true) {
+      if (!hasGroq && (!canFallback || !hasGemini)) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Vui lòng nhập Groq API Key trong Cài Đặt!'),
@@ -99,7 +102,7 @@ class _GeminiTranslateSubtitleDialogState
         return;
       }
     } else {
-      if (_apiKeys.isEmpty) {
+      if (!hasGemini && (!canFallback || !hasGroq)) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Vui lòng nhập Gemini API Key trong Cài Đặt!'),
@@ -355,64 +358,105 @@ class _GeminiTranslateSubtitleDialogState
               // 4. Trạng thái API Key
               if (_isLoadingSettings)
                 const SizedBox.shrink()
-              else if (_apiKeys.isNotEmpty)
-                Row(
-                  children: [
-                    const Icon(
-                      Icons.check_circle,
-                      color: AppColors.primaryEmerald,
-                      size: 16,
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      'Đã cấu hình ${_apiKeys.length} Gemini API Key',
-                      style: const TextStyle(
-                        color: AppColors.primaryEmerald,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                )
-              else
-                Row(
-                  children: [
-                    const Icon(
-                      Icons.warning_amber_rounded,
-                      color: Color(0xFFFFB74D),
-                      size: 16,
-                    ),
-                    const SizedBox(width: 6),
-                    const Expanded(
-                      child: Text(
-                        'Chưa có Gemini API Key!',
-                        style: TextStyle(
-                          color: Color(0xFFFFB74D),
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
+              else ...[
+                () {
+                  final provider = AiModelRegistry.detectProvider(_selectedModel);
+                  final isGroq = provider == AiProvider.groq;
+                  final activeKeys = isGroq
+                      ? (_settings?.groqApiKeys ?? const [])
+                      : _apiKeys;
+                  final providerName = isGroq ? 'Groq' : 'Gemini';
+                  final hasBackup = isGroq
+                      ? _apiKeys.isNotEmpty
+                      : (_settings?.groqApiKeys.isNotEmpty ?? false);
+                  final backupCount = isGroq
+                      ? _apiKeys.length
+                      : (_settings?.groqApiKeys.length ?? 0);
+                  final backupName = isGroq ? 'Gemini' : 'Groq';
+
+                  if (activeKeys.isNotEmpty) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(
+                              Icons.check_circle,
+                              color: AppColors.primaryEmerald,
+                              size: 16,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              'Đã cấu hình ${activeKeys.length} $providerName API Key',
+                              style: const TextStyle(
+                                color: AppColors.primaryEmerald,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
                         ),
-                      ),
-                    ),
-                    TextButton(
-                      onPressed: () {
-                        Navigator.pop(context);
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const SettingsScreen(),
+                        if ((_settings?.enableCrossProviderFallback ?? true) &&
+                            hasBackup) ...[
+                          const SizedBox(height: 3),
+                          Padding(
+                            padding: const EdgeInsets.only(left: 22),
+                            child: Text(
+                              '🔄 Dự phòng chéo: $backupCount $backupName Key',
+                              style: const TextStyle(
+                                color: Color(0xFF64B5F6),
+                                fontSize: 11,
+                                fontWeight: FontWeight.w400,
+                              ),
+                            ),
                           ),
-                        );
-                      },
-                      child: const Text(
-                        'Cài đặt',
-                        style: TextStyle(
-                          color: AppColors.primaryEmerald,
-                          fontSize: 12,
+                        ],
+                      ],
+                    );
+                  } else {
+                    return Row(
+                      children: [
+                        const Icon(
+                          Icons.warning_amber_rounded,
+                          color: Color(0xFFFFB74D),
+                          size: 16,
                         ),
-                      ),
-                    ),
-                  ],
-                ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            hasBackup
+                                ? 'Chưa có $providerName Key (sẽ tự động dùng $backupCount $backupName Key)'
+                                : 'Chưa có $providerName API Key!',
+                            style: const TextStyle(
+                              color: Color(0xFFFFB74D),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () {
+                            Navigator.pop(context);
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => const SettingsScreen(),
+                              ),
+                            );
+                          },
+                          child: const Text(
+                            'Cài đặt',
+                            style: TextStyle(
+                              color: AppColors.primaryEmerald,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
+                  }
+                }(),
+              ],
 
               // 5. Thanh tiến trình khi đang dịch
               if (_isTranslating) ...[
