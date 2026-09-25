@@ -180,6 +180,9 @@ class BilibiliResolver {
 
   static bool isBilibiliPageUrl(String input) {
     final lower = input.trim().toLowerCase();
+    if (!lower.startsWith('http://') && !lower.startsWith('https://')) {
+      return false;
+    }
     return isBilibiliUrl(input) &&
         !lower.contains('bilivideo.com') &&
         !lower.contains('biliapi');

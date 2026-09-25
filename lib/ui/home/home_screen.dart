@@ -565,14 +565,24 @@ class HomeScreenState extends State<HomeScreen> {
         downloadBilibiliVideo: _downloadBilibiliVideo,
       );
 
-      var finalPlayableVideo = pipeline.lastLocalVideoPath;
-      if (finalPlayableVideo == null || !await File(finalPlayableVideo).exists()) {
-        final cached = await VideoCacheManager.findCachedFile(url: _selectedVideoPath!);
+      String finalPlayableVideo;
+      if (pipeline.lastLocalVideoPath != null &&
+          await File(pipeline.lastLocalVideoPath!).exists()) {
+        finalPlayableVideo = pipeline.lastLocalVideoPath!;
+      } else if (_downloadBilibiliVideo) {
+        final cached = await VideoCacheManager.findCachedFile(
+          url: _selectedVideoPath!,
+          bvid: _bilibiliDetails?.bvid,
+          bilibiliPage: _selectedBilibiliPage,
+        );
         if (cached != null && await cached.exists()) {
           finalPlayableVideo = cached.path;
         } else {
           finalPlayableVideo = _selectedVideoPath!;
         }
+      } else {
+        // Người dùng không chọn tải về: Luôn mở xem online bằng link trực tuyến
+        finalPlayableVideo = _selectedVideoPath!;
       }
       final history = await HistoryRepository.getInstance();
       await documentFile.writeAsString(

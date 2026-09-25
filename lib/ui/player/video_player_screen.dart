@@ -155,16 +155,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   }) async {
     try {
       var targetPath = playablePath;
-      if (targetPath.startsWith('http://') || targetPath.startsWith('https://')) {
-        final cached = await VideoCacheManager.findCachedFile(
-          url: targetPath,
-          seriesId: widget.dramaDetail?.seriesId,
-          episodeIndex: _currentEpisodeIndex,
-        );
-        if (cached != null && await cached.exists()) {
-          targetPath = cached.path;
-        }
-      }
       var playableUrls = <String>[targetPath];
       var httpHeaders = const <String, String>{};
       if (BilibiliResolver.isBilibiliPageUrl(targetPath)) {
@@ -175,26 +165,24 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           _settings.bilibiliSessData,
         );
 
-        // KIỂM TRA ƯU TIÊN: Đã có video tải về trong cache máy chưa
-        final cached = await VideoCacheManager.findCachedFile(
-          url: target.rawUrl,
-          bvid: details.bvid,
-          bilibiliPage: details.selectedPageIndex,
+        playableUrls = await resolver.getMuxedVideoUrls(
+          details,
+          _settings.bilibiliSessData,
         );
-
+        targetPath = playableUrls.first;
+        httpHeaders = BilibiliResolver.requestHeaders(
+          _settings.bilibiliSessData,
+        );
+      } else if (widget.dramaDetail != null &&
+          (targetPath.startsWith('http://') || targetPath.startsWith('https://'))) {
+        final cached = await VideoCacheManager.findCachedFile(
+          url: targetPath,
+          seriesId: widget.dramaDetail?.seriesId,
+          episodeIndex: _currentEpisodeIndex,
+        );
         if (cached != null && await cached.exists()) {
           targetPath = cached.path;
           playableUrls = [cached.path];
-          httpHeaders = const {};
-        } else {
-          playableUrls = await resolver.getMuxedVideoUrls(
-            details,
-            _settings.bilibiliSessData,
-          );
-          targetPath = playableUrls.first;
-          httpHeaders = BilibiliResolver.requestHeaders(
-            _settings.bilibiliSessData,
-          );
         }
       }
 

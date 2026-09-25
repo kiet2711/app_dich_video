@@ -104,15 +104,19 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
   @override
   void didUpdateWidget(covariant TtsStudioScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.initialDoc != oldWidget.initialDoc &&
-        widget.initialDoc != null) {
-      _doc = widget.initialDoc;
-      _linkExistingAudio();
+    if (widget.initialDoc != null) {
+      if (widget.initialDoc != oldWidget.initialDoc || _doc == null) {
+        _doc = widget.initialDoc;
+        _linkExistingAudio();
+      }
     }
-    if (widget.initialVideoPath != oldWidget.initialVideoPath &&
-        widget.initialVideoPath != null) {
-      _videoPath = widget.initialVideoPath;
-      unawaited(_refreshVideoMetadata());
+    if (widget.initialVideoPath != null && widget.initialVideoPath!.isNotEmpty) {
+      if (widget.initialVideoPath != oldWidget.initialVideoPath ||
+          _videoPath == null ||
+          _videoPath!.isEmpty) {
+        _videoPath = widget.initialVideoPath;
+        unawaited(_refreshVideoMetadata());
+      }
     }
   }
 
@@ -764,23 +768,29 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
       );
       return;
     }
+
+    // Tự động kiểm tra và phục hồi đường dẫn video nếu đang null hoặc rỗng
+    if (_videoPath == null || _videoPath!.isEmpty) {
+      if (widget.initialVideoPath != null && widget.initialVideoPath!.isNotEmpty) {
+        _videoPath = widget.initialVideoPath;
+      } else {
+        final history = await HistoryRepository.getInstance();
+        final latest = history.getHistory().firstOrNull;
+        if (latest != null && latest.videoPath.isNotEmpty) {
+          _videoPath = latest.videoPath;
+        }
+      }
+      if (_videoPath != null && _videoPath!.isNotEmpty) {
+        unawaited(_refreshVideoMetadata());
+      }
+    }
+
     if (_videoPath == null || _videoPath!.isEmpty) {
       _showChooseVideoSourceDialog();
       return;
     }
 
-    var pathToPlay = _videoPath!;
-    if (pathToPlay.startsWith('http://') || pathToPlay.startsWith('https://')) {
-      final cached = await VideoCacheManager.findCachedFile(url: pathToPlay);
-      if (cached != null && await cached.exists()) {
-        pathToPlay = cached.path;
-        if (mounted) {
-          setState(() => _videoPath = cached.path);
-          unawaited(_refreshVideoMetadata());
-        }
-      }
-    }
-
+    final pathToPlay = _videoPath!;
     if (!mounted) return;
     Navigator.push(
       context,

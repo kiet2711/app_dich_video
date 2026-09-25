@@ -71,6 +71,7 @@ class _MainNavigationState extends State<MainNavigation> {
         },
       ),
       TtsStudioScreen(
+        key: ValueKey('tts_${_latestVideoPath ?? ""}_${_latestDoc?.hashCode ?? 0}'),
         initialDoc: _latestDoc,
         initialVideoPath: _latestVideoPath,
       ),
