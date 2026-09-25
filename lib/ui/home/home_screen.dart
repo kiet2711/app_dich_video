@@ -77,6 +77,7 @@ class HomeScreenState extends State<HomeScreen> {
   SubtitlingPipeline? _activePipeline;
   bool _cancelRequested = false;
   bool _downloadBilibiliVideo = false;
+  String _selectedVideoQuality = '64';
 
   // Danh mục tuỳ chọn đồng bộ 100% bản gốc Android HomeScreen.kt
   static const _sourceLanguageOptions = [
@@ -150,6 +151,7 @@ class HomeScreenState extends State<HomeScreen> {
       _selectedStyle = s.selectedStyle;
       _customPromptController.text = s.geminiCustomPrompt;
       _downloadBilibiliVideo = s.downloadBilibiliVideo;
+      _selectedVideoQuality = s.preferredVideoQuality;
     });
   }
 
@@ -563,6 +565,7 @@ class HomeScreenState extends State<HomeScreen> {
         sourceLanguage: _selectedSourceLang,
         outputSrtFile: srtFile,
         downloadBilibiliVideo: _downloadBilibiliVideo,
+        bilibiliQuality: _selectedVideoQuality,
       );
 
       String finalPlayableVideo;
@@ -1206,6 +1209,83 @@ class HomeScreenState extends State<HomeScreen> {
                                       _settings?.downloadBilibiliVideo = val;
                                     });
                                   },
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF1E202A),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                    color: const Color(0xFF2C3E32),
+                                  ),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Row(
+                                      children: [
+                                        Icon(
+                                          Icons.high_quality,
+                                          size: 16,
+                                          color: AppColors.primaryEmerald,
+                                        ),
+                                        SizedBox(width: 8),
+                                        Text(
+                                          'Chất lượng video:',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.white,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Wrap(
+                                      spacing: 8,
+                                      runSpacing: 6,
+                                      children: const [
+                                        MapEntry('80', '1080p (FHD)'),
+                                        MapEntry('64', '720p (HD - Mặc định)'),
+                                        MapEntry('32', '480p (Mạng yếu)'),
+                                        MapEntry('16', '360p (Siêu nhẹ)'),
+                                      ].map((q) {
+                                        final isSel = _selectedVideoQuality == q.key;
+                                        return ChoiceChip(
+                                          label: Text(
+                                            q.value,
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              fontWeight: isSel ? FontWeight.bold : FontWeight.normal,
+                                              color: isSel ? Colors.black : Colors.white70,
+                                            ),
+                                          ),
+                                          selected: isSel,
+                                          selectedColor: AppColors.primaryEmerald,
+                                          backgroundColor: const Color(0xFF14151B),
+                                          onSelected: (selected) {
+                                            if (selected) {
+                                              setState(() {
+                                                _selectedVideoQuality = q.key;
+                                                _settings?.preferredVideoQuality = q.key;
+                                              });
+                                            }
+                                          },
+                                        );
+                                      }).toList(),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    const Text(
+                                      '💡 Mạng yếu hoặc 3G/4G chập chờn? Chọn 480p hoặc 360p để xem online và tải video siêu mượt không lo giật lag.',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.white60,
+                                        fontStyle: FontStyle.italic,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
                             ],

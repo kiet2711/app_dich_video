@@ -86,6 +86,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   bool _autoPlayNextEpisode = true;
   bool _isSwitchingEpisode = false;
   bool _isDownloadingVideo = false;
+  bool _userChosePlayRaw = false;
 
   @override
   void initState() {
@@ -128,13 +129,16 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           if (!mounted || _currentEpisodeIndex != (widget.currentEpisodeIndex ?? 1)) {
             return;
           }
+          final wasWaiting = _currentDocument.isEmpty && !_userChosePlayRaw;
           setState(() {
             _currentDocument = newDoc;
             _ttsScheduler.dispose();
             _ttsScheduler = TtsAudioScheduler(newDoc);
           });
           await _applyAudioVolumes();
-          if (_settings.isTtsPlaybackEnabled) {
+          if (wasWaiting) {
+            await _controller?.play();
+          } else if (_settings.isTtsPlaybackEnabled) {
             final pos = _controller?.value.position.inMilliseconds ?? 0;
             await _ttsScheduler.onSeek(pos);
             _syncTtsWithVideo();
@@ -168,6 +172,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         playableUrls = await resolver.getMuxedVideoUrls(
           details,
           _settings.bilibiliSessData,
+          _settings.preferredVideoQuality,
         );
         targetPath = playableUrls.first;
         httpHeaders = BilibiliResolver.requestHeaders(
@@ -237,7 +242,15 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       setState(() {
         _isInitialized = true;
       });
-      await _controller!.play();
+      final bool shouldWaitHongguoTranslation = widget.dramaDetail != null &&
+          _currentDocument.isEmpty &&
+          !_userChosePlayRaw;
+
+      if (!shouldWaitHongguoTranslation) {
+        await _controller!.play();
+      } else {
+        await _controller!.pause();
+      }
       if (shouldRestorePosition) {
         try {
           await Future.wait([
@@ -345,17 +358,20 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       _prefetchManager?.onEpisodePlaying(
         targetIndex,
         translateCurrentIfEmpty: doc == null,
-        onCurrentSubtitleReady: (newDoc) {
+        onCurrentSubtitleReady: (newDoc) async {
           if (!mounted || _currentEpisodeIndex != targetIndex) return;
+          final wasWaiting = _currentDocument.isEmpty && !_userChosePlayRaw;
           setState(() {
             _currentDocument = newDoc;
             _ttsScheduler.dispose();
             _ttsScheduler = TtsAudioScheduler(newDoc);
           });
-          _applyAudioVolumes();
-          if (_settings.isTtsPlaybackEnabled) {
+          await _applyAudioVolumes();
+          if (wasWaiting) {
+            await _controller?.play();
+          } else if (_settings.isTtsPlaybackEnabled) {
             final pos = _controller?.value.position.inMilliseconds ?? 0;
-            _ttsScheduler.onSeek(pos);
+            await _ttsScheduler.onSeek(pos);
             _syncTtsWithVideo();
           }
         },
@@ -540,6 +556,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       _lastObservedPositionMs = 0;
       _isScrubbing = false;
       _isPlaybackStalled = false;
+      _userChosePlayRaw = false;
     });
 
     _ttsScheduler = TtsAudioScheduler(newDocument);
@@ -881,12 +898,16 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     final displayTitle = _currentTitle.isNotEmpty
         ? _currentTitle
         : (widget.title ?? '');
+    final bool isHongguoWaitingTranslation = widget.dramaDetail != null &&
+        _currentDocument.isEmpty &&
+        !_userChosePlayRaw;
 
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
         child: GestureDetector(
           onTap: () {
+            if (isHongguoWaitingTranslation) return;
             setState(() {
               _showControls = !_showControls;
             });
@@ -947,8 +968,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                   ),
                 ),
 
-              // Banner tiến trình dịch cho tập hiện tại (khi chưa có sub hoặc đang xử lý)
-              if (_prefetchManager != null && _currentDocument.isEmpty)
+              // Banner tiến trình dịch cho tập hiện tại (khi đang xem bản gốc và dịch chạy ngầm)
+              if (_prefetchManager != null && _currentDocument.isEmpty && _userChosePlayRaw)
                 Positioned(
                   top: 56,
                   left: 20,
@@ -1092,8 +1113,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                   ),
                 ),
 
+              // Màn hình chờ dịch tập mới (Gatekeeper) khi chưa có sub và chưa chọn xem bản gốc
+              if (isHongguoWaitingTranslation)
+                Positioned.fill(
+                  child: _buildHongguoTranslatingGateOverlay(displayTitle),
+                ),
+
               // 4. Thanh điều khiển Video (Controls)
-              if (_showControls) ...[
+              if (_showControls && !isHongguoWaitingTranslation) ...[
                 // Nút quay lại & tiêu đề trên cùng
                 Positioned(
                   top: 8,
@@ -1683,6 +1710,262 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildHongguoTranslatingGateOverlay(String displayTitle) {
+    return Container(
+      color: const Color(0xFF0D1117),
+      child: Stack(
+        children: [
+          // Thanh tiêu đề phía trên cùng
+          Positioned(
+            top: 8,
+            left: 8,
+            right: 8,
+            child: Row(
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.arrow_back, color: Colors.white),
+                  onPressed: () => Navigator.pop(context),
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    displayTitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(
+                    Icons.format_list_numbered_rounded,
+                    color: Colors.white,
+                  ),
+                  tooltip: 'Danh sách tập',
+                  onPressed: _showEpisodeListSheet,
+                ),
+              ],
+            ),
+          ),
+          // Hộp thông báo tiến độ dịch tập phim
+          Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+              child: ValueListenableBuilder<PrefetchState?>(
+                valueListenable: _prefetchManager!.prefetchStateNotifier,
+                builder: (context, state, _) {
+                  final isFailed = state?.status == 'failed';
+                  final progress = (state != null && state.episodeIndex == _currentEpisodeIndex)
+                      ? state.progress.clamp(0.0, 1.0)
+                      : 0.0;
+                  final percent = (progress * 100).toInt();
+                  final message = (state != null &&
+                          state.episodeIndex == _currentEpisodeIndex &&
+                          state.message.isNotEmpty)
+                      ? state.message
+                      : 'Đang chuẩn bị bóc tách & dịch phụ đề...';
+
+                  return Container(
+                    constraints: const BoxConstraints(maxWidth: 420),
+                    padding: const EdgeInsets.all(24),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF161B22),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: isFailed
+                            ? Colors.redAccent.withValues(alpha: 0.5)
+                            : AppTheme.primaryEmerald.withValues(alpha: 0.35),
+                        width: 1.5,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.6),
+                          blurRadius: 24,
+                          offset: const Offset(0, 8),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 64,
+                          height: 64,
+                          decoration: BoxDecoration(
+                            color: isFailed
+                                ? Colors.redAccent.withValues(alpha: 0.15)
+                                : AppTheme.primaryEmerald.withValues(alpha: 0.15),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Center(
+                            child: isFailed
+                                ? const Icon(
+                                    Icons.error_outline_rounded,
+                                    color: Colors.redAccent,
+                                    size: 34,
+                                  )
+                                : const SizedBox(
+                                    width: 30,
+                                    height: 30,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 3,
+                                      color: AppTheme.primaryEmerald,
+                                    ),
+                                  ),
+                          ),
+                        ),
+                        const SizedBox(height: 18),
+                        Text(
+                          isFailed
+                              ? 'Chưa thể dịch Tập $_currentEpisodeIndex'
+                              : 'Đang dịch Tập $_currentEpisodeIndex ($percent%)',
+                          style: TextStyle(
+                            color: isFailed ? Colors.redAccent : Colors.white,
+                            fontSize: 17,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          isFailed
+                              ? (state?.message ?? 'Đã xảy ra lỗi trong quá trình bóc tách phụ đề.')
+                              : message,
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.7),
+                            fontSize: 13,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                        if (!isFailed) ...[
+                          const SizedBox(height: 18),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(4),
+                            child: LinearProgressIndicator(
+                              value: progress > 0 ? progress : null,
+                              backgroundColor: Colors.white12,
+                              color: AppTheme.primaryEmerald,
+                              minHeight: 6,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            'Bạn có thể đợi hoàn tất để xem Vietsub & lồng tiếng AI,\nhoặc bấm nút dưới đây để xem trước bản gốc tiếng Trung.',
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.55),
+                              fontSize: 12,
+                              height: 1.4,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+                        const SizedBox(height: 24),
+                        if (!isFailed)
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: AppTheme.primaryEmerald,
+                                foregroundColor: const Color(0xFF0D1117),
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                elevation: 0,
+                              ),
+                              icon: const Icon(
+                                Icons.play_arrow_rounded,
+                                size: 22,
+                                color: Color(0xFF0D1117),
+                              ),
+                              label: const Text(
+                                'Xem luôn bản gốc tiếng Trung (Dịch ngầm)',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                ),
+                              ),
+                              onPressed: () {
+                                setState(() {
+                                  _userChosePlayRaw = true;
+                                });
+                                _controller?.play();
+                              },
+                            ),
+                          )
+                        else
+                          Row(
+                            children: [
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: Colors.white,
+                                    side: BorderSide(
+                                      color: Colors.white.withValues(alpha: 0.3),
+                                    ),
+                                    padding: const EdgeInsets.symmetric(vertical: 12),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                  ),
+                                  icon: const Icon(Icons.refresh_rounded, size: 18),
+                                  label: const Text('Thử lại'),
+                                  onPressed: () {
+                                    _prefetchManager?.onEpisodePlaying(
+                                      _currentEpisodeIndex,
+                                      translateCurrentIfEmpty: true,
+                                      onCurrentSubtitleReady: (newDoc) {
+                                        if (!mounted) return;
+                                        setState(() {
+                                          _currentDocument = newDoc;
+                                          _ttsScheduler.dispose();
+                                          _ttsScheduler = TtsAudioScheduler(newDoc);
+                                        });
+                                        _applyAudioVolumes();
+                                      },
+                                    );
+                                  },
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: ElevatedButton.icon(
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.white24,
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(vertical: 12),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    elevation: 0,
+                                  ),
+                                  icon: const Icon(Icons.play_arrow_rounded, size: 18),
+                                  label: const Text('Xem bản gốc'),
+                                  onPressed: () {
+                                    setState(() {
+                                      _userChosePlayRaw = true;
+                                    });
+                                    _controller?.play();
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

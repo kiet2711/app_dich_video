@@ -1,6 +1,7 @@
-﻿import Flutter
+import Flutter
 import UIKit
 import AVFoundation
+import UserNotifications
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
@@ -52,6 +53,46 @@ import AVFoundation
         result(FlutterMethodNotImplemented)
       }
     }
+
+    let serviceChannel = FlutterMethodChannel(name: "com.capcut.capsub/foreground_service",
+                                              binaryMessenger: registrar.messenger())
+    serviceChannel.setMethodCallHandler { call, result in
+      switch call.method {
+      case "start", "update":
+        guard let args = call.arguments as? [String: Any] else {
+          result(nil)
+          return
+        }
+        let title = args["title"] as? String ?? "CapSub AI"
+        let message = args["message"] as? String ?? ""
+        self.showOrUpdateNotification(title: title, body: message)
+        result(nil)
+      case "stop":
+        self.clearNotifications()
+        result(nil)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+  }
+
+  private func showOrUpdateNotification(title: String, body: String) {
+    let center = UNUserNotificationCenter.current()
+    center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+      guard granted else { return }
+      let content = UNMutableNotificationContent()
+      content.title = title
+      content.body = body
+      content.sound = nil
+      let request = UNNotificationRequest(identifier: "CapSubForegroundTask", content: content, trigger: nil)
+      center.add(request, withCompletionHandler: nil)
+    }
+  }
+
+  private func clearNotifications() {
+    let center = UNUserNotificationCenter.current()
+    center.removeDeliveredNotifications(withIdentifiers: ["CapSubForegroundTask"])
+    center.removePendingNotificationRequests(withIdentifiers: ["CapSubForegroundTask"])
   }
 
   private func makeMediaUrl(_ path: String) -> URL? {

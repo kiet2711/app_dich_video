@@ -258,4 +258,10 @@ class SettingsRepository {
       prefs.getString('hongguo_custom_prompt') ?? defaultHongguoPrompt;
   set hongguoCustomPrompt(String v) =>
       prefs.setString('hongguo_custom_prompt', v);
+
+  /// Chất lượng video ưu tiên khi phát online hoặc tải về: '80' (1080p), '64' (720p - mặc định), '32' (480p), '16' (360p)
+  String get preferredVideoQuality =>
+      prefs.getString('preferred_video_quality') ?? '64';
+  set preferredVideoQuality(String v) =>
+      prefs.setString('preferred_video_quality', v);
 }

@@ -74,6 +74,7 @@ class SubtitlingPipeline {
     String sourceLanguage = 'zh-CN',
     File? outputSrtFile,
     bool? downloadBilibiliVideo,
+    String? bilibiliQuality,
   }) async {
     _isCancelled = false;
     if (totalDurationMs <= 0) {
@@ -137,6 +138,7 @@ class SubtitlingPipeline {
                 partFile,
                 settings.bilibiliSessData,
                 concurrency: settings.downloadThreadCount,
+                quality: bilibiliQuality ?? settings.preferredVideoQuality,
                 onProgress: (p, msg) {
                   _emit(
                     ProcessProgress(

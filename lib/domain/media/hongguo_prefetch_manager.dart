@@ -6,6 +6,7 @@ import '../../data/model/voice_model.dart';
 import '../../data/repository/history_repository.dart';
 import '../../data/repository/settings_repository.dart';
 import '../pipeline/subtitling_pipeline.dart';
+import '../service/foreground_service_manager.dart';
 import '../tts/tts_cache_helper.dart';
 import '../tts/tts_generation_manager.dart';
 import 'hongguo_resolver.dart';
@@ -254,6 +255,14 @@ class HongguoPrefetchManager {
     final completer = Completer<SubtitleDocument?>();
     _inFlightDocCompleters[episodeIndex] = completer;
 
+    unawaited(
+      ForegroundServiceManager.start(
+        title: '🎬 Đang dịch: ${detail.title}',
+        message: 'Tập $episodeIndex: Đang kết nối video...',
+        progress: 5,
+      ),
+    );
+
     try {
       prefetchStateNotifier.value = PrefetchState(
         episodeIndex: episodeIndex,
@@ -318,14 +327,23 @@ class HongguoPrefetchManager {
       _pipelineSubs[episodeIndex] = pipeline.progressStream.listen((progress) {
         if (_isDisposed) return;
         final pct = progress.progress.clamp(0.0, 1.0);
+        final pctInt = (pct * 100).toInt();
         prefetchStateNotifier.value = PrefetchState(
           episodeIndex: episodeIndex,
           status: 'translating',
           progress: pct,
           message: progress.message.isNotEmpty
               ? progress.message
-              : 'Đang dịch Tập $episodeIndex [$modeText] (${(pct * 100).toInt()}%)...',
+              : 'Đang dịch Tập $episodeIndex [$modeText] ($pctInt%)...',
           videoUrl: playUrl,
+        );
+        unawaited(
+          ForegroundServiceManager.update(
+            title: '🎬 Đang dịch: ${detail.title}',
+            message: 'Tập $episodeIndex: ${progress.message.isNotEmpty ? progress.message : "Đang xử lý"} ($pctInt%)',
+            progress: pctInt,
+            maxProgress: 100,
+          ),
         );
       });
 
@@ -387,6 +405,14 @@ class HongguoPrefetchManager {
             'Tập $episodeIndex đã sẵn sàng ${settings.isTtsPlaybackEnabled ? "(Lồng tiếng & Sub)" : "(Vietsub)"}!',
         document: doc,
         videoUrl: finalVideoPath,
+      );
+
+      unawaited(
+        ForegroundServiceManager.update(
+          title: '🎬 Hoàn tất: ${detail.title}',
+          message: 'Tập $episodeIndex đã dịch xong và sẵn sàng xem!',
+          progress: 100,
+        ),
       );
 
       completer.complete(doc);
@@ -491,6 +517,7 @@ class HongguoPrefetchManager {
     }
     _pipelineSubs.clear();
     prefetchStateNotifier.value = null;
+    unawaited(ForegroundServiceManager.stop());
   }
 
   /// Huỷ bỏ các tác vụ ngầm khi đóng trình phát

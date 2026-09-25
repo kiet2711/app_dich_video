@@ -346,9 +346,10 @@ class BilibiliResolver {
     final dash = data['dash'] as Map<String, dynamic>?;
     final audio = dash?['audio'] as List<dynamic>? ?? const [];
     if (audio.isEmpty) throw StateError('Bilibili không trả track audio DASH.');
+    // Tối ưu mạng yếu: Chọn luồng âm thanh nhẹ nhất (~64kbps, chỉ 2-4MB) để tải siêu tốc cho CapCut STT
     audio.sort(
-      (a, b) => ((b as Map<String, dynamic>)['bandwidth'] as num? ?? 0)
-          .compareTo((a as Map<String, dynamic>)['bandwidth'] as num? ?? 0),
+      (a, b) => ((a as Map<String, dynamic>)['bandwidth'] as num? ?? 0)
+          .compareTo((b as Map<String, dynamic>)['bandwidth'] as num? ?? 0),
     );
     final best = audio.first as Map<String, dynamic>;
     final url =
@@ -360,16 +361,18 @@ class BilibiliResolver {
   Future<String> getMuxedVideoUrl(
     BilibiliVideoDetails details, [
     String cookie = '',
+    String quality = '64',
   ]) async {
-    final urls = await getMuxedVideoUrls(details, cookie);
+    final urls = await getMuxedVideoUrls(details, cookie, quality);
     return urls.first;
   }
 
   Future<List<String>> getMuxedVideoUrls(
     BilibiliVideoDetails details, [
     String cookie = '',
+    String quality = '64',
   ]) async {
-    final data = await _getPlayData(details, cookie, fnval: '0', quality: '80');
+    final data = await _getPlayData(details, cookie, fnval: '0', quality: quality);
     final urls = extractMuxedVideoUrls(data);
     if (urls.isEmpty) {
       throw StateError('Bilibili không trả luồng video MP4 tương thích iOS.');
@@ -564,10 +567,11 @@ class BilibiliResolver {
     File destination,
     String cookie, {
     int concurrency = 16,
+    String quality = '64',
     void Function(double progress, String message)? onProgress,
   }) async {
     await destination.parent.create(recursive: true);
-    final videoUrls = await getMuxedVideoUrls(details, cookie);
+    final videoUrls = await getMuxedVideoUrls(details, cookie, quality);
     if (videoUrls.isEmpty) {
       throw StateError('Không tìm thấy luồng video MP4 phù hợp từ Bilibili.');
     }

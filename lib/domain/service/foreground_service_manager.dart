@@ -15,7 +15,7 @@ class ForegroundServiceManager {
     int progress = 0,
     int maxProgress = 100,
   }) async {
-    if (!Platform.isAndroid) return;
+    if (!Platform.isAndroid && !Platform.isIOS) return;
     try {
       await _channel.invokeMethod('start', {
         'title': title,
@@ -26,14 +26,14 @@ class ForegroundServiceManager {
     } catch (_) {}
   }
 
-  /// Cập nhật nội dung hiển thị và phần trăm tiến độ trên thanh thông báo Android.
+  /// Cập nhật nội dung hiển thị và phần trăm tiến độ trên thanh thông báo Android & iOS.
   static Future<void> update({
     String? title,
     required String message,
     int progress = 0,
     int maxProgress = 100,
   }) async {
-    if (!Platform.isAndroid) return;
+    if (!Platform.isAndroid && !Platform.isIOS) return;
     try {
       final payload = <String, dynamic>{
         'message': message,
@@ -49,7 +49,7 @@ class ForegroundServiceManager {
 
   /// Dừng Foreground Service và giải phóng WakeLock khi tiến trình hoàn tất hoặc bị hủy.
   static Future<void> stop() async {
-    if (!Platform.isAndroid) return;
+    if (!Platform.isAndroid && !Platform.isIOS) return;
     try {
       await _channel.invokeMethod('stop');
     } catch (_) {}
