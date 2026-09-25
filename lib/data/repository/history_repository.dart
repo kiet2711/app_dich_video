@@ -157,8 +157,16 @@ class HistoryRepository {
       await savedSubtitlesDir.create(recursive: true);
     }
 
+    var effectiveVideoPath = videoPath;
+    if (effectiveVideoPath.startsWith('http://') || effectiveVideoPath.startsWith('https://')) {
+      final cached = await VideoCacheManager.findCachedFile(url: effectiveVideoPath);
+      if (cached != null && await cached.exists()) {
+        effectiveVideoPath = cached.path;
+      }
+    }
+
     final items = getHistory();
-    final existing = items.where((it) => it.videoPath == videoPath).firstOrNull;
+    final existing = items.where((it) => it.videoPath == effectiveVideoPath || it.videoPath == videoPath).firstOrNull;
     final id = existing?.id ?? DateTime.now().millisecondsSinceEpoch.toString();
 
     final srtFile = existing != null
@@ -174,7 +182,7 @@ class HistoryRepository {
     final item = HistoryItem(
       id: id,
       title: title.isNotEmpty ? title : (existing?.title ?? 'Video'),
-      videoPath: videoPath,
+      videoPath: effectiveVideoPath,
       srtPath: srtFile.path,
       documentPath: docFile.path,
       timestamp: DateTime.now().millisecondsSinceEpoch,

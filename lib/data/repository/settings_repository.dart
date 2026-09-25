@@ -249,7 +249,7 @@ class SettingsRepository {
 
   /// Tùy chọn tải video Bilibili về máy để phát offline (chống giật lag)
   bool get downloadBilibiliVideo =>
-      prefs.getBool('download_bilibili_video') ?? true;
+      prefs.getBool('download_bilibili_video') ?? false;
   set downloadBilibiliVideo(bool v) =>
       prefs.setBool('download_bilibili_video', v);
 

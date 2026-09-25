@@ -17,6 +17,7 @@ import '../../domain/media/audio_extractor.dart';
 import '../../domain/media/bilibili_resolver.dart';
 import '../../domain/media/media_storage.dart';
 import '../../domain/media/network_header_helper.dart';
+import '../../domain/media/video_cache_manager.dart';
 import '../../domain/pipeline/subtitling_pipeline.dart';
 import '../../domain/service/foreground_service_manager.dart';
 import '../theme/app_theme.dart';
@@ -75,7 +76,7 @@ class HomeScreenState extends State<HomeScreen> {
   bool _isProcessing = false;
   SubtitlingPipeline? _activePipeline;
   bool _cancelRequested = false;
-  bool _downloadBilibiliVideo = true;
+  bool _downloadBilibiliVideo = false;
 
   // Danh mục tuỳ chọn đồng bộ 100% bản gốc Android HomeScreen.kt
   static const _sourceLanguageOptions = [
@@ -564,7 +565,15 @@ class HomeScreenState extends State<HomeScreen> {
         downloadBilibiliVideo: _downloadBilibiliVideo,
       );
 
-      final finalPlayableVideo = pipeline.lastLocalVideoPath ?? _selectedVideoPath!;
+      var finalPlayableVideo = pipeline.lastLocalVideoPath;
+      if (finalPlayableVideo == null || !await File(finalPlayableVideo).exists()) {
+        final cached = await VideoCacheManager.findCachedFile(url: _selectedVideoPath!);
+        if (cached != null && await cached.exists()) {
+          finalPlayableVideo = cached.path;
+        } else {
+          finalPlayableVideo = _selectedVideoPath!;
+        }
+      }
       final history = await HistoryRepository.getInstance();
       await documentFile.writeAsString(
         jsonEncode(resultDoc.toJson()),

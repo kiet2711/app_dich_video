@@ -3,6 +3,9 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'bilibili_resolver.dart';
+
+
 class VideoCacheManager {
   static const int defaultMaxCacheSizeBytes = 1500 * 1024 * 1024; // 1.5 GB
 
@@ -104,6 +107,7 @@ class VideoCacheManager {
     int? bilibiliPage,
   }) async {
     try {
+      // 1. Kiểm tra trực tiếp theo cache key tiêu chuẩn
       final file = await getCachedVideoFile(
         url: url,
         seriesId: seriesId,
@@ -113,6 +117,24 @@ class VideoCacheManager {
       );
       if (await file.exists() && await file.length() > 1024 * 100) {
         return file;
+      }
+
+      // 2. Nếu chưa tìm thấy và url có thể là Bilibili (bao gồm link rút gọn b23.tv)
+      if (bvid == null && BilibiliResolver.isBilibiliPageUrl(url)) {
+        try {
+          final target = await BilibiliResolver().resolveUrl(url);
+          if (target.bvid != null && target.bvid!.isNotEmpty) {
+            final page = bilibiliPage ?? target.pageIndex;
+            final fileResolved = await getCachedVideoFile(
+              url: target.rawUrl,
+              bvid: target.bvid,
+              bilibiliPage: page,
+            );
+            if (await fileResolved.exists() && await fileResolved.length() > 1024 * 100) {
+              return fileResolved;
+            }
+          }
+        } catch (_) {}
       }
     } catch (_) {}
     return null;

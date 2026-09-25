@@ -149,15 +149,40 @@ class SubtitlingPipeline {
               );
               if (await partFile.exists()) {
                 if (await cachedVideo.exists()) {
-                  await cachedVideo.delete();
+                  try {
+                    await cachedVideo.delete();
+                  } catch (_) {}
                 }
-                await partFile.rename(cachedVideo.path);
-                lastLocalVideoPath = cachedVideo.path;
+                try {
+                  await partFile.rename(cachedVideo.path);
+                } catch (_) {
+                  await partFile.copy(cachedVideo.path);
+                  try {
+                    await partFile.delete();
+                  } catch (_) {}
+                }
+                if (await cachedVideo.exists() && await cachedVideo.length() > 1024 * 100) {
+                  lastLocalVideoPath = cachedVideo.path;
+                }
                 unawaited(VideoCacheManager.pruneCacheIfNeeded());
               }
             }
-          } catch (_) {
-            // Nếu tải video gặp sự cố, vẫn tiếp tục để làm phụ đề bình thường
+          } catch (e, st) {
+            // Ghi log để gỡ lỗi nhưng không làm sập pipeline phụ đề
+            // ignore: avoid_print
+            print('⚠️ Lỗi tải video Bilibili về máy: $e\n$st');
+          }
+
+          // Kiểm tra dự phòng: nếu file cache đã tồn tại sẵn thì luôn gán lastLocalVideoPath
+          if (lastLocalVideoPath == null) {
+            final fallback = await VideoCacheManager.findCachedFile(
+              url: videoPath,
+              bvid: details.bvid,
+              bilibiliPage: details.selectedPageIndex,
+            );
+            if (fallback != null && await fallback.exists()) {
+              lastLocalVideoPath = fallback.path;
+            }
           }
         }
 

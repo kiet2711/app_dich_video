@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../../domain/media/audio_extractor.dart';
 import '../../domain/media/media_storage.dart';
 import '../../domain/media/network_header_helper.dart';
+import '../../domain/media/video_cache_manager.dart';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -168,17 +169,25 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
       return;
     }
 
-    final isOnline = NetworkHeaderHelper.isRemoteUrl(path);
-    final isContent = MediaStorage.isContentUri(path);
+    var effectivePath = path;
+    if (NetworkHeaderHelper.isRemoteUrl(path)) {
+      final cached = await VideoCacheManager.findCachedFile(url: path);
+      if (cached != null && await cached.exists()) {
+        effectivePath = cached.path;
+      }
+    }
+
+    final isOnline = NetworkHeaderHelper.isRemoteUrl(effectivePath);
+    final isContent = MediaStorage.isContentUri(effectivePath);
     var name = 'video.mp4';
     var sizeLabel = isOnline ? 'Trực tuyến' : '';
     var durationMs = 0;
 
     if (isOnline) {
-      name = NetworkHeaderHelper.getSuggestedTitle(path);
+      name = NetworkHeaderHelper.getSuggestedTitle(effectivePath);
     } else if (isContent) {
       try {
-        final meta = await AudioExtractor.getContentMetadata(path);
+        final meta = await AudioExtractor.getContentMetadata(effectivePath);
         name = meta.name.isNotEmpty ? meta.name : 'video.mp4';
         if (meta.sizeBytes > 0) {
           sizeLabel =
@@ -188,17 +197,18 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
       } catch (_) {}
     } else {
       try {
-        name = File(path).uri.pathSegments.last;
+        name = File(effectivePath).uri.pathSegments.last;
       } catch (_) {}
       try {
-        final bytes = await File(path).length();
-        sizeLabel = '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+        final bytes = await File(effectivePath).length();
+        final isCached = effectivePath.contains('video_cache');
+        sizeLabel = '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB${isCached ? " (Đã tải)" : ""}';
       } catch (_) {}
     }
 
     if (durationMs <= 0) {
       try {
-        durationMs = await AudioExtractor.probeDuration(path);
+        durationMs = await AudioExtractor.probeDuration(effectivePath);
       } catch (_) {}
     }
     if (name.trim().isEmpty) name = 'video.mp4';
@@ -747,7 +757,7 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
     );
   }
 
-  void _navigateToPlayer() {
+  Future<void> _navigateToPlayer() async {
     if (_doc == null || _doc!.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Chưa có phụ đề để xem video!')),
@@ -759,11 +769,24 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
       return;
     }
 
+    var pathToPlay = _videoPath!;
+    if (pathToPlay.startsWith('http://') || pathToPlay.startsWith('https://')) {
+      final cached = await VideoCacheManager.findCachedFile(url: pathToPlay);
+      if (cached != null && await cached.exists()) {
+        pathToPlay = cached.path;
+        if (mounted) {
+          setState(() => _videoPath = cached.path);
+          unawaited(_refreshVideoMetadata());
+        }
+      }
+    }
+
+    if (!mounted) return;
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (ctx) =>
-            VideoPlayerScreen(videoPath: _videoPath!, document: _doc!),
+            VideoPlayerScreen(videoPath: pathToPlay, document: _doc!),
       ),
     );
   }

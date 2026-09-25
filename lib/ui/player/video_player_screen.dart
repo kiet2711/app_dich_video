@@ -174,15 +174,17 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           target,
           _settings.bilibiliSessData,
         );
-        // Kiểm tra xem đã có video tải về trong cache theo BVID và tập chưa
+
+        // KIỂM TRA ƯU TIÊN: Đã có video tải về trong cache máy chưa
         final cached = await VideoCacheManager.findCachedFile(
-          url: targetPath,
+          url: target.rawUrl,
           bvid: details.bvid,
           bilibiliPage: details.selectedPageIndex,
         );
+
         if (cached != null && await cached.exists()) {
           targetPath = cached.path;
-          playableUrls = [targetPath];
+          playableUrls = [cached.path];
           httpHeaders = const {};
         } else {
           playableUrls = await resolver.getMuxedVideoUrls(
@@ -195,6 +197,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           );
         }
       }
+
+      _currentVideoPath = targetPath;
 
       final isRemote =
           targetPath.startsWith('http://') || targetPath.startsWith('https://');
@@ -589,9 +593,18 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       );
       if (await partFile.exists()) {
         if (await cachedVideo.exists()) {
-          await cachedVideo.delete();
+          try {
+            await cachedVideo.delete();
+          } catch (_) {}
         }
-        await partFile.rename(cachedVideo.path);
+        try {
+          await partFile.rename(cachedVideo.path);
+        } catch (_) {
+          await partFile.copy(cachedVideo.path);
+          try {
+            await partFile.delete();
+          } catch (_) {}
+        }
         unawaited(VideoCacheManager.pruneCacheIfNeeded());
         try {
           final history = await HistoryRepository.getInstance();
@@ -1119,6 +1132,40 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                   color: Colors.white,
                                   fontWeight: FontWeight.bold,
                                   fontSize: 14,
+                                ),
+                              ),
+                              Padding(
+                                padding: const EdgeInsets.only(top: 2),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      (!_currentVideoPath.startsWith('http://') &&
+                                              !_currentVideoPath.startsWith('https://'))
+                                          ? Icons.offline_pin_rounded
+                                          : Icons.cloud_queue_rounded,
+                                      size: 11,
+                                      color: (!_currentVideoPath.startsWith('http://') &&
+                                              !_currentVideoPath.startsWith('https://'))
+                                          ? AppTheme.primaryEmerald
+                                          : const Color(0xFFFFB74D),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      (!_currentVideoPath.startsWith('http://') &&
+                                              !_currentVideoPath.startsWith('https://'))
+                                          ? 'Phát offline (Bộ nhớ máy)'
+                                          : 'Phát trực tuyến (Online)',
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w600,
+                                        color: (!_currentVideoPath.startsWith('http://') &&
+                                                !_currentVideoPath.startsWith('https://'))
+                                            ? AppTheme.primaryEmerald
+                                            : const Color(0xFFFFB74D),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
                               if (_prefetchManager != null)
