@@ -1,8 +1,8 @@
-﻿name: Build Mobile (Android APK & iOS IPA)
+name: Build Mobile (Android APK & iOS IPA)
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, 'feat/**' ]
   workflow_dispatch:
 
 jobs:
