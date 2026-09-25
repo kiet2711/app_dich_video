@@ -9,6 +9,7 @@ import '../pipeline/subtitling_pipeline.dart';
 import '../tts/tts_cache_helper.dart';
 import '../tts/tts_generation_manager.dart';
 import 'hongguo_resolver.dart';
+import 'video_cache_manager.dart';
 
 class PrefetchState {
   final int episodeIndex;
@@ -43,8 +44,8 @@ class HongguoPrefetchManager {
   final ValueNotifier<PrefetchState?> prefetchStateNotifier =
       ValueNotifier<PrefetchState?>(null);
 
-  SubtitlingPipeline? _activePipeline;
-  StreamSubscription? _pipelineSub;
+  final Map<int, SubtitlingPipeline> _activePipelines = {};
+  final Map<int, StreamSubscription> _pipelineSubs = {};
   bool _isDisposed = false;
   int _currentPlayingIndex = 1;
 
@@ -275,26 +276,46 @@ class HongguoPrefetchManager {
         videoUrl: playUrl,
       );
 
-      // Bước 2: Chuẩn bị SubtitlingPipeline theo cấu hình người dùng
+      // Bước 2: Chuẩn bị SubtitlingPipeline theo cấu hình riêng của Hồng Quả
       final settings = await SettingsRepository.getInstance();
-      _activePipeline?.cancel();
-      await _pipelineSub?.cancel();
+      _activePipelines[episodeIndex]?.cancel();
+      await _pipelineSubs[episodeIndex]?.cancel();
+
+      final isCapcut = settings.hongguoTranslationMode == 'capcut';
+      String engine = 'capcut';
+      if (!isCapcut) {
+        if (settings.geminiApiKeys.isNotEmpty) {
+          engine = settings.selectedGeminiModel.isNotEmpty
+              ? settings.selectedGeminiModel
+              : 'gemini-3.1-flash-lite';
+        } else if (settings.groqApiKeys.isNotEmpty) {
+          engine = settings.selectedGroqModel.isNotEmpty
+              ? settings.selectedGroqModel
+              : 'openai/gpt-oss-120b';
+        } else {
+          // Chưa có API key nào -> tự động fallback sang CapCut Free an toàn
+          engine = 'capcut';
+        }
+      }
+
+      final modeText = engine == 'capcut' ? 'CapCut Free' : 'API Online';
+      debugPrint('[Prefetch] Tập $episodeIndex dùng chế độ: $modeText ($engine)');
 
       final pipeline = SubtitlingPipeline(
         apiKeys: settings.geminiApiKeys,
         groqApiKeys: settings.groqApiKeys,
-        translationEngine: settings.selectedModel,
-        stylePreset: settings.selectedStyle,
-        customPrompt: settings.geminiCustomPrompt,
-        targetLanguage: settings.targetLanguage,
+        translationEngine: engine,
+        stylePreset: 'Zhihu',
+        customPrompt: settings.hongguoCustomPrompt,
+        targetLanguage: 'vi-VN',
         geminiThreadCount: settings.geminiThreadCount,
         geminiBatchSize: settings.geminiBatchSize,
         groqThreadCount: settings.groqThreadCount,
         groqBatchSize: settings.groqBatchSize,
       );
-      _activePipeline = pipeline;
+      _activePipelines[episodeIndex] = pipeline;
 
-      _pipelineSub = pipeline.progressStream.listen((progress) {
+      _pipelineSubs[episodeIndex] = pipeline.progressStream.listen((progress) {
         if (_isDisposed) return;
         final pct = progress.progress.clamp(0.0, 1.0);
         prefetchStateNotifier.value = PrefetchState(
@@ -303,17 +324,17 @@ class HongguoPrefetchManager {
           progress: pct,
           message: progress.message.isNotEmpty
               ? progress.message
-              : 'Đang dịch Tập $episodeIndex (${(pct * 100).toInt()}%)...',
+              : 'Đang dịch Tập $episodeIndex [$modeText] (${(pct * 100).toInt()}%)...',
           videoUrl: playUrl,
         );
       });
 
-      // Bước 3: Chạy quy trình bóc tách âm thanh & dịch phụ đề
+      // Bước 3: Chạy quy trình bóc tách âm thanh & dịch phụ đề (cố định zh-CN -> vi-VN)
       // Phim ngắn Hồng Quả trung bình 1.5 - 2 phút (~120000ms)
       final doc = await pipeline.execute(
         videoPath: playUrl,
         totalDurationMs: 120000,
-        sourceLanguage: settings.defaultSourceLanguage,
+        sourceLanguage: 'zh-CN',
       );
 
       if (_isDisposed) {
@@ -334,13 +355,15 @@ class HongguoPrefetchManager {
         }
       }
 
-      // Bước 5: Lưu vào Cache và Lịch sử
+      // Bước 5: Lưu vào Cache và Lịch sử (Ưu tiên đường dẫn file video cục bộ để phát mượt không lag)
+      final finalVideoPath = pipeline.lastLocalVideoPath ?? playUrl;
       _cachedDocs[episodeIndex] = doc;
+      _cachedUrls[episodeIndex] = finalVideoPath;
       final epTitle = '${detail.title} - Tập $episodeIndex';
       try {
         final historyRepo = await HistoryRepository.getInstance();
         await historyRepo.saveHistory(
-          videoPath: playUrl,
+          videoPath: finalVideoPath,
           title: epTitle,
           document: doc,
           durationMs: 120000,
@@ -363,7 +386,7 @@ class HongguoPrefetchManager {
         message:
             'Tập $episodeIndex đã sẵn sàng ${settings.isTtsPlaybackEnabled ? "(Lồng tiếng & Sub)" : "(Vietsub)"}!',
         document: doc,
-        videoUrl: playUrl,
+        videoUrl: finalVideoPath,
       );
 
       completer.complete(doc);
@@ -382,6 +405,9 @@ class HongguoPrefetchManager {
       return null;
     } finally {
       _inFlightDocCompleters.remove(episodeIndex);
+      _activePipelines.remove(episodeIndex);
+      unawaited(_pipelineSubs[episodeIndex]?.cancel());
+      _pipelineSubs.remove(episodeIndex);
     }
   }
 
@@ -410,9 +436,16 @@ class HongguoPrefetchManager {
         vid.isNotEmpty ? vid : detail.seriesId,
       );
 
-      _cachedUrls[episodeIndex] = url;
-      completer.complete(url);
-      return url;
+      final cached = await VideoCacheManager.findCachedFile(
+        url: url,
+        seriesId: detail.seriesId,
+        episodeIndex: episodeIndex,
+      );
+      final finalPath = cached != null ? cached.path : url;
+
+      _cachedUrls[episodeIndex] = finalPath;
+      completer.complete(finalPath);
+      return finalPath;
     } catch (e) {
       completer.complete(null);
       return null;
@@ -449,9 +482,14 @@ class HongguoPrefetchManager {
 
   /// Dừng các tác vụ dịch ngầm hiện tại (khi người dùng tắt công tắc AutoPlay)
   void cancelPrefetch() {
-    _activePipeline?.cancel();
-    _pipelineSub?.cancel();
-    _activePipeline = null;
+    for (final p in _activePipelines.values) {
+      p.cancel();
+    }
+    _activePipelines.clear();
+    for (final sub in _pipelineSubs.values) {
+      unawaited(sub.cancel());
+    }
+    _pipelineSubs.clear();
     prefetchStateNotifier.value = null;
   }
 

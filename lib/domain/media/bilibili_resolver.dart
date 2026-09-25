@@ -556,6 +556,32 @@ class BilibiliResolver {
     return destination;
   }
 
+  Future<File> downloadVideo(
+    BilibiliVideoDetails details,
+    File destination,
+    String cookie, {
+    int concurrency = 16,
+    void Function(double progress, String message)? onProgress,
+  }) async {
+    await destination.parent.create(recursive: true);
+    final videoUrls = await getMuxedVideoUrls(details, cookie);
+    if (videoUrls.isEmpty) {
+      throw StateError('Không tìm thấy luồng video MP4 phù hợp từ Bilibili.');
+    }
+    final headers = requestHeaders(cookie);
+    await MultiThreadDownloader.downloadFile(
+      url: videoUrls.first,
+      outputFile: destination,
+      headers: headers,
+      concurrency: concurrency,
+      progressCallback: onProgress,
+    );
+    if (!await destination.exists() || await destination.length() < 1024 * 100) {
+      throw StateError('Video tải từ Bilibili không hoàn chỉnh hoặc bị lỗi.');
+    }
+    return destination;
+  }
+
   Future<Map<String, dynamic>> _getPlayData(
     BilibiliVideoDetails details,
     String cookie, {

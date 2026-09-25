@@ -352,8 +352,34 @@ class MainActivity : FlutterActivity() {
                 "Origin" to "https://www.bilibili.com",
                 "User-Agent" to "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36",
             )
+        } else if (lower.contains("hongguoduanju.com") ||
+            lower.contains("novelquickapp.com") ||
+            lower.contains("qznovelvod.com") ||
+            lower.contains("fanqiesc.com") ||
+            lower.contains("fqnovel.com") ||
+            lower.contains("bytevcloud.com") ||
+            lower.contains("snssdk.com") ||
+            lower.contains("pstatp.com")
+        ) {
+            mapOf(
+                "Referer" to "https://www.hongguoduanju.com/",
+                "Origin" to "https://www.hongguoduanju.com",
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0.0.0 Safari/537.36",
+            )
+        } else if (lower.contains("douyin.com") || lower.contains("douyinvod.com") || lower.contains("iesdouyin.com")) {
+            mapOf(
+                "Referer" to "https://www.douyin.com/",
+                "Origin" to "https://www.douyin.com",
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0.0.0 Safari/537.36",
+            )
+        } else if (lower.contains("tiktok.com") || lower.contains("tiktokv.com")) {
+            mapOf(
+                "Referer" to "https://www.tiktok.com/",
+                "Origin" to "https://www.tiktok.com",
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0.0.0 Safari/537.36",
+            )
         } else {
-            mapOf("User-Agent" to "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36")
+            mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         }
     }
 

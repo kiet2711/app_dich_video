@@ -16,8 +16,10 @@ import '../../data/repository/settings_repository.dart';
 import '../ai/ai_model_registry.dart';
 import '../ai/smart_ai_translator.dart';
 import '../media/audio_chunker.dart';
+import '../media/audio_extractor.dart';
 import '../media/bilibili_resolver.dart';
 import '../media/hongguo_resolver.dart';
+import '../media/video_cache_manager.dart';
 
 class SubtitlingPipeline {
   final List<String> apiKeys;
@@ -35,6 +37,7 @@ class SubtitlingPipeline {
   Stream<ProcessProgress> get progressStream => _progressController.stream;
 
   bool _isCancelled = false;
+  String? lastLocalVideoPath;
 
   SubtitlingPipeline({
     required this.apiKeys,
@@ -70,6 +73,7 @@ class SubtitlingPipeline {
     required int totalDurationMs,
     String sourceLanguage = 'zh-CN',
     File? outputSrtFile,
+    bool? downloadBilibiliVideo,
   }) async {
     _isCancelled = false;
     if (totalDurationMs <= 0) {
@@ -107,6 +111,55 @@ class SubtitlingPipeline {
           target,
           settings.bilibiliSessData,
         );
+
+        // Kiểm tra xem người dùng có chọn tải video Bilibili về xem offline không
+        final shouldDownloadVideo = downloadBilibiliVideo ?? settings.downloadBilibiliVideo;
+        if (shouldDownloadVideo) {
+          try {
+            final cachedVideo = await VideoCacheManager.getCachedVideoFile(
+              url: videoPath,
+              bvid: details.bvid,
+              bilibiliPage: details.selectedPageIndex,
+            );
+            if (await cachedVideo.exists() && await cachedVideo.length() > 1024 * 100) {
+              lastLocalVideoPath = cachedVideo.path;
+            } else {
+              _emit(
+                const ProcessProgress(
+                  stage: ProcessStage.extractingAudio,
+                  progress: 0.03,
+                  message: 'Đang tải video Bilibili về máy qua 4 cụm CDN...',
+                ),
+              );
+              final partFile = File('${cachedVideo.path}.part');
+              await resolver.downloadVideo(
+                details,
+                partFile,
+                settings.bilibiliSessData,
+                concurrency: settings.downloadThreadCount,
+                onProgress: (p, msg) {
+                  _emit(
+                    ProcessProgress(
+                      stage: ProcessStage.extractingAudio,
+                      progress: 0.03 + p * 0.15,
+                      message: msg,
+                    ),
+                  );
+                },
+              );
+              if (await partFile.exists()) {
+                if (await cachedVideo.exists()) {
+                  await cachedVideo.delete();
+                }
+                await partFile.rename(cachedVideo.path);
+                lastLocalVideoPath = cachedVideo.path;
+                unawaited(VideoCacheManager.pruneCacheIfNeeded());
+              }
+            }
+          } catch (_) {
+            // Nếu tải video gặp sự cố, vẫn tiếp tục để làm phụ đề bình thường
+          }
+        }
 
         // Tự động kiểm tra phụ đề có sẵn:
         // - Nếu chọn AI (Gemini/Groq) hoặc 'none': Dùng phụ đề Bilibili có sẵn để dịch siêu tốc mà không cần tải audio.
@@ -159,29 +212,34 @@ class SubtitlingPipeline {
         }
 
         if (sourceDocument == null) {
-          final audioUrl = await resolver.getAudioUrl(
-            details,
-            settings.bilibiliSessData,
-          );
-          final downloadedAudio = File(
-            '${sessionDir.path}${Platform.pathSeparator}bilibili_audio.m4a',
-          );
-          await resolver.downloadAudio(
-            audioUrl,
-            downloadedAudio,
-            settings.bilibiliSessData,
-            concurrency: settings.downloadThreadCount,
-            onProgress: (progress, message) {
-              _emit(
-                ProcessProgress(
-                  stage: ProcessStage.extractingAudio,
-                  progress: 0.03 + progress * 0.15,
-                  message: message,
-                ),
-              );
-            },
-          );
-          extractionPath = downloadedAudio.path;
+          if (lastLocalVideoPath != null && await File(lastLocalVideoPath!).exists()) {
+            // Nếu đã tải video về máy, trích xuất âm thanh từ file video local
+            extractionPath = lastLocalVideoPath!;
+          } else {
+            final audioUrl = await resolver.getAudioUrl(
+              details,
+              settings.bilibiliSessData,
+            );
+            final downloadedAudio = File(
+              '${sessionDir.path}${Platform.pathSeparator}bilibili_audio.m4a',
+            );
+            await resolver.downloadAudio(
+              audioUrl,
+              downloadedAudio,
+              settings.bilibiliSessData,
+              concurrency: settings.downloadThreadCount,
+              onProgress: (progress, message) {
+                _emit(
+                  ProcessProgress(
+                    stage: ProcessStage.extractingAudio,
+                    progress: 0.03 + progress * 0.15,
+                    message: message,
+                  ),
+                );
+              },
+            );
+            extractionPath = downloadedAudio.path;
+          }
         }
       } else if (HongguoResolver.isHongguoUrl(videoPath)) {
         _emit(
@@ -193,43 +251,103 @@ class SubtitlingPipeline {
         );
         final resolver = HongguoResolver();
         var directMp4 = videoPath;
+        String? seriesId;
+        int? epIndex;
 
         // Nếu videoPath là link trang web/chia sẻ (chưa phải direct mp4 link)
         if (!videoPath.contains('.mp4') && !videoPath.contains('qznovelvod.com')) {
-          final seriesId = await resolver.resolveSeriesId(videoPath);
+          seriesId = await resolver.resolveSeriesId(videoPath);
           final vidMatch = RegExp(r'/player/\d+/(\d+)').firstMatch(videoPath);
           final vid = vidMatch?.group(1) ?? seriesId;
           directMp4 = await resolver.getEpisodePlayUrl(seriesId, vid);
         }
 
+        final epMatch = RegExp(r'Tập\s*(\d+)', caseSensitive: false).firstMatch(videoPath);
+        if (epMatch != null) {
+          epIndex = int.tryParse(epMatch.group(1)!);
+        }
+
+        final cachedVideo = await VideoCacheManager.getCachedVideoFile(
+          url: directMp4,
+          seriesId: seriesId,
+          episodeIndex: epIndex,
+        );
+
+        final isAlreadyCached = await VideoCacheManager.hasValidCache(
+          url: directMp4,
+          seriesId: seriesId,
+          episodeIndex: epIndex,
+        );
+
+        if (!isAlreadyCached) {
+          _emit(
+            const ProcessProgress(
+              stage: ProcessStage.extractingAudio,
+              progress: 0.03,
+              message: 'Đang tải video phim ngắn siêu tốc...',
+            ),
+          );
+
+          final partFile = File('${cachedVideo.path}.part');
+          final headers = NetworkHeaderHelper.getHeadersForUrl(directMp4);
+          await MultiThreadDownloader.downloadFile(
+            url: directMp4,
+            outputFile: partFile,
+            headers: headers,
+            concurrency: settings.downloadThreadCount,
+            progressCallback: (progress, message) {
+              _emit(
+                ProcessProgress(
+                  stage: ProcessStage.extractingAudio,
+                  progress: 0.03 + progress * 0.12,
+                  message: message,
+                ),
+              );
+            },
+          );
+
+          if (await partFile.exists() && await partFile.length() > 1024 * 100) {
+            if (await cachedVideo.exists()) await cachedVideo.delete();
+            await partFile.rename(cachedVideo.path);
+          }
+        } else {
+          _emit(
+            const ProcessProgress(
+              stage: ProcessStage.extractingAudio,
+              progress: 0.15,
+              message: 'Đã có sẵn video trong bộ nhớ máy (phát siêu mượt không lag)...',
+            ),
+          );
+        }
+
+        lastLocalVideoPath = cachedVideo.path;
+
+        final downloadedAudio = File(
+          '${sessionDir.path}${Platform.pathSeparator}hongguo_audio.m4a',
+        );
+
+        // BƯỚC BÓC TÁCH ÂM THANH CỤC BỘ (chạy trên file tải về cực nhanh ~0.1s, 100% không lỗi)
         _emit(
           const ProcessProgress(
             stage: ProcessStage.extractingAudio,
-            progress: 0.04,
-            message: 'Đang tải video Hồng Quả để bóc tách âm thanh...',
+            progress: 0.16,
+            message: 'Đang trích xuất luồng âm thanh để CapCut nhận diện...',
           ),
         );
 
-        final downloadedVideo = File(
-          '${sessionDir.path}${Platform.pathSeparator}hongguo_video.mp4',
-        );
-        final headers = NetworkHeaderHelper.getHeadersForUrl(directMp4);
-        await MultiThreadDownloader.downloadFile(
-          url: directMp4,
-          outputFile: downloadedVideo,
-          headers: headers,
-          concurrency: settings.downloadThreadCount,
-          progressCallback: (progress, message) {
-            _emit(
-              ProcessProgress(
-                stage: ProcessStage.extractingAudio,
-                progress: 0.04 + progress * 0.14,
-                message: message,
-              ),
-            );
-          },
-        );
-        extractionPath = downloadedVideo.path;
+        try {
+          await AudioExtractor.extractAudio(
+            videoPath: cachedVideo.path,
+            outputPath: downloadedAudio.path,
+          );
+          if (await downloadedAudio.exists() && await downloadedAudio.length() > 1024) {
+            extractionPath = downloadedAudio.path;
+          } else {
+            extractionPath = cachedVideo.path;
+          }
+        } catch (_) {
+          extractionPath = cachedVideo.path;
+        }
       }
 
       final allItems = <SubtitleItem>[];
@@ -245,33 +363,64 @@ class SubtitlingPipeline {
       } else {
         // Nếu là URL video online thông thường (không phải Bilibili), tải trước qua MultiThreadDownloader
         if (NetworkHeaderHelper.isRemoteUrl(extractionPath)) {
-          _emit(
-            const ProcessProgress(
-              stage: ProcessStage.extractingAudio,
-              progress: 0.03,
-              message: 'Đang tải video trực tuyến để bóc tách âm thanh...',
-            ),
-          );
-          final tempRemoteFile = File(
-            '${sessionDir.path}${Platform.pathSeparator}downloaded_remote_stream.mp4',
-          );
-          final headers = NetworkHeaderHelper.getHeadersForUrl(extractionPath, settings.bilibiliSessData);
-          await MultiThreadDownloader.downloadFile(
+          final cachedVideo = await VideoCacheManager.getCachedVideoFile(
             url: extractionPath,
-            outputFile: tempRemoteFile,
-            headers: headers,
-            concurrency: settings.downloadThreadCount,
-            progressCallback: (pct, msg) {
-              _emit(
-                ProcessProgress(
-                  stage: ProcessStage.extractingAudio,
-                  progress: 0.03 + pct * 0.12,
-                  message: msg,
-                ),
-              );
-            },
           );
-          extractionPath = tempRemoteFile.path;
+          final isAlreadyCached = await VideoCacheManager.hasValidCache(
+            url: extractionPath,
+          );
+
+          if (!isAlreadyCached) {
+            _emit(
+              const ProcessProgress(
+                stage: ProcessStage.extractingAudio,
+                progress: 0.03,
+                message: 'Đang tải video trực tuyến siêu tốc...',
+              ),
+            );
+            final partFile = File('${cachedVideo.path}.part');
+            final headers = NetworkHeaderHelper.getHeadersForUrl(extractionPath, settings.bilibiliSessData);
+            await MultiThreadDownloader.downloadFile(
+              url: extractionPath,
+              outputFile: partFile,
+              headers: headers,
+              concurrency: settings.downloadThreadCount,
+              progressCallback: (pct, msg) {
+                _emit(
+                  ProcessProgress(
+                    stage: ProcessStage.extractingAudio,
+                    progress: 0.03 + pct * 0.12,
+                    message: msg,
+                  ),
+                );
+              },
+            );
+
+            if (await partFile.exists() && await partFile.length() > 1024 * 100) {
+              if (await cachedVideo.exists()) await cachedVideo.delete();
+              await partFile.rename(cachedVideo.path);
+            }
+          }
+
+          lastLocalVideoPath = cachedVideo.path;
+
+          // Trích xuất âm thanh từ file video đã tải về máy
+          final tempAudioFile = File(
+            '${sessionDir.path}${Platform.pathSeparator}downloaded_remote_audio.m4a',
+          );
+          try {
+            await AudioExtractor.extractAudio(
+              videoPath: cachedVideo.path,
+              outputPath: tempAudioFile.path,
+            );
+            if (await tempAudioFile.exists() && await tempAudioFile.length() > 1024) {
+              extractionPath = tempAudioFile.path;
+            } else {
+              extractionPath = cachedVideo.path;
+            }
+          } catch (_) {
+            extractionPath = cachedVideo.path;
+          }
         }
 
         // GIAI ĐOẠN 1: TÁCH ÂM THANH SANG M4A
@@ -468,6 +617,7 @@ class SubtitlingPipeline {
           await sessionDir.delete(recursive: true);
         }
       } catch (_) {}
+      unawaited(VideoCacheManager.pruneCacheIfNeeded());
     }
   }
 

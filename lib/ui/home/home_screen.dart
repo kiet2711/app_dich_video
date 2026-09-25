@@ -75,6 +75,7 @@ class HomeScreenState extends State<HomeScreen> {
   bool _isProcessing = false;
   SubtitlingPipeline? _activePipeline;
   bool _cancelRequested = false;
+  bool _downloadBilibiliVideo = false;
 
   // Danh mục tuỳ chọn đồng bộ 100% bản gốc Android HomeScreen.kt
   static const _sourceLanguageOptions = [
@@ -147,6 +148,7 @@ class HomeScreenState extends State<HomeScreen> {
       _selectedTargetLang = s.targetLanguage;
       _selectedStyle = s.selectedStyle;
       _customPromptController.text = s.geminiCustomPrompt;
+      _downloadBilibiliVideo = s.downloadBilibiliVideo;
     });
   }
 
@@ -559,8 +561,10 @@ class HomeScreenState extends State<HomeScreen> {
         totalDurationMs: _fileDurationMs,
         sourceLanguage: _selectedSourceLang,
         outputSrtFile: srtFile,
+        downloadBilibiliVideo: _downloadBilibiliVideo,
       );
 
+      final finalPlayableVideo = pipeline.lastLocalVideoPath ?? _selectedVideoPath!;
       final history = await HistoryRepository.getInstance();
       await documentFile.writeAsString(
         jsonEncode(resultDoc.toJson()),
@@ -570,7 +574,7 @@ class HomeScreenState extends State<HomeScreen> {
         HistoryItem(
           id: historyId,
           title: _fileName.isEmpty ? 'Video' : _fileName,
-          videoPath: _selectedVideoPath!,
+          videoPath: finalPlayableVideo,
           srtPath: srtFile.path,
           documentPath: documentFile.path,
           timestamp: DateTime.now().millisecondsSinceEpoch,
@@ -584,7 +588,7 @@ class HomeScreenState extends State<HomeScreen> {
       }
 
       if (mounted) {
-        widget.onProcessCompleted?.call(resultDoc, _selectedVideoPath!);
+        widget.onProcessCompleted?.call(resultDoc, finalPlayableVideo);
       }
     } catch (e) {
       if (mounted && Navigator.of(context, rootNavigator: true).canPop()) {
@@ -1128,6 +1132,60 @@ class HomeScreenState extends State<HomeScreen> {
                                         }
                                       },
                                     );
+                                  },
+                                ),
+                              ),
+                            ],
+                            if (_bilibiliDetails != null) ...[
+                              const SizedBox(height: 10),
+                              Container(
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF1E202A),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                    color: _downloadBilibiliVideo
+                                        ? AppColors.primaryEmerald.withValues(alpha: 0.6)
+                                        : const Color(0xFF2C3E32),
+                                  ),
+                                ),
+                                child: SwitchListTile(
+                                  dense: true,
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 0,
+                                  ),
+                                  title: const Row(
+                                    children: [
+                                      Icon(
+                                        Icons.download_for_offline,
+                                        size: 16,
+                                        color: AppColors.primaryEmerald,
+                                      ),
+                                      SizedBox(width: 8),
+                                      Text(
+                                        'Tải video về máy để xem offline',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  subtitle: const Text(
+                                    'Lưu vào cache máy để phát mượt mà 100%, không bị xoay vòng hoặc giật lag mạng.',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.white60,
+                                    ),
+                                  ),
+                                  value: _downloadBilibiliVideo,
+                                  activeTrackColor: AppColors.primaryEmerald,
+                                  onChanged: (val) {
+                                    setState(() {
+                                      _downloadBilibiliVideo = val;
+                                      _settings?.downloadBilibiliVideo = val;
+                                    });
                                   },
                                 ),
                               ),

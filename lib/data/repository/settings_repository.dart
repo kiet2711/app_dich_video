@@ -230,4 +230,32 @@ class SettingsRepository {
       prefs.getBool('auto_play_next_episode') ?? true;
   set autoPlayNextEpisode(bool v) =>
       prefs.setBool('auto_play_next_episode', v);
+
+  // ===== CẤU HÌNH DỊCH ĐỘC LẬP CHO PHIM NGẮN HỒNG QUẢ (ZH -> VI) =====
+  static const String defaultHongguoPrompt =
+      'Bạn là chuyên gia biên kịch và dịch thuật phụ đề phim ngắn Trung Quốc (vi đoản kịch, tổng tài, ngôn tình, đô thị, trọng sinh, chiến thần, cung đấu).\n'
+      'Nhiệm vụ: Dịch phụ đề từ tiếng Trung (zh-CN) sang tiếng Việt (vi-VN) chuẩn văn phong phim ảnh, mượt mà, cảm xúc và tự nhiên.\n'
+      'Yêu cầu:\n'
+      '- Xưng hô nhân vật đúng ngữ cảnh, thân phận, vai vế (tổng tài, phu nhân, thiếu gia, thuộc hạ, bạn bè, đối thủ...).\n'
+      '- Giữ nguyên tên riêng Hán-Việt phổ biến, chuyển ngữ các câu thoại thành ngữ/tiếng lóng tự nhiên, bắt tai.\n'
+      '- Câu từ ngắn gọn, súc tích, khớp nhịp thoại nhanh của phim ngắn.\n'
+      '- Giữ nguyên số dòng và định dạng, chỉ trả về nội dung bản dịch tiếng Việt.';
+
+  /// Chế độ dịch riêng của Hồng Quả: 'capcut' (CapCut Free) hoặc 'api_online' (API Online tự động xoay model & key)
+  String get hongguoTranslationMode =>
+      prefs.getString('hongguo_translation_mode') ?? 'capcut';
+  set hongguoTranslationMode(String v) =>
+      prefs.setString('hongguo_translation_mode', v);
+
+  /// Tùy chọn tải video Bilibili về máy để phát offline (chống giật lag)
+  bool get downloadBilibiliVideo =>
+      prefs.getBool('download_bilibili_video') ?? false;
+  set downloadBilibiliVideo(bool v) =>
+      prefs.setBool('download_bilibili_video', v);
+
+  /// Prompt ngữ cảnh dịch riêng dành riêng cho phim ngắn Hồng Quả
+  String get hongguoCustomPrompt =>
+      prefs.getString('hongguo_custom_prompt') ?? defaultHongguoPrompt;
+  set hongguoCustomPrompt(String v) =>
+      prefs.setString('hongguo_custom_prompt', v);
 }

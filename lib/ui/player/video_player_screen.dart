@@ -7,10 +7,12 @@ import 'package:share_plus/share_plus.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../data/model/subtitle_document.dart';
+import '../../data/repository/history_repository.dart';
 import '../../data/repository/settings_repository.dart';
 import '../../domain/media/bilibili_resolver.dart';
 import '../../domain/media/hongguo_prefetch_manager.dart';
 import '../../domain/media/hongguo_resolver.dart';
+import '../../domain/media/video_cache_manager.dart';
 import '../../domain/media/media_storage.dart';
 import '../../domain/media/network_header_helper.dart';
 import '../../domain/tts/audio_file_validator.dart';
@@ -20,6 +22,7 @@ import 'dual_volume_sheet.dart';
 import 'subtitle_control_sheet.dart';
 import 'subtitle_overlay.dart';
 import 'transcript_sheet.dart';
+import '../hongguo/hongguo_settings_sheet.dart';
 
 class VideoPlayerScreen extends StatefulWidget {
   final String videoPath;
@@ -82,6 +85,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   HongguoPrefetchManager? _prefetchManager;
   bool _autoPlayNextEpisode = true;
   bool _isSwitchingEpisode = false;
+  bool _isDownloadingVideo = false;
 
   @override
   void initState() {
@@ -151,6 +155,16 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   }) async {
     try {
       var targetPath = playablePath;
+      if (targetPath.startsWith('http://') || targetPath.startsWith('https://')) {
+        final cached = await VideoCacheManager.findCachedFile(
+          url: targetPath,
+          seriesId: widget.dramaDetail?.seriesId,
+          episodeIndex: _currentEpisodeIndex,
+        );
+        if (cached != null && await cached.exists()) {
+          targetPath = cached.path;
+        }
+      }
       var playableUrls = <String>[targetPath];
       var httpHeaders = const <String, String>{};
       if (BilibiliResolver.isBilibiliPageUrl(targetPath)) {
@@ -395,6 +409,15 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
+                    IconButton(
+                      icon: const Icon(Icons.tune_rounded,
+                          color: AppTheme.primaryEmerald, size: 20),
+                      tooltip: 'Cài đặt Hồng Quả',
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        HongguoSettingsSheet.show(context);
+                      },
+                    ),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                       decoration: BoxDecoration(
@@ -517,6 +540,82 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
     _ttsScheduler = TtsAudioScheduler(newDocument);
     await _initPlayerForPath(newVideoPath);
+  }
+
+  Future<void> _downloadCurrentBilibiliVideo() async {
+    final videoUrl = _currentVideoPath;
+    if (!videoUrl.startsWith('http')) return;
+
+    setState(() {
+      _isDownloadingVideo = true;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('📥 Đang tải video Bilibili về máy qua 4 cụm máy chủ CDN...'),
+        duration: Duration(seconds: 2),
+      ),
+    );
+
+    try {
+      final resolver = BilibiliResolver();
+      final target = await resolver.resolveUrl(videoUrl);
+      final details = await resolver.getVideoDetails(
+        target,
+        _settings.bilibiliSessData,
+      );
+      final cachedVideo = await VideoCacheManager.getCachedVideoFile(
+        url: videoUrl,
+        bvid: details.bvid,
+        bilibiliPage: details.selectedPageIndex,
+      );
+      final partFile = File('${cachedVideo.path}.part');
+      await resolver.downloadVideo(
+        details,
+        partFile,
+        _settings.bilibiliSessData,
+        concurrency: _settings.downloadThreadCount,
+      );
+      if (await partFile.exists()) {
+        if (await cachedVideo.exists()) {
+          await cachedVideo.delete();
+        }
+        await partFile.rename(cachedVideo.path);
+        unawaited(VideoCacheManager.pruneCacheIfNeeded());
+        try {
+          final history = await HistoryRepository.getInstance();
+          await history.updateVideoPath(videoUrl, cachedVideo.path);
+        } catch (_) {}
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('✅ Tải video thành công! Đang chuyển sang phát offline mượt mà...'),
+              backgroundColor: AppTheme.primaryEmerald,
+            ),
+          );
+          final currentPos = _controller?.value.position.inMilliseconds ?? 0;
+          await _switchVideo(
+            newVideoPath: cachedVideo.path,
+            newDocument: _currentDocument,
+            newTitle: _currentTitle,
+          );
+          if (currentPos > 0) {
+            await _controller?.seekTo(Duration(milliseconds: currentPos));
+          }
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('⚠️ Lỗi khi tải video: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isDownloadingVideo = false;
+        });
+      }
+    }
   }
 
   @override
@@ -835,6 +934,151 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                   ),
                 ),
 
+              // Banner tiến trình dịch cho tập hiện tại (khi chưa có sub hoặc đang xử lý)
+              if (_prefetchManager != null && _currentDocument.isEmpty)
+                Positioned(
+                  top: 56,
+                  left: 20,
+                  right: 20,
+                  child: ValueListenableBuilder<PrefetchState?>(
+                    valueListenable: _prefetchManager!.prefetchStateNotifier,
+                    builder: (context, state, _) {
+                      if (state == null ||
+                          state.episodeIndex != _currentEpisodeIndex) {
+                        return const SizedBox.shrink();
+                      }
+                      final isTranslating = state.isTranslating;
+                      final isFailed = state.status == 'failed';
+                      if (!isTranslating && !isFailed) {
+                        return const SizedBox.shrink();
+                      }
+
+                      return Center(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.82),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: isFailed
+                                  ? Colors.redAccent.withValues(alpha: 0.6)
+                                  : AppTheme.primaryEmerald.withValues(alpha: 0.6),
+                              width: 1,
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.5),
+                                blurRadius: 10,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (isTranslating)
+                                    const SizedBox(
+                                      width: 14,
+                                      height: 14,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: AppTheme.primaryEmerald,
+                                      ),
+                                    )
+                                  else if (isFailed)
+                                    const Icon(
+                                      Icons.error_outline_rounded,
+                                      color: Colors.redAccent,
+                                      size: 16,
+                                    ),
+                                  const SizedBox(width: 8),
+                                  Flexible(
+                                    child: Text(
+                                      isFailed
+                                          ? 'Chưa tạo được phụ đề: ${state.message}'
+                                          : (state.message.isNotEmpty
+                                              ? state.message
+                                              : 'Đang bóc tách & dịch phụ đề (${(state.progress * 100).toInt()}%)...'),
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w600,
+                                        color: isFailed
+                                            ? Colors.redAccent
+                                            : Colors.white,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  if (isFailed) ...[
+                                    const SizedBox(width: 8),
+                                    InkWell(
+                                      onTap: () {
+                                        _prefetchManager?.onEpisodePlaying(
+                                          _currentEpisodeIndex,
+                                          translateCurrentIfEmpty: true,
+                                          onCurrentSubtitleReady: (newDoc) {
+                                            if (!mounted) return;
+                                            setState(() {
+                                              _currentDocument = newDoc;
+                                              _ttsScheduler.dispose();
+                                              _ttsScheduler = TtsAudioScheduler(newDoc);
+                                            });
+                                            _applyAudioVolumes();
+                                          },
+                                        );
+                                      },
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 6,
+                                          vertical: 2,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: Colors.redAccent.withValues(alpha: 0.2),
+                                          borderRadius: BorderRadius.circular(4),
+                                        ),
+                                        child: const Text(
+                                          'Thử lại',
+                                          style: TextStyle(
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.white,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                              if (isTranslating && state.progress > 0) ...[
+                                const SizedBox(height: 6),
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(2),
+                                  child: SizedBox(
+                                    width: 160,
+                                    height: 3,
+                                    child: LinearProgressIndicator(
+                                      value: state.progress.clamp(0.0, 1.0),
+                                      backgroundColor: Colors.white12,
+                                      color: AppTheme.primaryEmerald,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+
               // 4. Thanh điều khiển Video (Controls)
               if (_showControls) ...[
                 // Nút quay lại & tiêu đề trên cùng
@@ -1002,6 +1246,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                           tooltip: 'Danh sách tập phim',
                           onPressed: _showEpisodeListSheet,
                         ),
+                        IconButton(
+                          icon: const Icon(
+                            Icons.tune_rounded,
+                            color: Colors.white70,
+                          ),
+                          tooltip: 'Cài đặt dịch & xem Hồng Quả',
+                          onPressed: () => HongguoSettingsSheet.show(context),
+                        ),
                       ],
 
                       IconButton(
@@ -1103,6 +1355,27 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                         tooltip: 'Xuất/Chia sẻ SRT',
                         onPressed: _shareSubtitle,
                       ),
+                      if (_currentVideoPath.startsWith('http')) ...[
+                        IconButton(
+                          icon: _isDownloadingVideo
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: AppTheme.primaryEmerald,
+                                  ),
+                                )
+                              : const Icon(
+                                  Icons.download_for_offline_rounded,
+                                  color: Colors.white,
+                                ),
+                          tooltip: 'Tải video về máy để xem offline (không lag)',
+                          onPressed: _isDownloadingVideo
+                              ? null
+                              : _downloadCurrentBilibiliVideo,
+                        ),
+                      ],
                       IconButton(
                         icon: const Icon(Icons.subtitles, color: Colors.white),
                         tooltip: 'Kịch bản phụ đề',

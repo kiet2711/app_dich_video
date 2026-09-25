@@ -1326,6 +1326,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                   ),
                 ),
+                const SizedBox(height: 12),
+                const Divider(color: AppColors.cardBorder),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text(
+                    'Tự động tải video Bilibili để xem offline',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  subtitle: const Text(
+                    'Khi tạo phụ đề cho Bilibili, tự động tải luôn video MP4 về máy để phát offline 100% không giật lag.',
+                    style: TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                  value: _settings!.downloadBilibiliVideo,
+                  activeTrackColor: AppColors.primaryEmerald,
+                  onChanged: (val) {
+                    setState(() {
+                      _settings!.downloadBilibiliVideo = val;
+                    });
+                  },
+                ),
               ],
             ),
           ),

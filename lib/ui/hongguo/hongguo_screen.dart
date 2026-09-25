@@ -2,10 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../data/model/subtitle_document.dart';
-import '../../data/repository/settings_repository.dart';
 import '../../domain/media/hongguo_resolver.dart';
+import '../../domain/media/video_cache_manager.dart';
 import '../player/video_player_screen.dart';
 import '../theme/app_theme.dart';
+import 'hongguo_settings_sheet.dart';
 
 class HongguoScreen extends StatefulWidget {
   final void Function(String videoUrl, String title, int durationMs)?
@@ -220,233 +221,9 @@ class _HongguoScreenState extends State<HongguoScreen> {
     );
   }
 
-  Future<void> _showHongguoSettingsSheet() async {
+  void _showHongguoSettingsSheet() {
     HapticFeedback.lightImpact();
-    final settings = await SettingsRepository.getInstance();
-
-    if (!mounted) return;
-
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setSheetState) {
-          final autoPlay = settings.autoPlayNextEpisode;
-          final bufferCount = settings.prefetchEpisodeCount;
-
-          return Container(
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-            decoration: const BoxDecoration(
-              color: AppColors.darkSurface,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-            ),
-            child: SafeArea(
-              top: false,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 40,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: AppColors.cardBorder,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    children: const [
-                      Icon(Icons.tune_rounded,
-                          color: AppColors.primaryEmerald, size: 22),
-                      SizedBox(width: 8),
-                      Text(
-                        'Cài Đặt Xem Phim Hồng Quả',
-                        style: TextStyle(
-                          color: AppColors.textPrimary,
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Công tắc Tự động chuyển tập & dịch ngầm
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: AppColors.darkSurfaceVariant,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: AppColors.cardBorder),
-                    ),
-                    child: SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      activeThumbColor: AppColors.primaryEmerald,
-                      title: const Text(
-                        'Tự động chuyển tập & dịch ngầm',
-                        style: TextStyle(
-                          color: AppColors.textPrimary,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14,
-                        ),
-                      ),
-                      subtitle: const Text(
-                        'Tự chuyển tập kế tiếp khi hết video và gối đầu dịch ngầm trước',
-                        style: TextStyle(
-                            color: AppColors.textMuted, fontSize: 12),
-                      ),
-                      value: autoPlay,
-                      onChanged: (val) {
-                        setSheetState(() {
-                          settings.autoPlayNextEpisode = val;
-                        });
-                      },
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Cài đặt số tập dịch ngầm trước
-                  const Text(
-                    'SỐ TẬP DỊCH NGẦM TRƯỚC (GỐI ĐẦU):',
-                    style: TextStyle(
-                      color: AppColors.textSecondary,
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 0.5,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  const Text(
-                    'Ví dụ chọn 2 tập: Khi bạn xem Tập 1, app sẽ tự động tải và dịch ngầm Tập 2 và Tập 3 trong nền.',
-                    style: TextStyle(color: AppColors.textMuted, fontSize: 12),
-                  ),
-                  const SizedBox(height: 10),
-
-                  Row(
-                    children: [
-                      _buildBufferOption(
-                        count: 1,
-                        label: '1 tập',
-                        desc: 'Tiết kiệm pin',
-                        isSelected: bufferCount == 1,
-                        onTap: () {
-                          setSheetState(() {
-                            settings.prefetchEpisodeCount = 1;
-                          });
-                        },
-                      ),
-                      const SizedBox(width: 8),
-                      _buildBufferOption(
-                        count: 2,
-                        label: '2 tập',
-                        desc: 'Khuyên dùng',
-                        isSelected: bufferCount == 2,
-                        onTap: () {
-                          setSheetState(() {
-                            settings.prefetchEpisodeCount = 2;
-                          });
-                        },
-                      ),
-                      const SizedBox(width: 8),
-                      _buildBufferOption(
-                        count: 3,
-                        label: '3 tập',
-                        desc: 'Xem liên tục',
-                        isSelected: bufferCount == 3,
-                        onTap: () {
-                          setSheetState(() {
-                            settings.prefetchEpisodeCount = 3;
-                          });
-                        },
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primaryEmerald,
-                        foregroundColor: Colors.black,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                      ),
-                      onPressed: () => Navigator.pop(ctx),
-                      child: const Text('Xong',
-                          style: TextStyle(fontWeight: FontWeight.bold)),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildBufferOption({
-    required int count,
-    required String label,
-    required String desc,
-    required bool isSelected,
-    required VoidCallback onTap,
-  }) {
-    return Expanded(
-      child: InkWell(
-        onTap: () {
-          HapticFeedback.selectionClick();
-          onTap();
-        },
-        borderRadius: BorderRadius.circular(10),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
-          decoration: BoxDecoration(
-            color: isSelected
-                ? AppColors.primaryEmerald.withValues(alpha: 0.15)
-                : AppColors.darkSurfaceVariant,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: isSelected
-                  ? AppColors.primaryEmerald
-                  : AppColors.cardBorder,
-              width: isSelected ? 1.5 : 1,
-            ),
-          ),
-          child: Column(
-            children: [
-              Text(
-                label,
-                style: TextStyle(
-                  color: isSelected
-                      ? AppColors.primaryEmerald
-                      : AppColors.textPrimary,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 14,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                desc,
-                style: TextStyle(
-                  color: isSelected
-                      ? AppColors.primaryEmerald
-                      : AppColors.textMuted,
-                  fontSize: 10,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+    HongguoSettingsSheet.show(context);
   }
 
   @override
@@ -1423,11 +1200,22 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
     final playUrl = await _resolveCurrentEpisodeUrl();
     if (playUrl == null || !mounted) return;
 
+    var effectivePath = playUrl;
+    final cached = await VideoCacheManager.findCachedFile(
+      url: playUrl,
+      seriesId: widget.detail.seriesId,
+      episodeIndex: _selectedEpisodeIndex,
+    );
+    if (cached != null) {
+      effectivePath = cached.path;
+    }
+    if (!mounted) return;
+
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => VideoPlayerScreen(
-          videoPath: playUrl,
+          videoPath: effectivePath,
           title: '${widget.detail.title} - Tập $_selectedEpisodeIndex',
           document: SubtitleDocument(),
           dramaDetail: widget.detail,

@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../model/history_item.dart';
 import '../model/subtitle_document.dart';
 import '../../domain/media/media_storage.dart';
+import '../../domain/media/video_cache_manager.dart';
 import '../../domain/tts/tts_cache_helper.dart';
 
 class HistoryRepository {
@@ -29,11 +30,16 @@ class HistoryRepository {
   }
 
   /// Tự động sửa đường dẫn khi iOS thay đổi UUID sau mỗi lần cập nhật ứng dụng
+  /// và tự động phát file offline nếu video online đã được tải vào cache
   static Future<String> resolvePath(String path) async {
-    if (path.isEmpty ||
-        MediaStorage.isContentUri(path) ||
-        path.startsWith('http://') ||
-        path.startsWith('https://')) {
+    if (path.isEmpty || MediaStorage.isContentUri(path)) {
+      return path;
+    }
+    if (path.startsWith('http://') || path.startsWith('https://')) {
+      final cached = await VideoCacheManager.findCachedFile(url: path);
+      if (cached != null && await cached.exists()) {
+        return cached.path;
+      }
       return path;
     }
     final file = File(path);
@@ -246,6 +252,20 @@ class HistoryRepository {
     if (items[index].lastPositionMs == safePosition) return;
     items[index] = items[index].copyWith(lastPositionMs: safePosition);
     await _save(items);
+  }
+
+  Future<void> updateVideoPath(String oldPath, String newPath) async {
+    final items = getHistory();
+    var changed = false;
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].videoPath == oldPath) {
+        items[i] = items[i].copyWith(videoPath: newPath);
+        changed = true;
+      }
+    }
+    if (changed) {
+      await _save(items);
+    }
   }
 
   Future<void> deleteItem(String id) async {
