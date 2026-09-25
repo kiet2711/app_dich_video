@@ -75,7 +75,7 @@ class HomeScreenState extends State<HomeScreen> {
   bool _isProcessing = false;
   SubtitlingPipeline? _activePipeline;
   bool _cancelRequested = false;
-  bool _downloadBilibiliVideo = false;
+  bool _downloadBilibiliVideo = true;
 
   // Danh mục tuỳ chọn đồng bộ 100% bản gốc Android HomeScreen.kt
   static const _sourceLanguageOptions = [

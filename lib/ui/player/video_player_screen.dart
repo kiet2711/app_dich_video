@@ -174,14 +174,26 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           target,
           _settings.bilibiliSessData,
         );
-        playableUrls = await resolver.getMuxedVideoUrls(
-          details,
-          _settings.bilibiliSessData,
+        // Kiểm tra xem đã có video tải về trong cache theo BVID và tập chưa
+        final cached = await VideoCacheManager.findCachedFile(
+          url: targetPath,
+          bvid: details.bvid,
+          bilibiliPage: details.selectedPageIndex,
         );
-        targetPath = playableUrls.first;
-        httpHeaders = BilibiliResolver.requestHeaders(
-          _settings.bilibiliSessData,
-        );
+        if (cached != null && await cached.exists()) {
+          targetPath = cached.path;
+          playableUrls = [targetPath];
+          httpHeaders = const {};
+        } else {
+          playableUrls = await resolver.getMuxedVideoUrls(
+            details,
+            _settings.bilibiliSessData,
+          );
+          targetPath = playableUrls.first;
+          httpHeaders = BilibiliResolver.requestHeaders(
+            _settings.bilibiliSessData,
+          );
+        }
       }
 
       final isRemote =
