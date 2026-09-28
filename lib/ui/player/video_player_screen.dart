@@ -14,6 +14,7 @@ import '../../domain/media/hongguo_prefetch_manager.dart';
 import '../../domain/media/hongguo_resolver.dart';
 import '../../domain/media/video_cache_manager.dart';
 import '../../domain/media/media_storage.dart';
+import '../../domain/media/multi_thread_downloader.dart';
 import '../../domain/media/network_header_helper.dart';
 import '../../domain/tts/audio_file_validator.dart';
 import '../../player/tts_audio_scheduler.dart';
@@ -79,9 +80,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
   // Quản lý trạng thái phim bộ Hồng Quả
   late int _currentEpisodeIndex;
+  late String _sourceVideoUrl;
   late String _currentVideoPath;
   late String _currentTitle;
   late SubtitleDocument _currentDocument;
+  BilibiliVideoDetails? _bilibiliDetails;
   HongguoPrefetchManager? _prefetchManager;
   bool _autoPlayNextEpisode = true;
   bool _isSwitchingEpisode = false;
@@ -93,6 +96,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _currentEpisodeIndex = widget.currentEpisodeIndex ?? 1;
+    _sourceVideoUrl = widget.videoPath;
     _currentVideoPath = widget.videoPath;
     _currentTitle = widget.title ?? '';
     _currentDocument = widget.document ?? SubtitleDocument();
@@ -168,26 +172,48 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           target,
           _settings.bilibiliSessData,
         );
+        _bilibiliDetails = details;
 
-        playableUrls = await resolver.getMuxedVideoUrls(
-          details,
-          _settings.bilibiliSessData,
-          _settings.preferredVideoQuality,
+        // Ưu tiên nạp video từ cache nếu đã tải về trước đó
+        final cached = await VideoCacheManager.findCachedFile(
+          url: targetPath,
+          bvid: details.bvid,
+          bilibiliPage: details.selectedPageIndex,
         );
-        targetPath = playableUrls.first;
-        httpHeaders = BilibiliResolver.requestHeaders(
-          _settings.bilibiliSessData,
-        );
+        if (cached != null && await cached.exists() && await cached.length() > 1024 * 100) {
+          targetPath = cached.path;
+          playableUrls = [cached.path];
+        } else {
+          playableUrls = await resolver.getMuxedVideoUrls(
+            details,
+            _settings.bilibiliSessData,
+            _settings.preferredVideoQuality,
+          );
+          targetPath = playableUrls.first;
+          httpHeaders = BilibiliResolver.requestHeaders(
+            _settings.bilibiliSessData,
+          );
+        }
       } else if (widget.dramaDetail != null &&
           (targetPath.startsWith('http://') || targetPath.startsWith('https://'))) {
+        _bilibiliDetails = null;
         final cached = await VideoCacheManager.findCachedFile(
           url: targetPath,
           seriesId: widget.dramaDetail?.seriesId,
           episodeIndex: _currentEpisodeIndex,
         );
-        if (cached != null && await cached.exists()) {
+        if (cached != null && await cached.exists() && await cached.length() > 1024 * 50) {
           targetPath = cached.path;
           playableUrls = [cached.path];
+        }
+      } else {
+        _bilibiliDetails = null;
+        if (targetPath.startsWith('http://') || targetPath.startsWith('https://')) {
+          final cached = await VideoCacheManager.findCachedFile(url: targetPath);
+          if (cached != null && await cached.exists() && await cached.length() > 1024 * 100) {
+            targetPath = cached.path;
+            playableUrls = [cached.path];
+          }
         }
       }
 
@@ -549,6 +575,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
     setState(() {
       _isInitialized = false;
+      _sourceVideoUrl = newVideoPath;
       _currentVideoPath = newVideoPath;
       _currentDocument = newDocument;
       _currentTitle = newTitle;
@@ -563,73 +590,217 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     await _initPlayerForPath(newVideoPath);
   }
 
-  Future<void> _downloadCurrentBilibiliVideo() async {
-    final videoUrl = _currentVideoPath;
-    if (!videoUrl.startsWith('http')) return;
+  Future<void> _downloadCurrentVideo() async {
+    if (_isDownloadingVideo) return;
+    final isHongguo = widget.dramaDetail != null;
+    final isBilibili = _bilibiliDetails != null ||
+        BilibiliResolver.isBilibiliUrl(_sourceVideoUrl) ||
+        BilibiliResolver.isBilibiliUrl(_currentVideoPath);
 
     setState(() {
       _isDownloadingVideo = true;
     });
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('📥 Đang tải video Bilibili về máy qua 4 cụm máy chủ CDN...'),
-        duration: Duration(seconds: 2),
-      ),
-    );
+
+    if (isHongguo) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('📥 Đang tải Tập $_currentEpisodeIndex về máy để xem offline...'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } else if (isBilibili) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('📥 Đang tải video Bilibili về máy qua cụm máy chủ CDN...'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('📥 Đang tải video về máy để xem offline...'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
 
     try {
-      final resolver = BilibiliResolver();
-      final target = await resolver.resolveUrl(videoUrl);
-      final details = await resolver.getVideoDetails(
-        target,
-        _settings.bilibiliSessData,
-      );
-      final cachedVideo = await VideoCacheManager.getCachedVideoFile(
-        url: videoUrl,
-        bvid: details.bvid,
-        bilibiliPage: details.selectedPageIndex,
-      );
-      final partFile = File('${cachedVideo.path}.part');
-      await resolver.downloadVideo(
-        details,
-        partFile,
-        _settings.bilibiliSessData,
-        concurrency: _settings.downloadThreadCount,
-      );
-      if (await partFile.exists()) {
-        if (await cachedVideo.exists()) {
-          try {
-            await cachedVideo.delete();
-          } catch (_) {}
+      if (isHongguo) {
+        final drama = widget.dramaDetail!;
+        final cachedVideo = await VideoCacheManager.getCachedVideoFile(
+          url: _sourceVideoUrl,
+          seriesId: drama.seriesId,
+          episodeIndex: _currentEpisodeIndex,
+        );
+        final partFile = File('${cachedVideo.path}.part');
+
+        var streamUrl = _currentVideoPath;
+        if (!streamUrl.startsWith('http')) {
+          streamUrl = await _prefetchManager?.getOrResolveUrl(_currentEpisodeIndex) ?? _sourceVideoUrl;
         }
-        try {
-          await partFile.rename(cachedVideo.path);
-        } catch (_) {
-          await partFile.copy(cachedVideo.path);
+
+        await MultiThreadDownloader.downloadFile(
+          url: streamUrl,
+          outputFile: partFile,
+          headers: NetworkHeaderHelper.getHeadersForUri(streamUrl),
+          concurrency: _settings.downloadThreadCount,
+        );
+
+        if (await partFile.exists() && await partFile.length() > 1024 * 50) {
+          if (await cachedVideo.exists()) {
+            try {
+              await cachedVideo.delete();
+            } catch (_) {}
+          }
           try {
-            await partFile.delete();
+            await partFile.rename(cachedVideo.path);
+          } catch (_) {
+            await partFile.copy(cachedVideo.path);
+            try {
+              await partFile.delete();
+            } catch (_) {}
+          }
+          unawaited(VideoCacheManager.pruneCacheIfNeeded());
+
+          try {
+            final history = await HistoryRepository.getInstance();
+            await history.updateVideoPath(_sourceVideoUrl, cachedVideo.path);
+            await history.updateVideoPath(streamUrl, cachedVideo.path);
           } catch (_) {}
+
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('✅ Tải Tập $_currentEpisodeIndex thành công! Đang chuyển sang phát offline mượt mà...'),
+                backgroundColor: AppTheme.primaryEmerald,
+              ),
+            );
+            final currentPos = _controller?.value.position.inMilliseconds ?? 0;
+            await _switchVideo(
+              newVideoPath: cachedVideo.path,
+              newDocument: _currentDocument,
+              newTitle: _currentTitle,
+            );
+            if (currentPos > 0) {
+              await _controller?.seekTo(Duration(milliseconds: currentPos));
+            }
+          }
         }
-        unawaited(VideoCacheManager.pruneCacheIfNeeded());
-        try {
-          final history = await HistoryRepository.getInstance();
-          await history.updateVideoPath(videoUrl, cachedVideo.path);
-        } catch (_) {}
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('✅ Tải video thành công! Đang chuyển sang phát offline mượt mà...'),
-              backgroundColor: AppTheme.primaryEmerald,
-            ),
+      } else if (isBilibili) {
+        final resolver = BilibiliResolver();
+        BilibiliVideoDetails details;
+        if (_bilibiliDetails != null) {
+          details = _bilibiliDetails!;
+        } else {
+          final target = await resolver.resolveUrl(_sourceVideoUrl);
+          details = await resolver.getVideoDetails(
+            target,
+            _settings.bilibiliSessData,
           );
-          final currentPos = _controller?.value.position.inMilliseconds ?? 0;
-          await _switchVideo(
-            newVideoPath: cachedVideo.path,
-            newDocument: _currentDocument,
-            newTitle: _currentTitle,
-          );
-          if (currentPos > 0) {
-            await _controller?.seekTo(Duration(milliseconds: currentPos));
+          _bilibiliDetails = details;
+        }
+
+        final cachedVideo = await VideoCacheManager.getCachedVideoFile(
+          url: _sourceVideoUrl,
+          bvid: details.bvid,
+          bilibiliPage: details.selectedPageIndex,
+        );
+        final partFile = File('${cachedVideo.path}.part');
+        await resolver.downloadVideo(
+          details,
+          partFile,
+          _settings.bilibiliSessData,
+          concurrency: _settings.downloadThreadCount,
+          quality: _settings.preferredVideoQuality,
+        );
+
+        if (await partFile.exists() && await partFile.length() > 1024 * 100) {
+          if (await cachedVideo.exists()) {
+            try {
+              await cachedVideo.delete();
+            } catch (_) {}
+          }
+          try {
+            await partFile.rename(cachedVideo.path);
+          } catch (_) {
+            await partFile.copy(cachedVideo.path);
+            try {
+              await partFile.delete();
+            } catch (_) {}
+          }
+          unawaited(VideoCacheManager.pruneCacheIfNeeded());
+          try {
+            final history = await HistoryRepository.getInstance();
+            await history.updateVideoPath(_sourceVideoUrl, cachedVideo.path);
+            await history.updateVideoPath(_currentVideoPath, cachedVideo.path);
+          } catch (_) {}
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('✅ Tải video thành công! Đang chuyển sang phát offline mượt mà...'),
+                backgroundColor: AppTheme.primaryEmerald,
+              ),
+            );
+            final currentPos = _controller?.value.position.inMilliseconds ?? 0;
+            await _switchVideo(
+              newVideoPath: cachedVideo.path,
+              newDocument: _currentDocument,
+              newTitle: _currentTitle,
+            );
+            if (currentPos > 0) {
+              await _controller?.seekTo(Duration(milliseconds: currentPos));
+            }
+          }
+        }
+      } else {
+        // Video MP4/HTTP thông thường
+        final cachedVideo = await VideoCacheManager.getCachedVideoFile(
+          url: _sourceVideoUrl,
+        );
+        final partFile = File('${cachedVideo.path}.part');
+        final downloadUrl = _currentVideoPath.startsWith('http') ? _currentVideoPath : _sourceVideoUrl;
+        await MultiThreadDownloader.downloadFile(
+          url: downloadUrl,
+          outputFile: partFile,
+          headers: NetworkHeaderHelper.getHeadersForUri(downloadUrl),
+          concurrency: _settings.downloadThreadCount,
+        );
+        if (await partFile.exists() && await partFile.length() > 1024 * 100) {
+          if (await cachedVideo.exists()) {
+            try {
+              await cachedVideo.delete();
+            } catch (_) {}
+          }
+          try {
+            await partFile.rename(cachedVideo.path);
+          } catch (_) {
+            await partFile.copy(cachedVideo.path);
+            try {
+              await partFile.delete();
+            } catch (_) {}
+          }
+          unawaited(VideoCacheManager.pruneCacheIfNeeded());
+          try {
+            final history = await HistoryRepository.getInstance();
+            await history.updateVideoPath(_sourceVideoUrl, cachedVideo.path);
+            await history.updateVideoPath(_currentVideoPath, cachedVideo.path);
+          } catch (_) {}
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('✅ Tải video thành công! Đang chuyển sang phát offline mượt mà...'),
+                backgroundColor: AppTheme.primaryEmerald,
+              ),
+            );
+            final currentPos = _controller?.value.position.inMilliseconds ?? 0;
+            await _switchVideo(
+              newVideoPath: cachedVideo.path,
+              newDocument: _currentDocument,
+              newTitle: _currentTitle,
+            );
+            if (currentPos > 0) {
+              await _controller?.seekTo(Duration(milliseconds: currentPos));
+            }
           }
         }
       }
@@ -1447,7 +1618,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                           tooltip: 'Tải video về máy để xem offline (không lag)',
                           onPressed: _isDownloadingVideo
                               ? null
-                              : _downloadCurrentBilibiliVideo,
+                              : _downloadCurrentVideo,
                         ),
                       ],
                       IconButton(

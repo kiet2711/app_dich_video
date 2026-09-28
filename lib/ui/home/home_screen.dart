@@ -13,6 +13,7 @@ import '../../data/model/subtitle_document.dart';
 import '../../data/repository/history_repository.dart';
 import '../../data/repository/settings_repository.dart';
 import '../../domain/ai/ai_model_registry.dart';
+import '../../domain/ai/translation_checkpoint_manager.dart';
 import '../../domain/media/audio_extractor.dart';
 import '../../domain/media/bilibili_resolver.dart';
 import '../../domain/media/media_storage.dart';
@@ -38,8 +39,9 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => HomeScreenState();
 }
 
-class HomeScreenState extends State<HomeScreen> {
+class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   SettingsRepository? _settings;
+  TranslationCheckpointDraft? _pendingDraft;
   int _inputMode = 0; // 0: File máy, 1: Link video online
 
   void loadOnlineVideo(String url, {String? title}) {
@@ -137,7 +139,15 @@ class HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadSettings();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && !_isProcessing) {
+      _checkPendingDraft();
+    }
   }
 
   Future<void> _loadSettings() async {
@@ -153,10 +163,69 @@ class HomeScreenState extends State<HomeScreen> {
       _downloadBilibiliVideo = s.downloadBilibiliVideo;
       _selectedVideoQuality = s.preferredVideoQuality;
     });
+    await _checkPendingDraft();
+  }
+
+  Future<void> _checkPendingDraft() async {
+    try {
+      final draft = await TranslationCheckpointManager.getLatestDraft();
+      if (mounted) {
+        setState(() {
+          _pendingDraft = draft;
+        });
+      }
+    } catch (_) {}
+  }
+
+  void _resumeDraft(TranslationCheckpointDraft draft) {
+    var duration = draft.durationMs;
+    if (duration <= 0 && draft.sourceDocument.isNotEmpty) {
+      duration = draft.sourceDocument.items.last.endMs;
+    }
+    if (duration <= 0) {
+      duration = 60000;
+    }
+
+    setState(() {
+      _selectedVideoPath = draft.videoPath;
+      _fileName = draft.title;
+      _fileDurationMs = duration;
+      _selectedSourceLang = draft.sourceLanguage;
+      _selectedTargetLang = draft.targetLanguage;
+      if (NetworkHeaderHelper.isRemoteUrl(draft.videoPath)) {
+        _inputMode = 1;
+        _urlController.text = draft.videoPath;
+      } else {
+        _inputMode = 0;
+      }
+      _probeStatusMessage = '⚡ Đang tiếp tục phiên dịch dang dở (${draft.translatedCount}/${draft.totalItems} câu - ${draft.progressPercent}%)...';
+    });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && !_isProcessing) {
+        _startProcessing();
+      }
+    });
+  }
+
+  Future<void> _discardDraft(TranslationCheckpointDraft draft) async {
+    await TranslationCheckpointManager.clearCheckpoint(draft.sessionKey);
+    if (mounted) {
+      setState(() {
+        _pendingDraft = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Đã bỏ qua bản dịch dang dở.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _activePipeline?.cancel();
     unawaited(WakelockPlus.disable());
     unawaited(ForegroundServiceManager.stop());
@@ -294,6 +363,20 @@ class HomeScreenState extends State<HomeScreen> {
       final canonicalUrl = (_bilibiliDetails != null && _bilibiliDetails!.bvid.isNotEmpty)
           ? 'https://www.bilibili.com/video/${_bilibiliDetails!.bvid}?p=$selectedPage'
           : clean;
+
+      String? draftMsg;
+      try {
+        final draftSessionKey = TranslationCheckpointManager.generateSessionKey(
+          document: SubtitleDocument(),
+          targetLanguage: _selectedTargetLang,
+          identifier: canonicalUrl,
+        );
+        final draftForUrl = await TranslationCheckpointManager.loadDraft(draftSessionKey);
+        if (draftForUrl != null && draftForUrl.totalItems > 0 && draftForUrl.translatedCount < draftForUrl.totalItems) {
+          draftMsg = '⚡ Đã lưu bản dịch dang dở (${draftForUrl.translatedCount}/${draftForUrl.totalItems} câu - ${draftForUrl.progressPercent}%)! Bấm bắt đầu để tiếp tục ngay mà không cần tải hay nhận diện lại.';
+        }
+      } catch (_) {}
+
       setState(() {
         _isProbingUrl = false;
         _selectedVideoPath = canonicalUrl;
@@ -303,6 +386,9 @@ class HomeScreenState extends State<HomeScreen> {
         _fileSizeMb = 'Trực tuyến';
         _bilibiliPages = pages;
         _selectedBilibiliPage = selectedPage;
+        if (draftMsg != null) {
+          _probeStatusMessage = draftMsg;
+        }
       });
     } catch (e) {
       if (!mounted) return;
@@ -562,6 +648,7 @@ class HomeScreenState extends State<HomeScreen> {
       final resultDoc = await pipeline.execute(
         videoPath: _selectedVideoPath!,
         totalDurationMs: _fileDurationMs,
+        title: _fileName,
         sourceLanguage: _selectedSourceLang,
         outputSrtFile: srtFile,
         downloadBilibiliVideo: _downloadBilibiliVideo,
@@ -609,6 +696,8 @@ class HomeScreenState extends State<HomeScreen> {
         Navigator.of(context, rootNavigator: true).pop();
       }
 
+      await _checkPendingDraft();
+
       if (mounted) {
         widget.onProcessCompleted?.call(resultDoc, finalPlayableVideo);
       }
@@ -616,9 +705,21 @@ class HomeScreenState extends State<HomeScreen> {
       if (mounted && Navigator.of(context, rootNavigator: true).canPop()) {
         Navigator.of(context, rootNavigator: true).pop();
       }
+      await _checkPendingDraft();
       if (mounted && !_cancelRequested) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Lỗi: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Lỗi: $e'),
+            duration: const Duration(seconds: 10),
+            action: _pendingDraft != null
+                ? SnackBarAction(
+                    label: 'Tiếp tục ngay',
+                    textColor: AppColors.primaryEmerald,
+                    onPressed: () => _resumeDraft(_pendingDraft!),
+                  )
+                : null,
+          ),
+        );
       }
     } finally {
       await sub.cancel();
@@ -631,6 +732,7 @@ class HomeScreenState extends State<HomeScreen> {
           _isProcessing = false;
           _activePipeline = null;
         });
+        await _checkPendingDraft();
       }
     }
   }
@@ -640,6 +742,154 @@ class HomeScreenState extends State<HomeScreen> {
     final minutes = totalSeconds ~/ 60;
     final seconds = totalSeconds % 60;
     return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+  }
+
+  Widget _buildResumeDraftCard(TranslationCheckpointDraft draft) {
+    final percent = draft.progressPercent;
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            AppColors.primaryEmerald.withValues(alpha: 0.15),
+            AppColors.darkSurfaceVariant,
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: AppColors.primaryEmerald.withValues(alpha: 0.4),
+          width: 1.5,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primaryEmerald.withValues(alpha: 0.08),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: AppColors.primaryEmerald.withValues(alpha: 0.2),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.history_toggle_off,
+                  color: AppColors.primaryEmerald,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  'Tiếp tục phiên dịch dang dở',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.close, color: AppColors.textMuted, size: 20),
+                tooltip: 'Bỏ qua',
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+                onPressed: () => _discardDraft(draft),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            draft.title.isEmpty ? 'Video chưa hoàn thành' : draft.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Đã dịch: ${draft.translatedCount}/${draft.totalItems} câu',
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+              Text(
+                '$percent%',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.primaryEmerald,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: draft.progress,
+              backgroundColor: Colors.white.withValues(alpha: 0.08),
+              valueColor: const AlwaysStoppedAnimation<Color>(
+                AppColors.primaryEmerald,
+              ),
+              minHeight: 6,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primaryEmerald,
+                    foregroundColor: Colors.black,
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    elevation: 0,
+                  ),
+                  onPressed: () => _resumeDraft(draft),
+                  icon: const Icon(Icons.play_arrow_rounded, size: 20),
+                  label: const Text(
+                    'Tiếp tục dịch ngay',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              TextButton(
+                style: TextButton.styleFrom(
+                  foregroundColor: AppColors.textSecondary,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                ),
+                onPressed: () => _discardDraft(draft),
+                child: const Text('Bỏ qua', style: TextStyle(fontSize: 12)),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -685,6 +935,12 @@ class HomeScreenState extends State<HomeScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             const SizedBox(height: 12),
+
+            // CARD KHÔI PHỤC PHIÊN DỊCH DANG DỞ
+            if (_pendingDraft != null) ...[
+              _buildResumeDraftCard(_pendingDraft!),
+              const SizedBox(height: 14),
+            ],
 
             // 1. NGUỒN VIDEO: TABS CHUYỂN ĐỔI (FILE MÁY / NHẬP LINK)
             Container(

@@ -6,6 +6,7 @@ import 'package:capsub_flutter/data/api/groq_translator.dart';
 import 'package:capsub_flutter/data/model/subtitle_document.dart';
 import 'package:capsub_flutter/data/model/subtitle_item.dart';
 import 'package:capsub_flutter/domain/ai/ai_model_registry.dart';
+import 'package:capsub_flutter/domain/ai/translation_checkpoint_manager.dart';
 
 /// Mục tiêu điều phối gồm: Nhà cung cấp, API Key và Model ID
 class TranslationTarget {
@@ -146,6 +147,7 @@ class SmartAiTranslator {
           return true;
         }
       }
+      return false;
     }
     final msg = error.toString().toLowerCase();
     return msg.contains('api_key_invalid') ||
@@ -153,6 +155,20 @@ class SmartAiTranslator {
         msg.contains('permission_denied') ||
         msg.contains('http 401') ||
         msg.contains('http 403');
+  }
+
+  /// Phân biệt lỗi máy chủ tạm thời (500, 502, 503, 504 - Service Unavailable / Server Overload)
+  static bool isServerUnavailableError(Object error) {
+    if (error is DioException) {
+      final code = error.response?.statusCode;
+      if (code == 500 || code == 502 || code == 503 || code == 504) return true;
+    }
+    final msg = error.toString().toLowerCase();
+    return msg.contains('503') ||
+        msg.contains('service unavailable') ||
+        msg.contains('bad gateway') ||
+        msg.contains('gateway timeout') ||
+        msg.contains('server error');
   }
 
   /// Dịch phụ đề toàn diện cho [SubtitleDocument] với cơ chế xoay đa tầng thông minh
@@ -163,6 +179,8 @@ class SmartAiTranslator {
     String targetLanguage = 'vi-VN',
     int chunkSize = 45,
     int threadCount = 3,
+    String? checkpointSessionId,
+    bool enableCheckpoint = true,
     bool Function()? isCancelled,
     void Function(double progress, String message)? progressCallback,
   }) async {
@@ -174,8 +192,46 @@ class SmartAiTranslator {
       );
     }
 
-    final safeChunkSize = chunkSize.clamp(1, 100);
     final items = document.items;
+    final sessionKey = checkpointSessionId ??
+        TranslationCheckpointManager.generateSessionKey(
+          document: document,
+          targetLanguage: targetLanguage,
+        );
+
+    // 1. Phục hồi trạng thái đã dịch từ Checkpoint nếu có
+    if (enableCheckpoint) {
+      final cachedTranslations =
+          await TranslationCheckpointManager.loadCheckpoint(sessionKey);
+      if (cachedTranslations.isNotEmpty) {
+        var restored = 0;
+        for (final item in items) {
+          final trans = cachedTranslations[item.id]?.trim();
+          if (trans != null && trans.isNotEmpty) {
+            item.translatedText = trans;
+            item.normalizeTranslation();
+            restored++;
+          }
+        }
+        if (restored > 0) {
+          progressCallback?.call(
+            0.05,
+            'Đã khôi phục $restored/${items.length} câu từ Checkpoint!',
+          );
+          // Nếu tất cả các câu đã được dịch hoàn tất từ checkpoint
+          final remaining = items.where((it) =>
+              it.translatedText.trim().isEmpty ||
+              it.translatedText.trim() == it.originalText.trim());
+          if (remaining.isEmpty) {
+            progressCallback?.call(1.0, 'Đã hoàn tất toàn bộ phụ đề từ Checkpoint!');
+            await TranslationCheckpointManager.clearCheckpoint(sessionKey);
+            return document;
+          }
+        }
+      }
+    }
+
+    final safeChunkSize = chunkSize.clamp(1, 100);
     final chunks = <List<SubtitleItem>>[];
     for (var i = 0; i < items.length; i += safeChunkSize) {
       chunks.add(items.sublist(i, math.min(i + safeChunkSize, items.length)));
@@ -200,25 +256,62 @@ class SmartAiTranslator {
         if (chunkIdx >= chunks.length) return;
 
         final chunkItems = chunks[chunkIdx];
-        final translatedTexts = await _translateChunkWithSmartRotation(
-          items: chunkItems,
-          stylePreset: stylePreset,
-          customPrompt: customPrompt,
-          targetLanguage: targetLanguage,
-          workerId: workerId,
-          isCancelled: isCancelled,
-          progressCallback: progressCallback,
-        );
 
-        for (var itemIdx = 0; itemIdx < chunkItems.length; itemIdx++) {
-          final originalItem = chunkItems[itemIdx];
-          final trans = itemIdx < translatedTexts.length
-              ? translatedTexts[itemIdx].trim()
-              : '';
-          originalItem.translatedText = trans.isNotEmpty
-              ? trans
-              : originalItem.originalText;
-          originalItem.normalizeTranslation();
+        // Lọc các câu chưa có bản dịch trong chunk này
+        final pendingInChunk = chunkItems.where((it) {
+          final trans = it.translatedText.trim();
+          final orig = it.originalText.trim();
+          return trans.isEmpty || trans == orig;
+        }).toList();
+
+        if (pendingInChunk.isNotEmpty) {
+          // Lấy sliding context (tối đa 4 câu trước batch này đã có bản dịch)
+          final chunkStartIdx = chunkIdx * safeChunkSize;
+          final contextItems = <SubtitleItem>[];
+          for (var c = math.max(0, chunkStartIdx - 4); c < chunkStartIdx; c++) {
+            final prevItem = items[c];
+            if (prevItem.translatedText.trim().isNotEmpty &&
+                prevItem.translatedText.trim() != prevItem.originalText.trim()) {
+              contextItems.add(prevItem);
+            }
+          }
+
+          final translatedMap = await _translateChunkWithSmartRotation(
+            items: pendingInChunk,
+            contextItems: contextItems,
+            stylePreset: stylePreset,
+            customPrompt: customPrompt,
+            targetLanguage: targetLanguage,
+            workerId: workerId,
+            isCancelled: isCancelled,
+            progressCallback: progressCallback,
+          );
+
+          // GHÉP THEO ID ĐỘC LẬP - KHÔNG DÙNG POSITION
+          for (final originalItem in pendingInChunk) {
+            final trans = translatedMap[originalItem.id]?.trim() ?? '';
+            originalItem.translatedText = trans.isNotEmpty
+                ? trans
+                : originalItem.originalText;
+            originalItem.normalizeTranslation();
+          }
+
+          // LƯU CHECKPOINT NGAY SAU KHI DỊCH XONG BATCH
+          if (enableCheckpoint) {
+            final currentMap = <int, String>{};
+            for (final it in items) {
+              final tr = it.translatedText.trim();
+              if (tr.isNotEmpty && tr != it.originalText.trim()) {
+                currentMap[it.id] = tr;
+              }
+            }
+            await TranslationCheckpointManager.saveCheckpoint(
+              sessionKey: sessionKey,
+              targetLanguage: targetLanguage,
+              totalItems: items.length,
+              translations: currentMap,
+            );
+          }
         }
 
         completed++;
@@ -231,6 +324,11 @@ class SmartAiTranslator {
     }
 
     await Future.wait(List.generate(workerCount, (id) => worker(id)));
+
+    // Dịch hoàn tất 100% -> Tự động dọn dẹp Checkpoint tạm
+    if (enableCheckpoint) {
+      await TranslationCheckpointManager.clearCheckpoint(sessionKey);
+    }
 
     progressCallback?.call(1.0, 'Dịch thuật hoàn tất!');
     return document;
@@ -311,8 +409,9 @@ class SmartAiTranslator {
   }
 
   /// Thực hiện dịch 1 chunk có xoay model trên cùng key, xoay key, và nhảy cross-provider
-  Future<List<String>> _translateChunkWithSmartRotation({
+  Future<Map<int, String>> _translateChunkWithSmartRotation({
     required List<SubtitleItem> items,
+    List<SubtitleItem>? contextItems,
     required String stylePreset,
     required String customPrompt,
     required String targetLanguage,
@@ -326,9 +425,11 @@ class SmartAiTranslator {
       else ...[AiProvider.groq, AiProvider.gemini],
     ];
 
+    final resolvedMap = <int, String>{};
+    var pendingItems = List<SubtitleItem>.from(items);
     Object? lastError;
 
-    // Vòng lặp tối đa 3 chu kỳ tổng để đợi hồi phục cooldown nếu tất cả tạm thời bị 429
+    // Vòng lặp tối đa 3 chu kỳ tổng để đợi hồi phục cooldown nếu tất cả tạm thời bị 429 hoặc 503
     for (var cycle = 0; cycle < 3; cycle++) {
       for (final provider in providerOrder) {
         if (isCancelled?.call() == true) throw StateError('Đã huỷ tác vụ');
@@ -372,26 +473,39 @@ class SmartAiTranslator {
             if (!isTargetAvailable(target)) continue;
 
             try {
+              // CHỈ GỬI CÁC CÂU CHƯA ĐƯỢC DỊCH THÀNH CÔNG (MISSING IDS RETRY)
               final rawResponse = await _executeRawApiCall(
                 target: target,
-                items: items,
+                items: pendingItems,
+                contextItems: contextItems,
                 stylePreset: stylePreset,
                 customPrompt: customPrompt,
                 targetLanguage: targetLanguage,
               );
 
-              final parsedResults = _parseAndAlignSrt(
+              final parsedResults = _parseAndAlignResponse(
                 rawResponse: rawResponse,
-                items: items,
-                target: target,
-                stylePreset: stylePreset,
-                customPrompt: customPrompt,
-                targetLanguage: targetLanguage,
-                isCancelled: isCancelled,
+                items: pendingItems,
               );
 
-              if (parsedResults.isNotEmpty) {
-                return parsedResults;
+              for (final entry in parsedResults.entries) {
+                if (entry.value.trim().isNotEmpty) {
+                  resolvedMap[entry.key] = entry.value.trim();
+                }
+              }
+
+              // Cập nhật danh sách các câu còn thiếu ID
+              pendingItems = items.where((it) {
+                final trans = resolvedMap[it.id]?.trim() ?? '';
+                final orig = it.originalText.trim();
+                final origHasText = containsLetterOrNumber(orig);
+                final transHasText = containsLetterOrNumber(trans);
+                return trans.isEmpty || (origHasText && !transHasText);
+              }).toList();
+
+              // Nếu tất cả các ID đã được phân giải xong -> Hoàn thành batch!
+              if (pendingItems.isEmpty) {
+                return resolvedMap;
               }
             } catch (err) {
               lastError = err;
@@ -404,6 +518,15 @@ class SmartAiTranslator {
                 );
                 // Bỏ qua các model khác trên cùng key này, nhảy sang key khác
                 break;
+              } else if (isServerUnavailableError(err)) {
+                // 500, 502, 503, 504 - LỖI MÁY CHỦ TẠM THỜI: KHÔNG ĐƯỢC COI LÀ DEAD KEY!
+                markCooldown(target, duration: const Duration(seconds: 20));
+                progressCallback?.call(
+                  0.05,
+                  'Server $provider (${target.modelId}) quá tải (503/5xx) ➔ Cooldown 20s và chuyển sang slot khác...',
+                );
+                // Chuyển sang model/key tiếp theo
+                continue;
               } else if (isRateLimitError(err)) {
                 markCooldown(target);
                 // Tầng 1: Nếu còn model khác trên cùng key, tiếp tục vòng lặp model
@@ -427,7 +550,7 @@ class SmartAiTranslator {
       }
 
       // Nếu tất cả các Key & Provider đều trong Cooldown, tạm nghỉ một khoảng ngắn rồi thử lại
-      if (cycle < 2) {
+      if (cycle < 2 && pendingItems.isNotEmpty) {
         progressCallback?.call(
           0.05,
           'Các API Key đang đợi hồi hạn mức (cooldown 15s) ➔ Đang tự động thử lại...',
@@ -439,6 +562,18 @@ class SmartAiTranslator {
       }
     }
 
+    // Nếu sau tất cả các chu kỳ vẫn còn item thiếu: giải cứu an toàn bằng interjection hoặc câu gốc
+    for (final item in items) {
+      if (!resolvedMap.containsKey(item.id) || resolvedMap[item.id]!.trim().isEmpty) {
+        final interjection = resolveInterjection(item.originalText);
+        resolvedMap[item.id] = interjection ?? item.originalText;
+      }
+    }
+
+    if (resolvedMap.isNotEmpty) {
+      return resolvedMap;
+    }
+
     throw Exception(
       'Dịch khối phụ đề thất bại sau khi đã thử tất cả Model & API Key: $lastError',
     );
@@ -448,18 +583,15 @@ class SmartAiTranslator {
   Future<String> _executeRawApiCall({
     required TranslationTarget target,
     required List<SubtitleItem> items,
+    List<SubtitleItem>? contextItems,
     required String stylePreset,
     required String customPrompt,
     required String targetLanguage,
   }) async {
-    final srtInput = StringBuffer();
-    for (var i = 0; i < items.length; i++) {
-      final item = items[i];
-      srtInput.writeln(i + 1);
-      srtInput.writeln(item.formatSrtTimecode());
-      srtInput.writeln(item.originalText);
-      srtInput.writeln();
-    }
+    final payloadJson = GeminiTranslator.buildBatchPayload(
+      items: items,
+      contextItems: contextItems,
+    );
 
     if (target.provider == AiProvider.gemini) {
       final systemPrompt = _geminiTranslator.buildSystemPrompt(
@@ -470,13 +602,14 @@ class SmartAiTranslator {
       final userPrompt = '''
 [NỘI DUNG BẮT BUỘC DỊCH SANG $targetLanguage 100% CÁC KHỐI PHỤ ĐỀ DƯỚI ĐÂY. PHIÊN ÂM TẤT CẢ HỌ TÊN NHÂN VẬT SANG HÁN VIỆT KHI NGÔN NGỮ ĐÍCH LÀ TIẾNG VIỆT. TUYỆT ĐỐI KHÔNG ĐỂ SÓT CÂU]:
 
-$srtInput
+$payloadJson
 ''';
       return await _geminiTranslator.callGeminiRestApi(
         userPrompt,
         systemPrompt,
         target.apiKey,
         overrideModelId: target.modelId,
+        requestJson: true,
       );
     } else {
       final systemPrompt = _groqTranslator.buildSystemPrompt(
@@ -485,105 +618,52 @@ $srtInput
         customPrompt,
       );
       final userPrompt = '''
-Translate the following subtitles to $targetLanguage.
-CRITICAL FORMAT RULES:
-1. Output valid SRT format ONLY.
-2. Keep the exact number of subtitles and exact timecodes.
-3. Transliterate all Chinese character names into Sino-Vietnamese (Hán-Việt) naturally.
-4. Do NOT output markdown code fences (no ```srt), explanations, or notes.
-
-SUBTITLES TO TRANSLATE:
-$srtInput
+Translate the following subtitles into $targetLanguage.
+Return ONLY valid JSON according to instructions.
+INPUT:
+$payloadJson
 ''';
       final raw = await _groqTranslator.callGroqRestApi(
         userPrompt,
         systemPrompt,
         target.apiKey,
         overrideModelId: target.modelId,
+        requestJson: true,
       );
       // Làm sạch thẻ <think>...</think> nếu có từ Qwen/DeepSeek/GPT-OSS
       return raw.replaceAll(RegExp(r'<think>[\s\S]*?</think>'), '').trim();
     }
   }
 
-  /// Phân tích và căn chỉnh SRT 4 tầng chuẩn xác
-  List<String> _parseAndAlignSrt({
+  /// Phân tích kết quả dịch JSON hoặc fallback SRT và căn chỉnh hoàn thiện
+  Map<int, String> _parseAndAlignResponse({
     required String rawResponse,
     required List<SubtitleItem> items,
-    required TranslationTarget target,
-    required String stylePreset,
-    required String customPrompt,
-    required String targetLanguage,
-    bool Function()? isCancelled,
   }) {
-    final parsedDoc = SubtitleDocument.parseSrt(rawResponse);
-    final parsedItems = parsedDoc.items;
-    if (parsedItems.isEmpty) return [];
+    final results = GeminiTranslator.parseBatchResponse(rawResponse, items);
 
-    final translatedResults = List<String>.filled(items.length, '');
-    final usedIndices = <int>{};
-
-    // Tầng 1: Khớp theo ID cục bộ (1..N)
-    for (var i = 0; i < items.length; i++) {
-      final targetId = i + 1;
-      for (var p = 0; p < parsedItems.length; p++) {
-        if (!usedIndices.contains(p) && parsedItems[p].id == targetId) {
-          usedIndices.add(p);
-          translatedResults[i] = parsedItems[p].originalText;
-          break;
-        }
-      }
-    }
-
-    // Tầng 2: Khớp theo Timecode
-    for (var i = 0; i < items.length; i++) {
-      if (translatedResults[i].trim().isNotEmpty) continue;
-      final expectedTc = _normTc(items[i].formatSrtTimecode());
-      for (var p = 0; p < parsedItems.length; p++) {
-        if (!usedIndices.contains(p) && _normTc(parsedItems[p].formatSrtTimecode()) == expectedTc) {
-          usedIndices.add(p);
-          translatedResults[i] = parsedItems[p].originalText;
-          break;
-        }
-      }
-    }
-
-    // Tầng 3: Ghép tuần tự các câu còn lại
-    var uIdx = 0;
-    for (var i = 0; i < items.length; i++) {
-      if (translatedResults[i].trim().isNotEmpty) continue;
-      while (uIdx < parsedItems.length && usedIndices.contains(uIdx)) {
-        uIdx++;
-      }
-      if (uIdx < parsedItems.length) {
-        usedIndices.add(uIdx);
-        translatedResults[i] = parsedItems[uIdx].originalText;
-        uIdx++;
-      }
-    }
-
-    // Tầng 4: Điền fallback nếu câu bị rỗng hoặc chỉ toàn dấu câu trơ trọi (. ? , ...)
-    for (var i = 0; i < items.length; i++) {
-      final original = items[i].originalText.trim();
-      final translated = translatedResults[i].trim();
+    // Xử lý các câu bị rỗng hoặc chỉ toàn dấu câu trơ trọi (. ? , ...)
+    for (final item in items) {
+      final original = item.originalText.trim();
+      final translated = (results[item.id] ?? '').trim();
       final originalHasContent = containsLetterOrNumber(original);
       final translationHasContent = containsLetterOrNumber(translated);
 
       if (translated.isEmpty || (originalHasContent && !translationHasContent)) {
         final interjection = resolveInterjection(original);
         if (interjection != null) {
-          translatedResults[i] = interjection;
+          results[item.id] = interjection;
+        } else if (translated.isEmpty) {
+          // Chưa có bản dịch, giữ rỗng để retry missing IDs
         } else {
           // Lấy câu gốc từ SRT thay vì để lại dấu câu trơ trọi!
-          translatedResults[i] = original;
+          results[item.id] = original;
         }
       }
     }
 
-    return translatedResults;
+    return results;
   }
-
-  static String _normTc(String tc) => tc.replaceAll(' ', '').replaceAll('.', ',');
 
   static final Map<String, String> _interjectionMap = {
     '啊': 'A!',

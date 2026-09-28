@@ -1,10 +1,8 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
 
 import '../../data/repository/settings_repository.dart';
 import '../../domain/font/custom_font_manager.dart';
+import '../storage/storage_cleaner_screen.dart';
 import '../theme/app_theme.dart';
 import 'gemini_key_test_dialog.dart';
 import 'groq_key_test_dialog.dart';
@@ -61,39 +59,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         backgroundColor: AppColors.primaryEmerald,
       ),
     );
-  }
-
-  Future<void> _clearTemporaryCache() async {
-    try {
-      final tempDir = await getTemporaryDirectory();
-      int freedBytes = 0;
-      if (await tempDir.exists()) {
-        final list = tempDir.listSync(recursive: true);
-        for (final file in list) {
-          if (file is File) {
-            try {
-              freedBytes += await file.length();
-              await file.delete();
-            } catch (_) {}
-          }
-        }
-      }
-      final freedMb = (freedBytes / (1024 * 1024)).toStringAsFixed(1);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Đã dọn dẹp bộ nhớ tạm: giải phóng $freedMb MB!'),
-            backgroundColor: AppColors.primaryEmerald,
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Lỗi dọn dẹp bộ nhớ tạm: $e')),
-        );
-      }
-    }
   }
 
   void _openKeyTestDialog() {
@@ -1357,7 +1322,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
 
           // Section 5: Quản lý bộ nhớ
-          _buildSectionHeader('Quản lý bộ nhớ & Dọn dẹp cache'),
+          _buildSectionHeader('Quản lý bộ nhớ & Dọn dẹp rác'),
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
@@ -1368,32 +1333,75 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Bộ nhớ đệm video tạm (tmp):',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14,
-                  ),
+                Row(
+                  children: [
+                    Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: Colors.orangeAccent.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(
+                        Icons.cleaning_services_rounded,
+                        color: Colors.orangeAccent,
+                        size: 24,
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Trình dọn rác thông minh',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 15,
+                            ),
+                          ),
+                          SizedBox(height: 3),
+                          Text(
+                            'Quét chi tiết video, audio TTS, phụ đề và rác tạm',
+                            style: TextStyle(color: Colors.white60, fontSize: 12),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 14),
                 const Text(
-                  'Trên iOS, khi chọn video từ máy hệ điều hành sẽ tạo bản sao tạm trong thư mục tmp. Bạn có thể dọn dẹp để giải phóng dung lượng máy bất cứ lúc nào.',
+                  'Giúp bạn xem trực quan những gì đã tải về (video Bilibili, phim Hồng Quả, giọng đọc AI, tệp tạm) để dọn dẹp chọn lọc hoặc dọn rác an toàn chỉ với 1 chạm.',
                   style: TextStyle(color: Colors.white70, fontSize: 12),
                 ),
-                const SizedBox(height: 12),
-                OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.orangeAccent,
-                    side: const BorderSide(color: Colors.orangeAccent),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 10,
+                const SizedBox(height: 14),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.orangeAccent,
+                      foregroundColor: Colors.black,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
                     ),
+                    icon: const Icon(Icons.auto_delete_rounded, size: 20),
+                    label: const Text(
+                      'Mở Trình Dọn Dẹp Bộ Nhớ',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                    ),
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (ctx) => const StorageCleanerScreen(),
+                        ),
+                      );
+                    },
                   ),
-                  icon: const Icon(Icons.cleaning_services_rounded, size: 18),
-                  label: const Text('Dọn dẹp bộ nhớ đệm video tạm'),
-                  onPressed: _clearTemporaryCache,
                 ),
               ],
             ),

@@ -174,8 +174,8 @@ class BilibiliResolver {
     return lower.contains('bilibili.com') ||
         lower.contains('b23.tv') ||
         lower.contains('bilivideo.com') ||
-        RegExp(r'BV[a-zA-Z0-9]{10}', caseSensitive: false).hasMatch(value) ||
-        RegExp(r'av\d+', caseSensitive: false).hasMatch(value);
+        RegExp(r'(?:^|[\/\?&=#])BV1[0-9a-zA-Z]{9}(?:[\/\?&=#]|$)', caseSensitive: false).hasMatch(value) ||
+        RegExp(r'(?:^|[\/\?&=#])av\d+(?:[\/\?&=#]|$)', caseSensitive: false).hasMatch(value);
   }
 
   static bool isBilibiliPageUrl(String input) {
@@ -183,9 +183,15 @@ class BilibiliResolver {
     if (!lower.startsWith('http://') && !lower.startsWith('https://')) {
       return false;
     }
-    return isBilibiliUrl(input) &&
-        !lower.contains('bilivideo.com') &&
-        !lower.contains('biliapi');
+    // Không nhận nhầm các link CDN stream là link trang video Bilibili
+    if (lower.contains('bilivideo.com') ||
+        lower.contains('biliapi') ||
+        lower.contains('akamaized.net') ||
+        lower.contains('.m4s') ||
+        lower.contains('.mp4')) {
+      return false;
+    }
+    return isBilibiliUrl(input);
   }
 
   static Map<String, String> requestHeaders([String cookie = '']) {
@@ -235,11 +241,11 @@ class BilibiliResolver {
     }
 
     final bvid = RegExp(
-      r'BV[a-zA-Z0-9]{10}',
+      r'(?:^|[\/\?&=#])(BV1[0-9a-zA-Z]{9})(?:[\/\?&=#]|$)',
       caseSensitive: false,
-    ).firstMatch(target)?.group(0);
+    ).firstMatch(target)?.group(1);
     final aid = RegExp(
-      r'av(\d+)',
+      r'(?:^|[\/\?&=#])av(\d+)(?:[\/\?&=#]|$)',
       caseSensitive: false,
     ).firstMatch(target)?.group(1);
 
@@ -372,8 +378,20 @@ class BilibiliResolver {
     String cookie = '',
     String quality = '64',
   ]) async {
-    final data = await _getPlayData(details, cookie, fnval: '0', quality: quality);
-    final urls = extractMuxedVideoUrls(data);
+    var data = await _getPlayData(details, cookie, fnval: '0', quality: quality);
+    var urls = extractMuxedVideoUrls(data);
+    if (urls.isEmpty && quality != '32') {
+      try {
+        final fallbackData = await _getPlayData(details, cookie, fnval: '0', quality: '32');
+        urls = extractMuxedVideoUrls(fallbackData);
+      } catch (_) {}
+    }
+    if (urls.isEmpty && quality != '16') {
+      try {
+        final fallbackData = await _getPlayData(details, cookie, fnval: '0', quality: '16');
+        urls = extractMuxedVideoUrls(fallbackData);
+      } catch (_) {}
+    }
     if (urls.isEmpty) {
       throw StateError('Bilibili không trả luồng video MP4 tương thích iOS.');
     }
@@ -578,6 +596,7 @@ class BilibiliResolver {
     final headers = requestHeaders(cookie);
     await MultiThreadDownloader.downloadFile(
       url: videoUrls.first,
+      backupUrls: videoUrls.skip(1).toList(),
       outputFile: destination,
       headers: headers,
       concurrency: concurrency,

@@ -19,6 +19,9 @@ class SubtitleItem {
     this.playbackSpeed = 1.0,
   });
 
+  /// Thời lượng hiển thị của câu phụ đề tính bằng mili-giây
+  int get durationMs => (endMs - startMs) > 0 ? (endMs - startMs) : 0;
+
   String getDisplayText([String mode = 'translated']) {
     final translationOnly = getTranslationOnlyText();
     switch (mode.toLowerCase()) {

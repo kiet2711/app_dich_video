@@ -2,8 +2,11 @@ import 'dart:math' as math;
 
 import 'package:dio/dio.dart';
 
+import 'gemini_translator.dart';
+
 import '../model/subtitle_document.dart';
 import '../model/subtitle_item.dart';
+import '../../domain/ai/translation_checkpoint_manager.dart';
 
 class GroqTranslator {
   final List<String> apiKeys;
@@ -49,6 +52,8 @@ class GroqTranslator {
     String targetLanguage = 'Tiếng Việt',
     int chunkSize = 45,
     int threadCount = 3,
+    String? checkpointSessionId,
+    bool enableCheckpoint = true,
     bool Function()? isCancelled,
     void Function(double progress, String message)? progressCallback,
   }) async {
@@ -59,8 +64,45 @@ class GroqTranslator {
       );
     }
 
-    final safeChunkSize = chunkSize.clamp(1, 100);
     final items = document.items;
+    final sessionKey = checkpointSessionId ??
+        TranslationCheckpointManager.generateSessionKey(
+          document: document,
+          targetLanguage: targetLanguage,
+        );
+
+    // 1. Phục hồi trạng thái đã dịch từ Checkpoint nếu có
+    if (enableCheckpoint) {
+      final cachedTranslations =
+          await TranslationCheckpointManager.loadCheckpoint(sessionKey);
+      if (cachedTranslations.isNotEmpty) {
+        var restored = 0;
+        for (final item in items) {
+          final trans = cachedTranslations[item.id]?.trim();
+          if (trans != null && trans.isNotEmpty) {
+            item.translatedText = trans;
+            item.normalizeTranslation();
+            restored++;
+          }
+        }
+        if (restored > 0) {
+          progressCallback?.call(
+            0.05,
+            'Đã khôi phục $restored/${items.length} câu từ Checkpoint!',
+          );
+          final remaining = items.where((it) =>
+              it.translatedText.trim().isEmpty ||
+              it.translatedText.trim() == it.originalText.trim());
+          if (remaining.isEmpty) {
+            progressCallback?.call(1.0, 'Đã hoàn tất toàn bộ phụ đề từ Checkpoint!');
+            await TranslationCheckpointManager.clearCheckpoint(sessionKey);
+            return document;
+          }
+        }
+      }
+    }
+
+    final safeChunkSize = chunkSize.clamp(1, 100);
     final chunks = <List<SubtitleItem>>[];
     for (var i = 0; i < items.length; i += safeChunkSize) {
       chunks.add(items.sublist(i, math.min(i + safeChunkSize, items.length)));
@@ -91,18 +133,59 @@ class GroqTranslator {
         final chunkIdx = nextChunk++;
         if (chunkIdx >= chunks.length) return;
         final chunkItems = chunks[chunkIdx];
-        final translatedTexts = await _translateChunkWithRetry(
-          chunkItems,
-          systemPrompt,
-          targetLanguage,
-          isCancelled: isCancelled,
-        );
 
-        for (var i = 0; i < chunkItems.length; i++) {
-          final translated = translatedTexts[i].trim();
-          chunkItems[i].translatedText = translated.isEmpty
-              ? chunkItems[i].originalText
-              : translated;
+        // Lọc các câu chưa có bản dịch trong chunk này
+        final pendingInChunk = chunkItems.where((it) {
+          final trans = it.translatedText.trim();
+          final orig = it.originalText.trim();
+          return trans.isEmpty || trans == orig;
+        }).toList();
+
+        if (pendingInChunk.isNotEmpty) {
+          // Lấy sliding context (tối đa 4 câu trước batch này đã có bản dịch)
+          final chunkStartIdx = chunkIdx * safeChunkSize;
+          final contextItems = <SubtitleItem>[];
+          for (var c = math.max(0, chunkStartIdx - 4); c < chunkStartIdx; c++) {
+            final prevItem = items[c];
+            if (prevItem.translatedText.trim().isNotEmpty &&
+                prevItem.translatedText.trim() != prevItem.originalText.trim()) {
+              contextItems.add(prevItem);
+            }
+          }
+
+          final translatedMap = await _translateChunkWithRetry(
+            pendingInChunk,
+            systemPrompt,
+            targetLanguage,
+            contextItems: contextItems,
+            isCancelled: isCancelled,
+          );
+
+          // Map theo ID trực tiếp vào cue gốc, không bao giờ dùng index/position
+          for (final originalItem in pendingInChunk) {
+            final trans = translatedMap[originalItem.id]?.trim() ?? '';
+            originalItem.translatedText = trans.isNotEmpty
+                ? trans
+                : originalItem.originalText;
+            originalItem.normalizeTranslation();
+          }
+
+          // LƯU CHECKPOINT NGAY SAU KHI DỊCH XONG BATCH
+          if (enableCheckpoint) {
+            final currentMap = <int, String>{};
+            for (final it in items) {
+              final tr = it.translatedText.trim();
+              if (tr.isNotEmpty && tr != it.originalText.trim()) {
+                currentMap[it.id] = tr;
+              }
+            }
+            await TranslationCheckpointManager.saveCheckpoint(
+              sessionKey: sessionKey,
+              targetLanguage: targetLanguage,
+              totalItems: items.length,
+              translations: currentMap,
+            );
+          }
         }
 
         completed++;
@@ -116,6 +199,11 @@ class GroqTranslator {
 
     final workers = List.generate(workerCount, (_) => worker());
     await Future.wait(workers);
+
+    // Dịch hoàn tất 100% -> Tự động dọn dẹp Checkpoint tạm
+    if (enableCheckpoint) {
+      await TranslationCheckpointManager.clearCheckpoint(sessionKey);
+    }
 
     return document;
   }
@@ -183,117 +271,104 @@ class GroqTranslator {
     return results;
   }
 
-  Future<List<String>> _translateChunkWithRetry(
+  Future<Map<int, String>> _translateChunkWithRetry(
     List<SubtitleItem> items,
     String systemPrompt,
     String targetLanguage, {
+    List<SubtitleItem>? contextItems,
     bool Function()? isCancelled,
   }) async {
     final attempts = math.max(3, apiKeys.length * 2);
-    Object? lastError;
+    final expectedIds = items.map((e) => e.id).toSet();
+    final collectedResults = <int, String>{};
+
+    var currentItemsToTranslate = List<SubtitleItem>.from(items);
 
     for (var attempt = 0; attempt < attempts; attempt++) {
       if (isCancelled?.call() == true) {
         throw StateError('Đã huỷ tác vụ');
       }
+      if (currentItemsToTranslate.isEmpty) break;
 
       final key = getNextApiKey();
-      final userPrompt = _buildSrtPromptChunk(items, targetLanguage);
+      final userPrompt = GeminiTranslator.buildBatchPayload(
+        items: currentItemsToTranslate,
+        contextItems: contextItems,
+      );
 
       try {
-        final rawResponse = await callGroqRestApi(userPrompt, systemPrompt, key);
-        final cleanedResponse = _cleanThinkingContent(rawResponse);
-        final parsedItems = _parseSrtResponse(cleanedResponse);
-
-        if (parsedItems.isNotEmpty) {
-          final translatedResults = List<String>.filled(items.length, '');
-          final usedParsedIndices = <int>{};
-
-          // Tầng 1: khớp chính xác theo ID (1-based relative chunk ID).
-          for (var idx = 0; idx < items.length; idx++) {
-            final expectedId = idx + 1;
-            final parsedIndex = _findUnusedParsedIndex(
-              parsedItems,
-              usedParsedIndices,
-              (parsed) => parsed.id == expectedId,
-            );
-            if (parsedIndex != -1) {
-              usedParsedIndices.add(parsedIndex);
-              translatedResults[idx] = parsedItems[parsedIndex].originalText;
-            }
-          }
-
-          // Tầng 2: khớp theo timecode.
-          for (var idx = 0; idx < items.length; idx++) {
-            if (translatedResults[idx].trim().isNotEmpty) continue;
-            final expectedTimecode = _normalizeTimecode(
-              items[idx].formatSrtTimecode(),
-            );
-            final parsedIndex = _findUnusedParsedIndex(
-              parsedItems,
-              usedParsedIndices,
-              (parsed) =>
-                  _normalizeTimecode(parsed.formatSrtTimecode()) ==
-                  expectedTimecode,
-            );
-            if (parsedIndex != -1) {
-              usedParsedIndices.add(parsedIndex);
-              translatedResults[idx] = parsedItems[parsedIndex].originalText;
-            }
-          }
-
-          // Tầng 3: ghép tuần tự các câu còn lại.
-          var unusedIndex = 0;
-          for (var idx = 0; idx < items.length; idx++) {
-            if (translatedResults[idx].trim().isNotEmpty) continue;
-            while (unusedIndex < parsedItems.length &&
-                usedParsedIndices.contains(unusedIndex)) {
-              unusedIndex++;
-            }
-            if (unusedIndex < parsedItems.length) {
-              usedParsedIndices.add(unusedIndex);
-              translatedResults[idx] = parsedItems[unusedIndex].originalText;
-              unusedIndex++;
-            }
-          }
-
-          // Tầng 4: dịch riêng câu bị rỗng hoặc thiếu nội dung chữ.
-          for (var idx = 0; idx < items.length; idx++) {
-            final original = items[idx].originalText.trim();
-            final translated = translatedResults[idx].trim();
-            final originalHasContent = _containsLetterOrNumber(original);
-            final translationHasContent = _containsLetterOrNumber(translated);
-            if (originalHasContent && !translationHasContent) {
-              try {
-                final single = await _translateSingleTextInternal(
-                  original,
-                  systemPrompt,
-                  isCancelled: isCancelled,
-                );
-                translatedResults[idx] = _containsLetterOrNumber(single)
-                    ? single
-                    : original;
-              } catch (_) {
-                translatedResults[idx] = original;
-              }
-            } else if (translated.isEmpty) {
-              translatedResults[idx] = original;
-            }
-          }
-
-          return translatedResults;
-        }
-        lastError = const FormatException(
-          'Groq không trả về phụ đề theo định dạng SRT hợp lệ.',
+        final rawResponse = await callGroqRestApi(
+          userPrompt,
+          systemPrompt,
+          key,
+          requestJson: true,
         );
-      } catch (error) {
-        lastError = error;
+        final cleanedResponse = _cleanThinkingContent(rawResponse);
+        final parsed = GeminiTranslator.parseBatchResponse(
+          cleanedResponse,
+          currentItemsToTranslate,
+        );
+        collectedResults.addAll(parsed);
+
+        final missingIds = expectedIds
+            .where((id) => !collectedResults.containsKey(id))
+            .toSet();
+
+        if (missingIds.isEmpty) break;
+
+        // Nếu chỉ thiếu đúng 1 ID: dịch đơn lẻ để cứu ngay câu đó với độ ưu tiên cao nhất
+        if (missingIds.length == 1) {
+          final missingItem = items.firstWhere((it) => missingIds.contains(it.id));
+          try {
+            final single = await _translateSingleTextInternal(
+              missingItem.originalText,
+              systemPrompt,
+              isCancelled: isCancelled,
+            );
+            if (_containsLetterOrNumber(single)) {
+              collectedResults[missingItem.id] = single;
+              break;
+            }
+          } catch (_) {}
+        }
+
+        // Chỉ retry các ID còn thiếu
+        currentItemsToTranslate = items
+            .where((it) => missingIds.contains(it.id))
+            .toList();
+
+        await Future.delayed(Duration(milliseconds: 150 * (attempt + 1)));
+      } catch (_) {
+        await Future.delayed(Duration(milliseconds: 250 * (attempt + 1)));
       }
     }
 
-    throw Exception(
-      'Dịch phụ đề thất bại sau $attempts lần thử: ${_readableError(lastError)}',
-    );
+    // Tầng cứu câu: Nếu câu nào bị rỗng hoặc chỉ có dấu câu
+    for (final item in items) {
+      final existing = collectedResults[item.id]?.trim() ?? '';
+      final original = item.originalText.trim();
+      final origHasText = _containsLetterOrNumber(original);
+      final transHasText = _containsLetterOrNumber(existing);
+
+      if (origHasText && !transHasText) {
+        try {
+          final single = await _translateSingleTextInternal(
+            original,
+            systemPrompt,
+            isCancelled: isCancelled,
+          );
+          collectedResults[item.id] = _containsLetterOrNumber(single)
+              ? single
+              : original;
+        } catch (_) {
+          collectedResults[item.id] = original;
+        }
+      } else if (existing.isEmpty) {
+        collectedResults[item.id] = original;
+      }
+    }
+
+    return collectedResults;
   }
 
   Future<String> _translateSingleTextInternal(
@@ -337,10 +412,11 @@ class GroqTranslator {
     String systemPrompt,
     String apiKey, {
     String? overrideModelId,
+    bool requestJson = false,
   }) async {
     const url = 'https://api.groq.com/openai/v1/chat/completions';
 
-    final body = <String, dynamic>{
+    Map<String, dynamic> buildBody({required bool withJsonFormat}) => {
       'model': overrideModelId ?? modelId,
       'messages': [
         {'role': 'system', 'content': systemPrompt},
@@ -348,9 +424,10 @@ class GroqTranslator {
       ],
       'temperature': 0.2,
       'max_tokens': 8192,
+      if (withJsonFormat) 'response_format': {'type': 'json_object'},
     };
 
-    try {
+    Future<String> send(Map<String, dynamic> body) async {
       final response = await dio.post<Map<String, dynamic>>(
         url,
         data: body,
@@ -381,7 +458,17 @@ class GroqTranslator {
         throw const FormatException('Groq trả về nội dung rỗng.');
       }
       return text;
+    }
+
+    try {
+      return await send(buildBody(withJsonFormat: requestJson));
     } on DioException catch (error) {
+      if (requestJson && error.response?.statusCode == 400) {
+        try {
+          return await send(buildBody(withJsonFormat: false));
+        } catch (_) {}
+      }
+
       final status = error.response?.statusCode;
       final responseData = error.response?.data;
       final detail = responseData ?? error.message;
@@ -394,105 +481,12 @@ class GroqTranslator {
   String _cleanThinkingContent(String raw) {
     // Loại bỏ khối <think>...</think> nếu có từ các model suy luận (Qwen hoặc GPT-OSS)
     var cleaned = raw.replaceAll(RegExp(r'<think>[\s\S]*?</think>'), '').trim();
-    // Bỏ qua các markdown code block ```srt ... ```
+    // Bỏ qua các markdown code block ```srt ... ``` hoặc ```json ... ```
     if (cleaned.startsWith('```')) {
       cleaned = cleaned.replaceFirst(RegExp(r'^```[a-zA-Z]*\n?'), '');
       cleaned = cleaned.replaceFirst(RegExp(r'\n?```$'), '');
     }
     return cleaned.trim();
-  }
-
-  String _buildSrtPromptChunk(
-    List<SubtitleItem> items,
-    String targetLanguage,
-  ) {
-    final buffer = StringBuffer();
-    buffer.writeln(
-      'Dưới đây là các khối phụ đề SRT cần dịch sang $targetLanguage. '
-      'Hãy dịch toàn bộ nội dung sang $targetLanguage, bảo toàn đúng 100% số khối, '
-      'thứ tự ID và timecode SRT:',
-    );
-    buffer.writeln();
-
-    for (var i = 0; i < items.length; i++) {
-      final item = items[i];
-      buffer.writeln(i + 1);
-      buffer.writeln(item.formatSrtTimecode());
-      buffer.writeln(item.originalText);
-      buffer.writeln();
-    }
-    return buffer.toString().trim();
-  }
-
-  List<SubtitleItem> _parseSrtResponse(String srtText) {
-    final items = <SubtitleItem>[];
-    final normalized = srtText.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
-    final blocks = normalized.split(RegExp(r'\n\s*\n'));
-
-    for (final block in blocks) {
-      final lines = block
-          .split('\n')
-          .map((l) => l.trim())
-          .where((l) => l.isNotEmpty)
-          .toList();
-      if (lines.length < 2) continue;
-
-      int? id;
-      String? timecodeLine;
-      var textStartIndex = 0;
-
-      if (RegExp(r'^\d+$').hasMatch(lines[0])) {
-        id = int.tryParse(lines[0]);
-        if (lines.length > 1 && lines[1].contains('-->')) {
-          timecodeLine = lines[1];
-          textStartIndex = 2;
-        }
-      } else if (lines[0].contains('-->')) {
-        timecodeLine = lines[0];
-        textStartIndex = 1;
-      }
-
-      if (timecodeLine == null) continue;
-
-      final parts = timecodeLine.split('-->');
-      if (parts.length != 2) continue;
-
-      final startMs = _parseTimecodeToMs(parts[0].trim());
-      final endMs = _parseTimecodeToMs(parts[1].trim());
-      if (startMs == null || endMs == null) continue;
-
-      final text = lines.sublist(textStartIndex).join('\n').trim();
-      items.add(
-        SubtitleItem(
-          id: id ?? items.length + 1,
-          startMs: startMs,
-          endMs: endMs,
-          originalText: text,
-        ),
-      );
-    }
-    return items;
-  }
-
-  int? _parseTimecodeToMs(String timecode) {
-    final match = RegExp(
-      r'^(?:(\d+):)?(\d{1,2}):(\d{2})[,.](\d{1,3})$',
-    ).firstMatch(timecode.replaceAll(' ', ''));
-    if (match == null) return null;
-
-    final hours = int.tryParse(match.group(1) ?? '0') ?? 0;
-    final minutes = int.tryParse(match.group(2) ?? '0') ?? 0;
-    final seconds = int.tryParse(match.group(3) ?? '0') ?? 0;
-    var millisStr = match.group(4) ?? '0';
-    while (millisStr.length < 3) {
-      millisStr += '0';
-    }
-    if (millisStr.length > 3) {
-      millisStr = millisStr.substring(0, 3);
-    }
-    final millis = int.tryParse(millisStr) ?? 0;
-
-    return (hours * 3600 + minutes * 60 + seconds) * 1000 + millis;
   }
 
   String buildSystemPrompt(
@@ -519,17 +513,17 @@ ${customPrompt.trim()}
 '''
         : '';
 
-    final srtRules = isSrt
-        ? '''
+    final structuralRules = '''
 
-QUY TẮC BẮT BUỘC ĐỂ KHÔNG BỊ DỊCH THIẾU HOẶC MẤT DÒNG PHỤ ĐỀ:
-1. TUYỆT ĐỐI BẢO TOÀN 100% CẤU TRÚC SRT: đầu vào có bao nhiêu khối phụ đề (ID từ 1 đến N), đầu ra BẮT BUỘC PHẢI CÓ ĐỦ CHÍNH XÁC bấy nhiêu khối.
-2. Giữ nguyên số thứ tự ID và dòng timecode (00:00:00,000 --> 00:00:00,000). Dưới mỗi timecode là ĐÚNG 1 bản dịch tương ứng bằng $targetLanguage.
-3. TUYỆT ĐỐI KHÔNG thay câu thoại bằng dấu chấm, dấu hỏi hoặc dấu ba chấm. Câu ngắn và thán từ vẫn BẮT BUỘC PHẢI DỊCH ĐẦY ĐỦ; không được nuốt câu.
-4. KHÔNG gộp hai khối phụ đề thành một và KHÔNG bỏ qua bất kỳ khối nào.
-5. KHÔNG thêm lời chào, nhãn "bản gốc/bản dịch", Markdown hoặc giải thích ngoài định dạng SRT chuẩn.
-'''
-        : '';
+QUY TẮC BẮT BUỘC ĐỂ KHÔNG BỊ DỊCH THIẾU HOẶC MẤT DÒNG PHỤ ĐỀ (BẢO TOÀN 100% CẤU TRÚC SRT VÀ ID):
+1. BẢO TOÀN 100% CẤU TRÚC SRT và ID: Mỗi input ID trong "items" phải có đúng 1 bản dịch trong output items. KHÔNG bỏ qua bất kỳ khối nào.
+2. TUYỆT ĐỐI không tạo, xóa, gộp (merge), tách (split) hoặc đổi số ID.
+3. Chỉ xuất định dạng JSON hợp lệ: {"items": [{"id": ..., "translation": "..."}]}.
+4. duration_ms là thời lượng hiển thị phụ đề tính bằng mili-giây. Với câu có duration_ms rất ngắn, ưu tiên câu văn ngắn gọn, súc tích tự nhiên mà vẫn giữ trọn ý nghĩa cốt lõi.
+5. "context" (nếu có) CHỈ DÙNG ĐỂ THAM KHẢO NGỮ CẢNH (xưng hô, diễn biến câu chuyện), TUYỆT ĐỐI KHÔNG dịch lại các câu trong context và không đưa context vào danh sách output IDs.
+6. TUYỆT ĐỐI KHÔNG thay câu thoại bằng dấu chấm, dấu hỏi hoặc dấu ba chấm. Câu ngắn và thán từ vẫn BẮT BUỘC PHẢI DỊCH ĐẦY ĐỦ; không được nuốt câu.
+7. TUYỆT ĐỐI KHÔNG xuất timestamp, timecode, markdown hay bất kỳ lời giải thích nào ngoài JSON.
+''';
 
     return '''
 Bạn là chuyên gia dịch thuật phụ đề video và lời thoại phim chuyên nghiệp hàng đầu.
@@ -543,26 +537,10 @@ QUY TẮC BẮT BUỘC VỀ TÊN NHÂN VẬT VÀ TỪ NGỮ:
 1. Khi dịch sang tiếng Việt, toàn bộ họ tên nhân vật, tên riêng, biệt danh và chức vụ tiếng Trung phải được chuyển sang âm Hán Việt chuẩn mực (ví dụ: 余昭昭 -> Dư Chiêu Chiêu, 顾总 -> Cố tổng, 陆爷 -> Lục gia).
 2. Không dịch nửa vời và không để lẫn chữ Hán trong kết quả khi ngôn ngữ đích không phải tiếng Trung.
 3. Kết quả phải dùng 100% ngôn ngữ đích: $targetLanguage.
-$srtRules
+$structuralRules
 '''
         .trim();
   }
-
-  static int _findUnusedParsedIndex(
-    List<SubtitleItem> parsedItems,
-    Set<int> usedIndices,
-    bool Function(SubtitleItem item) predicate,
-  ) {
-    for (var index = 0; index < parsedItems.length; index++) {
-      if (!usedIndices.contains(index) && predicate(parsedItems[index])) {
-        return index;
-      }
-    }
-    return -1;
-  }
-
-  static String _normalizeTimecode(String value) =>
-      value.replaceAll(' ', '').replaceAll('.', ',');
 
   static bool _containsLetterOrNumber(String value) =>
       RegExp(r'[\p{L}\p{N}]', unicode: true).hasMatch(value);

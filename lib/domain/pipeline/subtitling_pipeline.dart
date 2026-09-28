@@ -15,6 +15,7 @@ import '../../data/model/subtitle_item.dart';
 import '../../data/repository/settings_repository.dart';
 import '../ai/ai_model_registry.dart';
 import '../ai/smart_ai_translator.dart';
+import '../ai/translation_checkpoint_manager.dart';
 import '../media/audio_chunker.dart';
 import '../media/audio_extractor.dart';
 import '../media/bilibili_resolver.dart';
@@ -71,6 +72,7 @@ class SubtitlingPipeline {
   Future<SubtitleDocument> execute({
     required String videoPath,
     required int totalDurationMs,
+    String? title,
     String sourceLanguage = 'zh-CN',
     File? outputSrtFile,
     bool? downloadBilibiliVideo,
@@ -98,7 +100,25 @@ class SubtitlingPipeline {
       var extractionPath = videoPath;
       SubtitleDocument? sourceDocument;
 
-      if (BilibiliResolver.isBilibiliPageUrl(videoPath)) {
+      // 0. KIỂM TRA BẢN NHÁP / CHECKPOINT DANG DỞ TỪ PHIÊN TRƯỚC
+      final sessionKey = TranslationCheckpointManager.generateSessionKey(
+        document: SubtitleDocument(),
+        targetLanguage: targetLanguage,
+        identifier: videoPath,
+      );
+      final existingDraft = await TranslationCheckpointManager.loadDraft(sessionKey);
+      if (existingDraft != null && existingDraft.sourceDocument.isNotEmpty) {
+        sourceDocument = existingDraft.sourceDocument;
+        _emit(
+          ProcessProgress(
+            stage: ProcessStage.extractingAudio,
+            progress: 0.65,
+            message: 'Phát hiện phiên dịch dang dở: Đã khôi phục ${sourceDocument.size} câu phụ đề (đã dịch ${existingDraft.translatedCount} câu). Đang tiếp tục...',
+          ),
+        );
+      }
+
+      if (sourceDocument == null && BilibiliResolver.isBilibiliPageUrl(videoPath)) {
         final resolver = BilibiliResolver();
         _emit(
           const ProcessProgress(
@@ -268,7 +288,7 @@ class SubtitlingPipeline {
             extractionPath = downloadedAudio.path;
           }
         }
-      } else if (HongguoResolver.isHongguoUrl(videoPath)) {
+      } else if (sourceDocument == null && HongguoResolver.isHongguoUrl(videoPath)) {
         _emit(
           const ProcessProgress(
             stage: ProcessStage.extractingAudio,
@@ -560,6 +580,25 @@ class SubtitlingPipeline {
       final fullDoc = SubtitleDocument(allItems);
       fullDoc.reindex();
 
+      // Lưu ngay bản nháp gốc vào Checkpoint phòng trường hợp đứt mạng khi gọi AI
+      if (fullDoc.isNotEmpty) {
+        final existingDraftCheck = await TranslationCheckpointManager.loadDraft(sessionKey);
+        if (existingDraftCheck == null) {
+          final displayTitle = (title != null && title.trim().isNotEmpty)
+              ? title.trim()
+              : videoPath.split(RegExp(r'[/\\]')).last;
+          await TranslationCheckpointManager.saveInitialDraft(
+            sessionKey: sessionKey,
+            videoPath: videoPath,
+            title: displayTitle,
+            durationMs: totalDurationMs,
+            sourceLanguage: sourceLanguage,
+            targetLanguage: targetLanguage,
+            sourceDocument: fullDoc,
+          );
+        }
+      }
+
       // -------------------------------------------------------------
       // GIAI ĐOẠN 4: DỊCH PHỤ ĐỀ BẰNG AI THÔNG MINH ĐA TẦNG
       // -------------------------------------------------------------
@@ -599,6 +638,11 @@ class SubtitlingPipeline {
           targetLanguage: targetLanguage,
           chunkSize: effectiveBatchSize,
           threadCount: effectiveThreadCount,
+          checkpointSessionId: TranslationCheckpointManager.generateSessionKey(
+            document: fullDoc,
+            targetLanguage: targetLanguage,
+            identifier: videoPath,
+          ),
           isCancelled: () => _isCancelled,
           progressCallback: (pct, msg) {
             final overall = 0.70 + (pct * 0.28);

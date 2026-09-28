@@ -10,6 +10,7 @@ import '../../data/repository/history_repository.dart';
 import '../../domain/media/hongguo_resolver.dart';
 import '../player/video_player_screen.dart';
 import '../settings/settings_screen.dart';
+import '../storage/storage_cleaner_screen.dart';
 import '../theme/app_theme.dart';
 import 'import_subtitle_dialog.dart';
 
@@ -955,6 +956,16 @@ class _HistoryScreenState extends State<HistoryScreen> {
           ],
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.cleaning_services_rounded, color: Colors.orangeAccent),
+            tooltip: 'Dọn dẹp bộ nhớ',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (ctx) => const StorageCleanerScreen()),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.settings, color: Colors.white70),
             onPressed: () {

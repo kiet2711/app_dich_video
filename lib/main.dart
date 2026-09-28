@@ -5,6 +5,7 @@ import 'ui/history/history_screen.dart';
 import 'ui/home/home_screen.dart';
 import 'ui/hongguo/hongguo_screen.dart';
 import 'ui/settings/settings_screen.dart';
+import 'ui/storage/storage_cleaner_screen.dart';
 import 'ui/theme/app_theme.dart';
 import 'ui/tts/tts_studio_screen.dart';
 
@@ -30,6 +31,7 @@ class CapSubApp extends StatelessWidget {
       routes: {
         '/': (context) => const MainNavigation(),
         '/settings': (context) => const SettingsScreen(),
+        '/storage-cleaner': (context) => const StorageCleanerScreen(),
       },
     );
   }

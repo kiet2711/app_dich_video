@@ -23,6 +23,7 @@ class MultiThreadDownloader {
 
   static Future<int> downloadFile({
     required String url,
+    List<String> backupUrls = const [],
     required File outputFile,
     Map<String, String> headers = const {},
     int concurrency = 16,
@@ -36,10 +37,17 @@ class MultiThreadDownloader {
     }
 
     final totalBytes = await _probeFileSize(cleanUrl, headers);
-    // Với file nhỏ <= 15MB (Hongguo tập phim, TikTok, short clip...):
-    // Tải 1 luồng trực tiếp là tối ưu nhất (1-2s giống tool PC).
-    if (totalBytes > 0 && totalBytes <= 15 * 1024 * 1024) {
-      return _downloadSingleStream(cleanUrl, outputFile, headers, progressCallback, knownTotalBytes: totalBytes);
+    // Với file nhỏ <= 15MB hoặc server không trả Content-Length (totalBytes <= 0):
+    // Tải 1 luồng trực tiếp là tối ưu và an toàn nhất (1-2s giống tool PC).
+    if (totalBytes <= 15 * 1024 * 1024) {
+      return _downloadSingleStream(
+        cleanUrl,
+        outputFile,
+        headers,
+        progressCallback,
+        knownTotalBytes: totalBytes,
+        backupUrls: backupUrls,
+      );
     }
 
     final totalMb = totalBytes / (1024.0 * 1024.0);
@@ -90,6 +98,7 @@ class MultiThreadDownloader {
           chunk.end,
           headers,
           workerId,
+          backupUrls: backupUrls,
         );
 
         await writeBuffer(chunk.start, buffer);
@@ -182,15 +191,20 @@ class MultiThreadDownloader {
     Map<String, String> headers,
     int workerId, {
     int maxRetries = 4,
+    List<String> backupUrls = const [],
   }) async {
     Object? lastEx;
     for (var attempt = 0; attempt < maxRetries; attempt++) {
       try {
         var targetUrl = rawUrl;
-        // Sharding qua 4 cụm máy chủ CDN (Tencent, Alibaba, Huawei, Bilibili) ngay từ lần đầu
-        if (rawUrl.contains('upos-')) {
-          final host = cdnFallbackHosts[(workerId + attempt) % cdnFallbackHosts.length];
-          targetUrl = rawUrl.replaceFirst(RegExp(r'upos-[^/]+'), host);
+        // Chỉ khi thử lại (attempt > 0) mới chuyển sang server backup hoặc fallback
+        if (attempt > 0) {
+          if (backupUrls.isNotEmpty) {
+            targetUrl = backupUrls[(attempt - 1) % backupUrls.length];
+          } else if (rawUrl.contains('upos-')) {
+            final host = cdnFallbackHosts[(workerId + attempt) % cdnFallbackHosts.length];
+            targetUrl = rawUrl.replaceFirst(RegExp(r'upos-[^/]+'), host);
+          }
         }
 
         final reqHeaders = Map<String, dynamic>.from(headers);
@@ -206,7 +220,13 @@ class MultiThreadDownloader {
         );
 
         if (resp.data != null && resp.data!.isNotEmpty) {
-          return Uint8List.fromList(resp.data!);
+          final data = resp.data!;
+          if (resp.statusCode == 200 && data.length > (end - start + 1)) {
+            final subStart = start.clamp(0, data.length);
+            final subEnd = (end + 1).clamp(subStart, data.length);
+            return Uint8List.fromList(data.sublist(subStart, subEnd));
+          }
+          return Uint8List.fromList(data);
         }
       } catch (e) {
         lastEx = e;
@@ -222,9 +242,11 @@ class MultiThreadDownloader {
     Map<String, String> headers,
     void Function(double progress, String message)? progressCallback, {
     int knownTotalBytes = 0,
+    List<String> backupUrls = const [],
   }) async {
     Object? lastEx;
     for (var attempt = 0; attempt < 3; attempt++) {
+      IOSink? sink;
       try {
         if (attempt > 0) {
           progressCallback?.call(
@@ -234,8 +256,12 @@ class MultiThreadDownloader {
           await Future<void>.delayed(Duration(seconds: attempt * 2));
         }
 
+        final targetUrl = (attempt > 0 && backupUrls.isNotEmpty)
+            ? backupUrls[(attempt - 1) % backupUrls.length]
+            : url;
+
         final resp = await _dio.get<ResponseBody>(
-          url,
+          targetUrl,
           options: Options(
             headers: headers,
             responseType: ResponseType.stream,
@@ -246,7 +272,7 @@ class MultiThreadDownloader {
         final totalBytes = headerBytes > 0 ? headerBytes : knownTotalBytes;
         final totalMb = totalBytes > 0 ? totalBytes / (1024.0 * 1024.0) : 0.0;
         var downloaded = 0;
-        final sink = outputFile.openWrite();
+        sink = outputFile.openWrite();
         final startTime = DateTime.now().millisecondsSinceEpoch;
         var lastNotifyTime = 0;
 
@@ -264,13 +290,14 @@ class MultiThreadDownloader {
             final totalMbStr = totalMb > 0 ? ' / ${totalMb.toStringAsFixed(1)} MB' : ' MB';
             progressCallback?.call(
               pct,
-              'Đang tải siêu tốc: ${(downloaded / (1024 * 1024)).toStringAsFixed(1)}$totalMbStr (${speedMBs.toStringAsFixed(1)} MB/s)',
+              'Đang tải video: ${(downloaded / (1024 * 1024)).toStringAsFixed(1)}$totalMbStr (${speedMBs.toStringAsFixed(1)} MB/s)',
             );
           }
         }
 
         await sink.flush();
         await sink.close();
+        sink = null;
 
         final totalTime = (DateTime.now().millisecondsSinceEpoch - startTime) / 1000.0;
         final avgSpeed = totalTime > 0.1 ? (downloaded / (1024 * 1024)) / totalTime : 0.0;
@@ -282,6 +309,10 @@ class MultiThreadDownloader {
         return downloaded;
       } catch (e) {
         lastEx = e;
+        try {
+          await sink?.flush();
+          await sink?.close();
+        } catch (_) {}
         try {
           if (await outputFile.exists()) {
             await outputFile.delete();

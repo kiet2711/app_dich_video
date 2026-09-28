@@ -65,8 +65,13 @@ class HistoryRepository {
         if (await candidate.exists()) return candidate.path;
       }
 
-      // 3. Kiểm tra nếu là video nằm trong thư mục media hoặc supportDir
+      // 3. Kiểm tra nếu là video nằm trong thư mục video_cache, media hoặc supportDir
       final supportDir = await getApplicationSupportDirectory();
+      if (path.contains('video_cache')) {
+        final filename = path.split(RegExp(r'[/\\]')).last;
+        final candidate = File('${supportDir.path}/video_cache/$filename');
+        if (await candidate.exists()) return candidate.path;
+      }
       if (path.contains('/media/')) {
         final filename = path.split(RegExp(r'[/\\]')).last;
         final candidate = File('${supportDir.path}/media/$filename');
