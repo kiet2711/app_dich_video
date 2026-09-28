@@ -580,13 +580,23 @@ class SubtitlingPipeline {
       final fullDoc = SubtitleDocument(allItems);
       fullDoc.reindex();
 
-      // Lưu ngay bản nháp gốc vào Checkpoint phòng trường hợp đứt mạng khi gọi AI
-      if (fullDoc.isNotEmpty) {
+      // -------------------------------------------------------------
+      // GIAI ĐOẠN 4: DỊCH PHỤ ĐỀ BẰNG AI THÔNG MINH ĐA TẦNG
+      // -------------------------------------------------------------
+      final isAi = AiModelRegistry.isAiTranslationModel(translationEngine);
+
+      // Chỉ lưu bản nháp Checkpoint nếu sử dụng mô hình dịch AI (phòng trường hợp rớt mạng/hết quota)
+      if (isAi && fullDoc.isNotEmpty) {
         final existingDraftCheck = await TranslationCheckpointManager.loadDraft(sessionKey);
         if (existingDraftCheck == null) {
-          final displayTitle = (title != null && title.trim().isNotEmpty)
-              ? title.trim()
-              : videoPath.split(RegExp(r'[/\\]')).last;
+          String displayTitle;
+          if (title != null && title.trim().isNotEmpty && !title.startsWith('?') && !title.startsWith('http')) {
+            displayTitle = title.trim();
+          } else if (NetworkHeaderHelper.isRemoteUrl(videoPath)) {
+            displayTitle = NetworkHeaderHelper.getSuggestedTitle(videoPath);
+          } else {
+            displayTitle = videoPath.split(RegExp(r'[/\\]')).last;
+          }
           await TranslationCheckpointManager.saveInitialDraft(
             sessionKey: sessionKey,
             videoPath: videoPath,
@@ -598,11 +608,6 @@ class SubtitlingPipeline {
           );
         }
       }
-
-      // -------------------------------------------------------------
-      // GIAI ĐOẠN 4: DỊCH PHỤ ĐỀ BẰNG AI THÔNG MINH ĐA TẦNG
-      // -------------------------------------------------------------
-      final isAi = AiModelRegistry.isAiTranslationModel(translationEngine);
       if (isAi && fullDoc.isNotEmpty) {
         if (_isCancelled) throw Exception('Đã huỷ tác vụ');
         _emit(
@@ -660,6 +665,9 @@ class SubtitlingPipeline {
       if (outputSrtFile != null) {
         await fullDoc.saveToFile(outputSrtFile);
       }
+
+      // Xóa checkpoint khi hoàn thành xuất sắc toàn bộ pipeline
+      await TranslationCheckpointManager.clearCheckpoint(sessionKey);
 
       _emit(
         ProcessProgress(

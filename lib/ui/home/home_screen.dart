@@ -696,6 +696,12 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         Navigator.of(context, rootNavigator: true).pop();
       }
 
+      final finishedSessionKey = TranslationCheckpointManager.generateSessionKey(
+        document: SubtitleDocument(),
+        targetLanguage: _selectedTargetLang,
+        identifier: _selectedVideoPath!,
+      );
+      await TranslationCheckpointManager.clearCheckpoint(finishedSessionKey);
       await _checkPendingDraft();
 
       if (mounted) {

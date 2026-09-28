@@ -1,11 +1,13 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:crypto/crypto.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../../data/model/subtitle_document.dart';
 import '../../data/model/subtitle_item.dart';
+import '../media/network_header_helper.dart';
 
 class TranslationCheckpointDraft {
   final String sessionKey;
@@ -42,7 +44,12 @@ class TranslationCheckpointDraft {
   factory TranslationCheckpointDraft.fromJson(Map<String, dynamic> json, String filePath) {
     final sessionKey = json['sessionKey']?.toString() ?? '';
     final videoPath = json['videoPath']?.toString() ?? '';
-    final title = json['title']?.toString() ?? (videoPath.split(RegExp(r'[/\\]')).last);
+    final rawTitle = json['title']?.toString() ?? '';
+    final title = (rawTitle.isNotEmpty && !rawTitle.startsWith('?') && !rawTitle.startsWith('http'))
+        ? rawTitle
+        : (NetworkHeaderHelper.isRemoteUrl(videoPath)
+            ? NetworkHeaderHelper.getSuggestedTitle(videoPath)
+            : videoPath.split(RegExp(r'[/\\]')).last);
     final durationMs = int.tryParse(json['durationMs']?.toString() ?? '0') ?? 0;
     final sourceLanguage = json['sourceLanguage']?.toString() ?? 'zh-CN';
     final targetLanguage = json['targetLanguage']?.toString() ?? 'vi-VN';
@@ -84,6 +91,14 @@ class TranslationCheckpointDraft {
       }
     }
 
+    // Đếm số lượng thực tế đã có bản dịch (kể cả từ sourceItems)
+    final docTranslated = items.where((it) {
+      final tr = it.translatedText.trim();
+      final orig = it.originalText.trim();
+      return tr.isNotEmpty && tr != orig;
+    }).length;
+    final finalTranslatedCount = math.max(translations.length, docTranslated);
+
     return TranslationCheckpointDraft(
       sessionKey: sessionKey,
       filePath: filePath,
@@ -96,7 +111,7 @@ class TranslationCheckpointDraft {
       translations: translations,
       updatedAt: updatedAt,
       totalItems: totalItems > 0 ? totalItems : items.length,
-      translatedCount: translations.length,
+      translatedCount: finalTranslatedCount,
     );
   }
 }
@@ -319,6 +334,12 @@ class TranslationCheckpointManager {
           final data = jsonDecode(content);
           if (data is Map) {
             final draft = TranslationCheckpointDraft.fromJson(Map<String, dynamic>.from(data), f.path);
+            // Nếu draft đã được dịch hoàn tất 100% -> Tự động xóa file checkpoint này
+            if (draft.totalItems > 0 && draft.translatedCount >= draft.totalItems) {
+              await clearCheckpoint(draft.sessionKey);
+              continue;
+            }
+
             if (draft.totalItems > 0 && draft.translatedCount < draft.totalItems) {
               return draft;
             }
