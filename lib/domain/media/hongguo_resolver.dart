@@ -316,12 +316,12 @@ class HongguoResolver {
     }
 
     // Ảnh bìa
-    var cover = _cleanJsonString(_extractMatch(html, r'"series_cover"\s*:\s*"([^"]+)"'));
+    var cover = _normalizeImageUrl(_extractMatch(html, r'"series_cover"\s*:\s*"([^"]+)"'));
     if (cover.isEmpty) {
-      cover = _cleanJsonString(_extractMatch(html, r'"image"\s*:\s*"([^"]+)"'));
+      cover = _normalizeImageUrl(_extractMatch(html, r'"image"\s*:\s*"([^"]+)"'));
     }
     if (cover.isEmpty) {
-      cover = _cleanJsonString(_extractMatch(html, r'"thumbnailUrl"\s*:\s*\[\s*"([^"]+)"'));
+      cover = _normalizeImageUrl(_extractMatch(html, r'"thumbnailUrl"\s*:\s*\[\s*"([^"]+)"'));
     }
 
     // Tóm tắt nội dung
@@ -438,7 +438,7 @@ class HongguoResolver {
       final title = _cleanDramaTitle(_extractMatch(block, r'"series_name"\s*:\s*"([^"]+)"'));
       if (title.isEmpty) continue;
 
-      final cover = _cleanJsonString(_extractMatch(block, r'"series_cover"\s*:\s*"([^"]+)"'));
+      final cover = _normalizeImageUrl(_extractMatch(block, r'"series_cover"\s*:\s*"([^"]+)"'));
       final epRightText = _cleanJsonString(_extractMatch(block, r'"episode_right_text"\s*:\s*"([^"]+)"'));
       final epCntMatch = RegExp(r'(\d+)').firstMatch(epRightText);
       final epCount = epCntMatch != null ? int.tryParse(epCntMatch.group(1)!) ?? 0 : 0;
@@ -486,7 +486,7 @@ class HongguoResolver {
             : _stripHtml(content);
         title = _cleanDramaTitle(title);
 
-        final cover = _extractMatch(content, r'src="([^"]+)"');
+        final cover = _normalizeImageUrl(_extractMatch(content, r'src="([^"]+)"'));
         final epText = _extractMatch(content, r'全(\d+)集');
         final epCount = int.tryParse(epText) ?? 0;
 
@@ -547,8 +547,20 @@ class HongguoResolver {
     return raw
         .replaceAll(r'\u002F', '/')
         .replaceAll(r'\u0026', '&')
+        .replaceAll(r'\/', '/')
         .replaceAll('&amp;', '&')
         .trim();
+  }
+
+  static String _normalizeImageUrl(String raw) {
+    var clean = _cleanJsonString(raw);
+    if (clean.isEmpty) return '';
+    if (clean.startsWith('//')) {
+      clean = 'https:$clean';
+    } else if (clean.startsWith('http://')) {
+      clean = clean.replaceFirst('http://', 'https://');
+    }
+    return clean;
   }
 
   static String _cleanDramaTitle(String raw) {

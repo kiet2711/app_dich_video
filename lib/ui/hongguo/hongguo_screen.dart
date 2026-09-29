@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../../data/model/subtitle_document.dart';
 import '../../domain/media/hongguo_resolver.dart';
+import '../../domain/media/network_header_helper.dart';
 import '../../domain/media/video_cache_manager.dart';
 import '../player/video_player_screen.dart';
 import '../theme/app_theme.dart';
@@ -567,57 +568,66 @@ class _HongguoScreenState extends State<HongguoScreen> {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  // Nút Load Phim Mới
-                  InkWell(
-                    onTap: _isLoading ? null : _loadRandomNewDramas,
-                    borderRadius: BorderRadius.circular(20),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 5,
-                      ),
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [
-                            AppColors.primaryEmerald.withValues(alpha: 0.22),
-                            AppColors.primaryEmerald.withValues(alpha: 0.08),
-                          ],
+                  // Nút hành động Subheader (Đổi phim ngẫu nhiên khi ở Đề Xuất, hoặc Làm mới khi ở BXH/Thể loại)
+                  if (!_isSearchMode)
+                    InkWell(
+                      onTap: _isLoading
+                          ? null
+                          : (_currentCategorySlug == 'discover'
+                              ? _loadRandomNewDramas
+                              : _loadDramas),
+                      borderRadius: BorderRadius.circular(20),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 5,
                         ),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                          color: AppColors.primaryEmerald.withValues(alpha: 0.5),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [
+                              AppColors.primaryEmerald.withValues(alpha: 0.22),
+                              AppColors.primaryEmerald.withValues(alpha: 0.08),
+                            ],
+                          ),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: AppColors.primaryEmerald.withValues(alpha: 0.5),
+                          ),
                         ),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          _isLoading
-                              ? const SizedBox(
-                                  width: 13,
-                                  height: 13,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _isLoading
+                                ? const SizedBox(
+                                    width: 13,
+                                    height: 13,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: AppColors.primaryEmerald,
+                                    ),
+                                  )
+                                : Icon(
+                                    _currentCategorySlug == 'discover'
+                                        ? Icons.casino_rounded
+                                        : Icons.refresh_rounded,
+                                    size: 14,
                                     color: AppColors.primaryEmerald,
                                   ),
-                                )
-                              : const Icon(
-                                  Icons.casino_rounded,
-                                  size: 14,
-                                  color: AppColors.primaryEmerald,
-                                ),
-                          const SizedBox(width: 5),
-                          const Text(
-                            'Load phim mới',
-                            style: TextStyle(
-                              fontSize: 11.5,
-                              fontWeight: FontWeight.bold,
-                              color: AppColors.primaryEmerald,
+                            const SizedBox(width: 5),
+                            Text(
+                              _currentCategorySlug == 'discover'
+                                  ? 'Đổi phim mới'
+                                  : 'Làm mới',
+                              style: const TextStyle(
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.bold,
+                                color: AppColors.primaryEmerald,
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
-                  ),
                 ],
               ),
             ),
@@ -674,31 +684,6 @@ class _HongguoScreenState extends State<HongguoScreen> {
           ],
         ),
       ),
-      floatingActionButton: _isSearchMode
-          ? null
-          : FloatingActionButton.extended(
-              onPressed: _isLoading ? null : _loadRandomNewDramas,
-              backgroundColor: AppColors.primaryEmerald,
-              foregroundColor: const Color(0xFF0D1117),
-              elevation: 4,
-              icon: _isLoading
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Color(0xFF0D1117),
-                      ),
-                    )
-                  : const Icon(Icons.casino_rounded, size: 18),
-              label: const Text(
-                'Load phim mới',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 12.5,
-                ),
-              ),
-            ),
     );
   }
 
@@ -797,7 +782,7 @@ class _HongguoScreenState extends State<HongguoScreen> {
           physics: const AlwaysScrollableScrollPhysics(
             parent: BouncingScrollPhysics(),
           ),
-          padding: const EdgeInsets.fromLTRB(14, 4, 14, 80),
+          padding: const EdgeInsets.fromLTRB(14, 4, 14, 16),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: 2,
             childAspectRatio: aspectRatio,
@@ -834,20 +819,32 @@ class _HongguoScreenState extends State<HongguoScreen> {
             label: const Text('Trang trước'),
             style: OutlinedButton.styleFrom(
               foregroundColor: _currentPage > 1
-                  ? AppColors.textPrimary
+                  ? AppColors.primaryEmerald
                   : AppColors.textMuted,
-              side: const BorderSide(color: AppColors.cardBorder),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              side: BorderSide(
+                color: _currentPage > 1
+                    ? AppColors.primaryEmerald.withValues(alpha: 0.5)
+                    : AppColors.cardBorder,
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
             ),
             onPressed:
                 _currentPage > 1 ? () => _goToPage(_currentPage - 1) : null,
           ),
-          Text(
-            'Trang $_currentPage / $_totalPages',
-            style: const TextStyle(
-              color: AppColors.textSecondary,
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: AppColors.darkSurfaceVariant,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: AppColors.cardBorder),
+            ),
+            child: Text(
+              'Trang $_currentPage / $_totalPages',
+              style: const TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
           OutlinedButton.icon(
@@ -855,10 +852,14 @@ class _HongguoScreenState extends State<HongguoScreen> {
             label: const Text('Trang sau'),
             style: OutlinedButton.styleFrom(
               foregroundColor: _currentPage < _totalPages
-                  ? AppColors.textPrimary
+                  ? AppColors.primaryEmerald
                   : AppColors.textMuted,
-              side: const BorderSide(color: AppColors.cardBorder),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              side: BorderSide(
+                color: _currentPage < _totalPages
+                    ? AppColors.primaryEmerald.withValues(alpha: 0.5)
+                    : AppColors.cardBorder,
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
             ),
             onPressed: _currentPage < _totalPages
                 ? () => _goToPage(_currentPage + 1)
@@ -915,38 +916,52 @@ class _DramaCard extends StatelessWidget {
                   drama.cover.isNotEmpty
                       ? Image.network(
                           drama.cover,
+                          headers: NetworkHeaderHelper.getHeadersForUrl(drama.cover),
+                          cacheWidth: 360,
                           fit: BoxFit.cover,
                           errorBuilder: (ctx, e, st) => Container(
                             color: AppColors.darkSurfaceVariant,
-                            child: const Icon(
-                              Icons.movie_rounded,
-                              size: 40,
-                              color: AppColors.textMuted,
+                            child: const Center(
+                              child: Icon(
+                                Icons.movie_rounded,
+                                size: 36,
+                                color: AppColors.textMuted,
+                              ),
                             ),
                           ),
                           loadingBuilder: (ctx, child, progress) {
                             if (progress == null) return child;
                             return Container(
                               color: AppColors.darkSurfaceVariant,
-                              child: const Center(
-                                child: SizedBox(
-                                  width: 22,
-                                  height: 22,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: AppColors.primaryEmerald,
+                              child: Stack(
+                                alignment: Alignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.movie_rounded,
+                                    size: 36,
+                                    color: Colors.white.withValues(alpha: 0.05),
                                   ),
-                                ),
+                                  const SizedBox(
+                                    width: 22,
+                                    height: 22,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: AppColors.primaryEmerald,
+                                    ),
+                                  ),
+                                ],
                               ),
                             );
                           },
                         )
                       : Container(
                           color: AppColors.darkSurfaceVariant,
-                          child: const Icon(
-                            Icons.movie_rounded,
-                            size: 40,
-                            color: AppColors.textMuted,
+                          child: const Center(
+                            child: Icon(
+                              Icons.movie_rounded,
+                              size: 36,
+                              color: AppColors.textMuted,
+                            ),
                           ),
                         ),
 
@@ -1142,6 +1157,8 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                           child: detail.cover.isNotEmpty
                               ? Image.network(
                                   detail.cover,
+                                  headers: NetworkHeaderHelper.getHeadersForUrl(detail.cover),
+                                  cacheWidth: 200,
                                   width: 84,
                                   height: 114,
                                   fit: BoxFit.cover,

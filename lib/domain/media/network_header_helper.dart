@@ -77,6 +77,9 @@ class NetworkHeaderHelper {
         lower.contains('fanqiesc.com') ||
         lower.contains('fqnovel.com') ||
         lower.contains('bytevcloud.com') ||
+        lower.contains('byteimg.com') ||
+        lower.contains('ibyteimg.com') ||
+        lower.contains('toutiaoimg.com') ||
         lower.contains('snssdk.com') ||
         lower.contains('pstatp.com')) {
       headers['Referer'] = 'https://www.hongguoduanju.com/';
