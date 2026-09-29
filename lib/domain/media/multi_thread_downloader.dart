@@ -51,9 +51,8 @@ class MultiThreadDownloader {
     }
 
     final totalMb = totalBytes / (1024.0 * 1024.0);
-    // Với file > 15MB (audio dài vài tiếng, video Bilibili nặng):
-    // Dùng 4 luồng song song luân chuyển qua 4 cụm CDN (Tencent, Alibaba, Huawei, Bilibili)
-    final effectiveConcurrency = concurrency.clamp(2, 4);
+    // Tối ưu hóa số luồng song song theo cấu hình cài đặt (tối đa 16 luồng)
+    final effectiveConcurrency = concurrency.clamp(2, 16);
     // Chunk size 3MB chuẩn theo tool PC để các luồng kéo liên tục theo hàng đợi động
     const chunkSize = 3 * 1024 * 1024;
     final chunks = <_Chunk>[];
@@ -113,7 +112,7 @@ class MultiThreadDownloader {
               : 0.0;
           final pct = (downloadedBytes / totalBytes).clamp(0.0, 1.0);
           final msg =
-              'Đang tải tốc độ cao ($effectiveConcurrency cụm CDN): ${(downloadedBytes / (1024 * 1024)).toStringAsFixed(1)} / ${totalMb.toStringAsFixed(1)} MB (${speedMBs.toStringAsFixed(1)} MB/s)';
+              'Đang tải tốc độ cao ($effectiveConcurrency luồng): ${(downloadedBytes / (1024 * 1024)).toStringAsFixed(1)} / ${totalMb.toStringAsFixed(1)} MB (${speedMBs.toStringAsFixed(1)} MB/s)';
           progressCallback?.call(pct, msg);
         }
       }
@@ -193,18 +192,16 @@ class MultiThreadDownloader {
     int maxRetries = 4,
     List<String> backupUrls = const [],
   }) async {
+    final validBackups = backupUrls.where((u) => u.trim().isNotEmpty).toList();
+    final allUrls = [rawUrl, ...validBackups];
     Object? lastEx;
     for (var attempt = 0; attempt < maxRetries; attempt++) {
       try {
-        var targetUrl = rawUrl;
-        // Chỉ khi thử lại (attempt > 0) mới chuyển sang server backup hoặc fallback
-        if (attempt > 0) {
-          if (backupUrls.isNotEmpty) {
-            targetUrl = backupUrls[(attempt - 1) % backupUrls.length];
-          } else if (rawUrl.contains('upos-')) {
-            final host = cdnFallbackHosts[(workerId + attempt) % cdnFallbackHosts.length];
-            targetUrl = rawUrl.replaceFirst(RegExp(r'upos-[^/]+'), host);
-          }
+        var targetUrl = allUrls[(workerId + attempt) % allUrls.length];
+        // Nếu không có backupUrls từ API và là link upos Bilibili thì đổi host qua danh sách CDN mirror
+        if (attempt > 0 && validBackups.isEmpty && rawUrl.contains('upos-')) {
+          final host = cdnFallbackHosts[(workerId + attempt) % cdnFallbackHosts.length];
+          targetUrl = rawUrl.replaceFirst(RegExp(r'upos-[^/]+'), host);
         }
 
         final reqHeaders = Map<String, dynamic>.from(headers);

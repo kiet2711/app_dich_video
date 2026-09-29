@@ -89,6 +89,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   bool _autoPlayNextEpisode = true;
   bool _isSwitchingEpisode = false;
   bool _isDownloadingVideo = false;
+  double _downloadProgress = 0.0;
+  String _downloadMessage = '';
   bool _userChosePlayRaw = false;
 
   @override
@@ -597,32 +599,21 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         BilibiliResolver.isBilibiliUrl(_sourceVideoUrl) ||
         BilibiliResolver.isBilibiliUrl(_currentVideoPath);
 
+    void onDownloadProgress(double progress, String message) {
+      if (!mounted) return;
+      setState(() {
+        _downloadProgress = progress;
+        _downloadMessage = message;
+      });
+    }
+
     setState(() {
       _isDownloadingVideo = true;
+      _downloadProgress = 0.02;
+      _downloadMessage = isHongguo
+          ? 'Đang chuẩn bị tải Tập $_currentEpisodeIndex...'
+          : 'Đang kết nối tải video...';
     });
-
-    if (isHongguo) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('📥 Đang tải Tập $_currentEpisodeIndex về máy để xem offline...'),
-          duration: const Duration(seconds: 2),
-        ),
-      );
-    } else if (isBilibili) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('📥 Đang tải video Bilibili về máy qua cụm máy chủ CDN...'),
-          duration: Duration(seconds: 2),
-        ),
-      );
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('📥 Đang tải video về máy để xem offline...'),
-          duration: Duration(seconds: 2),
-        ),
-      );
-    }
 
     try {
       if (isHongguo) {
@@ -644,6 +635,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           outputFile: partFile,
           headers: NetworkHeaderHelper.getHeadersForUri(streamUrl),
           concurrency: _settings.downloadThreadCount,
+          progressCallback: onDownloadProgress,
         );
 
         if (await partFile.exists() && await partFile.length() > 1024 * 50) {
@@ -669,10 +661,15 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           } catch (_) {}
 
           if (mounted) {
+            setState(() {
+              _downloadProgress = 1.0;
+              _downloadMessage = '✅ Đã tải Tập $_currentEpisodeIndex thành công!';
+            });
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text('✅ Tải Tập $_currentEpisodeIndex thành công! Đang chuyển sang phát offline mượt mà...'),
                 backgroundColor: AppTheme.primaryEmerald,
+                duration: const Duration(seconds: 3),
               ),
             );
             final currentPos = _controller?.value.position.inMilliseconds ?? 0;
@@ -712,6 +709,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           _settings.bilibiliSessData,
           concurrency: _settings.downloadThreadCount,
           quality: _settings.preferredVideoQuality,
+          onProgress: onDownloadProgress,
         );
 
         if (await partFile.exists() && await partFile.length() > 1024 * 100) {
@@ -735,10 +733,15 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             await history.updateVideoPath(_currentVideoPath, cachedVideo.path);
           } catch (_) {}
           if (mounted) {
+            setState(() {
+              _downloadProgress = 1.0;
+              _downloadMessage = '✅ Đã tải video Bilibili thành công!';
+            });
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
                 content: Text('✅ Tải video thành công! Đang chuyển sang phát offline mượt mà...'),
                 backgroundColor: AppTheme.primaryEmerald,
+                duration: Duration(seconds: 3),
               ),
             );
             final currentPos = _controller?.value.position.inMilliseconds ?? 0;
@@ -764,6 +767,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           outputFile: partFile,
           headers: NetworkHeaderHelper.getHeadersForUri(downloadUrl),
           concurrency: _settings.downloadThreadCount,
+          progressCallback: onDownloadProgress,
         );
         if (await partFile.exists() && await partFile.length() > 1024 * 100) {
           if (await cachedVideo.exists()) {
@@ -786,10 +790,15 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             await history.updateVideoPath(_currentVideoPath, cachedVideo.path);
           } catch (_) {}
           if (mounted) {
+            setState(() {
+              _downloadProgress = 1.0;
+              _downloadMessage = '✅ Đã tải video thành công!';
+            });
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
                 content: Text('✅ Tải video thành công! Đang chuyển sang phát offline mượt mà...'),
                 backgroundColor: AppTheme.primaryEmerald,
+                duration: Duration(seconds: 3),
               ),
             );
             final currentPos = _controller?.value.position.inMilliseconds ?? 0;
@@ -807,13 +816,18 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('⚠️ Lỗi khi tải video: $e')),
+          SnackBar(
+            content: Text('⚠️ Lỗi khi tải video: $e'),
+            backgroundColor: Colors.redAccent,
+          ),
         );
       }
     } finally {
       if (mounted) {
         setState(() {
           _isDownloadingVideo = false;
+          _downloadProgress = 0.0;
+          _downloadMessage = '';
         });
       }
     }
@@ -1601,25 +1615,61 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                         onPressed: _shareSubtitle,
                       ),
                       if (_currentVideoPath.startsWith('http')) ...[
-                        IconButton(
-                          icon: _isDownloadingVideo
-                              ? const SizedBox(
-                                  width: 18,
-                                  height: 18,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: AppTheme.primaryEmerald,
-                                  ),
-                                )
-                              : const Icon(
-                                  Icons.download_for_offline_rounded,
-                                  color: Colors.white,
+                        if (_isDownloadingVideo)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 4),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: AppTheme.primaryEmerald
+                                    .withValues(alpha: 0.18),
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(
+                                  color: AppTheme.primaryEmerald
+                                      .withValues(alpha: 0.6),
+                                  width: 1,
                                 ),
-                          tooltip: 'Tải video về máy để xem offline (không lag)',
-                          onPressed: _isDownloadingVideo
-                              ? null
-                              : _downloadCurrentVideo,
-                        ),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  SizedBox(
+                                    width: 13,
+                                    height: 13,
+                                    child: CircularProgressIndicator(
+                                      value: _downloadProgress > 0
+                                          ? _downloadProgress.clamp(0.0, 1.0)
+                                          : null,
+                                      strokeWidth: 2,
+                                      color: AppTheme.primaryEmerald,
+                                      backgroundColor: Colors.white12,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 5),
+                                  Text(
+                                    '${(_downloadProgress * 100).toInt()}%',
+                                    style: const TextStyle(
+                                      color: AppTheme.primaryEmerald,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          )
+                        else
+                          IconButton(
+                            icon: const Icon(
+                              Icons.download_for_offline_rounded,
+                              color: Colors.white,
+                            ),
+                            tooltip: 'Tải video về máy để xem offline (không lag)',
+                            onPressed: _downloadCurrentVideo,
+                          ),
                       ],
                       IconButton(
                         icon: const Icon(Icons.subtitles, color: Colors.white),
@@ -1878,6 +1928,89 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                   ),
                 ),
               ],
+
+              // 5. Thanh hiển thị tiến trình tải video offline (Floating Banner)
+              if (_isDownloadingVideo)
+                Positioned(
+                  bottom: (_showControls && !isHongguoWaitingTranslation) ? 82 : 24,
+                  left: 20,
+                  right: 20,
+                  child: Center(
+                    child: Container(
+                      constraints: const BoxConstraints(maxWidth: 440),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 10,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF14161E).withValues(alpha: 0.92),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: AppTheme.primaryEmerald.withValues(alpha: 0.7),
+                          width: 1.2,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.6),
+                            blurRadius: 14,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(
+                                Icons.downloading_rounded,
+                                color: AppTheme.primaryEmerald,
+                                size: 20,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  _downloadMessage.isNotEmpty
+                                      ? _downloadMessage
+                                      : 'Đang tải video về máy để xem offline...',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Text(
+                                '${(_downloadProgress * 100).toInt()}%',
+                                style: const TextStyle(
+                                  color: AppTheme.primaryEmerald,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(3),
+                            child: LinearProgressIndicator(
+                              value: _downloadProgress > 0
+                                  ? _downloadProgress.clamp(0.0, 1.0)
+                                  : null,
+                              minHeight: 4,
+                              backgroundColor: Colors.white12,
+                              color: AppTheme.primaryEmerald,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
