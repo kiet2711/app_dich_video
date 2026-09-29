@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:dio/dio.dart';
 
 import 'network_header_helper.dart';
@@ -107,6 +109,7 @@ class HongguoResolver {
             );
 
   static const List<HongguoCategory> categories = [
+    HongguoCategory(slug: 'discover', label: '✨ Đề Xuất'),
     HongguoCategory(slug: 'rank/hot-drama', label: '🔥 Hot Nhất'),
     HongguoCategory(slug: 'category/real-drama', label: '🎬 Người Thật'),
     HongguoCategory(slug: 'category/comic-drama', label: '🎨 Hoạt Hình'),
@@ -190,6 +193,10 @@ class HongguoResolver {
     String genre = '',
     int page = 1,
   }) async {
+    if (category == 'discover') {
+      return getRandomRecommendations(genre: genre);
+    }
+
     var url = '$siteOrigin/$category';
     if (genre.isNotEmpty && !category.startsWith('rank/')) {
       url = '$url/$genre';
@@ -198,10 +205,82 @@ class HongguoResolver {
       url = '$url?page=$page';
     }
 
-    final res = await dio.get<String>(url);
+    final res = await dio.get<String>(
+      url,
+      options: Options(
+        validateStatus: (status) => status != null && status < 500,
+      ),
+    );
     final html = res.data ?? '';
 
     return _parseDramaList(html, page);
+  }
+
+  /// Lấy danh sách phim đề xuất mới ngẫu nhiên (Load phim mới)
+  Future<HongguoBrowseResult> getRandomRecommendations({
+    String? preferredCategory,
+    String? genre,
+  }) async {
+    final rng = Random();
+
+    // 1. Nếu có chỉ định danh mục cụ thể (vd: Người Thật, Hoạt Hình, Phim AI)
+    if (preferredCategory != null &&
+        preferredCategory.isNotEmpty &&
+        preferredCategory != 'rank/hot-drama' &&
+        preferredCategory != 'discover') {
+      final randomPage = rng.nextInt(25) + 1;
+      try {
+        final res = await browseList(
+          category: preferredCategory,
+          genre: genre ?? '',
+          page: randomPage,
+        );
+        if (res.items.isNotEmpty) {
+          final shuffled = List<HongguoDramaItem>.from(res.items)..shuffle(rng);
+          return HongguoBrowseResult(
+            items: shuffled,
+            currentPage: randomPage,
+            totalPages: res.totalPages,
+            totalItems: res.totalItems,
+          );
+        }
+      } catch (_) {}
+    }
+
+    // 2. Nếu không chỉ định hoặc đang ở tab BXH / Đề xuất:
+    // Đa dạng hóa nguồn phim từ các kho phong phú của Hồng Quả:
+    // Người Thật (34 trang), Hoạt hình (34 trang), Phim AI (34 trang), các bảng xếp hạng hot
+    final pool = <String>[
+      'category/real-drama',
+      'category/real-drama',
+      'category/comic-drama',
+      'category/ai-drama',
+      'rank/hot-drama',
+      'rank/hot-real-drama',
+    ];
+    final selectedCat = pool[rng.nextInt(pool.length)];
+    final maxPage = selectedCat.startsWith('rank/') ? 5 : 25;
+    final randomPage = rng.nextInt(maxPage) + 1;
+
+    try {
+      final res = await browseList(
+        category: selectedCat,
+        genre: genre ?? '',
+        page: randomPage,
+      );
+      if (res.items.isNotEmpty) {
+        final shuffled = List<HongguoDramaItem>.from(res.items)..shuffle(rng);
+        return HongguoBrowseResult(
+          items: shuffled,
+          currentPage: 1,
+          totalPages: 10,
+          totalItems: res.totalItems > 0 ? res.totalItems : 240,
+        );
+      }
+    } catch (_) {}
+
+    // Fallback: nếu lỗi trang ngẫu nhiên, lấy trang 1 của real-drama
+    return browseList(category: 'category/real-drama', page: 1);
   }
 
   /// Tìm kiếm phim theo từ khóa
@@ -356,7 +435,7 @@ class HongguoResolver {
       final sid = _extractMatch(block, r'"series_id"\s*:\s*"(\d+)"');
       if (sid.isEmpty || !seen.add(sid)) continue;
 
-      final title = _cleanJsonString(_extractMatch(block, r'"series_name"\s*:\s*"([^"]+)"'));
+      final title = _cleanDramaTitle(_extractMatch(block, r'"series_name"\s*:\s*"([^"]+)"'));
       if (title.isEmpty) continue;
 
       final cover = _cleanJsonString(_extractMatch(block, r'"series_cover"\s*:\s*"([^"]+)"'));
@@ -402,9 +481,10 @@ class HongguoResolver {
         if (!seen.add(sid)) continue;
 
         final content = card.group(2)!;
-        final title = _extractMatch(content, r'alt="([^"]+)"').isNotEmpty
+        var title = _extractMatch(content, r'alt="([^"]+)"').isNotEmpty
             ? _extractMatch(content, r'alt="([^"]+)"')
             : _stripHtml(content);
+        title = _cleanDramaTitle(title);
 
         final cover = _extractMatch(content, r'src="([^"]+)"');
         final epText = _extractMatch(content, r'全(\d+)集');
@@ -436,6 +516,18 @@ class HongguoResolver {
       totalItems = int.tryParse(paginationMatch.group(1)!) ?? totalItems;
       pageNum = int.tryParse(paginationMatch.group(2)!) ?? pageNum;
       totalPages = int.tryParse(paginationMatch.group(3)!) ?? totalPages;
+    } else {
+      // Bóc tách số trang nếu SSR không trả JSON pagination (như trang bảng xếp hạng rank/hot-drama)
+      final pageLinks = RegExp(r'[?&]page=(\d+)').allMatches(html);
+      if (pageLinks.isNotEmpty) {
+        var maxP = 1;
+        for (final m in pageLinks) {
+          final p = int.tryParse(m.group(1)!) ?? 1;
+          if (p > maxP) maxP = p;
+        }
+        totalPages = maxP;
+        totalItems = maxP * items.length;
+      }
     }
 
     return HongguoBrowseResult(
@@ -456,6 +548,12 @@ class HongguoResolver {
         .replaceAll(r'\u002F', '/')
         .replaceAll(r'\u0026', '&')
         .replaceAll('&amp;', '&')
+        .trim();
+  }
+
+  static String _cleanDramaTitle(String raw) {
+    return _cleanJsonString(raw)
+        .replaceAll(RegExp(r'封面$'), '')
         .trim();
   }
 

@@ -21,8 +21,9 @@ class HongguoScreen extends StatefulWidget {
 class _HongguoScreenState extends State<HongguoScreen> {
   final HongguoResolver _resolver = HongguoResolver();
   final TextEditingController _searchController = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
 
-  String _currentCategorySlug = 'rank/hot-drama';
+  String _currentCategorySlug = 'discover';
   String _currentGenreSlug = '';
   int _currentPage = 1;
   int _totalPages = 1;
@@ -41,6 +42,7 @@ class _HongguoScreenState extends State<HongguoScreen> {
   @override
   void dispose() {
     _searchController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -52,11 +54,13 @@ class _HongguoScreenState extends State<HongguoScreen> {
     });
 
     try {
-      final res = await _resolver.browseList(
-        category: _currentCategorySlug,
-        genre: _currentGenreSlug,
-        page: _currentPage,
-      );
+      final res = _currentCategorySlug == 'discover'
+          ? await _resolver.getRandomRecommendations(genre: _currentGenreSlug)
+          : await _resolver.browseList(
+              category: _currentCategorySlug,
+              genre: _currentGenreSlug,
+              page: _currentPage,
+            );
 
       if (!mounted) return;
       setState(() {
@@ -70,6 +74,84 @@ class _HongguoScreenState extends State<HongguoScreen> {
       setState(() {
         _isLoading = false;
         _errorMessage = 'Không thể tải danh sách phim: $e';
+      });
+    }
+  }
+
+  Future<void> _loadRandomNewDramas() async {
+    HapticFeedback.mediumImpact();
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+      _isSearchMode = false;
+      _searchController.clear();
+      // Nếu đang ở BXH Hot, chuyển sang tab Đề Xuất để nạp phim phong phú ngoài BXH
+      if (_currentCategorySlug == 'rank/hot-drama') {
+        _currentCategorySlug = 'discover';
+      }
+    });
+
+    try {
+      final res = await _resolver.getRandomRecommendations(
+        preferredCategory: (_currentCategorySlug == 'discover' ||
+                _currentCategorySlug.startsWith('rank/'))
+            ? null
+            : _currentCategorySlug,
+        genre: _currentGenreSlug,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _dramas = res.items;
+        _currentPage = res.currentPage;
+        _totalPages = res.totalPages > 0 ? res.totalPages : 1;
+        _isLoading = false;
+      });
+
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          0,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(
+                Icons.casino_rounded,
+                color: AppColors.primaryEmerald,
+                size: 20,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Đã nạp ${res.items.length} phim mới ngẫu nhiên!',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          duration: const Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: const Color(0xFF1E222D),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+            side: const BorderSide(color: AppColors.cardBorder),
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _errorMessage = 'Không thể nạp phim mới: $e';
       });
     }
   }
@@ -265,6 +347,14 @@ class _HongguoScreenState extends State<HongguoScreen> {
         ),
         actions: [
           IconButton(
+            icon: const Icon(
+              Icons.casino_rounded,
+              color: AppColors.primaryEmerald,
+            ),
+            tooltip: 'Load phim mới ngẫu nhiên',
+            onPressed: _isLoading ? null : _loadRandomNewDramas,
+          ),
+          IconButton(
             icon: const Icon(Icons.tune_rounded, color: AppColors.textSecondary),
             tooltip: 'Cài đặt tự chuyển tập & dịch ngầm',
             onPressed: _showHongguoSettingsSheet,
@@ -430,6 +520,108 @@ class _HongguoScreenState extends State<HongguoScreen> {
 
             const SizedBox(height: 6),
 
+            // 3.5 THANH ĐIỀU KHIỂN TRẠNG THÁI & NÚT LOAD PHIM MỚI
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 4, 14, 6),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: Row(
+                      children: [
+                        Icon(
+                          _isSearchMode
+                              ? Icons.search_rounded
+                              : (_currentCategorySlug == 'discover'
+                                  ? Icons.auto_awesome
+                                  : (_currentCategorySlug.contains('rank')
+                                      ? Icons.local_fire_department_rounded
+                                      : Icons.movie_filter_rounded)),
+                          size: 15,
+                          color: _currentCategorySlug == 'discover'
+                              ? AppColors.accentGold
+                              : (_currentCategorySlug.contains('rank')
+                                  ? Colors.redAccent
+                                  : AppColors.primaryEmerald),
+                        ),
+                        const SizedBox(width: 6),
+                        Flexible(
+                          child: Text(
+                            _isSearchMode
+                                ? 'Kết quả tìm kiếm (${_dramas.length})'
+                                : (_currentCategorySlug == 'discover'
+                                    ? 'Phim đề xuất ngẫu nhiên (${_dramas.length})'
+                                    : (_currentCategorySlug.contains('rank')
+                                        ? 'Bảng Xếp Hạng Hot (Trang $_currentPage/$_totalPages)'
+                                        : 'Kho phim Hồng Quả (Trang $_currentPage/$_totalPages)')),
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textSecondary,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  // Nút Load Phim Mới
+                  InkWell(
+                    onTap: _isLoading ? null : _loadRandomNewDramas,
+                    borderRadius: BorderRadius.circular(20),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 5,
+                      ),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [
+                            AppColors.primaryEmerald.withValues(alpha: 0.22),
+                            AppColors.primaryEmerald.withValues(alpha: 0.08),
+                          ],
+                        ),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: AppColors.primaryEmerald.withValues(alpha: 0.5),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _isLoading
+                              ? const SizedBox(
+                                  width: 13,
+                                  height: 13,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: AppColors.primaryEmerald,
+                                  ),
+                                )
+                              : const Icon(
+                                  Icons.casino_rounded,
+                                  size: 14,
+                                  color: AppColors.primaryEmerald,
+                                ),
+                          const SizedBox(width: 5),
+                          const Text(
+                            'Load phim mới',
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.primaryEmerald,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
             // 4. LƯỚI PHIM VỚI PULL-TO-REFRESH
             Expanded(
               child: RefreshIndicator(
@@ -440,11 +632,73 @@ class _HongguoScreenState extends State<HongguoScreen> {
               ),
             ),
 
-            // 5. THANH PHÂN TRANG (PAGINATION)
-            if (!_isSearchMode && _totalPages > 1) _buildPaginationBar(),
+            // 5. THANH PHÂN TRANG (PAGINATION HOẶC ĐỔI PHIM MỚI)
+            if (!_isSearchMode &&
+                _currentCategorySlug != 'discover' &&
+                _totalPages > 1)
+              _buildPaginationBar(),
+            if (!_isSearchMode && _currentCategorySlug == 'discover')
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                decoration: const BoxDecoration(
+                  color: AppColors.darkSurface,
+                  border: Border(top: BorderSide(color: AppColors.cardBorder)),
+                ),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _isLoading ? null : _loadRandomNewDramas,
+                    icon: const Icon(Icons.casino_rounded, size: 18),
+                    label: const Text(
+                      'Đổi danh sách phim mới khác',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                      ),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor:
+                          AppColors.primaryEmerald.withValues(alpha: 0.15),
+                      foregroundColor: AppColors.primaryEmerald,
+                      side: const BorderSide(color: AppColors.primaryEmerald),
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      elevation: 0,
+                    ),
+                  ),
+                ),
+              ),
           ],
         ),
       ),
+      floatingActionButton: _isSearchMode
+          ? null
+          : FloatingActionButton.extended(
+              onPressed: _isLoading ? null : _loadRandomNewDramas,
+              backgroundColor: AppColors.primaryEmerald,
+              foregroundColor: const Color(0xFF0D1117),
+              elevation: 4,
+              icon: _isLoading
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Color(0xFF0D1117),
+                      ),
+                    )
+                  : const Icon(Icons.casino_rounded, size: 18),
+              label: const Text(
+                'Load phim mới',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12.5,
+                ),
+              ),
+            ),
     );
   }
 
@@ -474,15 +728,30 @@ class _HongguoScreenState extends State<HongguoScreen> {
                 style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
               ),
               const SizedBox(height: 16),
-              ElevatedButton.icon(
-                icon: const Icon(Icons.refresh_rounded, size: 16),
-                label: const Text('Thử lại'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.darkSurfaceVariant,
-                  foregroundColor: AppColors.primaryEmerald,
-                  side: const BorderSide(color: AppColors.cardBorder),
-                ),
-                onPressed: _loadDramas,
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.refresh_rounded, size: 16),
+                    label: const Text('Thử lại'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.darkSurfaceVariant,
+                      foregroundColor: AppColors.primaryEmerald,
+                      side: const BorderSide(color: AppColors.cardBorder),
+                    ),
+                    onPressed: _loadDramas,
+                  ),
+                  const SizedBox(width: 10),
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.casino_rounded, size: 16),
+                    label: const Text('Load phim mới'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primaryEmerald,
+                      foregroundColor: Colors.black,
+                    ),
+                    onPressed: _loadRandomNewDramas,
+                  ),
+                ],
               ),
             ],
           ),
@@ -493,12 +762,24 @@ class _HongguoScreenState extends State<HongguoScreen> {
     if (_dramas.isEmpty) {
       return ListView(
         physics: const AlwaysScrollableScrollPhysics(),
-        children: const [
-          SizedBox(height: 120),
-          Center(
+        children: [
+          const SizedBox(height: 100),
+          const Center(
             child: Text(
               'Không tìm thấy bộ phim nào.',
               style: TextStyle(color: AppColors.textMuted),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Center(
+            child: ElevatedButton.icon(
+              icon: const Icon(Icons.casino_rounded, size: 16),
+              label: const Text('Load phim mới ngẫu nhiên'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primaryEmerald,
+                foregroundColor: Colors.black,
+              ),
+              onPressed: _loadRandomNewDramas,
             ),
           ),
         ],
@@ -512,10 +793,11 @@ class _HongguoScreenState extends State<HongguoScreen> {
         final aspectRatio = width < 370 ? 0.58 : 0.61;
 
         return GridView.builder(
+          controller: _scrollController,
           physics: const AlwaysScrollableScrollPhysics(
             parent: BouncingScrollPhysics(),
           ),
-          padding: const EdgeInsets.fromLTRB(14, 4, 14, 14),
+          padding: const EdgeInsets.fromLTRB(14, 4, 14, 80),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: 2,
             childAspectRatio: aspectRatio,
