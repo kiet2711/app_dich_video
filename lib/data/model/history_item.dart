@@ -1,6 +1,8 @@
 class HistoryItem {
   final String id;
   final String title;
+  final String? originalTitle;
+  final String? translatedTitle;
   final String videoPath;
   final String srtPath;
   final String? documentPath;
@@ -20,6 +22,8 @@ class HistoryItem {
   const HistoryItem({
     required this.id,
     required this.title,
+    this.originalTitle,
+    this.translatedTitle,
     required this.videoPath,
     required this.srtPath,
     this.documentPath,
@@ -63,9 +67,27 @@ class HistoryItem {
     return 1;
   }
 
+  /// Tiêu đề gốc (tiếng Trung hoặc nguyên bản)
+  String get displayOriginalTitle {
+    if (originalTitle != null && originalTitle!.trim().isNotEmpty) {
+      return originalTitle!.replaceAll(RegExp(r'\.mp4$', caseSensitive: false), '').trim();
+    }
+    return title.replaceAll(RegExp(r'\.mp4$', caseSensitive: false), '').trim();
+  }
+
+  /// Tiêu đề đã dịch sang tiếng Việt (nếu có)
+  String? get displayTranslatedTitle {
+    if (translatedTitle != null && translatedTitle!.trim().isNotEmpty) {
+      return translatedTitle!.replaceAll(RegExp(r'\.mp4$', caseSensitive: false), '').trim();
+    }
+    return null;
+  }
+
   HistoryItem copyWith({
     String? id,
     String? title,
+    String? originalTitle,
+    String? translatedTitle,
     String? videoPath,
     String? srtPath,
     String? documentPath,
@@ -83,6 +105,8 @@ class HistoryItem {
     return HistoryItem(
       id: id ?? this.id,
       title: title ?? this.title,
+      originalTitle: originalTitle ?? this.originalTitle,
+      translatedTitle: translatedTitle ?? this.translatedTitle,
       videoPath: videoPath ?? this.videoPath,
       srtPath: srtPath ?? this.srtPath,
       documentPath: documentPath ?? this.documentPath,
@@ -102,6 +126,8 @@ class HistoryItem {
   Map<String, dynamic> toJson() => {
     'id': id,
     'title': title,
+    if (originalTitle != null) 'originalTitle': originalTitle,
+    if (translatedTitle != null) 'translatedTitle': translatedTitle,
     'videoPath': videoPath,
     'srtPath': srtPath,
     'documentPath': documentPath,
@@ -120,6 +146,8 @@ class HistoryItem {
   factory HistoryItem.fromJson(Map<String, dynamic> json) => HistoryItem(
     id: json['id'] as String,
     title: json['title'] as String,
+    originalTitle: json['originalTitle'] as String?,
+    translatedTitle: json['translatedTitle'] as String?,
     videoPath: json['videoPath'] as String,
     srtPath: json['srtPath'] as String,
     documentPath: json['documentPath'] as String?,

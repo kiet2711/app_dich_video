@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 
 import '../../domain/media/audio_extractor.dart';
+import '../../domain/media/bilibili_resolver.dart';
 import '../../domain/media/media_storage.dart';
 import '../../domain/media/network_header_helper.dart';
 import '../../domain/media/video_cache_manager.dart';
@@ -28,8 +29,14 @@ import 'tts_error_review_dialog.dart';
 class TtsStudioScreen extends StatefulWidget {
   final SubtitleDocument? initialDoc;
   final String? initialVideoPath;
+  final String? initialTitle;
 
-  const TtsStudioScreen({super.key, this.initialDoc, this.initialVideoPath});
+  const TtsStudioScreen({
+    super.key,
+    this.initialDoc,
+    this.initialVideoPath,
+    this.initialTitle,
+  });
 
   @override
   State<TtsStudioScreen> createState() => _TtsStudioScreenState();
@@ -55,6 +62,7 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
     super.initState();
     _doc = widget.initialDoc;
     _videoPath = widget.initialVideoPath;
+    _videoFileName = widget.initialTitle ?? '';
     _ttsManager.progress.addListener(_onTtsProgressChanged);
     unawaited(_refreshVideoMetadata());
     _loadSettings();
@@ -108,6 +116,11 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
       if (widget.initialDoc != oldWidget.initialDoc || _doc == null) {
         _doc = widget.initialDoc;
         _linkExistingAudio();
+      }
+    }
+    if (widget.initialTitle != null && widget.initialTitle!.isNotEmpty) {
+      if (widget.initialTitle != oldWidget.initialTitle || _videoFileName.isEmpty) {
+        _videoFileName = widget.initialTitle!;
       }
     }
     if (widget.initialVideoPath != null && widget.initialVideoPath!.isNotEmpty) {
@@ -215,6 +228,48 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
         durationMs = await AudioExtractor.probeDuration(effectivePath);
       } catch (_) {}
     }
+
+    bool isGenericName(String? t) {
+      if (t == null || t.trim().isEmpty) return true;
+      final clean = t.trim().toLowerCase();
+      return clean == 'video' ||
+          clean == 'video.mp4' ||
+          clean == 'video import' ||
+          clean.startsWith('video online') ||
+          (clean.startsWith('bili_') && clean.endsWith('.mp4')) ||
+          (clean.startsWith('video_') && clean.endsWith('.mp4')) ||
+          (clean.startsWith('hg_') && clean.endsWith('.mp4'));
+    }
+
+    try {
+      final repo = await HistoryRepository.getInstance();
+      final bvid = RegExp(r'BV[a-zA-Z0-9]+', caseSensitive: false).firstMatch(effectivePath)?.group(0) ??
+          RegExp(r'BV[a-zA-Z0-9]+', caseSensitive: false).firstMatch(path)?.group(0);
+      final historyItem = repo.getHistory().where((h) {
+        if (h.videoPath == path || h.videoPath == effectivePath) return true;
+        if (bvid != null && h.videoPath.contains(bvid)) return true;
+        return false;
+      }).firstOrNull;
+
+      if (historyItem != null && historyItem.title.isNotEmpty && !isGenericName(historyItem.title)) {
+        name = historyItem.title;
+      } else if (_videoFileName.isNotEmpty && !isGenericName(_videoFileName)) {
+        name = _videoFileName;
+      } else if (widget.initialTitle != null && widget.initialTitle!.isNotEmpty && !isGenericName(widget.initialTitle!)) {
+        name = widget.initialTitle!;
+      } else if (BilibiliResolver.isBilibiliPageUrl(path) || BilibiliResolver.isBilibiliPageUrl(effectivePath)) {
+        try {
+          final resolver = BilibiliResolver();
+          final target = await resolver.resolveUrl(path.startsWith('http') ? path : effectivePath);
+          final s = await SettingsRepository.getInstance();
+          final details = await resolver.getVideoDetails(target, s.bilibiliSessData);
+          if (details.title.isNotEmpty) {
+            name = details.title;
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+
     if (name.trim().isEmpty) name = 'video.mp4';
     if (!mounted || _videoPath != path) return;
     setState(() {
@@ -795,8 +850,11 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (ctx) =>
-            VideoPlayerScreen(videoPath: pathToPlay, document: _doc!),
+        builder: (ctx) => VideoPlayerScreen(
+          videoPath: pathToPlay,
+          document: _doc!,
+          title: _videoFileName.isNotEmpty ? _videoFileName : null,
+        ),
       ),
     );
   }

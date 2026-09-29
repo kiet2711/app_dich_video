@@ -9,6 +9,7 @@ import 'package:video_player/video_player.dart';
 import '../../data/model/subtitle_document.dart';
 import '../../data/repository/history_repository.dart';
 import '../../data/repository/settings_repository.dart';
+import '../../domain/ai/title_translator.dart';
 import '../../domain/media/bilibili_resolver.dart';
 import '../../domain/media/hongguo_prefetch_manager.dart';
 import '../../domain/media/hongguo_resolver.dart';
@@ -94,6 +95,23 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   bool _showDownloadBanner = true;
   bool _userChosePlayRaw = false;
 
+  String? _originalTitle;
+  String? _translatedTitle;
+  bool _showTranslatedTitle = false;
+  bool _isTranslatingTitle = false;
+
+  bool _isGenericTitle(String? t) {
+    if (t == null || t.trim().isEmpty) return true;
+    final clean = t.trim().toLowerCase();
+    return clean == 'video' ||
+        clean == 'video.mp4' ||
+        clean == 'video import' ||
+        clean.startsWith('video online') ||
+        (clean.startsWith('bili_') && clean.endsWith('.mp4')) ||
+        (clean.startsWith('video_') && clean.endsWith('.mp4')) ||
+        (clean.startsWith('hg_') && clean.endsWith('.mp4'));
+  }
+
   @override
   void initState() {
     super.initState();
@@ -119,6 +137,23 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         _autoPlayNextEpisode = _settings.autoPlayNextEpisode;
       });
     }
+
+    try {
+      final history = await HistoryRepository.getInstance();
+      final bvid = RegExp(r'BV[a-zA-Z0-9]+', caseSensitive: false).firstMatch(_sourceVideoUrl)?.group(0);
+      final item = history.getHistory().where((h) {
+        if (h.videoPath == _sourceVideoUrl || h.videoPath == _currentVideoPath) return true;
+        if (bvid != null && h.videoPath.contains(bvid)) return true;
+        return false;
+      }).firstOrNull;
+
+      if (item != null) {
+        _originalTitle = item.displayOriginalTitle;
+        _translatedTitle = item.displayTranslatedTitle;
+      } else {
+        _originalTitle = _currentTitle;
+      }
+    } catch (_) {}
 
     // Khởi tạo HongguoPrefetchManager nếu có thông tin phim bộ
     if (widget.dramaDetail != null) {
@@ -176,6 +211,20 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           _settings.bilibiliSessData,
         );
         _bilibiliDetails = details;
+        if (_originalTitle == null || _originalTitle!.isEmpty || _isGenericTitle(_originalTitle)) {
+          _originalTitle = details.title;
+        }
+        if (_currentTitle.isEmpty || _isGenericTitle(_currentTitle)) {
+          _currentTitle = _showTranslatedTitle && _translatedTitle != null
+              ? _translatedTitle!
+              : details.title;
+          if (mounted) setState(() {});
+        }
+        try {
+          final history = await HistoryRepository.getInstance();
+          await history.updateTitleForVideo(_sourceVideoUrl, details.title);
+          await history.updateTitleForVideo(targetPath, details.title);
+        } catch (_) {}
 
         // Ưu tiên nạp video từ cache nếu đã tải về trước đó
         final cached = await VideoCacheManager.findCachedFile(
@@ -561,6 +610,65 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         );
       },
     );
+  }
+
+  Future<void> _togglePlayerTitleTranslation() async {
+    if (_showTranslatedTitle) {
+      setState(() {
+        _showTranslatedTitle = false;
+        _currentTitle = (_originalTitle != null && _originalTitle!.isNotEmpty)
+            ? _originalTitle!
+            : _currentTitle;
+      });
+      return;
+    }
+
+    if (_translatedTitle != null && _translatedTitle!.isNotEmpty) {
+      setState(() {
+        _showTranslatedTitle = true;
+        _currentTitle = _translatedTitle!;
+      });
+      return;
+    }
+
+    setState(() {
+      _isTranslatingTitle = true;
+    });
+
+    try {
+      final toTranslate = (_originalTitle != null && _originalTitle!.isNotEmpty)
+          ? _originalTitle!
+          : _currentTitle;
+      final translated = await TitleTranslator.translateTitle(toTranslate);
+      if (translated != null && translated.isNotEmpty) {
+        if (_originalTitle == null || _originalTitle!.isEmpty) {
+          _originalTitle = _currentTitle;
+        }
+        _translatedTitle = translated;
+        _currentTitle = translated;
+        _showTranslatedTitle = true;
+        try {
+          final history = await HistoryRepository.getInstance();
+          await history.updateTranslatedTitle(_sourceVideoUrl, translated);
+          await history.updateTranslatedTitle(_currentVideoPath, translated);
+        } catch (_) {}
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Không thể dịch tiêu đề lúc này. Vui lòng thử lại!'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isTranslatingTitle = false;
+        });
+      }
+    }
   }
 
   Future<void> _switchVideo({
@@ -1039,6 +1147,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           );
           _bilibiliDetails = details;
         }
+        if (_currentTitle.isEmpty || _isGenericTitle(_currentTitle)) {
+          _currentTitle = details.title;
+          if (mounted) setState(() {});
+        }
 
         final cachedVideo = await VideoCacheManager.getCachedVideoFile(
           url: _sourceVideoUrl,
@@ -1074,6 +1186,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             final history = await HistoryRepository.getInstance();
             await history.updateVideoPath(_sourceVideoUrl, cachedVideo.path);
             await history.updateVideoPath(_currentVideoPath, cachedVideo.path);
+            if (_currentTitle.isNotEmpty && !_isGenericTitle(_currentTitle)) {
+              await history.updateTitleForVideo(cachedVideo.path, _currentTitle);
+              await history.updateTitleForVideo(_sourceVideoUrl, _currentTitle);
+            }
           } catch (_) {}
           if (mounted) {
             setState(() {
@@ -1670,15 +1786,72 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                             crossAxisAlignment: CrossAxisAlignment.start,
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Text(
-                                displayTitle,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 14,
-                                ),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      displayTitle,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  InkWell(
+                                    onTap: _isTranslatingTitle ? null : _togglePlayerTitleTranslation,
+                                    borderRadius: BorderRadius.circular(6),
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: _showTranslatedTitle
+                                            ? AppTheme.primaryEmerald.withValues(alpha: 0.25)
+                                            : Colors.white24,
+                                        borderRadius: BorderRadius.circular(6),
+                                        border: Border.all(
+                                          color: _showTranslatedTitle
+                                              ? AppTheme.primaryEmerald.withValues(alpha: 0.5)
+                                              : Colors.white30,
+                                        ),
+                                      ),
+                                      child: _isTranslatingTitle
+                                          ? const SizedBox(
+                                              width: 10,
+                                              height: 10,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                                color: Colors.white,
+                                              ),
+                                            )
+                                          : Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Icon(
+                                                  Icons.translate_rounded,
+                                                  size: 11,
+                                                  color: _showTranslatedTitle
+                                                      ? AppTheme.primaryEmerald
+                                                      : Colors.white,
+                                                ),
+                                                const SizedBox(width: 3),
+                                                Text(
+                                                  _showTranslatedTitle ? 'Gốc' : 'Dịch',
+                                                  style: TextStyle(
+                                                    color: _showTranslatedTitle
+                                                        ? AppTheme.primaryEmerald
+                                                        : Colors.white,
+                                                    fontSize: 10,
+                                                    fontWeight: FontWeight.bold,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                    ),
+                                  ),
+                                ],
                               ),
                               Padding(
                                 padding: const EdgeInsets.only(top: 2),

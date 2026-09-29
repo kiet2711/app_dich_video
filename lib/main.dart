@@ -49,6 +49,7 @@ class _MainNavigationState extends State<MainNavigation> {
   int _currentIndex = 0;
   SubtitleDocument? _latestDoc;
   String? _latestVideoPath;
+  String? _latestTitle;
 
   @override
   Widget build(BuildContext context) {
@@ -56,10 +57,11 @@ class _MainNavigationState extends State<MainNavigation> {
       HomeScreen(
         key: _homeKey,
         onNavigateToSettings: () => Navigator.pushNamed(context, '/settings'),
-        onProcessCompleted: (doc, videoPath) {
+        onProcessCompleted: (doc, videoPath, [title]) {
           setState(() {
             _latestDoc = doc;
             _latestVideoPath = videoPath;
+            _latestTitle = title;
             _currentIndex = 2; // Tự động chuyển sang Tab Lồng Tiếng AI
           });
         },
@@ -76,12 +78,14 @@ class _MainNavigationState extends State<MainNavigation> {
         key: ValueKey('tts_${_latestVideoPath ?? ""}_${_latestDoc?.hashCode ?? 0}'),
         initialDoc: _latestDoc,
         initialVideoPath: _latestVideoPath,
+        initialTitle: _latestTitle,
       ),
       HistoryScreen(
-        onOpenInTts: (videoPath, doc) {
+        onOpenInTts: (videoPath, doc, [title]) {
           setState(() {
             _latestDoc = doc;
             _latestVideoPath = videoPath;
+            _latestTitle = title;
             _currentIndex = 2;
           });
         },

@@ -1,12 +1,14 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../data/model/history_item.dart';
 import '../../data/model/subtitle_document.dart';
 import '../../data/repository/history_repository.dart';
+import '../../domain/ai/title_translator.dart';
 import '../../domain/media/hongguo_resolver.dart';
 import '../player/video_player_screen.dart';
 import '../settings/settings_screen.dart';
@@ -69,7 +71,7 @@ class HistoryDisplayItem {
 }
 
 class HistoryScreen extends StatefulWidget {
-  final void Function(String videoPath, SubtitleDocument doc)? onOpenInTts;
+  final void Function(String videoPath, SubtitleDocument doc, [String? title])? onOpenInTts;
 
   const HistoryScreen({super.key, this.onOpenInTts});
 
@@ -80,6 +82,124 @@ class HistoryScreen extends StatefulWidget {
 class _HistoryScreenState extends State<HistoryScreen> {
   HistoryRepository? _historyRepo;
   final HongguoResolver _hongguoResolver = HongguoResolver();
+
+  // Quản lý trạng thái hiển thị tiêu đề đã dịch tiếng Việt
+  final Set<String> _showTranslatedItemIds = {};
+  final Set<String> _translatingItemIds = {};
+  final Set<String> _showTranslatedGroupKeys = {};
+  final Set<String> _translatingGroupKeys = {};
+  final Map<String, String> _groupTranslatedTitles = {};
+
+  Future<void> _toggleTranslateTitle(HistoryItem it) async {
+    final isShowing = _showTranslatedItemIds.contains(it.id);
+    if (isShowing) {
+      setState(() {
+        _showTranslatedItemIds.remove(it.id);
+      });
+      return;
+    }
+
+    if (it.displayTranslatedTitle != null && it.displayTranslatedTitle!.isNotEmpty) {
+      setState(() {
+        _showTranslatedItemIds.add(it.id);
+      });
+      return;
+    }
+
+    setState(() {
+      _translatingItemIds.add(it.id);
+    });
+
+    try {
+      final translated = await TitleTranslator.translateTitle(it.displayOriginalTitle);
+      if (translated != null && translated.isNotEmpty) {
+        final repo = _historyRepo ?? await HistoryRepository.getInstance();
+        await repo.updateTranslatedTitle(it.id, translated);
+        if (mounted) {
+          setState(() {
+            _showTranslatedItemIds.add(it.id);
+          });
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Không thể dịch tiêu đề lúc này. Vui lòng thử lại!'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _translatingItemIds.remove(it.id);
+        });
+      }
+    }
+  }
+
+  Future<void> _toggleTranslateDramaTitle(DramaHistoryGroup group) async {
+    final isShowing = _showTranslatedGroupKeys.contains(group.seriesKey);
+    if (isShowing) {
+      setState(() {
+        _showTranslatedGroupKeys.remove(group.seriesKey);
+      });
+      return;
+    }
+
+    if (_groupTranslatedTitles.containsKey(group.seriesKey)) {
+      setState(() {
+        _showTranslatedGroupKeys.add(group.seriesKey);
+      });
+      return;
+    }
+
+    final firstTranslated = group.episodes
+        .where((e) => e.displayTranslatedTitle != null && e.displayTranslatedTitle!.isNotEmpty)
+        .firstOrNull;
+    if (firstTranslated != null && firstTranslated.displayTranslatedTitle != null) {
+      final match = RegExp(r'^(.*?)\s*-\s*(Tập|P)\s*\d+', caseSensitive: false)
+          .firstMatch(firstTranslated.displayTranslatedTitle!);
+      final clean = match != null ? match.group(1)!.trim() : firstTranslated.displayTranslatedTitle!;
+      _groupTranslatedTitles[group.seriesKey] = clean;
+      setState(() {
+        _showTranslatedGroupKeys.add(group.seriesKey);
+      });
+      return;
+    }
+
+    setState(() {
+      _translatingGroupKeys.add(group.seriesKey);
+    });
+
+    try {
+      final translated = await TitleTranslator.translateTitle(group.seriesTitle);
+      if (translated != null && translated.isNotEmpty) {
+        _groupTranslatedTitles[group.seriesKey] = translated;
+        if (mounted) {
+          setState(() {
+            _showTranslatedGroupKeys.add(group.seriesKey);
+          });
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Không thể dịch tiêu đề lúc này. Vui lòng thử lại!'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _translatingGroupKeys.remove(group.seriesKey);
+        });
+      }
+    }
+  }
 
   @override
   void initState() {
@@ -181,6 +301,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
           builder: (ctx) => VideoPlayerScreen(
             videoPath: resolvedVideo,
             document: doc,
+            title: item.title,
             initialPositionMs: item.lastPositionMs,
             onPlaybackPositionChanged: (positionMs) =>
                 repo.updatePlaybackPosition(item.id, positionMs),
@@ -324,7 +445,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
     }
 
     final resolvedVideo = await HistoryRepository.resolvePath(item.videoPath);
-    widget.onOpenInTts!(resolvedVideo, doc);
+    widget.onOpenInTts!(resolvedVideo, doc, item.title);
   }
 
   Future<void> _exportSrt(HistoryItem item) async {
@@ -1198,15 +1319,123 @@ class _HistoryScreenState extends State<HistoryScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      group.seriesTitle,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 15,
-                        fontWeight: FontWeight.bold,
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
+                    Builder(
+                      builder: (context) {
+                        final isGroupTranslated = _showTranslatedGroupKeys.contains(group.seriesKey);
+                        final translatedTitle = _groupTranslatedTitles[group.seriesKey];
+                        final displayGroupTitle = isGroupTranslated && translatedTitle != null && translatedTitle.isNotEmpty
+                            ? translatedTitle
+                            : group.seriesTitle;
+                        final isGroupTranslating = _translatingGroupKeys.contains(group.seriesKey);
+
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    displayGroupTitle,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                InkWell(
+                                  onTap: isGroupTranslating ? null : () => _toggleTranslateDramaTitle(group),
+                                  borderRadius: BorderRadius.circular(6),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: isGroupTranslated
+                                          ? AppTheme.primaryEmerald.withValues(alpha: 0.18)
+                                          : const Color(0xFF2A2D3A),
+                                      borderRadius: BorderRadius.circular(6),
+                                      border: Border.all(
+                                        color: isGroupTranslated
+                                            ? AppTheme.primaryEmerald.withValues(alpha: 0.5)
+                                            : Colors.white24,
+                                      ),
+                                    ),
+                                    child: isGroupTranslating
+                                        ? const SizedBox(
+                                            width: 10,
+                                            height: 10,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              color: AppTheme.primaryEmerald,
+                                            ),
+                                          )
+                                        : Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Icon(
+                                                Icons.translate_rounded,
+                                                size: 11,
+                                                color: isGroupTranslated
+                                                    ? AppTheme.primaryEmerald
+                                                    : Colors.white70,
+                                              ),
+                                              const SizedBox(width: 3),
+                                              Text(
+                                                isGroupTranslated ? 'Gốc' : 'Dịch',
+                                                style: TextStyle(
+                                                  color: isGroupTranslated
+                                                      ? AppTheme.primaryEmerald
+                                                      : Colors.white70,
+                                                  fontSize: 10,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            if (isGroupTranslated && group.seriesTitle != displayGroupTitle) ...[
+                              const SizedBox(height: 3),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      '🇨🇳 Gốc: ${group.seriesTitle}',
+                                      style: const TextStyle(
+                                        color: Colors.grey,
+                                        fontSize: 11,
+                                        fontStyle: FontStyle.italic,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  InkWell(
+                                    onTap: () {
+                                      Clipboard.setData(ClipboardData(text: group.seriesTitle));
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(
+                                          content: Text('📋 Đã sao chép: "${group.seriesTitle}"'),
+                                          duration: const Duration(seconds: 2),
+                                        ),
+                                      );
+                                    },
+                                    child: const Padding(
+                                      padding: EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                      child: Icon(Icons.copy_rounded, size: 12, color: Colors.grey),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ],
+                        );
+                      },
                     ),
                     const SizedBox(height: 6),
                     Wrap(
@@ -1349,6 +1578,13 @@ class _HistoryScreenState extends State<HistoryScreen> {
     );
     final hasVoice = it.ttsVoice != null && it.ttsVoice!.isNotEmpty;
 
+    final isShowingTranslated = _showTranslatedItemIds.contains(it.id);
+    final hasTranslated = it.displayTranslatedTitle != null && it.displayTranslatedTitle!.isNotEmpty;
+    final displayTitle = isShowingTranslated && hasTranslated
+        ? it.displayTranslatedTitle!
+        : it.displayOriginalTitle;
+    final isTranslating = _translatingItemIds.contains(it.id);
+
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -1364,16 +1600,69 @@ class _HistoryScreenState extends State<HistoryScreen> {
             children: [
               Expanded(
                 child: Text(
-                  it.title,
+                  displayTitle,
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 15,
                     fontWeight: FontWeight.bold,
                   ),
-                  maxLines: 1,
+                  maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
+              const SizedBox(width: 8),
+              // Nút dịch / chuyển đổi tên phim
+              InkWell(
+                onTap: isTranslating ? null : () => _toggleTranslateTitle(it),
+                borderRadius: BorderRadius.circular(6),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: (isShowingTranslated && hasTranslated)
+                        ? AppTheme.primaryEmerald.withValues(alpha: 0.18)
+                        : const Color(0xFF2A2D3A),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color: (isShowingTranslated && hasTranslated)
+                          ? AppTheme.primaryEmerald.withValues(alpha: 0.5)
+                          : Colors.white24,
+                    ),
+                  ),
+                  child: isTranslating
+                      ? const SizedBox(
+                          width: 12,
+                          height: 12,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: AppTheme.primaryEmerald,
+                          ),
+                        )
+                      : Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.translate_rounded,
+                              size: 13,
+                              color: (isShowingTranslated && hasTranslated)
+                                  ? AppTheme.primaryEmerald
+                                  : Colors.white70,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              (isShowingTranslated && hasTranslated) ? 'Gốc' : 'Dịch',
+                              style: TextStyle(
+                                color: (isShowingTranslated && hasTranslated)
+                                    ? AppTheme.primaryEmerald
+                                    : Colors.white70,
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                ),
+              ),
+              const SizedBox(width: 6),
               InkWell(
                 onTap: () => _confirmDelete(it),
                 child: const Padding(
@@ -1387,6 +1676,51 @@ class _HistoryScreenState extends State<HistoryScreen> {
               ),
             ],
           ),
+          if (isShowingTranslated && hasTranslated && it.displayOriginalTitle.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '🇨🇳 Gốc: ${it.displayOriginalTitle}',
+                    style: const TextStyle(
+                      color: Colors.grey,
+                      fontSize: 12,
+                      fontStyle: FontStyle.italic,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                InkWell(
+                  onTap: () {
+                    Clipboard.setData(ClipboardData(text: it.displayOriginalTitle));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Row(
+                          children: [
+                            const Icon(Icons.check_circle, color: AppTheme.primaryEmerald, size: 16),
+                            const SizedBox(width: 8),
+                            Expanded(child: Text('Đã sao chép: "${it.displayOriginalTitle}"')),
+                          ],
+                        ),
+                        duration: const Duration(seconds: 2),
+                      ),
+                    );
+                  },
+                  borderRadius: BorderRadius.circular(4),
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                    child: Icon(
+                      Icons.copy_rounded,
+                      size: 14,
+                      color: Colors.grey,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
           const SizedBox(height: 8),
           Wrap(
             spacing: 8,

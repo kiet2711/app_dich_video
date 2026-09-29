@@ -163,7 +163,12 @@ class HistoryRepository {
     }
 
     final items = getHistory();
-    final existing = items.where((it) => it.videoPath == videoPath).firstOrNull;
+    final bvidMatch = RegExp(r'BV[a-zA-Z0-9]+', caseSensitive: false).firstMatch(videoPath)?.group(0);
+    final existing = items.where((it) {
+      if (it.videoPath == videoPath) return true;
+      if (bvidMatch != null && it.videoPath.contains(bvidMatch)) return true;
+      return false;
+    }).firstOrNull;
     final id = existing?.id ?? DateTime.now().millisecondsSinceEpoch.toString();
 
     final srtFile = existing != null
@@ -176,9 +181,32 @@ class HistoryRepository {
 
     final docKey = TtsCacheHelper.getDocKey(document);
 
+    bool isGenericTitle(String? t) {
+      if (t == null || t.trim().isEmpty) return true;
+      final clean = t.trim().toLowerCase();
+      return clean == 'video' ||
+          clean == 'video.mp4' ||
+          clean == 'video import' ||
+          clean.startsWith('video online') ||
+          (clean.startsWith('bili_') && clean.endsWith('.mp4')) ||
+          (clean.startsWith('video_') && clean.endsWith('.mp4')) ||
+          (clean.startsWith('hg_') && clean.endsWith('.mp4'));
+    }
+
+    var cleanTitle = title.replaceAll(RegExp(r'\.mp4$', caseSensitive: false), '').trim();
+    if (isGenericTitle(cleanTitle)) {
+      if (existing != null && !isGenericTitle(existing.title)) {
+        cleanTitle = existing.title;
+      } else if (cleanTitle.isEmpty) {
+        cleanTitle = existing?.title ?? 'Video';
+      }
+    }
+
     final item = HistoryItem(
       id: id,
-      title: title.isNotEmpty ? title : (existing?.title ?? 'Video'),
+      title: cleanTitle,
+      originalTitle: existing?.originalTitle ?? cleanTitle,
+      translatedTitle: existing?.translatedTitle,
       videoPath: videoPath,
       srtPath: srtFile.path,
       documentPath: docFile.path,
@@ -261,10 +289,59 @@ class HistoryRepository {
 
   Future<void> updateVideoPath(String oldPath, String newPath) async {
     final items = getHistory();
+    final bvid = RegExp(r'BV[a-zA-Z0-9]+', caseSensitive: false).firstMatch(oldPath)?.group(0);
     var changed = false;
     for (var i = 0; i < items.length; i++) {
-      if (items[i].videoPath == oldPath) {
+      if (items[i].videoPath == oldPath ||
+          (bvid != null && items[i].videoPath.contains(bvid))) {
         items[i] = items[i].copyWith(videoPath: newPath);
+        changed = true;
+      }
+    }
+    if (changed) {
+      await _save(items);
+    }
+  }
+
+  Future<void> updateTitleForVideo(String videoPath, String newTitle) async {
+    final clean = newTitle.replaceAll(RegExp(r'\.mp4$', caseSensitive: false), '').trim();
+    if (clean.isEmpty) return;
+    final bvid = RegExp(r'BV[a-zA-Z0-9]+', caseSensitive: false).firstMatch(videoPath)?.group(0);
+
+    final items = getHistory();
+    var changed = false;
+    for (var i = 0; i < items.length; i++) {
+      final matchesPath = items[i].videoPath == videoPath ||
+          (bvid != null && items[i].videoPath.contains(bvid));
+      if (matchesPath) {
+        if (items[i].title != clean) {
+          items[i] = items[i].copyWith(title: clean);
+          changed = true;
+        }
+      }
+    }
+    if (changed) {
+      await _save(items);
+    }
+  }
+
+  Future<void> updateTranslatedTitle(String idOrVideoPath, String translatedTitle) async {
+    final clean = translatedTitle.replaceAll(RegExp(r'\.mp4$', caseSensitive: false), '').trim();
+    if (clean.isEmpty) return;
+    final bvid = RegExp(r'BV[a-zA-Z0-9]+', caseSensitive: false).firstMatch(idOrVideoPath)?.group(0);
+
+    final items = getHistory();
+    var changed = false;
+    for (var i = 0; i < items.length; i++) {
+      final matches = items[i].id == idOrVideoPath ||
+          items[i].videoPath == idOrVideoPath ||
+          items[i].title == idOrVideoPath ||
+          (bvid != null && items[i].videoPath.contains(bvid));
+      if (matches) {
+        items[i] = items[i].copyWith(
+          translatedTitle: clean,
+          originalTitle: items[i].originalTitle ?? items[i].title,
+        );
         changed = true;
       }
     }

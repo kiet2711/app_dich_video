@@ -26,7 +26,7 @@ import 'progress_bottom_sheet.dart';
 
 class HomeScreen extends StatefulWidget {
   final VoidCallback? onNavigateToSettings;
-  final void Function(SubtitleDocument doc, String videoPath)?
+  final void Function(SubtitleDocument doc, String videoPath, [String? title])?
   onProcessCompleted;
 
   const HomeScreen({
@@ -679,10 +679,19 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         jsonEncode(resultDoc.toJson()),
         flush: true,
       );
+      var effectiveTitle = _fileName.replaceAll(RegExp(r'\.mp4$', caseSensitive: false), '').trim();
+      if ((effectiveTitle.isEmpty || effectiveTitle == 'Video' || effectiveTitle.startsWith('Video Online')) &&
+          pipeline.lastResolvedTitle != null &&
+          pipeline.lastResolvedTitle!.isNotEmpty) {
+        effectiveTitle = pipeline.lastResolvedTitle!;
+      }
+      if (effectiveTitle.isEmpty) effectiveTitle = 'Video';
+
       await history.addItem(
         HistoryItem(
           id: historyId,
-          title: _fileName.isEmpty ? 'Video' : _fileName,
+          title: effectiveTitle,
+          originalTitle: effectiveTitle,
           videoPath: finalPlayableVideo,
           srtPath: srtFile.path,
           documentPath: documentFile.path,
@@ -705,7 +714,7 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       await _checkPendingDraft();
 
       if (mounted) {
-        widget.onProcessCompleted?.call(resultDoc, finalPlayableVideo);
+        widget.onProcessCompleted?.call(resultDoc, finalPlayableVideo, effectiveTitle);
       }
     } catch (e) {
       if (mounted && Navigator.of(context, rootNavigator: true).canPop()) {

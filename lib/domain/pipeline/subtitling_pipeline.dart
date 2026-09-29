@@ -39,6 +39,7 @@ class SubtitlingPipeline {
 
   bool _isCancelled = false;
   String? lastLocalVideoPath;
+  String? lastResolvedTitle;
 
   SubtitlingPipeline({
     required this.apiKeys,
@@ -132,6 +133,7 @@ class SubtitlingPipeline {
           target,
           settings.bilibiliSessData,
         );
+        lastResolvedTitle = details.title;
 
         // Kiểm tra xem người dùng có chọn tải video Bilibili về xem offline không
         final shouldDownloadVideo = downloadBilibiliVideo ?? settings.downloadBilibiliVideo;
