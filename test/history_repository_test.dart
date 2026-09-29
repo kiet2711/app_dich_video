@@ -58,7 +58,7 @@ void main() {
 
     final list = repo.getHistory();
     expect(list.length, 1);
-    expect(list.first.title, 'video.mp4');
+    expect(list.first.title, 'video');
 
     await repo.updatePlaybackPosition(item.id, 3200);
     expect(repo.getHistory().first.lastPositionMs, 3200);
@@ -96,6 +96,41 @@ void main() {
     // Delete item
     await repo.deleteItem(item.id);
     expect(repo.getHistory(), isEmpty);
+  });
+
+  test('updates video title and translated title correctly', () async {
+    final repo = await HistoryRepository.getInstance();
+    final doc = SubtitleDocument([
+      SubtitleItem(
+        id: 1,
+        startMs: 0,
+        endMs: 1000,
+        originalText: 'Test',
+      ),
+    ]);
+
+    final item = await repo.saveHistory(
+      videoPath: 'https://www.bilibili.com/video/BV1xx411c7mD',
+      title: 'BV1xx411c7mD.mp4',
+      document: doc,
+    );
+
+    // Initial title has .mp4 stripped
+    expect(repo.getHistory().first.title, 'BV1xx411c7mD');
+    expect(repo.getHistory().first.displayOriginalTitle, 'BV1xx411c7mD');
+    expect(repo.getHistory().first.displayTranslatedTitle, isNull);
+
+    // Update real title
+    await repo.updateTitleForVideo('https://www.bilibili.com/video/BV1xx411c7mD', 'Đại Chiến Tam Quốc.mp4');
+    expect(repo.getHistory().first.title, 'Đại Chiến Tam Quốc');
+    expect(repo.getHistory().first.displayOriginalTitle, 'Đại Chiến Tam Quốc');
+
+    // Update translated title
+    await repo.updateTranslatedTitle(item.id, 'Three Kingdoms War.mp4');
+    expect(repo.getHistory().first.translatedTitle, 'Three Kingdoms War');
+    expect(repo.getHistory().first.displayTranslatedTitle, 'Three Kingdoms War');
+
+    await repo.deleteItem(item.id);
   });
 
   test('self-heals paths when iOS container UUID changes after app update', () async {

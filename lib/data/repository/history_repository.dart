@@ -184,13 +184,13 @@ class HistoryRepository {
     bool isGenericTitle(String? t) {
       if (t == null || t.trim().isEmpty) return true;
       final clean = t.trim().toLowerCase();
-      return clean == 'video' ||
-          clean == 'video.mp4' ||
-          clean == 'video import' ||
-          clean.startsWith('video online') ||
-          (clean.startsWith('bili_') && clean.endsWith('.mp4')) ||
-          (clean.startsWith('video_') && clean.endsWith('.mp4')) ||
-          (clean.startsWith('hg_') && clean.endsWith('.mp4'));
+      final withoutExt = clean.replaceAll(RegExp(r'\.mp4$', caseSensitive: false), '').trim();
+      return withoutExt == 'video' ||
+          withoutExt == 'video import' ||
+          withoutExt.startsWith('video online') ||
+          withoutExt.startsWith('bili_') ||
+          withoutExt.startsWith('video_') ||
+          withoutExt.startsWith('hg_');
     }
 
     var cleanTitle = title.replaceAll(RegExp(r'\.mp4$', caseSensitive: false), '').trim();
@@ -314,8 +314,11 @@ class HistoryRepository {
       final matchesPath = items[i].videoPath == videoPath ||
           (bvid != null && items[i].videoPath.contains(bvid));
       if (matchesPath) {
-        if (items[i].title != clean) {
-          items[i] = items[i].copyWith(title: clean);
+        if (items[i].title != clean || items[i].originalTitle != clean) {
+          items[i] = items[i].copyWith(
+            title: clean,
+            originalTitle: clean,
+          );
           changed = true;
         }
       }

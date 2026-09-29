@@ -232,13 +232,13 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
     bool isGenericName(String? t) {
       if (t == null || t.trim().isEmpty) return true;
       final clean = t.trim().toLowerCase();
-      return clean == 'video' ||
-          clean == 'video.mp4' ||
-          clean == 'video import' ||
-          clean.startsWith('video online') ||
-          (clean.startsWith('bili_') && clean.endsWith('.mp4')) ||
-          (clean.startsWith('video_') && clean.endsWith('.mp4')) ||
-          (clean.startsWith('hg_') && clean.endsWith('.mp4'));
+      final withoutExt = clean.replaceAll(RegExp(r'\.mp4$', caseSensitive: false), '').trim();
+      return withoutExt == 'video' ||
+          withoutExt == 'video import' ||
+          withoutExt.startsWith('video online') ||
+          withoutExt.startsWith('bili_') ||
+          withoutExt.startsWith('video_') ||
+          withoutExt.startsWith('hg_');
     }
 
     try {
