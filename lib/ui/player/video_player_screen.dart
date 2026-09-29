@@ -91,6 +91,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   bool _isDownloadingVideo = false;
   double _downloadProgress = 0.0;
   String _downloadMessage = '';
+  bool _showDownloadBanner = true;
   bool _userChosePlayRaw = false;
 
   @override
@@ -592,7 +593,348 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     await _initPlayerForPath(newVideoPath);
   }
 
-  Future<void> _downloadCurrentVideo() async {
+  void _showDownloadSelectionSheet() {
+    final isBilibili = _bilibiliDetails != null ||
+        BilibiliResolver.isBilibiliUrl(_sourceVideoUrl) ||
+        BilibiliResolver.isBilibiliUrl(_currentVideoPath);
+    final isHongguo = widget.dramaDetail != null;
+
+    if (!isBilibili) {
+      showModalBottomSheet(
+        context: context,
+        backgroundColor: Colors.transparent,
+        builder: (ctx) {
+          return Container(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
+            decoration: const BoxDecoration(
+              color: Color(0xFF1A1C24),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 40,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: Colors.white24,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: AppTheme.primaryEmerald.withValues(alpha: 0.15),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.download_for_offline_rounded,
+                        color: AppTheme.primaryEmerald,
+                        size: 26,
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            isHongguo
+                                ? 'Tải Tập $_currentEpisodeIndex về máy'
+                                : 'Tải video ngoại tuyến',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            isHongguo
+                                ? 'Lưu phim vào bộ nhớ để xem offline mượt mà không cần mạng.'
+                                : 'Tải video về máy để xem không bị giật lag mạng.',
+                            style: const TextStyle(
+                              color: Colors.white60,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 22),
+                SizedBox(
+                  width: double.infinity,
+                  height: 46,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.primaryEmerald,
+                      foregroundColor: const Color(0xFF0D1117),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      elevation: 0,
+                    ),
+                    icon: const Icon(Icons.download_rounded, size: 20),
+                    label: Text(
+                      isHongguo
+                          ? 'Bắt đầu tải Tập $_currentEpisodeIndex'
+                          : 'Bắt đầu tải video',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                      ),
+                    ),
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      _downloadCurrentVideo();
+                    },
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      );
+      return;
+    }
+
+    var selectedQuality = _settings.preferredVideoQuality;
+    final qualities = [
+      {
+        'key': '80',
+        'title': '1080p (Full HD)',
+        'subtitle': 'Độ nét cao nhất, xem đã mắt trên màn hình lớn',
+        'badge': 'VIP / SESSDATA',
+      },
+      {
+        'key': '64',
+        'title': '720p (HD - Chuẩn)',
+        'subtitle': 'Cân bằng tối ưu giữa độ nét và dung lượng (Khuyên dùng)',
+        'badge': 'Phổ biến',
+      },
+      {
+        'key': '32',
+        'title': '480p (Tiết kiệm)',
+        'subtitle': 'Dung lượng nhẹ, phù hợp mạng 4G/3G hoặc máy ít bộ nhớ',
+        'badge': null,
+      },
+      {
+        'key': '16',
+        'title': '360p (Siêu nhẹ)',
+        'subtitle': 'Tải siêu tốc trong vài giây, tốn rất ít dữ liệu mạng',
+        'badge': null,
+      },
+    ];
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return Container(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+              decoration: const BoxDecoration(
+                color: Color(0xFF1A1C24),
+                borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 14),
+                      decoration: BoxDecoration(
+                        color: Colors.white24,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: AppTheme.primaryEmerald.withValues(alpha: 0.15),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.video_settings_rounded,
+                              color: AppTheme.primaryEmerald,
+                              size: 22,
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          const Text(
+                            'Chọn chất lượng tải về',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close_rounded, color: Colors.white60, size: 20),
+                        onPressed: () => Navigator.pop(ctx),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'Chọn độ phân giải mong muốn để lưu video offline:',
+                    style: TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                  const SizedBox(height: 14),
+                  ...qualities.map((q) {
+                    final isSel = selectedQuality == q['key'];
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: InkWell(
+                        onTap: () {
+                          setSheetState(() {
+                            selectedQuality = q['key']!;
+                          });
+                        },
+                        borderRadius: BorderRadius.circular(12),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+                          decoration: BoxDecoration(
+                            color: isSel
+                                ? AppTheme.primaryEmerald.withValues(alpha: 0.15)
+                                : const Color(0xFF14151B),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: isSel
+                                  ? AppTheme.primaryEmerald
+                                  : Colors.white12,
+                              width: isSel ? 1.5 : 1,
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                isSel
+                                    ? Icons.radio_button_checked_rounded
+                                    : Icons.radio_button_unchecked_rounded,
+                                color: isSel
+                                    ? AppTheme.primaryEmerald
+                                    : Colors.white38,
+                                size: 20,
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Text(
+                                          q['title']!,
+                                          style: TextStyle(
+                                            color: isSel
+                                                ? AppTheme.primaryEmerald
+                                                : Colors.white,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 13,
+                                          ),
+                                        ),
+                                        if (q['badge'] != null) ...[
+                                          const SizedBox(width: 8),
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 6,
+                                              vertical: 1.5,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: (q['key'] == '80'
+                                                      ? Colors.amber
+                                                      : AppTheme.primaryEmerald)
+                                                  .withValues(alpha: 0.2),
+                                              borderRadius: BorderRadius.circular(6),
+                                            ),
+                                            child: Text(
+                                              q['badge']!,
+                                              style: TextStyle(
+                                                color: q['key'] == '80'
+                                                    ? Colors.amber
+                                                    : AppTheme.primaryEmerald,
+                                                fontSize: 9.5,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      q['subtitle']!,
+                                      style: TextStyle(
+                                        color: Colors.white.withValues(alpha: 0.55),
+                                        fontSize: 11,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  }),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 46,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTheme.primaryEmerald,
+                        foregroundColor: const Color(0xFF0D1117),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        elevation: 0,
+                      ),
+                      icon: const Icon(Icons.download_rounded, size: 20),
+                      label: Text(
+                        'Tải ngay (${qualities.firstWhere((e) => e['key'] == selectedQuality)['title']?.split(' ').first})',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                        ),
+                      ),
+                      onPressed: () {
+                        _settings.preferredVideoQuality = selectedQuality;
+                        Navigator.pop(ctx);
+                        _downloadCurrentVideo(quality: selectedQuality);
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _downloadCurrentVideo({String? quality}) async {
     if (_isDownloadingVideo) return;
     final isHongguo = widget.dramaDetail != null;
     final isBilibili = _bilibiliDetails != null ||
@@ -609,6 +951,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
     setState(() {
       _isDownloadingVideo = true;
+      _showDownloadBanner = true;
       _downloadProgress = 0.02;
       _downloadMessage = isHongguo
           ? 'Đang chuẩn bị tải Tập $_currentEpisodeIndex...'
@@ -708,7 +1051,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           partFile,
           _settings.bilibiliSessData,
           concurrency: _settings.downloadThreadCount,
-          quality: _settings.preferredVideoQuality,
+          quality: quality ?? _settings.preferredVideoQuality,
           onProgress: onDownloadProgress,
         );
 
@@ -828,6 +1171,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           _isDownloadingVideo = false;
           _downloadProgress = 0.0;
           _downloadMessage = '';
+          _showDownloadBanner = true;
         });
       }
     }
@@ -1080,6 +1424,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     }
 
     final controller = _controller!;
+    final isLandscape =
+        MediaQuery.of(context).orientation == Orientation.landscape;
     final displayTitle = _currentTitle.isNotEmpty
         ? _currentTitle
         : (widget.title ?? '');
@@ -1616,48 +1962,66 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                       ),
                       if (_currentVideoPath.startsWith('http')) ...[
                         if (_isDownloadingVideo)
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 4),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: AppTheme.primaryEmerald
-                                    .withValues(alpha: 0.18),
-                                borderRadius: BorderRadius.circular(16),
-                                border: Border.all(
-                                  color: AppTheme.primaryEmerald
-                                      .withValues(alpha: 0.6),
-                                  width: 1,
+                          GestureDetector(
+                            onTap: () {
+                              setState(() {
+                                _showDownloadBanner = !_showDownloadBanner;
+                              });
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 4),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 4,
                                 ),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  SizedBox(
-                                    width: 13,
-                                    height: 13,
-                                    child: CircularProgressIndicator(
-                                      value: _downloadProgress > 0
-                                          ? _downloadProgress.clamp(0.0, 1.0)
-                                          : null,
-                                      strokeWidth: 2,
-                                      color: AppTheme.primaryEmerald,
-                                      backgroundColor: Colors.white12,
-                                    ),
+                                decoration: BoxDecoration(
+                                  color: AppTheme.primaryEmerald.withValues(
+                                    alpha: _showDownloadBanner ? 0.22 : 0.10,
                                   ),
-                                  const SizedBox(width: 5),
-                                  Text(
-                                    '${(_downloadProgress * 100).toInt()}%',
-                                    style: const TextStyle(
-                                      color: AppTheme.primaryEmerald,
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.bold,
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(
+                                    color: AppTheme.primaryEmerald.withValues(
+                                      alpha: _showDownloadBanner ? 0.7 : 0.35,
                                     ),
+                                    width: 1,
                                   ),
-                                ],
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    SizedBox(
+                                      width: 13,
+                                      height: 13,
+                                      child: CircularProgressIndicator(
+                                        value: _downloadProgress > 0
+                                            ? _downloadProgress.clamp(0.0, 1.0)
+                                            : null,
+                                        strokeWidth: 2,
+                                        color: AppTheme.primaryEmerald,
+                                        backgroundColor: Colors.white12,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 5),
+                                    Text(
+                                      '${(_downloadProgress * 100).toInt()}%',
+                                      style: const TextStyle(
+                                        color: AppTheme.primaryEmerald,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Icon(
+                                      _showDownloadBanner
+                                          ? Icons.visibility_rounded
+                                          : Icons.visibility_off_rounded,
+                                      color: AppTheme.primaryEmerald
+                                          .withValues(alpha: 0.8),
+                                      size: 13,
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
                           )
@@ -1668,7 +2032,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                               color: Colors.white,
                             ),
                             tooltip: 'Tải video về máy để xem offline (không lag)',
-                            onPressed: _downloadCurrentVideo,
+                            onPressed: _showDownloadSelectionSheet,
                           ),
                       ],
                       IconButton(
@@ -1930,90 +2294,201 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
               ],
 
               // 5. Thanh hiển thị tiến trình tải video offline (Floating Banner)
-              if (_isDownloadingVideo)
+              if (_isDownloadingVideo && _showDownloadBanner)
                 Positioned(
-                  bottom: (_showControls && !isHongguoWaitingTranslation) ? 82 : 24,
-                  left: 20,
-                  right: 20,
+                  bottom: isLandscape
+                      ? ((_showControls && !isHongguoWaitingTranslation) ? 58 : 12)
+                      : ((_showControls && !isHongguoWaitingTranslation) ? 82 : 24),
+                  left: isLandscape ? 32 : 16,
+                  right: isLandscape ? 32 : 16,
                   child: Center(
-                    child: Container(
-                      constraints: const BoxConstraints(maxWidth: 440),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 10,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF14161E).withValues(alpha: 0.92),
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(
-                          color: AppTheme.primaryEmerald.withValues(alpha: 0.7),
-                          width: 1.2,
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.6),
-                            blurRadius: 14,
-                            offset: const Offset(0, 4),
-                          ),
-                        ],
-                      ),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              const Icon(
-                                Icons.downloading_rounded,
-                                color: AppTheme.primaryEmerald,
-                                size: 20,
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  _downloadMessage.isNotEmpty
-                                      ? _downloadMessage
-                                      : 'Đang tải video về máy để xem offline...',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              Text(
-                                '${(_downloadProgress * 100).toInt()}%',
-                                style: const TextStyle(
-                                  color: AppTheme.primaryEmerald,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(3),
-                            child: LinearProgressIndicator(
-                              value: _downloadProgress > 0
-                                  ? _downloadProgress.clamp(0.0, 1.0)
-                                  : null,
-                              minHeight: 4,
-                              backgroundColor: Colors.white12,
-                              color: AppTheme.primaryEmerald,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+                    child: isLandscape
+                        ? _buildLandscapeDownloadBanner()
+                        : _buildPortraitDownloadBanner(),
                   ),
                 ),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildLandscapeDownloadBanner() {
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 520),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: const Color(0xFF14161E).withValues(alpha: 0.92),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: AppTheme.primaryEmerald.withValues(alpha: 0.6),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.5),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(
+            Icons.downloading_rounded,
+            color: AppTheme.primaryEmerald,
+            size: 15,
+          ),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              _downloadMessage.isNotEmpty
+                  ? _downloadMessage
+                  : 'Đang tải video...',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 10.5,
+                fontWeight: FontWeight.w600,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 80,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(2),
+              child: LinearProgressIndicator(
+                value: _downloadProgress > 0
+                    ? _downloadProgress.clamp(0.0, 1.0)
+                    : null,
+                minHeight: 3,
+                backgroundColor: Colors.white12,
+                color: AppTheme.primaryEmerald,
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            '${(_downloadProgress * 100).toInt()}%',
+            style: const TextStyle(
+              color: AppTheme.primaryEmerald,
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(width: 6),
+          GestureDetector(
+            onTap: () {
+              setState(() {
+                _showDownloadBanner = false;
+              });
+            },
+            child: const Padding(
+              padding: EdgeInsets.all(2),
+              child: Icon(
+                Icons.close_rounded,
+                color: Colors.white60,
+                size: 14,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPortraitDownloadBanner() {
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 440),
+      padding: const EdgeInsets.symmetric(
+        horizontal: 14,
+        vertical: 9,
+      ),
+      decoration: BoxDecoration(
+        color: const Color(0xFF14161E).withValues(alpha: 0.92),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: AppTheme.primaryEmerald.withValues(alpha: 0.7),
+          width: 1.2,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.6),
+            blurRadius: 14,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.downloading_rounded,
+                color: AppTheme.primaryEmerald,
+                size: 19,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _downloadMessage.isNotEmpty
+                      ? _downloadMessage
+                      : 'Đang tải video về máy để xem offline...',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '${(_downloadProgress * 100).toInt()}%',
+                style: const TextStyle(
+                  color: AppTheme.primaryEmerald,
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(width: 6),
+              GestureDetector(
+                onTap: () {
+                  setState(() {
+                    _showDownloadBanner = false;
+                  });
+                },
+                child: const Padding(
+                  padding: EdgeInsets.all(2),
+                  child: Icon(
+                    Icons.close_rounded,
+                    color: Colors.white60,
+                    size: 16,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 7),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(3),
+            child: LinearProgressIndicator(
+              value: _downloadProgress > 0
+                  ? _downloadProgress.clamp(0.0, 1.0)
+                  : null,
+              minHeight: 4,
+              backgroundColor: Colors.white12,
+              color: AppTheme.primaryEmerald,
+            ),
+          ),
+        ],
       ),
     );
   }
