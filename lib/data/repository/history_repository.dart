@@ -153,6 +153,7 @@ class HistoryRepository {
     String? ttsVoice,
     String? seriesId,
     String? seriesCover,
+    String? coverUrl,
     int? episodeIndex,
     int? totalEpisodes,
   }) async {
@@ -217,7 +218,7 @@ class HistoryRepository {
       docKey: docKey,
       lastPositionMs: existing?.lastPositionMs ?? 0,
       seriesId: seriesId ?? existing?.seriesId,
-      seriesCover: seriesCover ?? existing?.seriesCover,
+      seriesCover: coverUrl ?? seriesCover ?? existing?.seriesCover,
       episodeIndex: episodeIndex ?? existing?.episodeIndex,
       totalEpisodes: totalEpisodes ?? existing?.totalEpisodes,
     );
@@ -319,6 +320,29 @@ class HistoryRepository {
             title: clean,
             originalTitle: clean,
           );
+          changed = true;
+        }
+      }
+    }
+    if (changed) {
+      await _save(items);
+    }
+  }
+
+  Future<void> updateCoverForVideo(String idOrVideoPath, String newCoverUrl) async {
+    final clean = newCoverUrl.trim();
+    if (clean.isEmpty) return;
+    final bvid = RegExp(r'BV[a-zA-Z0-9]+', caseSensitive: false).firstMatch(idOrVideoPath)?.group(0);
+
+    final items = getHistory();
+    var changed = false;
+    for (var i = 0; i < items.length; i++) {
+      final matches = items[i].id == idOrVideoPath ||
+          items[i].videoPath == idOrVideoPath ||
+          (bvid != null && items[i].videoPath.contains(bvid));
+      if (matches) {
+        if (items[i].seriesCover != clean) {
+          items[i] = items[i].copyWith(seriesCover: clean);
           changed = true;
         }
       }

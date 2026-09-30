@@ -43,6 +43,7 @@ class BilibiliVideoDetails {
   final int cid;
   final String title;
   final String? rawTitle;
+  final String? coverUrl;
   final int durationSeconds;
   final List<BilibiliPageInfo> pages;
   final int selectedPageIndex;
@@ -53,6 +54,7 @@ class BilibiliVideoDetails {
     required this.cid,
     required this.title,
     this.rawTitle,
+    this.coverUrl,
     required this.durationSeconds,
     this.pages = const [],
     this.selectedPageIndex = 1,
@@ -330,12 +332,22 @@ class BilibiliResolver {
             ? '$mainTitle - P${target.pageIndex} ($partTitle)'
             : mainTitle;
 
+    var coverUrl = data['pic']?.toString().trim();
+    if (coverUrl != null && coverUrl.isNotEmpty) {
+      if (coverUrl.startsWith('//')) {
+        coverUrl = 'https:$coverUrl';
+      } else if (coverUrl.startsWith('http://')) {
+        coverUrl = coverUrl.replaceFirst('http://', 'https://');
+      }
+    }
+
     return BilibiliVideoDetails(
       bvid: data['bvid']?.toString() ?? target.bvid ?? '',
       aid: (data['aid'] as num?)?.toInt() ?? 0,
       cid: cid,
       title: fullTitle,
       rawTitle: mainTitle,
+      coverUrl: coverUrl,
       durationSeconds: pageDuration > 0
           ? pageDuration
           : ((data['duration'] as num?)?.toInt() ?? 0),

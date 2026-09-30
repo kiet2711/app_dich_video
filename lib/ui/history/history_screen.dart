@@ -9,7 +9,9 @@ import '../../data/model/history_item.dart';
 import '../../data/model/subtitle_document.dart';
 import '../../data/repository/history_repository.dart';
 import '../../domain/ai/title_translator.dart';
+import '../../domain/media/bilibili_resolver.dart';
 import '../../domain/media/hongguo_resolver.dart';
+import '../../data/repository/settings_repository.dart';
 import '../player/video_player_screen.dart';
 import '../settings/settings_screen.dart';
 import '../storage/storage_cleaner_screen.dart';
@@ -207,6 +209,66 @@ class _HistoryScreenState extends State<HistoryScreen> {
     _load();
   }
 
+  static Map<String, String>? _imageHeaders(String? url) {
+    if (url == null) return null;
+    final lower = url.toLowerCase();
+    if (lower.contains('bilibili') ||
+        lower.contains('hdslb.com') ||
+        lower.contains('bilivideo')) {
+      return const {
+        'Referer': 'https://www.bilibili.com/',
+        'User-Agent':
+            'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17.0 Mobile/15E148 Safari/604.1',
+      };
+    }
+    return null;
+  }
+
+  bool _isBackfillingCovers = false;
+
+  Future<void> _backfillBilibiliCovers(HistoryRepository repo) async {
+    if (_isBackfillingCovers) return;
+    _isBackfillingCovers = true;
+    try {
+      final items = repo.getHistory();
+      final itemsNeedingCover = items.where((it) {
+        if (it.seriesCover != null && it.seriesCover!.trim().isNotEmpty) return false;
+        final hasBv = RegExp(r'BV1[0-9a-zA-Z]{9}', caseSensitive: false).hasMatch(it.videoPath) ||
+            RegExp(r'BV1[0-9a-zA-Z]{9}', caseSensitive: false).hasMatch(it.title);
+        return hasBv || BilibiliResolver.isBilibiliUrl(it.videoPath);
+      }).toList();
+
+      if (itemsNeedingCover.isEmpty) return;
+
+      final resolver = BilibiliResolver();
+      final settings = await SettingsRepository.getInstance();
+
+      for (final it in itemsNeedingCover) {
+        try {
+          final bvMatch = RegExp(r'BV1[0-9a-zA-Z]{9}', caseSensitive: false).firstMatch(it.videoPath) ??
+              RegExp(r'BV1[0-9a-zA-Z]{9}', caseSensitive: false).firstMatch(it.title);
+          final targetUrl = bvMatch != null
+              ? 'https://www.bilibili.com/video/${bvMatch.group(0)}'
+              : (it.videoPath.startsWith('http') ? it.videoPath : null);
+
+          if (targetUrl == null) continue;
+
+          final target = await resolver.resolveUrl(targetUrl);
+          final details = await resolver.getVideoDetails(target, settings.bilibiliSessData);
+          if (details.coverUrl != null && details.coverUrl!.isNotEmpty) {
+            await repo.updateCoverForVideo(it.videoPath, details.coverUrl!);
+            await repo.updateCoverForVideo(it.id, details.coverUrl!);
+          }
+        } catch (_) {
+          // Bỏ qua nếu lỗi mạng
+        }
+      }
+    } catch (_) {
+    } finally {
+      _isBackfillingCovers = false;
+    }
+  }
+
   Future<void> _load() async {
     final repo = await HistoryRepository.getInstance();
     if (mounted) {
@@ -214,6 +276,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
         _historyRepo = repo;
       });
     }
+    _backfillBilibiliCovers(repo);
   }
 
   /// Gom nhóm các tập phim bộ lại thành 1 thẻ, giữ nguyên các video đơn lẻ
@@ -641,6 +704,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                                 group.seriesCover!.isNotEmpty)
                             ? Image.network(
                                 group.seriesCover!,
+                                headers: _imageHeaders(group.seriesCover),
                                 width: 56,
                                 height: 74,
                                 fit: BoxFit.cover,
@@ -1291,6 +1355,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                         group.seriesCover!.isNotEmpty)
                     ? Image.network(
                         group.seriesCover!,
+                        headers: _imageHeaders(group.seriesCover),
                         width: 52,
                         height: 70,
                         fit: BoxFit.cover,
@@ -1335,15 +1400,31 @@ class _HistoryScreenState extends State<HistoryScreen> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Expanded(
-                                  child: Text(
-                                    displayGroupTitle,
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.bold,
+                                  child: Tooltip(
+                                    message: 'Chạm để sao chép',
+                                    child: InkWell(
+                                      onTap: () {
+                                        Clipboard.setData(ClipboardData(text: displayGroupTitle));
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          SnackBar(
+                                            content: Text('📋 Đã sao chép: "$displayGroupTitle"'),
+                                            duration: const Duration(seconds: 2),
+                                            behavior: SnackBarBehavior.floating,
+                                          ),
+                                        );
+                                      },
+                                      borderRadius: BorderRadius.circular(4),
+                                      child: Text(
+                                        displayGroupTitle,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
                                     ),
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
                                   ),
                                 ),
                                 const SizedBox(width: 6),
@@ -1585,6 +1666,12 @@ class _HistoryScreenState extends State<HistoryScreen> {
         : it.displayOriginalTitle;
     final isTranslating = _translatingItemIds.contains(it.id);
 
+    final hasCover = it.seriesCover != null && it.seriesCover!.trim().isNotEmpty;
+    final isBilibiliVideo = BilibiliResolver.isBilibiliUrl(it.videoPath) ||
+        RegExp(r'BV1[0-9a-zA-Z]{9}', caseSensitive: false).hasMatch(it.videoPath) ||
+        RegExp(r'BV1[0-9a-zA-Z]{9}', caseSensitive: false).hasMatch(it.title);
+    final showCoverSlot = hasCover || isBilibiliVideo;
+
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -1598,16 +1685,71 @@ class _HistoryScreenState extends State<HistoryScreen> {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              if (showCoverSlot) ...[
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: hasCover
+                      ? Image.network(
+                          it.seriesCover!,
+                          headers: _imageHeaders(it.seriesCover),
+                          width: 52,
+                          height: 70,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, _, _) => Container(
+                            width: 52,
+                            height: 70,
+                            color: const Color(0xFF252631),
+                            child: const Icon(Icons.movie, color: Colors.white30),
+                          ),
+                        )
+                      : Container(
+                          width: 52,
+                          height: 70,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF132F24),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Icon(
+                            Icons.movie_filter_rounded,
+                            color: AppTheme.primaryEmerald,
+                          ),
+                        ),
+                ),
+                const SizedBox(width: 12),
+              ],
               Expanded(
-                child: Text(
-                  displayTitle,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 15,
-                    fontWeight: FontWeight.bold,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+              Expanded(
+                child: Tooltip(
+                  message: 'Chạm để sao chép',
+                  child: InkWell(
+                    onTap: () {
+                      Clipboard.setData(ClipboardData(text: displayTitle));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('📋 Đã sao chép: "$displayTitle"'),
+                          duration: const Duration(seconds: 2),
+                          behavior: SnackBarBehavior.floating,
+                        ),
+                      );
+                    },
+                    borderRadius: BorderRadius.circular(4),
+                    child: Text(
+                      displayTitle,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
                 ),
               ),
               const SizedBox(width: 8),
@@ -1674,54 +1816,67 @@ class _HistoryScreenState extends State<HistoryScreen> {
                   ),
                 ),
               ),
+                      ],
+                    ),
+                    if (isShowingTranslated && hasTranslated && it.displayOriginalTitle.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              '🇨🇳 Gốc: ${it.displayOriginalTitle}',
+                              style: const TextStyle(
+                                color: Colors.grey,
+                                fontSize: 12,
+                                fontStyle: FontStyle.italic,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          InkWell(
+                            onTap: () {
+                              Clipboard.setData(ClipboardData(text: it.displayOriginalTitle));
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Row(
+                                    children: [
+                                      const Icon(Icons.check_circle, color: AppTheme.primaryEmerald, size: 16),
+                                      const SizedBox(width: 8),
+                                      Expanded(child: Text('Đã sao chép: "${it.displayOriginalTitle}"')),
+                                    ],
+                                  ),
+                                  duration: const Duration(seconds: 2),
+                                ),
+                              );
+                            },
+                            borderRadius: BorderRadius.circular(4),
+                            child: const Padding(
+                              padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                              child: Icon(
+                                Icons.copy_rounded,
+                                size: 14,
+                                color: Colors.grey,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                    const SizedBox(height: 6),
+                    Text(
+                      dateStr,
+                      style: const TextStyle(
+                        color: Colors.grey,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
-          if (isShowingTranslated && hasTranslated && it.displayOriginalTitle.isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    '🇨🇳 Gốc: ${it.displayOriginalTitle}',
-                    style: const TextStyle(
-                      color: Colors.grey,
-                      fontSize: 12,
-                      fontStyle: FontStyle.italic,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                InkWell(
-                  onTap: () {
-                    Clipboard.setData(ClipboardData(text: it.displayOriginalTitle));
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Row(
-                          children: [
-                            const Icon(Icons.check_circle, color: AppTheme.primaryEmerald, size: 16),
-                            const SizedBox(width: 8),
-                            Expanded(child: Text('Đã sao chép: "${it.displayOriginalTitle}"')),
-                          ],
-                        ),
-                        duration: const Duration(seconds: 2),
-                      ),
-                    );
-                  },
-                  borderRadius: BorderRadius.circular(4),
-                  child: const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                    child: Icon(
-                      Icons.copy_rounded,
-                      size: 14,
-                      color: Colors.grey,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ],
-          const SizedBox(height: 8),
+          const SizedBox(height: 10),
           Wrap(
             spacing: 8,
             runSpacing: 4,
@@ -1762,13 +1917,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     color: hasVoice ? AppTheme.primaryEmerald : Colors.grey,
                     fontSize: 11,
                   ),
-                ),
-              ),
-              Text(
-                dateStr,
-                style: const TextStyle(
-                  color: Colors.grey,
-                  fontSize: 11,
                 ),
               ),
             ],

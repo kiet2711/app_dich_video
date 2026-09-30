@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:video_player/video_player.dart';
 
@@ -224,6 +225,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           final history = await HistoryRepository.getInstance();
           await history.updateTitleForVideo(_sourceVideoUrl, details.title);
           await history.updateTitleForVideo(targetPath, details.title);
+          if (details.coverUrl != null && details.coverUrl!.isNotEmpty) {
+            await history.updateCoverForVideo(_sourceVideoUrl, details.coverUrl!);
+            await history.updateCoverForVideo(targetPath, details.coverUrl!);
+          }
         } catch (_) {}
 
         // Ưu tiên nạp video từ cache nếu đã tải về trước đó
@@ -609,6 +614,34 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           ),
         );
       },
+    );
+  }
+
+  void _copyTitleToClipboard(String title) {
+    if (title.trim().isEmpty) return;
+    Clipboard.setData(ClipboardData(text: title.trim()));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(
+              Icons.check_circle,
+              color: AppTheme.primaryEmerald,
+              size: 16,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Đã sao chép: "${title.trim()}"',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+      ),
     );
   }
 
@@ -1150,6 +1183,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         if (_currentTitle.isEmpty || _isGenericTitle(_currentTitle)) {
           _currentTitle = details.title;
           if (mounted) setState(() {});
+        }
+        if (details.coverUrl != null && details.coverUrl!.isNotEmpty) {
+          try {
+            final history = await HistoryRepository.getInstance();
+            await history.updateCoverForVideo(_sourceVideoUrl, details.coverUrl!);
+          } catch (_) {}
         }
 
         final cachedVideo = await VideoCacheManager.getCachedVideoFile(
@@ -1784,9 +1823,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                         ConstrainedBox(
                           constraints: BoxConstraints(
                             maxWidth: isLandscape
-                                ? 380
-                                : (MediaQuery.of(context).size.width * 0.38)
-                                    .clamp(110.0, 160.0),
+                                ? 420
+                                : (MediaQuery.of(context).size.width * 0.45)
+                                    .clamp(130.0, 220.0),
                           ),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1795,14 +1834,25 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                               Row(
                                 children: [
                                   Expanded(
-                                    child: Text(
-                                      displayTitle,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 14,
+                                    child: Tooltip(
+                                      message: 'Chạm để sao chép: $displayTitle',
+                                      child: InkWell(
+                                        onTap: () => _copyTitleToClipboard(displayTitle),
+                                        borderRadius: BorderRadius.circular(4),
+                                        child: SingleChildScrollView(
+                                          scrollDirection: Axis.horizontal,
+                                          physics: const BouncingScrollPhysics(),
+                                          child: Text(
+                                            displayTitle,
+                                            maxLines: 1,
+                                            softWrap: false,
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 14,
+                                            ),
+                                          ),
+                                        ),
                                       ),
                                     ),
                                   ),
@@ -2708,14 +2758,25 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                 ),
                 const SizedBox(width: 4),
                 Expanded(
-                  child: Text(
-                    displayTitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 15,
+                  child: Tooltip(
+                    message: 'Chạm để sao chép: $displayTitle',
+                    child: InkWell(
+                      onTap: () => _copyTitleToClipboard(displayTitle),
+                      borderRadius: BorderRadius.circular(4),
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        physics: const BouncingScrollPhysics(),
+                        child: Text(
+                          displayTitle,
+                          maxLines: 1,
+                          softWrap: false,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                 ),

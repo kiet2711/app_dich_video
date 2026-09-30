@@ -40,6 +40,7 @@ class SubtitlingPipeline {
   bool _isCancelled = false;
   String? lastLocalVideoPath;
   String? lastResolvedTitle;
+  String? lastResolvedCover;
 
   SubtitlingPipeline({
     required this.apiKeys,
@@ -134,6 +135,7 @@ class SubtitlingPipeline {
           settings.bilibiliSessData,
         );
         lastResolvedTitle = details.title;
+        lastResolvedCover = details.coverUrl;
 
         // Kiểm tra xem người dùng có chọn tải video Bilibili về xem offline không
         final shouldDownloadVideo = downloadBilibiliVideo ?? settings.downloadBilibiliVideo;
@@ -309,6 +311,12 @@ class SubtitlingPipeline {
           final vidMatch = RegExp(r'/player/\d+/(\d+)').firstMatch(videoPath);
           final vid = vidMatch?.group(1) ?? seriesId;
           directMp4 = await resolver.getEpisodePlayUrl(seriesId, vid);
+          try {
+            final hgDetail = await resolver.getDramaDetail(seriesId);
+            if (hgDetail.cover.isNotEmpty) {
+              lastResolvedCover = hgDetail.cover;
+            }
+          } catch (_) {}
         }
 
         final epMatch = RegExp(r'Tập\s*(\d+)', caseSensitive: false).firstMatch(videoPath);

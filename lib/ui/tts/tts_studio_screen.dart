@@ -266,6 +266,13 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
           if (details.title.isNotEmpty) {
             name = details.title;
           }
+          if (details.coverUrl != null && details.coverUrl!.isNotEmpty) {
+            try {
+              final repo = await HistoryRepository.getInstance();
+              await repo.updateCoverForVideo(path, details.coverUrl!);
+              await repo.updateCoverForVideo(effectivePath, details.coverUrl!);
+            } catch (_) {}
+          }
         } catch (_) {}
       }
     } catch (_) {}

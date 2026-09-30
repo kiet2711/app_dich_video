@@ -687,6 +687,8 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       }
       if (effectiveTitle.isEmpty) effectiveTitle = 'Video';
 
+      final coverToSave = _bilibiliDetails?.coverUrl ?? pipeline.lastResolvedCover;
+
       await history.addItem(
         HistoryItem(
           id: historyId,
@@ -697,6 +699,7 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           documentPath: documentFile.path,
           timestamp: DateTime.now().millisecondsSinceEpoch,
           durationMs: _fileDurationMs,
+          seriesCover: coverToSave,
         ),
       );
 

@@ -13,11 +13,13 @@ class HistoryItem {
   final String? docKey;
   final int lastPositionMs;
 
-  // Thuộc tính phục vụ gom nhóm phim bộ (Hồng Quả, Short Drama)
+  // Thuộc tính phục vụ ảnh bìa & gom nhóm phim bộ (Hồng Quả, Bilibili, Short Drama)
   final String? seriesId;
   final String? seriesCover;
   final int? episodeIndex;
   final int? totalEpisodes;
+
+  String? get coverUrl => seriesCover;
 
   const HistoryItem({
     required this.id,
@@ -99,6 +101,7 @@ class HistoryItem {
     int? lastPositionMs,
     String? seriesId,
     String? seriesCover,
+    String? coverUrl,
     int? episodeIndex,
     int? totalEpisodes,
   }) {
@@ -117,7 +120,7 @@ class HistoryItem {
       docKey: docKey ?? this.docKey,
       lastPositionMs: lastPositionMs ?? this.lastPositionMs,
       seriesId: seriesId ?? this.seriesId,
-      seriesCover: seriesCover ?? this.seriesCover,
+      seriesCover: coverUrl ?? seriesCover ?? this.seriesCover,
       episodeIndex: episodeIndex ?? this.episodeIndex,
       totalEpisodes: totalEpisodes ?? this.totalEpisodes,
     );
@@ -158,7 +161,7 @@ class HistoryItem {
     docKey: json['docKey'] as String?,
     lastPositionMs: json['lastPositionMs'] as int? ?? 0,
     seriesId: json['seriesId'] as String?,
-    seriesCover: json['seriesCover'] as String?,
+    seriesCover: (json['seriesCover'] ?? json['coverUrl']) as String?,
     episodeIndex: json['episodeIndex'] as int?,
     totalEpisodes: json['totalEpisodes'] as int?,
   );
