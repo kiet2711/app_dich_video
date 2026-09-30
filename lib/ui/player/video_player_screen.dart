@@ -1781,7 +1781,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                       ),
                       if (displayTitle.isNotEmpty) ...[
                         const SizedBox(width: 4),
-                        Expanded(
+                        ConstrainedBox(
+                          constraints: BoxConstraints(
+                            maxWidth: isLandscape
+                                ? 380
+                                : (MediaQuery.of(context).size.width * 0.38)
+                                    .clamp(110.0, 160.0),
+                          ),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             mainAxisSize: MainAxisSize.min,
@@ -1870,18 +1876,22 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                           : const Color(0xFFFFB74D),
                                     ),
                                     const SizedBox(width: 4),
-                                    Text(
-                                      (!_currentVideoPath.startsWith('http://') &&
-                                              !_currentVideoPath.startsWith('https://'))
-                                          ? 'Phát offline (Bộ nhớ máy)'
-                                          : 'Phát trực tuyến (Online)',
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.w600,
-                                        color: (!_currentVideoPath.startsWith('http://') &&
+                                    Flexible(
+                                      child: Text(
+                                        (!_currentVideoPath.startsWith('http://') &&
                                                 !_currentVideoPath.startsWith('https://'))
-                                            ? AppTheme.primaryEmerald
-                                            : const Color(0xFFFFB74D),
+                                            ? 'Phát offline (Bộ nhớ máy)'
+                                            : 'Phát trực tuyến (Online)',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w600,
+                                          color: (!_currentVideoPath.startsWith('http://') &&
+                                                  !_currentVideoPath.startsWith('https://'))
+                                              ? AppTheme.primaryEmerald
+                                              : const Color(0xFFFFB74D),
+                                        ),
                                       ),
                                     ),
                                   ],
@@ -1933,11 +1943,20 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                           ),
                         ),
                         const SizedBox(width: 8),
-                      ] else
-                        const Spacer(),
+                      ],
 
-                      // Nút YouTube-style: Bật/Tắt Tự Động Chuyển Tập & Dịch Ngầm
-                      if (widget.dramaDetail != null) ...[
+                      // Danh sách nút công cụ & tiện ích có thể cuộn ngang mượt mà khi quay dọc
+                      Expanded(
+                        child: Align(
+                          alignment: Alignment.centerRight,
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            physics: const BouncingScrollPhysics(),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                // Nút YouTube-style: Bật/Tắt Tự Động Chuyển Tập & Dịch Ngầm
+                                if (widget.dramaDetail != null) ...[
                         InkWell(
                           onTap: () {
                             final newVal = !_autoPlayNextEpisode;
@@ -2234,6 +2253,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                             ),
                           );
                         },
+                      ),
+                              ],
+                            ),
+                          ),
+                        ),
                       ),
                     ],
                   ),
