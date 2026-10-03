@@ -273,6 +273,27 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   Future<void> _enterPipMode() async {
     final controller = _controller;
     if (controller == null || !controller.value.isInitialized) return;
+
+    if (Platform.isIOS) {
+      if (widget.isGlobalPlayer) {
+        GlobalPlayerManager.instance.minimize();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Đã thu nhỏ video (Mini-Player) trong ứng dụng.'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Hệ điều hành iOS chỉ hỗ trợ thu nhỏ trình phát bên trong ứng dụng.'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+      return;
+    }
+
     final w = controller.value.size.width.toInt();
     final h = controller.value.size.height.toInt();
     final isPlaying = controller.value.isPlaying;
@@ -2096,8 +2117,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Row(
+                                mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  Expanded(
+                                  Flexible(
+                                    fit: FlexFit.loose,
                                     child: Tooltip(
                                       message: 'Chạm để sao chép: $displayTitle',
                                       child: InkWell(
@@ -2270,14 +2293,16 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 // Nút PiP ngoài màn hình (Picture-in-Picture)
-                                IconButton(
-                                  icon: const Icon(
-                                    Icons.picture_in_picture_alt_rounded,
-                                    color: Colors.white,
+                                  IconButton(
+                                    icon: const Icon(
+                                      Icons.picture_in_picture_alt_rounded,
+                                      color: Colors.white,
+                                    ),
+                                    tooltip: Platform.isIOS
+                                        ? 'Thu nhỏ video (Mini-Player)'
+                                        : 'Hình thu nhỏ ngoài màn hình (PiP)',
+                                    onPressed: _enterPipMode,
                                   ),
-                                  tooltip: 'Hình thu nhỏ ngoài màn hình (PiP)',
-                                  onPressed: _enterPipMode,
-                                ),
 
                                 // Nút Bật/Tắt phát nền (Background Play)
                                 IconButton(

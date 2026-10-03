@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 import '../../data/repository/settings_repository.dart';
+import 'offline_mlkit_translator.dart';
 
 /// Dịch tiêu đề phim/video sang tiếng Việt thông minh:
 /// 1. Ưu tiên: Gemini / Groq nếu có cấu hình API Key (dịch chuẩn điện ảnh, bắt tai).
@@ -114,7 +115,20 @@ class TitleTranslator {
       }
     } catch (_) {}
 
-    // 2. Dự phòng: MyMemory Translation API (miễn phí 100%, không cần API Key)
+    // 2. Dự phòng: Dịch offline bằng Google ML Kit (không cần mạng, không cần key)
+    try {
+      final offlineResult =
+          await OfflineMlKitTranslator.translateHongguoTitle(clean);
+      if (offlineResult.isNotEmpty && offlineResult != clean) {
+        final sanitized = _sanitize(offlineResult);
+        if (sanitized.isNotEmpty) {
+          _cache[clean] = sanitized;
+          return sanitized;
+        }
+      }
+    } catch (_) {}
+
+    // 3. Dự phòng trực tuyến: MyMemory Translation API (miễn phí 100%, không cần API Key)
     try {
       final res = await _dio.get(
         'https://api.mymemory.translated.net/get',
