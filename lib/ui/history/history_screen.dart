@@ -12,7 +12,7 @@ import '../../domain/ai/title_translator.dart';
 import '../../domain/media/bilibili_resolver.dart';
 import '../../domain/media/hongguo_resolver.dart';
 import '../../data/repository/settings_repository.dart';
-import '../player/video_player_screen.dart';
+import '../../player/global_player_manager.dart';
 import '../settings/settings_screen.dart';
 import '../storage/storage_cleaner_screen.dart';
 import '../theme/app_theme.dart';
@@ -358,18 +358,13 @@ class _HistoryScreenState extends State<HistoryScreen> {
     final resolvedVideo = await HistoryRepository.resolvePath(item.videoPath);
 
     if (mounted) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (ctx) => VideoPlayerScreen(
-            videoPath: resolvedVideo,
-            document: doc,
-            title: item.title,
-            initialPositionMs: item.lastPositionMs,
-            onPlaybackPositionChanged: (positionMs) =>
-                repo.updatePlaybackPosition(item.id, positionMs),
-          ),
-        ),
+      GlobalPlayerManager.instance.openPlayer(
+        videoPath: resolvedVideo,
+        document: doc,
+        title: item.title,
+        initialPositionMs: item.lastPositionMs,
+        onPlaybackPositionChanged: (positionMs) =>
+            repo.updatePlaybackPosition(item.id, positionMs),
       );
     }
   }
@@ -427,20 +422,15 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
     if (!mounted) return;
 
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (ctx) => VideoPlayerScreen(
-          videoPath: resolvedVideo,
-          title: '${group.seriesTitle} - Tập $epIndex',
-          document: doc ?? SubtitleDocument(),
-          initialPositionMs: item.lastPositionMs,
-          dramaDetail: dramaDetail,
-          currentEpisodeIndex: epIndex,
-          onPlaybackPositionChanged: (positionMs) =>
-              repo.updatePlaybackPosition(item.id, positionMs),
-        ),
-      ),
+    GlobalPlayerManager.instance.openPlayer(
+      videoPath: resolvedVideo,
+      title: '${group.seriesTitle} - Tập $epIndex',
+      document: doc ?? SubtitleDocument(),
+      initialPositionMs: item.lastPositionMs,
+      dramaDetail: dramaDetail,
+      currentEpisodeIndex: epIndex,
+      onPlaybackPositionChanged: (positionMs) =>
+          repo.updatePlaybackPosition(item.id, positionMs),
     );
   }
 
@@ -471,17 +461,12 @@ class _HistoryScreenState extends State<HistoryScreen> {
       if (!mounted) return;
       Navigator.pop(context); // Đóng loading
 
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (ctx) => VideoPlayerScreen(
-            videoPath: playUrl,
-            title: '${detail.title} - Tập $epIndex',
-            document: SubtitleDocument(),
-            dramaDetail: detail,
-            currentEpisodeIndex: epIndex,
-          ),
-        ),
+      GlobalPlayerManager.instance.openPlayer(
+        videoPath: playUrl,
+        title: '${detail.title} - Tập $epIndex',
+        document: SubtitleDocument(),
+        dramaDetail: detail,
+        currentEpisodeIndex: epIndex,
       );
     } catch (e) {
       if (!mounted) return;
@@ -643,12 +628,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
       context: context,
       builder: (ctx) => ImportSubtitleDialog(
         onSuccessPlay: (videoPath, doc) {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (c) =>
-                  VideoPlayerScreen(videoPath: videoPath, document: doc),
-            ),
+          GlobalPlayerManager.instance.openPlayer(
+            videoPath: videoPath,
+            document: doc,
           );
         },
       ),

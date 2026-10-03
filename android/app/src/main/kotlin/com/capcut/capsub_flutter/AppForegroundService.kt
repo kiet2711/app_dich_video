@@ -49,7 +49,24 @@ class AppForegroundService : Service() {
 
         val notification = buildNotification(title, message, progress, maxProgress)
         if (action == ACTION_START) {
-            startForeground(NOTIFICATION_ID, notification)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                try {
+                    val serviceType = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+                    startForeground(NOTIFICATION_ID, notification, serviceType)
+                } catch (_: Exception) {
+                    try {
+                        startForeground(NOTIFICATION_ID, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+                    } catch (_: Exception) {
+                        try {
+                            startForeground(NOTIFICATION_ID, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+                        } catch (_: Exception) {
+                            startForeground(NOTIFICATION_ID, notification)
+                        }
+                    }
+                }
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
         } else {
             val manager = getSystemService(NotificationManager::class.java)
             manager.notify(NOTIFICATION_ID, notification)

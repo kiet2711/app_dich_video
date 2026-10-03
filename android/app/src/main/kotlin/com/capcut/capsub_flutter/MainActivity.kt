@@ -1,16 +1,26 @@
 package com.capcut.capsub_flutter
 
 import android.app.Activity
+import android.app.PendingIntent
+import android.app.PictureInPictureParams
+import android.app.RemoteAction
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.content.res.Configuration
+import android.graphics.drawable.Icon
 import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMuxer
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.OpenableColumns
+import android.util.Rational
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -21,9 +31,122 @@ import java.util.concurrent.Executors
 class MainActivity : FlutterActivity() {
     private val CHANNEL = "com.capcut.capsub/media"
     private val FOREGROUND_CHANNEL = "com.capcut.capsub/foreground_service"
+    private val PIP_CHANNEL = "com.capcut.capsub/pip"
     private val mediaExecutor = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
     private var pendingMediaPickResult: MethodChannel.Result? = null
+    private var pipMethodChannel: MethodChannel? = null
+
+    companion object {
+        private const val REQUEST_PICK_MEDIA = 42017
+        private const val ACTION_PIP_PLAY_PAUSE = "com.capcut.capsub.PIP_PLAY_PAUSE"
+        private const val ACTION_PIP_REWIND = "com.capcut.capsub.PIP_REWIND"
+        private const val ACTION_PIP_FORWARD = "com.capcut.capsub.PIP_FORWARD"
+        private const val REQUEST_CODE_PLAY_PAUSE = 101
+        private const val REQUEST_CODE_REWIND = 102
+        private const val REQUEST_CODE_FORWARD = 103
+    }
+
+    private var currentPipWidth = 16
+    private var currentPipHeight = 9
+    private var isPipPlaying = true
+    private var isPipReceiverRegistered = false
+
+    private val pipReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                ACTION_PIP_PLAY_PAUSE -> pipMethodChannel?.invokeMethod("onPipAction", "playPause")
+                ACTION_PIP_REWIND -> pipMethodChannel?.invokeMethod("onPipAction", "rewind")
+                ACTION_PIP_FORWARD -> pipMethodChannel?.invokeMethod("onPipAction", "forward")
+            }
+        }
+    }
+
+    private fun registerPipReceiverIfNeeded() {
+        if (!isPipReceiverRegistered) {
+            val filter = IntentFilter().apply {
+                addAction(ACTION_PIP_PLAY_PAUSE)
+                addAction(ACTION_PIP_REWIND)
+                addAction(ACTION_PIP_FORWARD)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(pipReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                registerReceiver(pipReceiver, filter)
+            }
+            isPipReceiverRegistered = true
+        }
+    }
+
+    private fun buildPipParams(width: Int, height: Int, isPlaying: Boolean): PictureInPictureParams? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return null
+        val rational = calculateValidPipAspectRatio(width, height)
+        val builder = PictureInPictureParams.Builder()
+            .setAspectRatio(rational)
+
+        // Actions chuẩn đa phương tiện như YouTube: Lùi 10s, Phát/Tạm dừng, Tiến 10s
+        val actions = mutableListOf<RemoteAction>()
+
+        // 1. Lùi 10 giây
+        val rewPendingIntent = PendingIntent.getBroadcast(
+            this,
+            REQUEST_CODE_REWIND,
+            Intent(ACTION_PIP_REWIND).setPackage(packageName),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        actions.add(
+            RemoteAction(
+                Icon.createWithResource(this, android.R.drawable.ic_media_rew),
+                "Lùi 10s",
+                "Lùi 10 giây",
+                rewPendingIntent
+            )
+        )
+
+        // 2. Phát / Tạm dừng
+        val playPauseIconRes = if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play
+        val playPauseTitle = if (isPlaying) "Tạm dừng" else "Phát"
+        val playPausePendingIntent = PendingIntent.getBroadcast(
+            this,
+            REQUEST_CODE_PLAY_PAUSE,
+            Intent(ACTION_PIP_PLAY_PAUSE).setPackage(packageName),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        actions.add(
+            RemoteAction(
+                Icon.createWithResource(this, playPauseIconRes),
+                playPauseTitle,
+                playPauseTitle,
+                playPausePendingIntent
+            )
+        )
+
+        // 3. Tiến 10 giây
+        val ffPendingIntent = PendingIntent.getBroadcast(
+            this,
+            REQUEST_CODE_FORWARD,
+            Intent(ACTION_PIP_FORWARD).setPackage(packageName),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        actions.add(
+            RemoteAction(
+                Icon.createWithResource(this, android.R.drawable.ic_media_ff),
+                "Tiến 10s",
+                "Tiến 10 giây",
+                ffPendingIntent
+            )
+        )
+
+        builder.setActions(actions)
+
+        // Android 12+ (API 31+) mượt mà như YouTube: điều chỉnh kích thước mượt mà không nháy đen
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            builder.setSeamlessResizeEnabled(true)
+            builder.setAutoEnterEnabled(true)
+        }
+
+        return builder.build()
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -111,6 +234,93 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+
+        pipMethodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, PIP_CHANNEL).apply {
+            setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "enterPip" -> {
+                        val width = call.argument<Int>("width") ?: 16
+                        val height = call.argument<Int>("height") ?: 9
+                        val isPlaying = call.argument<Boolean>("isPlaying") ?: true
+                        currentPipWidth = width
+                        currentPipHeight = height
+                        isPipPlaying = isPlaying
+                        registerPipReceiverIfNeeded()
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            try {
+                                val params = buildPipParams(width, height, isPlaying)
+                                val entered = if (params != null) enterPictureInPictureMode(params) else false
+                                result.success(entered)
+                            } catch (e: Exception) {
+                                result.error("PIP_ERROR", e.message, null)
+                            }
+                        } else {
+                            result.error("PIP_UNSUPPORTED", "Picture-in-Picture yêu cầu Android 8.0 trở lên", null)
+                        }
+                    }
+                    "updatePipActions" -> {
+                        val isPlaying = call.argument<Boolean>("isPlaying") ?: isPipPlaying
+                        isPipPlaying = isPlaying
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            try {
+                                val params = buildPipParams(currentPipWidth, currentPipHeight, isPlaying)
+                                if (params != null) {
+                                    setPictureInPictureParams(params)
+                                }
+                                result.success(true)
+                            } catch (e: Exception) {
+                                result.error("UPDATE_PIP_ERROR", e.message, null)
+                            }
+                        } else {
+                            result.success(false)
+                        }
+                    }
+                    "updatePipAspectRatio" -> {
+                        val width = call.argument<Int>("width") ?: currentPipWidth
+                        val height = call.argument<Int>("height") ?: currentPipHeight
+                        currentPipWidth = width
+                        currentPipHeight = height
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            try {
+                                val params = buildPipParams(width, height, isPipPlaying)
+                                if (params != null) {
+                                    setPictureInPictureParams(params)
+                                }
+                                result.success(true)
+                            } catch (e: Exception) {
+                                result.error("UPDATE_PIP_ERROR", e.message, null)
+                            }
+                        } else {
+                            result.success(false)
+                        }
+                    }
+                    "isPipSupported" -> {
+                        val supported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                                packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE)
+                        result.success(supported)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+        }
+    }
+
+
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: android.content.res.Configuration?) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        pipMethodChannel?.invokeMethod("onPipModeChanged", isInPictureInPictureMode)
+    }
+
+    private fun calculateValidPipAspectRatio(width: Int, height: Int): Rational {
+        val w = if (width <= 0) 16 else width
+        val h = if (height <= 0) 9 else height
+        val ratio = w.toFloat() / h.toFloat()
+        return when {
+            ratio > 2.38f -> Rational(238, 100)
+            ratio < 0.42f -> Rational(42, 100)
+            else -> Rational(w, h)
+        }
     }
 
     private fun openPersistentMediaPicker(videoOnly: Boolean, result: MethodChannel.Result) {
@@ -172,6 +382,12 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        if (isPipReceiverRegistered) {
+            try {
+                unregisterReceiver(pipReceiver)
+            } catch (_: Exception) {}
+            isPipReceiverRegistered = false
+        }
         AppForegroundService.stop(applicationContext)
         pendingMediaPickResult?.error(
             "ACTIVITY_DESTROYED",
@@ -381,9 +597,5 @@ class MainActivity : FlutterActivity() {
         } else {
             mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         }
-    }
-
-    companion object {
-        private const val REQUEST_PICK_MEDIA = 42017
     }
 }

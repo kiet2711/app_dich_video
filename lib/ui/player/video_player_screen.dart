@@ -18,7 +18,10 @@ import '../../domain/media/video_cache_manager.dart';
 import '../../domain/media/media_storage.dart';
 import '../../domain/media/multi_thread_downloader.dart';
 import '../../domain/media/network_header_helper.dart';
+import '../../domain/service/foreground_service_manager.dart';
 import '../../domain/tts/audio_file_validator.dart';
+import '../../player/global_player_manager.dart';
+import '../../player/pip_manager.dart';
 import '../../player/tts_audio_scheduler.dart';
 import '../theme/app_theme.dart';
 import 'dual_volume_sheet.dart';
@@ -38,6 +41,7 @@ class VideoPlayerScreen extends StatefulWidget {
   final HongguoDramaDetail? dramaDetail;
   final int? currentEpisodeIndex;
   final bool? initialTtsEnabled;
+  final bool isGlobalPlayer;
 
   const VideoPlayerScreen({
     super.key,
@@ -49,6 +53,7 @@ class VideoPlayerScreen extends StatefulWidget {
     this.dramaDetail,
     this.currentEpisodeIndex,
     this.initialTtsEnabled,
+    this.isGlobalPlayer = false,
   });
 
   @override
@@ -79,6 +84,17 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   double _playbackSpeed = 1.0;
   DateTime _lastPositionSaveAt = DateTime.fromMillisecondsSinceEpoch(0);
   int _lastSavedPositionMs = -1;
+  bool _isInBackground = false;
+
+  // Trạng thái điều khiển PiP (Picture-in-Picture)
+  bool _pipShowControls = true;
+  Timer? _pipControlsTimer;
+  double _pipZoomScale = 1.0;
+  double _pipBaseScale = 1.0;
+  int _pipSizeRatioIndex = 0; // 0: Gốc, 1: 16:9, 2: 4:3, 3: Fill
+  bool _pipDoubleTapLeft = false;
+  bool _pipDoubleTapRight = false;
+  Timer? _pipFeedbackTimer;
 
   // Quản lý trạng thái phim bộ Hồng Quả
   late int _currentEpisodeIndex;
@@ -117,6 +133,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    PipManager.initialize();
+    PipManager.isInPipMode.addListener(_onPipModeChanged);
+    PipManager.lastPipAction.addListener(_onPipActionReceived);
     _currentEpisodeIndex = widget.currentEpisodeIndex ?? 1;
     _sourceVideoUrl = widget.videoPath;
     _currentVideoPath = widget.videoPath;
@@ -126,6 +145,168 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     _ttsScheduler = TtsAudioScheduler(_currentDocument);
 
     _initSettingsAndPlayer();
+  }
+
+  void _onPipModeChanged() {
+    if (mounted) {
+      if (PipManager.isInPipMode.value) {
+        _pipShowControls = true;
+        _startPipControlsTimer();
+      }
+      setState(() {});
+    }
+  }
+
+  void _onPipActionReceived() {
+    final action = PipManager.lastPipAction.value;
+    final controller = _controller;
+    if (action == null || controller == null || !controller.value.isInitialized) return;
+    if (action == 'playPause') {
+      if (controller.value.isPlaying) {
+        controller.pause();
+        _ttsScheduler.onSeek(_currentPosMs);
+      } else {
+        controller.play();
+        _syncTtsWithVideo();
+      }
+      unawaited(PipManager.updatePipActions(isPlaying: controller.value.isPlaying));
+      _startPipControlsTimer();
+      if (mounted) setState(() {});
+    } else if (action == 'rewind') {
+      _skipBy(-10000);
+      _triggerDoubleTapFeedback(isLeft: true);
+      _startPipControlsTimer();
+    } else if (action == 'forward') {
+      _skipBy(10000);
+      _triggerDoubleTapFeedback(isLeft: false);
+      _startPipControlsTimer();
+    }
+  }
+
+  void _startPipControlsTimer() {
+    _pipControlsTimer?.cancel();
+    _pipControlsTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted && _pipShowControls) {
+        setState(() {
+          _pipShowControls = false;
+        });
+      }
+    });
+  }
+
+  void _togglePipControls() {
+    setState(() {
+      _pipShowControls = !_pipShowControls;
+      if (_pipShowControls) {
+        _startPipControlsTimer();
+      } else {
+        _pipControlsTimer?.cancel();
+      }
+    });
+  }
+
+  String get _pipRatioLabel {
+    switch (_pipSizeRatioIndex) {
+      case 1:
+        return '16:9';
+      case 2:
+        return '4:3';
+      case 3:
+        return 'Fill';
+      default:
+        return 'Gốc';
+    }
+  }
+
+  Future<void> _cyclePipAspectRatio() async {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return;
+    _pipSizeRatioIndex = (_pipSizeRatioIndex + 1) % 4;
+    int w = 16;
+    int h = 9;
+    if (_pipSizeRatioIndex == 0) {
+      w = controller.value.size.width.toInt();
+      h = controller.value.size.height.toInt();
+      _pipZoomScale = 1.0;
+    } else if (_pipSizeRatioIndex == 1) {
+      w = 16;
+      h = 9;
+      _pipZoomScale = 1.0;
+    } else if (_pipSizeRatioIndex == 2) {
+      w = 4;
+      h = 3;
+      _pipZoomScale = 1.0;
+    } else if (_pipSizeRatioIndex == 3) {
+      w = 21;
+      h = 9;
+      _pipZoomScale = 1.25;
+    }
+    await PipManager.updatePipAspectRatio(
+      width: w > 0 ? w : 16,
+      height: h > 0 ? h : 9,
+    );
+    _startPipControlsTimer();
+    if (mounted) setState(() {});
+  }
+
+  void _triggerDoubleTapFeedback({required bool isLeft}) {
+    _pipFeedbackTimer?.cancel();
+    setState(() {
+      if (isLeft) {
+        _pipDoubleTapLeft = true;
+        _pipDoubleTapRight = false;
+      } else {
+        _pipDoubleTapLeft = false;
+        _pipDoubleTapRight = true;
+      }
+    });
+    _pipFeedbackTimer = Timer(const Duration(milliseconds: 650), () {
+      if (mounted) {
+        setState(() {
+          _pipDoubleTapLeft = false;
+          _pipDoubleTapRight = false;
+        });
+      }
+    });
+  }
+
+  Future<void> _enterPipMode() async {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return;
+    final w = controller.value.size.width.toInt();
+    final h = controller.value.size.height.toInt();
+    final isPlaying = controller.value.isPlaying;
+    final ok = await PipManager.enterPip(
+      width: w > 0 ? w : 16,
+      height: h > 0 ? h : 9,
+      isPlaying: isPlaying,
+    );
+    if (!ok && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Thiết bị không hỗ trợ hoặc chưa cấp quyền Picture-in-Picture (PiP).'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  void _toggleBackgroundPlay() {
+    final newVal = !_settings.backgroundPlayEnabled;
+    setState(() {
+      _settings.backgroundPlayEnabled = newVal;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          newVal
+              ? '🎧 Đã BẬT phát nền (Âm thanh & AI lồng tiếng tiếp tục chạy khi tắt màn hình)'
+              : '⏸️ Đã TẮT phát nền (Dừng khi tắt màn hình / ra ngoài app)',
+        ),
+        duration: const Duration(seconds: 2),
+        backgroundColor: newVal ? AppTheme.primaryEmerald : Colors.grey[800],
+      ),
+    );
   }
 
   Future<void> _initSettingsAndPlayer() async {
@@ -278,7 +459,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
       final isRemote =
           targetPath.startsWith('http://') || targetPath.startsWith('https://');
-      final videoOptions = VideoPlayerOptions(mixWithOthers: true);
+      final videoOptions = VideoPlayerOptions(
+        mixWithOthers: true,
+        allowBackgroundPlayback: true,
+      );
       if (isRemote) {
         if (httpHeaders.isEmpty) {
           httpHeaders = NetworkHeaderHelper.getHeadersForUri(targetPath);
@@ -1334,6 +1518,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
   @override
   void dispose() {
+    _pipControlsTimer?.cancel();
+    _pipFeedbackTimer?.cancel();
+    PipManager.isInPipMode.removeListener(_onPipModeChanged);
+    PipManager.lastPipAction.removeListener(_onPipActionReceived);
     _prefetchManager?.dispose();
     WidgetsBinding.instance.removeObserver(this);
     _playbackMonitor?.cancel();
@@ -1346,9 +1534,38 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.inactive) {
-      _controller?.pause();
-      _ttsScheduler.onSeek(_currentPosMs);
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.hidden) {
+      _isInBackground = true;
+      final isPlaying = _controller?.value.isPlaying ?? false;
+      final allowBackground =
+          _settings.backgroundPlayEnabled || PipManager.isInPipMode.value;
+
+      if (allowBackground && isPlaying) {
+        final displayTitle = _currentTitle.isNotEmpty
+            ? _currentTitle
+            : (widget.title ?? 'CapSub Video');
+        final durationSec = _controller?.value.duration.inSeconds ?? 100;
+        final currentSec = _currentPosMs ~/ 1000;
+        ForegroundServiceManager.start(
+          title: displayTitle,
+          message: 'Đang phát âm thanh trong nền',
+          progress: currentSec,
+          maxProgress: durationSec > 0 ? durationSec : 100,
+        );
+      } else {
+        if (!allowBackground) {
+          _controller?.pause();
+          _ttsScheduler.onSeek(_currentPosMs);
+        }
+        ForegroundServiceManager.stop();
+      }
+    } else if (state == AppLifecycleState.resumed) {
+      _isInBackground = false;
+      ForegroundServiceManager.stop();
+      if (mounted) {
+        setState(() {});
+      }
     }
   }
 
@@ -1444,6 +1661,22 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     try {
       await callback(positionMs);
     } catch (_) {}
+
+    if (_isInBackground && (_controller?.value.isPlaying ?? false)) {
+      final durationSec = _controller?.value.duration.inSeconds ?? 100;
+      final currentSec = positionMs ~/ 1000;
+      final displayTitle = _currentTitle.isNotEmpty
+          ? _currentTitle
+          : (widget.title ?? 'CapSub Video');
+      unawaited(
+        ForegroundServiceManager.update(
+          title: displayTitle,
+          message: 'Đang phát âm thanh trong nền',
+          progress: currentSec,
+          maxProgress: durationSec > 0 ? durationSec : 100,
+        ),
+      );
+    }
   }
 
   Future<void> _seekTo(int positionMs) async {
@@ -1578,12 +1811,23 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       );
     }
 
-    final controller = _controller!;
-    final isLandscape =
-        MediaQuery.of(context).orientation == Orientation.landscape;
     final displayTitle = _currentTitle.isNotEmpty
         ? _currentTitle
         : (widget.title ?? '');
+
+    // Nếu đang ở chế độ Mini-Player (Thu nhỏ kiểu YouTube)
+    if (widget.isGlobalPlayer && GlobalPlayerManager.instance.isMiniPlayer) {
+      return _buildMiniPlayer(displayTitle);
+    }
+
+    // Nếu đang ở chế độ Picture-in-Picture ngoài màn hình
+    if (PipManager.isInPipMode.value) {
+      return _buildPipPlayer();
+    }
+
+    final controller = _controller!;
+    final isLandscape =
+        MediaQuery.of(context).orientation == Orientation.landscape;
     final bool isHongguoWaitingTranslation = widget.dramaDetail != null &&
         _currentDocument.isEmpty &&
         !_userChosePlayRaw;
@@ -1816,8 +2060,28 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                     children: [
                       IconButton(
                         icon: const Icon(Icons.arrow_back, color: Colors.white),
-                        onPressed: () => Navigator.pop(context),
+                        onPressed: () {
+                          if (widget.isGlobalPlayer) {
+                            if (_settings.miniPlayerEnabled) {
+                              GlobalPlayerManager.instance.minimize();
+                            } else {
+                              GlobalPlayerManager.instance.close();
+                            }
+                          } else {
+                            Navigator.pop(context);
+                          }
+                        },
                       ),
+                      if (widget.isGlobalPlayer)
+                        IconButton(
+                          icon: const Icon(
+                            Icons.keyboard_arrow_down_rounded,
+                            color: Colors.white,
+                            size: 28,
+                          ),
+                          tooltip: 'Thu nhỏ video (Mini-player)',
+                          onPressed: () => GlobalPlayerManager.instance.minimize(),
+                        ),
                       if (displayTitle.isNotEmpty) ...[
                         const SizedBox(width: 4),
                         ConstrainedBox(
@@ -2005,6 +2269,32 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
+                                // Nút PiP ngoài màn hình (Picture-in-Picture)
+                                IconButton(
+                                  icon: const Icon(
+                                    Icons.picture_in_picture_alt_rounded,
+                                    color: Colors.white,
+                                  ),
+                                  tooltip: 'Hình thu nhỏ ngoài màn hình (PiP)',
+                                  onPressed: _enterPipMode,
+                                ),
+
+                                // Nút Bật/Tắt phát nền (Background Play)
+                                IconButton(
+                                  icon: Icon(
+                                    _settings.backgroundPlayEnabled
+                                        ? Icons.headphones_rounded
+                                        : Icons.headset_off_rounded,
+                                    color: _settings.backgroundPlayEnabled
+                                        ? AppTheme.primaryEmerald
+                                        : Colors.white70,
+                                  ),
+                                  tooltip: _settings.backgroundPlayEnabled
+                                      ? 'Phát nền: ĐANG BẬT (Tiếp tục phát khi tắt màn hình)'
+                                      : 'Phát nền: ĐANG TẮT (Bấm để bật)',
+                                  onPressed: _toggleBackgroundPlay,
+                                ),
+
                                 // Nút YouTube-style: Bật/Tắt Tự Động Chuyển Tập & Dịch Ngầm
                                 if (widget.dramaDetail != null) ...[
                         InkWell(
@@ -2754,7 +3044,17 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
               children: [
                 IconButton(
                   icon: const Icon(Icons.arrow_back, color: Colors.white),
-                  onPressed: () => Navigator.pop(context),
+                  onPressed: () {
+                    if (widget.isGlobalPlayer) {
+                      if (_settings.miniPlayerEnabled) {
+                        GlobalPlayerManager.instance.minimize();
+                      } else {
+                        GlobalPlayerManager.instance.close();
+                      }
+                    } else {
+                      Navigator.pop(context);
+                    }
+                  },
                 ),
                 const SizedBox(width: 4),
                 Expanded(
@@ -3022,5 +3322,605 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       return speed.toInt().toString();
     }
     return speed.toStringAsFixed(2).replaceAll(RegExp(r'0+$'), '');
+  }
+
+  Widget _buildPipPlayer() {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) {
+      return const Scaffold(
+        backgroundColor: Colors.black,
+        body: Center(
+          child: CircularProgressIndicator(color: AppTheme.primaryEmerald),
+        ),
+      );
+    }
+
+    final durationMs = controller.value.duration.inMilliseconds;
+    final currentPosMs = _currentPosMs.clamp(0, durationMs > 0 ? durationMs : 0);
+    final isPlaying = controller.value.isPlaying;
+
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: GestureDetector(
+          onTap: _togglePipControls,
+          onScaleStart: (details) {
+            _pipBaseScale = _pipZoomScale;
+          },
+          onScaleUpdate: (details) {
+            setState(() {
+              _pipZoomScale = (_pipBaseScale * details.scale).clamp(0.85, 2.8);
+            });
+          },
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              // 1. Video Layer với thu phóng mượt mà
+              Center(
+                child: Transform.scale(
+                  scale: _pipZoomScale,
+                  child: AspectRatio(
+                    aspectRatio: controller.value.aspectRatio,
+                    child: VideoPlayer(controller),
+                  ),
+                ),
+              ),
+
+              // 2. Vùng nhận diện chạm đúp tua 10s trái / phải
+              Row(
+                children: [
+                  Expanded(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.translucent,
+                      onDoubleTap: () {
+                        _skipBy(-10000);
+                        _triggerDoubleTapFeedback(isLeft: true);
+                        _startPipControlsTimer();
+                      },
+                      child: const SizedBox.expand(),
+                    ),
+                  ),
+                  Expanded(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.translucent,
+                      onDoubleTap: () {
+                        _skipBy(10000);
+                        _triggerDoubleTapFeedback(isLeft: false);
+                        _startPipControlsTimer();
+                      },
+                      child: const SizedBox.expand(),
+                    ),
+                  ),
+                ],
+              ),
+
+              // 3. Hiệu ứng Double-tap Ripple trực quan (YouTube style)
+              if (_pipDoubleTapLeft)
+                Positioned(
+                  left: 20,
+                  top: 0,
+                  bottom: 0,
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.65),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: const [
+                          Icon(Icons.replay_10, color: Colors.white, size: 22),
+                          SizedBox(height: 2),
+                          Text('-10s', style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              if (_pipDoubleTapRight)
+                Positioned(
+                  right: 20,
+                  top: 0,
+                  bottom: 0,
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.65),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: const [
+                          Icon(Icons.forward_10, color: Colors.white, size: 22),
+                          SizedBox(height: 2),
+                          Text('+10s', style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+
+              // 4. Phụ đề Subtitle Pill (nằm trên thanh progress bar)
+              if (_currentDocument.isNotEmpty)
+                Positioned(
+                  left: 8,
+                  right: 8,
+                  bottom: _pipShowControls ? 28 : 8,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    alignment: Alignment.center,
+                    child: _buildMiniSubtitleSnippet(),
+                  ),
+                ),
+
+              // 5. Giao diện điều khiển kiểu hình mẫu Image 2
+              AnimatedOpacity(
+                opacity: _pipShowControls ? 1.0 : 0.0,
+                duration: const Duration(milliseconds: 240),
+                child: IgnorePointer(
+                  ignoring: !_pipShowControls,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.black.withValues(alpha: 0.65),
+                          Colors.black.withValues(alpha: 0.25),
+                          Colors.black.withValues(alpha: 0.65),
+                        ],
+                      ),
+                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        // Thanh trên cùng: Nút Đóng (✕) bên trái, Nút chỉnh tỷ lệ & Phóng to bên phải
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            GestureDetector(
+                              onTap: () {
+                                controller.pause();
+                                _ttsScheduler.onSeek(_currentPosMs);
+                                ForegroundServiceManager.stop();
+                                if (widget.isGlobalPlayer) {
+                                  GlobalPlayerManager.instance.close();
+                                }
+                              },
+                              child: Container(
+                                width: 28,
+                                height: 28,
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: 0.55),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: Colors.white24, width: 0.8),
+                                ),
+                                child: const Icon(Icons.close, color: Colors.white, size: 16),
+                              ),
+                            ),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                GestureDetector(
+                                  onTap: _cyclePipAspectRatio,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                                    decoration: BoxDecoration(
+                                      color: Colors.black.withValues(alpha: 0.55),
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(color: Colors.white24, width: 0.8),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(Icons.aspect_ratio_rounded, color: Colors.white, size: 13),
+                                        const SizedBox(width: 3),
+                                        Text(
+                                          _pipRatioLabel,
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 9,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                GestureDetector(
+                                  onTap: () {
+                                    if (widget.isGlobalPlayer) {
+                                      GlobalPlayerManager.instance.expand();
+                                    }
+                                  },
+                                  child: Container(
+                                    width: 28,
+                                    height: 28,
+                                    decoration: BoxDecoration(
+                                      color: Colors.black.withValues(alpha: 0.55),
+                                      shape: BoxShape.circle,
+                                      border: Border.all(color: Colors.white24, width: 0.8),
+                                    ),
+                                    child: const Icon(Icons.open_in_full_rounded, color: Colors.white, size: 13),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+
+                        // Cụm điều khiển ở giữa: Tua lại 10s, Phát/Dừng tròn lớn, Tua tới 10s (chuẩn Image 2)
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            GestureDetector(
+                              onTap: () {
+                                _skipBy(-10000);
+                                _triggerDoubleTapFeedback(isLeft: true);
+                                _startPipControlsTimer();
+                              },
+                              child: Container(
+                                width: 36,
+                                height: 36,
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: 0.55),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: Colors.white24, width: 0.8),
+                                ),
+                                child: const Icon(Icons.replay_10, color: Colors.white, size: 20),
+                              ),
+                            ),
+                            const SizedBox(width: 18),
+                            GestureDetector(
+                              onTap: () async {
+                                if (controller.value.isPlaying) {
+                                  await controller.pause();
+                                  _ttsScheduler.onSeek(_currentPosMs);
+                                } else {
+                                  await controller.play();
+                                  _syncTtsWithVideo();
+                                }
+                                unawaited(PipManager.updatePipActions(isPlaying: controller.value.isPlaying));
+                                _startPipControlsTimer();
+                                if (mounted) setState(() {});
+                              },
+                              child: Container(
+                                width: 46,
+                                height: 46,
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withValues(alpha: 0.85),
+                                  shape: BoxShape.circle,
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withValues(alpha: 0.4),
+                                      blurRadius: 8,
+                                    ),
+                                  ],
+                                ),
+                                child: Icon(
+                                  isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                                  color: Colors.black87,
+                                  size: 28,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 18),
+                            GestureDetector(
+                              onTap: () {
+                                _skipBy(10000);
+                                _triggerDoubleTapFeedback(isLeft: false);
+                                _startPipControlsTimer();
+                              },
+                              child: Container(
+                                width: 36,
+                                height: 36,
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: 0.55),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: Colors.white24, width: 0.8),
+                                ),
+                                child: const Icon(Icons.forward_10, color: Colors.white, size: 20),
+                              ),
+                            ),
+                          ],
+                        ),
+
+                        // Thanh dưới cùng: Thời gian và Thanh tiến trình mượt mà
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 2),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(
+                                      _formatDuration(Duration(milliseconds: currentPosMs)),
+                                      style: const TextStyle(
+                                        color: Colors.white70,
+                                        fontSize: 9,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    Text(
+                                      _formatDuration(Duration(milliseconds: durationMs)),
+                                      style: const TextStyle(
+                                        color: Colors.white70,
+                                        fontSize: 9,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(2),
+                                child: LinearProgressIndicator(
+                                  value: durationMs > 0 ? (currentPosMs / durationMs).clamp(0.0, 1.0) : 0.0,
+                                  backgroundColor: Colors.white24,
+                                  valueColor: const AlwaysStoppedAnimation<Color>(AppTheme.primaryEmerald),
+                                  minHeight: 2.5,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMiniPlayer(String displayTitle) {
+    final controller = _controller;
+    final isPlaying = controller?.value.isPlaying ?? false;
+    final durationMs = controller?.value.duration.inMilliseconds ?? 0;
+    final currentPosMs = _currentPosMs.clamp(0, durationMs > 0 ? durationMs : 0);
+
+    return Dismissible(
+      key: ValueKey('mini_${widget.videoPath}'),
+      direction: DismissDirection.horizontal,
+      onDismissed: (_) {
+        GlobalPlayerManager.instance.close();
+      },
+      child: GestureDetector(
+        onTap: () {
+          GlobalPlayerManager.instance.expand();
+        },
+        child: Container(
+          height: 64,
+          margin: const EdgeInsets.symmetric(horizontal: 6),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1E222D).withValues(alpha: 0.96),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: Colors.white.withValues(alpha: 0.12),
+              width: 1,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.45),
+                blurRadius: 10,
+                offset: const Offset(0, 3),
+              ),
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child: Stack(
+              children: [
+                Row(
+                  children: [
+                    // Mini Video Preview
+                    Container(
+                      width: 90,
+                      height: 52,
+                      margin: const EdgeInsets.only(left: 6, top: 6, bottom: 6),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            if (controller != null && controller.value.isInitialized)
+                              FittedBox(
+                                fit: BoxFit.cover,
+                                child: SizedBox(
+                                  width: controller.value.size.width,
+                                  height: controller.value.size.height,
+                                  child: VideoPlayer(controller),
+                                ),
+                              )
+                            else
+                              Container(
+                                color: Colors.black54,
+                                child: const Center(
+                                  child: SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: AppTheme.primaryEmerald,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            // Mini Subtitle text preview
+                            if (_currentDocument.isNotEmpty)
+                              Positioned(
+                                left: 2,
+                                right: 2,
+                                bottom: 2,
+                                child: _buildMiniSubtitleSnippet(),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+
+                    // Tiêu đề & Thông tin tiến trình
+                    Expanded(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            displayTitle.isNotEmpty ? displayTitle : 'Đang phát video',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                          Row(
+                            children: [
+                              if (widget.dramaDetail != null) ...[
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                                  decoration: BoxDecoration(
+                                    color: AppTheme.primaryEmerald.withValues(alpha: 0.25),
+                                    borderRadius: BorderRadius.circular(4),
+                                    border: Border.all(
+                                      color: AppTheme.primaryEmerald.withValues(alpha: 0.4),
+                                      width: 0.8,
+                                    ),
+                                  ),
+                                  child: Text(
+                                    'Tập $_currentEpisodeIndex',
+                                    style: const TextStyle(
+                                      color: AppTheme.primaryEmerald,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                              ],
+                              Text(
+                                '${_formatDuration(Duration(milliseconds: currentPosMs))} / ${_formatDuration(Duration(milliseconds: durationMs))}',
+                                style: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.65),
+                                  fontSize: 11,
+                                ),
+                              ),
+                              if (_settings.isTtsPlaybackEnabled) ...[
+                                const SizedBox(width: 6),
+                                const Icon(
+                                  Icons.record_voice_over,
+                                  size: 11,
+                                  color: Colors.lightGreenAccent,
+                                ),
+                              ],
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    // Nút Tua lùi 10s
+                    IconButton(
+                      icon: const Icon(Icons.replay_10, color: Colors.white70, size: 20),
+                      tooltip: 'Lùi 10 giây',
+                      onPressed: () => _skipBy(-10000),
+                    ),
+
+                    // Nút Play / Pause
+                    IconButton(
+                      icon: Icon(
+                        isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                        color: AppTheme.primaryEmerald,
+                        size: 28,
+                      ),
+                      tooltip: isPlaying ? 'Tạm dừng' : 'Phát tiếp',
+                      onPressed: () async {
+                        if (controller == null) return;
+                        if (isPlaying) {
+                          await controller.pause();
+                          _ttsScheduler.onSeek(_currentPosMs);
+                        } else {
+                          await controller.play();
+                          _syncTtsWithVideo();
+                        }
+                        if (mounted) setState(() {});
+                      },
+                    ),
+
+                    // Nút Tua tới 10s
+                    IconButton(
+                      icon: const Icon(Icons.forward_10, color: Colors.white70, size: 20),
+                      tooltip: 'Tới 10 giây',
+                      onPressed: () => _skipBy(10000),
+                    ),
+
+                    // Nút Đóng mini-player (X)
+                    IconButton(
+                      icon: const Icon(Icons.close_rounded, color: Colors.white70, size: 22),
+                      tooltip: 'Đóng trình phát',
+                      onPressed: () {
+                        GlobalPlayerManager.instance.close();
+                      },
+                    ),
+                    const SizedBox(width: 4),
+                  ],
+                ),
+
+                // Thanh tiến trình chạy dưới đáy thẻ
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: LinearProgressIndicator(
+                    value: durationMs > 0 ? (currentPosMs / durationMs).clamp(0.0, 1.0) : 0.0,
+                    backgroundColor: Colors.white12,
+                    valueColor: const AlwaysStoppedAnimation<Color>(AppTheme.primaryEmerald),
+                    minHeight: 2.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMiniSubtitleSnippet() {
+    final sub = _currentDocument.getActiveItem(_currentPosMs);
+    final text = sub?.getDisplayText(_settings.subtitleMode) ?? '';
+    if (text.trim().isEmpty) return const SizedBox.shrink();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.75),
+        borderRadius: BorderRadius.circular(2),
+      ),
+      child: Text(
+        text,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 8,
+          fontWeight: FontWeight.bold,
+        ),
+        textAlign: TextAlign.center,
+      ),
+    );
   }
 }

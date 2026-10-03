@@ -5,7 +5,7 @@ import '../../data/model/subtitle_document.dart';
 import '../../domain/media/hongguo_resolver.dart';
 import '../../domain/media/network_header_helper.dart';
 import '../../domain/media/video_cache_manager.dart';
-import '../player/video_player_screen.dart';
+import '../../player/global_player_manager.dart';
 import '../theme/app_theme.dart';
 import 'hongguo_settings_sheet.dart';
 
@@ -1510,18 +1510,13 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
     }
     if (!mounted) return;
 
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => VideoPlayerScreen(
-          videoPath: effectivePath,
-          title: '${widget.detail.title} - Tập $_selectedEpisodeIndex',
-          document: SubtitleDocument(),
-          dramaDetail: widget.detail,
-          currentEpisodeIndex: _selectedEpisodeIndex,
-          initialTtsEnabled: enableTts,
-        ),
-      ),
+    GlobalPlayerManager.instance.openPlayer(
+      videoPath: effectivePath,
+      title: '${widget.detail.title} - Tập $_selectedEpisodeIndex',
+      document: SubtitleDocument(),
+      dramaDetail: widget.detail,
+      currentEpisodeIndex: _selectedEpisodeIndex,
+      initialTtsEnabled: enableTts,
     );
   }
 }

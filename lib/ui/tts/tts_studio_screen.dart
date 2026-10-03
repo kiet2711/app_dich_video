@@ -20,7 +20,7 @@ import '../../data/repository/history_repository.dart';
 import '../../data/repository/settings_repository.dart';
 import '../../domain/service/foreground_service_manager.dart';
 import '../../domain/tts/tts_generation_manager.dart';
-import '../player/video_player_screen.dart';
+import '../../player/global_player_manager.dart';
 import '../settings/settings_screen.dart';
 import '../theme/app_theme.dart';
 import 'gemini_translate_subtitle_dialog.dart';
@@ -854,15 +854,10 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
 
     final pathToPlay = _videoPath!;
     if (!mounted) return;
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (ctx) => VideoPlayerScreen(
-          videoPath: pathToPlay,
-          document: _doc!,
-          title: _videoFileName.isNotEmpty ? _videoFileName : null,
-        ),
-      ),
+    GlobalPlayerManager.instance.openPlayer(
+      videoPath: pathToPlay,
+      document: _doc!,
+      title: _videoFileName.isNotEmpty ? _videoFileName : null,
     );
   }
 

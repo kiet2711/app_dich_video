@@ -1320,6 +1320,91 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 16),
 
+          // Section 4.5: Trình phát Video & Phát Nền
+          _buildSectionHeader('Trình phát Video & Âm thanh nền'),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: AppColors.darkSurface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.cardBorder),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  secondary: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: AppColors.primaryEmerald.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(
+                      Icons.headphones_rounded,
+                      color: AppColors.primaryEmerald,
+                      size: 22,
+                    ),
+                  ),
+                  title: const Text(
+                    'Phát âm thanh khi khóa màn hình / Chuyển app',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  subtitle: const Text(
+                    'Duy trì âm thanh gốc và giọng đọc lồng tiếng AI chạy nền liên tục khi bạn tắt màn hình hoặc chuyển sang ứng dụng khác (kiểu YouTube Premium).',
+                    style: TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                  value: _settings!.backgroundPlayEnabled,
+                  activeTrackColor: AppColors.primaryEmerald,
+                  onChanged: (val) {
+                    setState(() {
+                      _settings!.backgroundPlayEnabled = val;
+                    });
+                  },
+                ),
+                const Divider(color: AppColors.cardBorder),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  secondary: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.lightBlueAccent.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(
+                      Icons.picture_in_picture_rounded,
+                      color: Colors.lightBlueAccent,
+                      size: 22,
+                    ),
+                  ),
+                  title: const Text(
+                    'Thu nhỏ kiểu YouTube (Mini-player)',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  subtitle: const Text(
+                    'Tự động thu nhỏ trình phát xuống góc dưới khi vuốt xuống hoặc bấm nút quay lại. Vừa xem vừa lướt Phim Hồng Quả, Lịch Sử, Tạo Phụ Đề.',
+                    style: TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                  value: _settings!.miniPlayerEnabled,
+                  activeTrackColor: AppColors.primaryEmerald,
+                  onChanged: (val) {
+                    setState(() {
+                      _settings!.miniPlayerEnabled = val;
+                    });
+                  },
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
 
           // Section 5: Quản lý bộ nhớ
           _buildSectionHeader('Quản lý bộ nhớ & Dọn dẹp rác'),

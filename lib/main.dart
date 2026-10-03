@@ -11,9 +11,13 @@ import 'ui/tts/tts_studio_screen.dart';
 
 import 'data/repository/settings_repository.dart';
 import 'domain/font/custom_font_manager.dart';
+import 'player/global_player_manager.dart';
+import 'player/pip_manager.dart';
+import 'ui/player/global_player_overlay.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  PipManager.initialize();
   final settings = await SettingsRepository.getInstance();
   await CustomFontManager.loadAllSavedFonts(settings);
   runApp(const CapSubApp());
@@ -92,52 +96,65 @@ class _MainNavigationState extends State<MainNavigation> {
       ),
     ];
 
-    return Scaffold(
-      body: IndexedStack(index: _currentIndex, children: screens),
-      bottomNavigationBar: NavigationBar(
-        backgroundColor: AppColors.darkSurface,
-        indicatorColor: AppColors.primaryEmerald.withValues(alpha: 0.2),
-        selectedIndex: _currentIndex,
-        onDestinationSelected: (idx) {
-          setState(() {
-            _currentIndex = idx;
-          });
-        },
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.auto_awesome, color: Colors.grey),
-            selectedIcon: Icon(
-              Icons.auto_awesome,
-              color: AppColors.primaryEmerald,
-            ),
-            label: 'Tạo Phụ Đề',
+    return ListenableBuilder(
+      listenable: GlobalPlayerManager.instance,
+      builder: (context, _) {
+        final isFullScreen = GlobalPlayerManager.instance.isFullScreen;
+        return Scaffold(
+          body: Stack(
+            children: [
+              IndexedStack(index: _currentIndex, children: screens),
+              const GlobalPlayerOverlay(),
+            ],
           ),
-          NavigationDestination(
-            icon: Icon(Icons.movie_filter_rounded, color: Colors.grey),
-            selectedIcon: Icon(
-              Icons.movie_filter_rounded,
-              color: AppColors.primaryEmerald,
-            ),
-            label: 'Phim Hồng Quả',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.record_voice_over, color: Colors.grey),
-            selectedIcon: Icon(
-              Icons.record_voice_over,
-              color: AppColors.primaryEmerald,
-            ),
-            label: 'Lồng Tiếng AI',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.video_library, color: Colors.grey),
-            selectedIcon: Icon(
-              Icons.video_library,
-              color: AppColors.primaryEmerald,
-            ),
-            label: 'Lịch Sử & Player',
-          ),
-        ],
-      ),
+          bottomNavigationBar: isFullScreen
+              ? null
+              : NavigationBar(
+                  backgroundColor: AppColors.darkSurface,
+                  indicatorColor: AppColors.primaryEmerald.withValues(alpha: 0.2),
+                  selectedIndex: _currentIndex,
+                  onDestinationSelected: (idx) {
+                    setState(() {
+                      _currentIndex = idx;
+                    });
+                  },
+                  destinations: const [
+                    NavigationDestination(
+                      icon: Icon(Icons.auto_awesome, color: Colors.grey),
+                      selectedIcon: Icon(
+                        Icons.auto_awesome,
+                        color: AppColors.primaryEmerald,
+                      ),
+                      label: 'Tạo Phụ Đề',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.movie_filter_rounded, color: Colors.grey),
+                      selectedIcon: Icon(
+                        Icons.movie_filter_rounded,
+                        color: AppColors.primaryEmerald,
+                      ),
+                      label: 'Phim Hồng Quả',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.record_voice_over, color: Colors.grey),
+                      selectedIcon: Icon(
+                        Icons.record_voice_over,
+                        color: AppColors.primaryEmerald,
+                      ),
+                      label: 'Lồng Tiếng AI',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.video_library, color: Colors.grey),
+                      selectedIcon: Icon(
+                        Icons.video_library,
+                        color: AppColors.primaryEmerald,
+                      ),
+                      label: 'Lịch Sử & Player',
+                    ),
+                  ],
+                ),
+        );
+      },
     );
   }
 }

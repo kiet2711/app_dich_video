@@ -264,4 +264,16 @@ class SettingsRepository {
       prefs.getString('preferred_video_quality') ?? '64';
   set preferredVideoQuality(String v) =>
       prefs.setString('preferred_video_quality', v);
+
+  /// Cho phép phát âm thanh & AI lồng tiếng trong nền khi khóa màn hình hoặc chuyển app
+  bool get backgroundPlayEnabled =>
+      prefs.getBool('background_play_enabled') ?? true;
+  set backgroundPlayEnabled(bool v) =>
+      prefs.setBool('background_play_enabled', v);
+
+  /// Bật chế độ thu nhỏ kiểu YouTube (Mini-player)
+  bool get miniPlayerEnabled =>
+      prefs.getBool('mini_player_enabled') ?? true;
+  set miniPlayerEnabled(bool v) =>
+      prefs.setBool('mini_player_enabled', v);
 }
