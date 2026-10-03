@@ -624,8 +624,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       if (playUrl == null) {
         if (mounted) {
           setState(() => _isSwitchingEpisode = false);
+          final maxAcc = widget.dramaDetail?.accessibleEpisodes ?? 3;
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Không thể lấy đường dẫn Tập $targetIndex!')),
+            SnackBar(
+              content: Text(
+                'Tập $targetIndex chưa có sẵn trên web Hồng Quả (web chỉ mở xem trước $maxAcc tập đầu, các tập sau xem trên app chính thức).',
+              ),
+              backgroundColor: Colors.orangeAccent.shade700,
+            ),
           );
         }
         return;
@@ -759,6 +765,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                     final ep = i + 1;
                     final isPlaying = ep == _currentEpisodeIndex;
                     final isCached = _prefetchManager?.getCachedDocument(ep) != null;
+                    final isAccessible = ep <= detail.accessibleEpisodes;
 
                     return InkWell(
                       onTap: () {
@@ -789,15 +796,29 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Text(
-                              '$ep',
-                              style: TextStyle(
-                                color: isPlaying
-                                    ? AppTheme.primaryEmerald
-                                    : Colors.white,
-                                fontWeight: isPlaying ? FontWeight.bold : FontWeight.w500,
-                                fontSize: 13,
-                              ),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  '$ep',
+                                  style: TextStyle(
+                                    color: isPlaying
+                                        ? AppTheme.primaryEmerald
+                                        : (isAccessible ? Colors.white : Colors.white38),
+                                    fontWeight: isPlaying ? FontWeight.bold : FontWeight.w500,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                                if (!isAccessible) ...[
+                                  const SizedBox(width: 2),
+                                  const Icon(
+                                    Icons.lock_outline_rounded,
+                                    size: 10,
+                                    color: Colors.white38,
+                                  ),
+                                ],
+                              ],
                             ),
                             if (isCached && !isPlaying)
                               const Text(

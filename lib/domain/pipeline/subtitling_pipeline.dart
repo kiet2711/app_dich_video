@@ -310,7 +310,15 @@ class SubtitlingPipeline {
           seriesId = await resolver.resolveSeriesId(videoPath);
           final vidMatch = RegExp(r'/player/\d+/(\d+)').firstMatch(videoPath);
           final vid = vidMatch?.group(1) ?? seriesId;
-          directMp4 = await resolver.getEpisodePlayUrl(seriesId, vid);
+          final epMatch = RegExp(r'Tập\s*(\d+)', caseSensitive: false).firstMatch(videoPath);
+          if (epMatch != null) {
+            epIndex = int.tryParse(epMatch.group(1)!);
+          }
+          directMp4 = await resolver.getEpisodePlayUrl(
+            seriesId,
+            vid,
+            episodeIndex: epIndex ?? 1,
+          );
           try {
             final hgDetail = await resolver.getDramaDetail(seriesId);
             if (hgDetail.cover.isNotEmpty) {
@@ -320,7 +328,7 @@ class SubtitlingPipeline {
         }
 
         final epMatch = RegExp(r'Tập\s*(\d+)', caseSensitive: false).firstMatch(videoPath);
-        if (epMatch != null) {
+        if (epMatch != null && epIndex == null) {
           epIndex = int.tryParse(epMatch.group(1)!);
         }
 

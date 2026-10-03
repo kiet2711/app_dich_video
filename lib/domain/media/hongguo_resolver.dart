@@ -1,6 +1,8 @@
+import 'dart:convert';
 import 'dart:math';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 
 import 'network_header_helper.dart';
 
@@ -28,11 +30,13 @@ class HongguoEpisodeItem {
   final int index; // Tập 1, 2, 3...
   final String vid;
   final String title;
+  final bool isAccessible;
 
   const HongguoEpisodeItem({
     required this.index,
     required this.vid,
     required this.title,
+    this.isAccessible = true,
   });
 }
 
@@ -44,6 +48,7 @@ class HongguoDramaDetail {
   final int totalEpisodes;
   final List<String> tags;
   final List<HongguoEpisodeItem> episodes;
+  final int accessibleEpisodes;
 
   const HongguoDramaDetail({
     required this.seriesId,
@@ -53,6 +58,7 @@ class HongguoDramaDetail {
     required this.totalEpisodes,
     this.tags = const [],
     this.episodes = const [],
+    this.accessibleEpisodes = 3,
   });
 }
 
@@ -327,6 +333,12 @@ class HongguoResolver {
     // Tóm tắt nội dung
     final intro = _cleanJsonString(_extractMatch(html, r'"description"\s*:\s*"([^"]+)"'));
 
+    // Số tập xem được trên nền tảng Web Hồng Quả (mặc định các phim web chỉ mở xem trước 3 tập)
+    final accMatch = RegExp(r'"accessible_episode_cnt"\s*:\s*(\d+)').firstMatch(html);
+    final accessibleEpisodes = accMatch != null
+        ? int.tryParse(accMatch.group(1)!) ?? 3
+        : 3;
+
     // Danh sách tập (vid_list)
     final vidListMatch = RegExp(r'"vid_list"\s*:\s*\[([^\]]*)\]').firstMatch(html);
     final episodes = <HongguoEpisodeItem>[];
@@ -340,11 +352,13 @@ class HongguoResolver {
           .toList();
 
       for (var i = 0; i < vids.length; i++) {
+        final epNum = i + 1;
         episodes.add(
           HongguoEpisodeItem(
-            index: i + 1,
+            index: epNum,
             vid: vids[i],
-            title: 'Tập ${i + 1}',
+            title: 'Tập $epNum',
+            isAccessible: true, // Mở khóa toàn bộ qua Cloud Resolver
           ),
         );
       }
@@ -359,17 +373,26 @@ class HongguoResolver {
 
         final playerLinks = RegExp(r'/player/\d+/(\d+)').allMatches(dHtml);
         var idx = 2;
-        episodes.add(HongguoEpisodeItem(index: 1, vid: cleanId, title: 'Tập 1'));
+        episodes.add(
+          HongguoEpisodeItem(
+            index: 1,
+            vid: cleanId,
+            title: 'Tập 1',
+            isAccessible: true,
+          ),
+        );
         final seen = <String>{cleanId};
 
         for (final m in playerLinks) {
           final vid = m.group(1)!;
           if (seen.add(vid)) {
+            final epNum = idx++;
             episodes.add(
               HongguoEpisodeItem(
-                index: idx++,
+                index: epNum,
                 vid: vid,
-                title: 'Tập ${episodes.length + 1}',
+                title: 'Tập $epNum',
+                isAccessible: true,
               ),
             );
           }
@@ -382,26 +405,90 @@ class HongguoResolver {
       title: title,
       cover: cover,
       intro: intro,
-      totalEpisodes: episodes.length,
+      totalEpisodes: episodes.isNotEmpty ? episodes.length : accessibleEpisodes,
       episodes: episodes,
+      accessibleEpisodes: episodes.isNotEmpty ? episodes.length : accessibleEpisodes,
     );
   }
 
+  /// URL Server API trên Hugging Face Spaces (sử dụng Sixgod signing engine)
+  static const String hfApiBase = 'https://kietno1-hongqua.hf.space';
+
+  /// Giải mã video qua Hugging Face Cloud Resolver
+  Future<String?> _resolveFromHfApi(String vid) async {
+    try {
+      final res = await dio.post(
+        '$hfApiBase/gradio_api/call/get_play_url',
+        data: {
+          'data': [vid],
+        },
+        options: Options(
+          receiveTimeout: const Duration(seconds: 15),
+          sendTimeout: const Duration(seconds: 10),
+        ),
+      );
+
+      final eventId = res.data is Map ? res.data['event_id'] : null;
+      if (eventId == null) return null;
+
+      final eventRes = await dio.get<String>(
+        '$hfApiBase/gradio_api/call/get_play_url/$eventId',
+        options: Options(
+          responseType: ResponseType.plain,
+          receiveTimeout: const Duration(seconds: 40),
+        ),
+      );
+
+      final lines = (eventRes.data ?? '').split('\n');
+      for (final line in lines) {
+        if (line.startsWith('data:')) {
+          final jsonStr = line.substring(5).trim();
+          final parsed = jsonDecode(jsonStr);
+          if (parsed is List && parsed.isNotEmpty && parsed[0] is Map) {
+            final fileData = parsed[0] as Map;
+            final url = fileData['url']?.toString();
+            if (url != null && url.startsWith('http')) {
+              return url;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[HongguoResolver] HF Cloud resolve error: $e');
+    }
+    return null;
+  }
+
   /// Lấy trực tiếp link MP4 của một tập phim để phát hoặc tải về
-  Future<String> getEpisodePlayUrl(String seriesId, String vid) async {
+  Future<String> getEpisodePlayUrl(
+    String seriesId,
+    String vid, {
+    int episodeIndex = 1,
+  }) async {
+    // Chỉ thử URL không có vid ($siteOrigin/player/$seriesId) khi đang tìm tập 1
+    // hoặc vid trùng seriesId. TUYỆT ĐỐI KHÔNG dùng làm fallback cho tập 2 trở đi
+    // vì $siteOrigin/player/$seriesId luôn trả về video của Tập 1!
     final candidates = <String>[
       if (vid.isNotEmpty && vid != seriesId)
         '$siteOrigin/player/$seriesId/$vid',
-      '$siteOrigin/player/$seriesId',
-      if (vid.isNotEmpty) '$siteOrigin/player/_/$vid',
+      if (episodeIndex == 1 || vid.isEmpty || vid == seriesId)
+        '$siteOrigin/player/$seriesId',
+      if (vid.isNotEmpty && vid != seriesId)
+        '$siteOrigin/player/_/$vid',
     ];
 
+    // 1. Thử lấy từ web public trước (tập 1-3 hoặc web mở)
     for (final url in candidates) {
       try {
-        final res = await dio.get<String>(url);
+        final res = await dio.get<String>(
+          url,
+          options: Options(
+            validateStatus: (status) => status != null && status < 400,
+          ),
+        );
         final html = res.data ?? '';
 
-        // 1. Thử lấy contentUrl từ VideoObject JSON-LD
+        // Thử lấy contentUrl từ VideoObject JSON-LD
         final contentUrl = _cleanJsonString(
           _extractMatch(html, r'"contentUrl"\s*:\s*"([^"]+)"'),
         );
@@ -409,7 +496,7 @@ class HongguoResolver {
           return contentUrl;
         }
 
-        // 2. Thử lấy main_url từ video_model
+        // Thử lấy main_url từ video_model
         final mainUrl = _cleanJsonString(
           _extractMatch(html, r'"main_url"\s*:\s*"([^"]+)"'),
         );
@@ -419,6 +506,20 @@ class HongguoResolver {
       } catch (_) {}
     }
 
+    // 2. Fallback: Giải mã qua Cloud Resolver Hugging Face (hỗ trợ tập 4+ và video mã hóa)
+    final actualVid = (vid.isNotEmpty && vid != seriesId) ? vid : '';
+    if (actualVid.isNotEmpty) {
+      final hfPlayUrl = await _resolveFromHfApi(actualVid);
+      if (hfPlayUrl != null && hfPlayUrl.isNotEmpty) {
+        return hfPlayUrl;
+      }
+    }
+
+    if (episodeIndex > 1) {
+      throw StateError(
+        'Tập $episodeIndex không thể giải mã qua Server Cloud hoặc web Hồng Quả.',
+      );
+    }
     throw StateError('Không thể lấy liên kết MP4 cho tập phim này.');
   }
 

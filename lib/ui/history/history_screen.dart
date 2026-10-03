@@ -456,6 +456,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
       final playUrl = await _hongguoResolver.getEpisodePlayUrl(
         detail.seriesId,
         vid.isNotEmpty ? vid : detail.seriesId,
+        episodeIndex: epIndex,
       );
 
       if (!mounted) return;

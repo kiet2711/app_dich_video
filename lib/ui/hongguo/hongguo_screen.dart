@@ -1491,6 +1491,25 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                             color: AppColors.textPrimary,
                           ),
                         ),
+                        if (detail.accessibleEpisodes < total)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 3,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.amber.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              'Web mở: 1 - ${detail.accessibleEpisodes}',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.amber,
+                              ),
+                            ),
+                          ),
                       ],
                     ),
                     const SizedBox(height: 10),
@@ -1555,11 +1574,18 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                       itemBuilder: (ctx, i) {
                         final epIndex = startEp + i;
                         final isSelected = _selectedEpisodeIndex == epIndex;
+                        final isAccessible = epIndex <= detail.accessibleEpisodes;
                         return InkWell(
                           onTap: () {
                             HapticFeedback.lightImpact();
                             setState(() {
                               _selectedEpisodeIndex = epIndex;
+                              if (!isAccessible) {
+                                _statusMessage =
+                                    'Lưu ý: Tập $epIndex có thể bị khóa trên web Hồng Quả (web chỉ mở xem trước ${detail.accessibleEpisodes} tập đầu).';
+                              } else {
+                                _statusMessage = '';
+                              }
                             });
                           },
                           borderRadius: BorderRadius.circular(8),
@@ -1578,17 +1604,33 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                               ),
                             ),
                             alignment: Alignment.center,
-                            child: Text(
-                              '$epIndex',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: isSelected
-                                    ? FontWeight.bold
-                                    : FontWeight.normal,
-                                color: isSelected
-                                    ? AppColors.primaryEmerald
-                                    : AppColors.textPrimary,
-                              ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  '$epIndex',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: isSelected
+                                        ? FontWeight.bold
+                                        : FontWeight.normal,
+                                    color: isSelected
+                                        ? AppColors.primaryEmerald
+                                        : (isAccessible
+                                            ? AppColors.textPrimary
+                                            : AppColors.textMuted),
+                                  ),
+                                ),
+                                if (!isAccessible) ...[
+                                  const SizedBox(width: 2),
+                                  const Icon(
+                                    Icons.lock_outline_rounded,
+                                    size: 11,
+                                    color: Colors.white38,
+                                  ),
+                                ],
+                              ],
                             ),
                           ),
                         );
@@ -1717,6 +1759,7 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
       final playUrl = await widget.resolver.getEpisodePlayUrl(
         detail.seriesId,
         vid.isNotEmpty ? vid : detail.seriesId,
+        episodeIndex: _selectedEpisodeIndex,
       );
       if (mounted) {
         setState(() {
@@ -1759,6 +1802,11 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
         ? (OfflineMlKitTranslator.getCachedTitle(widget.detail.title) ??
             widget.detail.title)
         : widget.detail.title;
+
+    // Tự động đóng bảng chọn tập phim để người dùng xem video ngay lập tức
+    if (Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+    }
 
     GlobalPlayerManager.instance.openPlayer(
       videoPath: effectivePath,

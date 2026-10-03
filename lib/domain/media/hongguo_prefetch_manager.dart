@@ -460,6 +460,7 @@ class HongguoPrefetchManager {
       final url = await _resolver.getEpisodePlayUrl(
         detail.seriesId,
         vid.isNotEmpty ? vid : detail.seriesId,
+        episodeIndex: episodeIndex,
       );
 
       final cached = await VideoCacheManager.findCachedFile(
