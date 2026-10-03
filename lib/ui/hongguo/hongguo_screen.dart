@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../data/model/subtitle_document.dart';
+import '../../domain/ai/offline_mlkit_translator.dart';
 import '../../domain/media/hongguo_resolver.dart';
 import '../../domain/media/network_header_helper.dart';
 import '../../domain/media/video_cache_manager.dart';
@@ -33,11 +35,66 @@ class _HongguoScreenState extends State<HongguoScreen> {
   String? _errorMessage;
   List<HongguoDramaItem> _dramas = [];
   bool _isSearchMode = false;
+  bool _isTranslationEnabled = true;
 
   @override
   void initState() {
     super.initState();
+    _loadTranslationSetting();
     _loadDramas();
+  }
+
+  Future<void> _loadTranslationSetting() async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      final saved = sp.getBool('hongguo_translate_enabled') ?? true;
+      if (mounted) {
+        setState(() => _isTranslationEnabled = saved);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _toggleTranslation() async {
+    HapticFeedback.lightImpact();
+    final newVal = !_isTranslationEnabled;
+    setState(() {
+      _isTranslationEnabled = newVal;
+    });
+    try {
+      final sp = await SharedPreferences.getInstance();
+      await sp.setBool('hongguo_translate_enabled', newVal);
+    } catch (_) {}
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            Icon(
+              newVal ? Icons.translate_rounded : Icons.translate_outlined,
+              color: newVal ? AppColors.primaryEmerald : Colors.white70,
+              size: 18,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                newVal
+                    ? 'Đã BẬT dịch tiếng Việt (Tên phim & Giới thiệu)'
+                    : 'Đã TẮT dịch (Hiển thị tiếng Trung gốc)',
+                style: const TextStyle(color: Colors.white, fontSize: 13),
+              ),
+            ),
+          ],
+        ),
+        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: const Color(0xFF1E222D),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+          side: const BorderSide(color: AppColors.cardBorder),
+        ),
+      ),
+    );
   }
 
   @override
@@ -176,8 +233,49 @@ class _HongguoScreenState extends State<HongguoScreen> {
       _isSearchMode = true;
     });
 
+    var queryToSearch = text;
+    // Tự động nhận diện tiếng Việt / chữ cái Latin và dùng ML Kit dịch sang tiếng Trung
+    if (RegExp(r'[a-zA-ZÀ-ỹ]').hasMatch(text)) {
+      try {
+        final translatedQuery =
+            await OfflineMlKitTranslator.translateSearchQuery(text);
+        if (translatedQuery.isNotEmpty && translatedQuery != text) {
+          queryToSearch = translatedQuery;
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Row(
+                  children: [
+                    const Icon(Icons.translate_rounded,
+                        color: AppColors.primaryEmerald, size: 16),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Đã dịch tìm kiếm: "$text" ➔ "$translatedQuery"',
+                        style:
+                            const TextStyle(color: Colors.white, fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
+                duration: const Duration(seconds: 3),
+                behavior: SnackBarBehavior.floating,
+                backgroundColor: const Color(0xFF1E222D),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  side: const BorderSide(color: AppColors.cardBorder),
+                ),
+              ),
+            );
+          }
+        }
+      } catch (e) {
+        debugPrint('[HongguoSearch] Lỗi dịch từ khóa: $e');
+      }
+    }
+
     try {
-      final results = await _resolver.search(text);
+      final results = await _resolver.search(queryToSearch);
       if (!mounted) return;
       setState(() {
         _dramas = results;
@@ -300,6 +398,7 @@ class _HongguoScreenState extends State<HongguoScreen> {
         detail: detail,
         resolver: _resolver,
         onStartTranslation: widget.onStartTranslation,
+        isTranslationEnabled: _isTranslationEnabled,
       ),
     );
   }
@@ -348,12 +447,16 @@ class _HongguoScreenState extends State<HongguoScreen> {
         ),
         actions: [
           IconButton(
-            icon: const Icon(
-              Icons.casino_rounded,
-              color: AppColors.primaryEmerald,
+            icon: Icon(
+              Icons.translate_rounded,
+              color: _isTranslationEnabled
+                  ? AppColors.primaryEmerald
+                  : AppColors.textMuted,
             ),
-            tooltip: 'Load phim mới ngẫu nhiên',
-            onPressed: _isLoading ? null : _loadRandomNewDramas,
+            tooltip: _isTranslationEnabled
+                ? 'Tắt dịch tiếng Việt'
+                : 'Bật dịch tiếng Việt (Tên & Giới thiệu)',
+            onPressed: _toggleTranslation,
           ),
           IconButton(
             icon: const Icon(Icons.tune_rounded, color: AppColors.textSecondary),
@@ -796,6 +899,7 @@ class _HongguoScreenState extends State<HongguoScreen> {
               drama: drama,
               index: i + 1,
               isRankCategory: _currentCategorySlug.contains('rank'),
+              isTranslationEnabled: _isTranslationEnabled,
               onTap: () => _openDramaDetail(drama),
             );
           },
@@ -876,12 +980,14 @@ class _DramaCard extends StatelessWidget {
   final HongguoDramaItem drama;
   final int index;
   final bool isRankCategory;
+  final bool isTranslationEnabled;
   final VoidCallback onTap;
 
   const _DramaCard({
     required this.drama,
     required this.index,
     required this.isRankCategory,
+    this.isTranslationEnabled = true,
     required this.onTap,
   });
 
@@ -1040,16 +1146,55 @@ class _DramaCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    drama.title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.textPrimary,
-                      height: 1.25,
-                    ),
+                  Builder(
+                    builder: (context) {
+                      if (!isTranslationEnabled) {
+                        return Text(
+                          drama.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.textPrimary,
+                            height: 1.25,
+                          ),
+                        );
+                      }
+                      final cached =
+                          OfflineMlKitTranslator.getCachedTitle(drama.title);
+                      if (cached != null) {
+                        return Text(
+                          cached,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.textPrimary,
+                            height: 1.25,
+                          ),
+                        );
+                      }
+                      return FutureBuilder<String>(
+                        future: OfflineMlKitTranslator.translateHongguoTitle(
+                            drama.title),
+                        initialData: drama.title,
+                        builder: (context, snapshot) {
+                          return Text(
+                            snapshot.data ?? drama.title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.textPrimary,
+                              height: 1.25,
+                            ),
+                          );
+                        },
+                      );
+                    },
                   ),
                   const SizedBox(height: 4),
                   Text(
@@ -1077,12 +1222,14 @@ class _DramaCard extends StatelessWidget {
 class _EpisodeSelectorSheet extends StatefulWidget {
   final HongguoDramaDetail detail;
   final HongguoResolver resolver;
+  final bool isTranslationEnabled;
   final void Function(String videoUrl, String title, int durationMs)?
       onStartTranslation;
 
   const _EpisodeSelectorSheet({
     required this.detail,
     required this.resolver,
+    this.isTranslationEnabled = true,
     this.onStartTranslation,
   });
 
@@ -1096,8 +1243,15 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
   bool _loadingTts = false;
   String _statusMessage = '';
   int _selectedRangeChunk = 0; // Phân đoạn mỗi 30 tập: 0 (1-30), 1 (31-60), ...
+  final ScrollController _introScrollController = ScrollController();
 
   static const int _chunkSize = 30;
+
+  @override
+  void dispose() {
+    _introScrollController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1181,15 +1335,54 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(
-                                detail.title,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  color: AppColors.textPrimary,
-                                ),
+                              Builder(
+                                builder: (ctx) {
+                                  if (!widget.isTranslationEnabled) {
+                                    return Text(
+                                      detail.title,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
+                                        color: AppColors.textPrimary,
+                                      ),
+                                    );
+                                  }
+                                  final cached =
+                                      OfflineMlKitTranslator.getCachedTitle(
+                                          detail.title);
+                                  if (cached != null) {
+                                    return Text(
+                                      cached,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
+                                        color: AppColors.textPrimary,
+                                      ),
+                                    );
+                                  }
+                                  return FutureBuilder<String>(
+                                    future:
+                                        OfflineMlKitTranslator.translateHongguoTitle(
+                                            detail.title),
+                                    initialData: detail.title,
+                                    builder: (ctx, snap) {
+                                      return Text(
+                                        snap.data ?? detail.title,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.bold,
+                                          color: AppColors.textPrimary,
+                                        ),
+                                      );
+                                    },
+                                  );
+                                },
                               ),
                               const SizedBox(height: 6),
                               Container(
@@ -1213,14 +1406,66 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                               ),
                               if (detail.intro.isNotEmpty) ...[
                                 const SizedBox(height: 6),
-                                Text(
-                                  detail.intro,
-                                  maxLines: 3,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontSize: 11,
-                                    color: AppColors.textMuted,
-                                    height: 1.3,
+                                ConstrainedBox(
+                                  constraints:
+                                      const BoxConstraints(maxHeight: 76),
+                                  child: Scrollbar(
+                                    controller: _introScrollController,
+                                    thumbVisibility: true,
+                                    radius: const Radius.circular(4),
+                                    thickness: 3,
+                                    child: SingleChildScrollView(
+                                      controller: _introScrollController,
+                                      physics: const BouncingScrollPhysics(),
+                                      child: Padding(
+                                        padding:
+                                            const EdgeInsets.only(right: 6),
+                                        child: Builder(
+                                          builder: (ctx) {
+                                            if (!widget.isTranslationEnabled) {
+                                              return Text(
+                                                detail.intro,
+                                                style: const TextStyle(
+                                                  fontSize: 11,
+                                                  color: AppColors.textMuted,
+                                                  height: 1.35,
+                                                ),
+                                              );
+                                            }
+                                            final cached =
+                                                OfflineMlKitTranslator
+                                                    .getCachedIntro(
+                                                        detail.intro);
+                                            if (cached != null) {
+                                              return Text(
+                                                cached,
+                                                style: const TextStyle(
+                                                  fontSize: 11,
+                                                  color: AppColors.textMuted,
+                                                  height: 1.35,
+                                                ),
+                                              );
+                                            }
+                                            return FutureBuilder<String>(
+                                              future: OfflineMlKitTranslator
+                                                  .translateHongguoIntro(
+                                                      detail.intro),
+                                              initialData: detail.intro,
+                                              builder: (ctx, snap) {
+                                                return Text(
+                                                  snap.data ?? detail.intro,
+                                                  style: const TextStyle(
+                                                    fontSize: 11,
+                                                    color: AppColors.textMuted,
+                                                    height: 1.35,
+                                                  ),
+                                                );
+                                              },
+                                            );
+                                          },
+                                        ),
+                                      ),
+                                    ),
                                   ),
                                 ),
                               ],
@@ -1510,9 +1755,14 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
     }
     if (!mounted) return;
 
+    final dramaTitle = widget.isTranslationEnabled
+        ? (OfflineMlKitTranslator.getCachedTitle(widget.detail.title) ??
+            widget.detail.title)
+        : widget.detail.title;
+
     GlobalPlayerManager.instance.openPlayer(
       videoPath: effectivePath,
-      title: '${widget.detail.title} - Tập $_selectedEpisodeIndex',
+      title: '$dramaTitle - Tập $_selectedEpisodeIndex',
       document: SubtitleDocument(),
       dramaDetail: widget.detail,
       currentEpisodeIndex: _selectedEpisodeIndex,
