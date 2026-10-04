@@ -100,6 +100,7 @@ class _BilibiliScreenState extends State<BilibiliScreen>
     if (cookie.isNotEmpty) {
       _fetchProfile(cookie);
     }
+    BilibiliResolver.warmUpWbi(cookie);
 
     _fetchRecommend(refresh: true);
     _fetchAi(refresh: true);
@@ -374,6 +375,9 @@ class _BilibiliScreenState extends State<BilibiliScreen>
       GlobalPlayerManager.instance.openPlayer(
         videoPath: playUrl,
         title: item.title,
+        coverUrl: item.cover,
+        author: item.author,
+        bilibiliItem: item,
       );
     }
   }

@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import '../data/model/subtitle_document.dart';
+import '../domain/media/bilibili_resolver.dart';
 import '../domain/media/hongguo_resolver.dart';
 
 enum PlayerDisplayMode {
@@ -18,6 +19,9 @@ class PlaybackRequest {
   final HongguoDramaDetail? dramaDetail;
   final int? currentEpisodeIndex;
   final bool? initialTtsEnabled;
+  final String? coverUrl;
+  final String? author;
+  final BilibiliAnimeItem? bilibiliItem;
   final int requestId;
 
   PlaybackRequest({
@@ -29,6 +33,9 @@ class PlaybackRequest {
     this.dramaDetail,
     this.currentEpisodeIndex,
     this.initialTtsEnabled,
+    this.coverUrl,
+    this.author,
+    this.bilibiliItem,
     required this.requestId,
   });
 }
@@ -56,6 +63,9 @@ class GlobalPlayerManager extends ChangeNotifier {
     HongguoDramaDetail? dramaDetail,
     int? currentEpisodeIndex,
     bool? initialTtsEnabled,
+    String? coverUrl,
+    String? author,
+    BilibiliAnimeItem? bilibiliItem,
   }) {
     _currentRequest = PlaybackRequest(
       videoPath: videoPath,
@@ -66,6 +76,9 @@ class GlobalPlayerManager extends ChangeNotifier {
       dramaDetail: dramaDetail,
       currentEpisodeIndex: currentEpisodeIndex,
       initialTtsEnabled: initialTtsEnabled,
+      coverUrl: coverUrl ?? bilibiliItem?.cover,
+      author: author ?? bilibiliItem?.author,
+      bilibiliItem: bilibiliItem,
       requestId: DateTime.now().microsecondsSinceEpoch,
     );
     _mode = PlayerDisplayMode.full;

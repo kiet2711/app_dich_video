@@ -499,6 +499,7 @@ class _HistoryScreenState extends State<HistoryScreen>
         videoPath: resolvedVideo,
         document: doc,
         title: item.title,
+        coverUrl: item.coverUrl,
         initialPositionMs: item.lastPositionMs,
         onPlaybackPositionChanged: (positionMs) =>
             repo.updatePlaybackPosition(item.id, positionMs),
@@ -566,6 +567,7 @@ class _HistoryScreenState extends State<HistoryScreen>
       videoPath: resolvedVideo,
       title: '${group.seriesTitle} - Tập $epIndex',
       document: doc ?? SubtitleDocument(),
+      coverUrl: group.seriesCover ?? item.coverUrl,
       initialPositionMs: item.lastPositionMs,
       dramaDetail: dramaDetail,
       currentEpisodeIndex: epIndex,

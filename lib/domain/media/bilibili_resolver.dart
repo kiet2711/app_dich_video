@@ -299,9 +299,11 @@ class BilibiliResolver {
   ];
 
   final Dio dio;
-  String? _cachedImgKey;
-  String? _cachedSubKey;
-  DateTime? _wbiFetchedAt;
+  static String? _cachedImgKey;
+  static String? _cachedSubKey;
+  static DateTime? _wbiFetchedAt;
+  static final Map<String, BilibiliVideoDetails> _videoDetailsCache = {};
+  static final Map<String, List<String>> _muxedUrlsCache = {};
 
   BilibiliResolver({Dio? dio})
     : dio =
@@ -358,6 +360,26 @@ class BilibiliResolver {
       'Origin': 'https://www.bilibili.com',
       'Accept': 'application/json, text/plain, */*',
       'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+      'Cookie': finalCookie,
+    };
+  }
+
+  static Map<String, String> streamHeaders([String cookie = '']) {
+    final trimmed = cookie.trim();
+    final sessData = trimmed.isEmpty
+        ? ''
+        : trimmed.contains('SESSDATA=')
+        ? trimmed
+        : 'SESSDATA=$trimmed';
+    final buvid = 'buvid3_infoc_${DateTime.now().millisecondsSinceEpoch}';
+    final defaultCookie =
+        'buvid3=$buvid; b_nut=${DateTime.now().millisecondsSinceEpoch ~/ 1000}; CURRENT_FNVAL=4048';
+    final finalCookie =
+        sessData.isEmpty ? defaultCookie : '$sessData; $defaultCookie';
+    return {
+      'User-Agent': _userAgent,
+      'Referer': _referer,
+      'Origin': 'https://www.bilibili.com',
       'Cookie': finalCookie,
     };
   }
@@ -461,6 +483,10 @@ class BilibiliResolver {
     BilibiliTarget target, [
     String cookie = '',
   ]) async {
+    final cacheKey = target.bvid != null ? '${target.bvid}_p${target.pageIndex}' : target.rawUrl;
+    if (_videoDetailsCache.containsKey(cacheKey)) {
+      return _videoDetailsCache[cacheKey]!;
+    }
     final params = <String, String>{};
     if (target.bvid != null) {
       params['bvid'] = target.bvid!;
@@ -533,7 +559,7 @@ class BilibiliResolver {
     final view = stat?['view'];
     final danmaku = stat?['danmaku'];
 
-    return BilibiliVideoDetails(
+    final result = BilibiliVideoDetails(
       bvid: data['bvid']?.toString() ?? target.bvid ?? '',
       aid: (data['aid'] as num?)?.toInt() ?? 0,
       cid: cid,
@@ -550,6 +576,11 @@ class BilibiliResolver {
       viewCountText: view != null ? _formatCount(view) : '',
       danmakuText: danmaku != null ? _formatCount(danmaku) : '',
     );
+    _videoDetailsCache[cacheKey] = result;
+    if (target.bvid != null && target.pageIndex == 1) {
+      _videoDetailsCache[target.bvid!] = result;
+    }
+    return result;
   }
 
   Future<String> getAudioUrl(
@@ -586,6 +617,10 @@ class BilibiliResolver {
     String cookie = '',
     String quality = '64',
   ]) async {
+    final cacheKey = '${details.bvid}_${details.selectedPageIndex}_$quality';
+    if (_muxedUrlsCache.containsKey(cacheKey)) {
+      return _muxedUrlsCache[cacheKey]!;
+    }
     var data = await _getPlayData(details, cookie, fnval: '0', quality: quality);
     var urls = extractMuxedVideoUrls(data);
     if (urls.isEmpty && quality != '32') {
@@ -603,14 +638,27 @@ class BilibiliResolver {
     if (urls.isEmpty) {
       throw StateError('Bilibili không trả luồng video MP4 tương thích iOS.');
     }
+    _muxedUrlsCache[cacheKey] = urls;
     return urls;
+  }
+
+  static int _scoreCdnUrl(String url) {
+    final lower = url.toLowerCase();
+    if (lower.contains('mirroraliov') || lower.contains('aliov')) return 100;
+    if (lower.contains('akamai')) return 90;
+    if (lower.contains('mirrorcos')) return 80;
+    if (lower.contains('upcdnbov')) return 75;
+    if (lower.contains('mirrorali')) return 60;
+    if (lower.contains('mirrorhw')) return 50;
+    if (lower.contains('cn-')) return 10;
+    return 40;
   }
 
   static List<String> extractMuxedVideoUrls(Map<String, dynamic> data) {
     final durl = data['durl'] as List<dynamic>? ?? const [];
     if (durl.isEmpty || durl.first is! Map<String, dynamic>) return const [];
     final first = durl.first as Map<String, dynamic>;
-    final urls = <String>[
+    final rawUrls = <String>[
       first['url']?.toString() ?? '',
       ...(first['backup_url'] as List<dynamic>? ?? const []).map(
         (url) => url.toString(),
@@ -619,11 +667,26 @@ class BilibiliResolver {
         (url) => url.toString(),
       ),
     ];
-    return urls
+    final initialList = rawUrls
         .map((url) => url.trim())
         .where((url) => url.startsWith('http://') || url.startsWith('https://'))
         .toSet()
-        .toList(growable: false);
+        .toList();
+
+    // Sinh thêm link mirror quốc tế tốc độ cao nếu URL chứa cấu trúc UPOS
+    final synthesized = <String>[];
+    for (final u in initialList) {
+      final uri = Uri.tryParse(u);
+      if (uri != null && uri.path.contains('/upos/')) {
+        synthesized.add(uri.replace(host: 'upos-sz-mirroraliov.bilivideo.com').toString());
+        synthesized.add(uri.replace(host: 'upos-sz-mirrorakamai.bilivideo.com').toString());
+        synthesized.add(uri.replace(host: 'upos-sz-upcdnbov.bilivideo.com').toString());
+      }
+    }
+
+    final allUrls = {...synthesized, ...initialList}.toList();
+    allUrls.sort((a, b) => _scoreCdnUrl(b).compareTo(_scoreCdnUrl(a)));
+    return allUrls;
   }
 
   Future<List<BilibiliSubtitleInfo>> getSubtitles(
@@ -863,7 +926,7 @@ class BilibiliResolver {
     if (_cachedImgKey != null &&
         _cachedSubKey != null &&
         _wbiFetchedAt != null &&
-        now.difference(_wbiFetchedAt!) < const Duration(minutes: 30)) {
+        now.difference(_wbiFetchedAt!) < const Duration(hours: 12)) {
       return (_cachedImgKey!, _cachedSubKey!);
     }
     final response = await dio.get<Map<String, dynamic>>(
@@ -880,6 +943,20 @@ class BilibiliResolver {
     _cachedSubKey = Uri.parse(subUrl).pathSegments.last.split('.').first;
     _wbiFetchedAt = now;
     return (_cachedImgKey!, _cachedSubKey!);
+  }
+
+  static Future<void> warmUpWbi([String cookie = '']) async {
+    try {
+      final now = DateTime.now();
+      if (_cachedImgKey != null &&
+          _cachedSubKey != null &&
+          _wbiFetchedAt != null &&
+          now.difference(_wbiFetchedAt!) < const Duration(hours: 12)) {
+        return;
+      }
+      final resolver = BilibiliResolver();
+      await resolver._getWbiKeys(cookie);
+    } catch (_) {}
   }
 
   Map<String, String> _signWbi(

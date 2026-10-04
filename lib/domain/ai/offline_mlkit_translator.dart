@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_translation/google_mlkit_translation.dart';
 
@@ -179,23 +180,53 @@ class OfflineMlKitTranslator {
     return _viToZhTranslator!;
   }
 
-  /// Dịch tiêu đề phim Hồng Quả (có lưu cache tức thì)
+  static final Dio _fallbackDio = Dio(
+    BaseOptions(
+      connectTimeout: const Duration(seconds: 4),
+      receiveTimeout: const Duration(seconds: 6),
+    ),
+  );
+
+  /// Dịch tiêu đề phim/video (có lưu cache tức thì, ưu tiên offline ML Kit, dự phòng online)
   static Future<String> translateHongguoTitle(String title) async {
     final clean = title.trim();
     if (clean.isEmpty) return title;
     if (_hongguoTitleCache.containsKey(clean)) {
       return _hongguoTitleCache[clean]!;
     }
+    // 1. Thử dịch Offline bằng ML Kit trên thiết bị (0ms - 50ms)
     try {
       final translator = await getZhToViTranslator();
       final res = await translator.translateText(clean);
-      final finalStr = res.trim().isNotEmpty ? res.trim() : clean;
-      _hongguoTitleCache[clean] = finalStr;
-      return finalStr;
+      if (res.trim().isNotEmpty && res.trim() != clean) {
+        final finalStr = res.trim();
+        _hongguoTitleCache[clean] = finalStr;
+        return finalStr;
+      }
     } catch (e) {
-      debugPrint('[HongguoTranslate] Lỗi dịch tiêu đề "$clean": $e');
-      return clean;
+      debugPrint('[HongguoTranslate] ML Kit chưa sẵn sàng hoặc lỗi: $e. Thử dự phòng online...');
     }
+
+    // 2. Dự phòng trực tuyến MyMemory API (miễn phí 100%, không cần key)
+    try {
+      final res = await _fallbackDio.get(
+        'https://api.mymemory.translated.net/get',
+        queryParameters: {
+          'q': clean,
+          'langpair': 'zh|vi',
+        },
+      );
+      final trans = res.data?['responseData']?['translatedText']?.toString().trim();
+      if (trans != null &&
+          trans.isNotEmpty &&
+          trans != clean &&
+          !trans.toLowerCase().contains('mymemory')) {
+        _hongguoTitleCache[clean] = trans;
+        return trans;
+      }
+    } catch (_) {}
+
+    return clean;
   }
 
   /// Lấy bản dịch tiêu đề đã có trong cache (đồng bộ 0ms)
@@ -213,13 +244,35 @@ class OfflineMlKitTranslator {
     try {
       final translator = await getZhToViTranslator();
       final res = await translator.translateText(clean);
-      final finalStr = res.trim().isNotEmpty ? res.trim() : clean;
-      _hongguoIntroCache[clean] = finalStr;
-      return finalStr;
+      if (res.trim().isNotEmpty && res.trim() != clean) {
+        final finalStr = res.trim();
+        _hongguoIntroCache[clean] = finalStr;
+        return finalStr;
+      }
     } catch (e) {
-      debugPrint('[HongguoTranslate] Lỗi dịch giới thiệu: $e');
-      return clean;
+      debugPrint('[HongguoTranslate] Lỗi dịch giới thiệu ML Kit: $e');
     }
+
+    // Dự phòng trực tuyến
+    try {
+      final res = await _fallbackDio.get(
+        'https://api.mymemory.translated.net/get',
+        queryParameters: {
+          'q': clean,
+          'langpair': 'zh|vi',
+        },
+      );
+      final trans = res.data?['responseData']?['translatedText']?.toString().trim();
+      if (trans != null &&
+          trans.isNotEmpty &&
+          trans != clean &&
+          !trans.toLowerCase().contains('mymemory')) {
+        _hongguoIntroCache[clean] = trans;
+        return trans;
+      }
+    } catch (_) {}
+
+    return clean;
   }
 
   /// Lấy bản dịch giới thiệu đã có trong cache (đồng bộ 0ms)
@@ -241,13 +294,35 @@ class OfflineMlKitTranslator {
     try {
       final translator = await getViToZhTranslator();
       final res = await translator.translateText(clean);
-      final finalStr = res.trim().isNotEmpty ? res.trim() : clean;
-      _searchQueryCache[clean] = finalStr;
-      return finalStr;
+      if (res.trim().isNotEmpty && res.trim() != clean) {
+        final finalStr = res.trim();
+        _searchQueryCache[clean] = finalStr;
+        return finalStr;
+      }
     } catch (e) {
-      debugPrint('[HongguoTranslate] Lỗi dịch từ khóa "$clean": $e');
-      return clean;
+      debugPrint('[HongguoTranslate] Lỗi dịch từ khóa ML Kit: $e');
     }
+
+    // Dự phòng trực tuyến
+    try {
+      final res = await _fallbackDio.get(
+        'https://api.mymemory.translated.net/get',
+        queryParameters: {
+          'q': clean,
+          'langpair': 'vi|zh',
+        },
+      );
+      final trans = res.data?['responseData']?['translatedText']?.toString().trim();
+      if (trans != null &&
+          trans.isNotEmpty &&
+          trans != clean &&
+          !trans.toLowerCase().contains('mymemory')) {
+        _searchQueryCache[clean] = trans;
+        return trans;
+      }
+    } catch (_) {}
+
+    return clean;
   }
 
   /// Dịch một đoạn văn bản đơn lẻ (ví dụ: Tiêu đề video)

@@ -44,6 +44,9 @@ class VideoPlayerScreen extends StatefulWidget {
   final HongguoDramaDetail? dramaDetail;
   final int? currentEpisodeIndex;
   final bool? initialTtsEnabled;
+  final String? coverUrl;
+  final String? author;
+  final BilibiliAnimeItem? bilibiliItem;
   final bool isGlobalPlayer;
 
   const VideoPlayerScreen({
@@ -56,6 +59,9 @@ class VideoPlayerScreen extends StatefulWidget {
     this.dramaDetail,
     this.currentEpisodeIndex,
     this.initialTtsEnabled,
+    this.coverUrl,
+    this.author,
+    this.bilibiliItem,
     this.isGlobalPlayer = false,
   });
 
@@ -74,6 +80,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   bool _isPlayerFullScreen = false;
   List<BilibiliAnimeItem> _relatedVideos = [];
   bool _isLoadingRelated = false;
+  String? _lastLoadedRelatedBvid;
+  String? _coverUrl;
+  String? _authorName;
+  String? _upFaceUrl;
+  BilibiliAnimeItem? _bilibiliItem;
 
   String get _currentQualityLabel {
     switch (_currentQualityKey) {
@@ -502,8 +513,36 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     _currentEpisodeIndex = widget.currentEpisodeIndex ?? 1;
     _sourceVideoUrl = widget.videoPath;
     _currentVideoPath = widget.videoPath;
-    _currentTitle = widget.title ?? '';
+    _currentTitle = widget.title ?? widget.bilibiliItem?.title ?? '';
+    _originalTitle = _currentTitle;
     _currentDocument = widget.document ?? SubtitleDocument();
+
+    _coverUrl = widget.coverUrl ?? widget.bilibiliItem?.cover;
+    _authorName = widget.author ?? widget.bilibiliItem?.author;
+    _upFaceUrl = widget.bilibiliItem?.upFace;
+    _bilibiliItem = widget.bilibiliItem;
+
+    if (_bilibiliItem != null) {
+      _bilibiliDetails = BilibiliVideoDetails(
+        bvid: _bilibiliItem!.bvid ?? '',
+        aid: 0,
+        cid: 0,
+        title: _bilibiliItem!.title,
+        rawTitle: _bilibiliItem!.title,
+        coverUrl: _bilibiliItem!.cover.isNotEmpty ? _bilibiliItem!.cover : null,
+        durationSeconds: _bilibiliItem!.durationSeconds,
+        author: _bilibiliItem!.author,
+        upFace: _bilibiliItem!.upFace.isNotEmpty ? _bilibiliItem!.upFace : null,
+        viewCountText: _bilibiliItem!.viewCountText,
+        danmakuText: _bilibiliItem!.danmakuText,
+      );
+    }
+
+    final initialBvid = widget.bilibiliItem?.bvid ??
+        RegExp(r'BV[a-zA-Z0-9]+', caseSensitive: false).firstMatch(widget.videoPath)?.group(0);
+    if (initialBvid != null && initialBvid.isNotEmpty) {
+      _loadRelatedVideos(initialBvid);
+    }
 
     _ttsScheduler = TtsAudioScheduler(_currentDocument);
 
@@ -797,7 +836,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             _settings.preferredVideoQuality,
           );
           targetPath = playableUrls.first;
-          httpHeaders = BilibiliResolver.requestHeaders(
+          httpHeaders = BilibiliResolver.streamHeaders(
             _settings.bilibiliSessData,
           );
           _currentQualityKey = _settings.preferredVideoQuality;
@@ -901,9 +940,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         const Duration(milliseconds: 250),
         (_) => _monitorPlaybackStall(),
       );
-      await _calibratePlaybackSpeeds();
-      await _applyAudioVolumes();
-      await _ttsScheduler.warmUp(resumePositionMs);
       setState(() {
         _isInitialized = true;
       });
@@ -919,6 +955,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       } else {
         await _controller!.pause();
       }
+
+      // Khởi động các tác vụ phụ chạy ngầm bất đồng bộ song song
+      unawaited(_calibratePlaybackSpeeds());
+      unawaited(_applyAudioVolumes());
+      unawaited(_ttsScheduler.warmUp(resumePositionMs));
       if (shouldRestorePosition) {
         try {
           await Future.wait([
@@ -1312,6 +1353,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
   Future<void> _loadRelatedVideos(String bvid) async {
     if (bvid.isEmpty) return;
+    if (_lastLoadedRelatedBvid == bvid && _relatedVideos.isNotEmpty) return;
+    _lastLoadedRelatedBvid = bvid;
     if (mounted) {
       setState(() {
         _isLoadingRelated = true;
@@ -1319,10 +1362,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       });
     }
     try {
+      final settings = await SettingsRepository.getInstance();
       final resolver = BilibiliResolver();
       final related = await resolver.getRelatedVideos(
         bvid,
-        cookie: _settings.bilibiliSessData,
+        cookie: settings.bilibiliSessData,
       );
       if (mounted) {
         setState(() {
@@ -1566,7 +1610,19 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     final details = _bilibiliDetails;
     final displayTitle = _currentTitle.isNotEmpty
         ? _currentTitle
-        : (widget.title ?? '');
+        : (widget.title ?? widget.bilibiliItem?.title ?? '');
+    final author = (details != null && details.author.isNotEmpty)
+        ? details.author
+        : (_authorName ?? widget.author ?? widget.bilibiliItem?.author ?? '');
+    final upFace = (details?.upFace != null && details!.upFace!.isNotEmpty)
+        ? details.upFace
+        : (_upFaceUrl ?? widget.bilibiliItem?.upFace);
+    final viewCount = (details != null && details.viewCountText.isNotEmpty)
+        ? details.viewCountText
+        : (widget.bilibiliItem?.viewCountText ?? '');
+    final danmaku = (details != null && details.danmakuText.isNotEmpty)
+        ? details.danmakuText
+        : (widget.bilibiliItem?.danmakuText ?? '');
 
     return Container(
       color: const Color(0xFF14161E),
@@ -1646,14 +1702,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           const SizedBox(height: 10),
 
           // 2. Thông tin UP tác giả
-          if (details != null && details.author.isNotEmpty)
+          if (author.isNotEmpty)
             Row(
               children: [
-                if (details.upFace != null && details.upFace!.isNotEmpty)
+                if (upFace != null && upFace.isNotEmpty)
                   ClipRRect(
                     borderRadius: BorderRadius.circular(16),
                     child: Image.network(
-                      details.upFace!,
+                      upFace,
                       width: 32,
                       height: 32,
                       fit: BoxFit.cover,
@@ -1676,7 +1732,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        details.author,
+                        author,
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 13,
@@ -1688,16 +1744,16 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                       const SizedBox(height: 2),
                       Row(
                         children: [
-                          if (details.viewCountText.isNotEmpty)
+                          if (viewCount.isNotEmpty)
                             Text(
-                              '${details.viewCountText} lượt xem',
+                              '$viewCount lượt xem',
                               style: const TextStyle(color: Colors.white54, fontSize: 11),
                             ),
-                          if (details.viewCountText.isNotEmpty && details.danmakuText.isNotEmpty)
+                          if (viewCount.isNotEmpty && danmaku.isNotEmpty)
                             const Text(' • ', style: TextStyle(color: Colors.white38)),
-                          if (details.danmakuText.isNotEmpty)
+                          if (danmaku.isNotEmpty)
                             Text(
-                              '${details.danmakuText} đạn mạc',
+                              '$danmaku đạn mạc',
                               style: const TextStyle(color: Colors.white54, fontSize: 11),
                             ),
                         ],
@@ -1844,12 +1900,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
           // 5. Danh sách video đề xuất
           if (_isLoadingRelated && _relatedVideos.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 30),
-              child: Center(
-                child: CircularProgressIndicator(color: Color(0xFF00AEEC)),
-              ),
-            )
+            _buildRelatedVideosSkeleton()
           else if (_relatedVideos.isEmpty)
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 24),
@@ -1867,6 +1918,66 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     );
   }
 
+  Widget _buildRelatedVideosSkeleton() {
+    return Column(
+      children: List.generate(4, (index) {
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 124,
+                height: 70,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1E212B),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Center(
+                  child: Icon(Icons.movie_rounded, color: Colors.white12, size: 24),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      height: 14,
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1E212B),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Container(
+                      height: 14,
+                      width: 140,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1E212B),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Container(
+                      height: 10,
+                      width: 90,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF191B24),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      }),
+    );
+  }
+
   Widget _buildRelatedVideoTile(BilibiliAnimeItem item) {
     return InkWell(
       onTap: () {
@@ -1874,6 +1985,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           newVideoPath: item.targetPlayUrl,
           newDocument: SubtitleDocument(),
           newTitle: item.title,
+          newCoverUrl: item.cover,
+          newAuthor: item.author,
+          newBilibiliItem: item,
         );
       },
       borderRadius: BorderRadius.circular(8),
@@ -2006,6 +2120,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     required String newVideoPath,
     required SubtitleDocument newDocument,
     required String newTitle,
+    String? newCoverUrl,
+    String? newAuthor,
+    BilibiliAnimeItem? newBilibiliItem,
   }) async {
     await _controller?.pause();
     _controller?.removeListener(_onPlayerUpdate);
@@ -2015,18 +2132,46 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     _playbackMonitor?.cancel();
     _ttsScheduler.dispose();
 
+    final item = newBilibiliItem;
     setState(() {
       _isInitialized = false;
       _sourceVideoUrl = newVideoPath;
       _currentVideoPath = newVideoPath;
       _currentDocument = newDocument;
       _currentTitle = newTitle;
+      _originalTitle = newTitle;
+      _translatedTitle = null;
+      _coverUrl = newCoverUrl ?? item?.cover ?? _coverUrl;
+      _authorName = newAuthor ?? item?.author ?? _authorName;
+      _upFaceUrl = item?.upFace ?? _upFaceUrl;
+      _bilibiliItem = item;
+      if (item != null) {
+        _bilibiliDetails = BilibiliVideoDetails(
+          bvid: item.bvid ?? '',
+          aid: 0,
+          cid: 0,
+          title: item.title,
+          rawTitle: item.title,
+          coverUrl: item.cover.isNotEmpty ? item.cover : null,
+          durationSeconds: item.durationSeconds,
+          author: item.author,
+          upFace: item.upFace.isNotEmpty ? item.upFace : null,
+          viewCountText: item.viewCountText,
+          danmakuText: item.danmakuText,
+        );
+      }
       _currentPosMs = 0;
       _lastObservedPositionMs = 0;
       _isScrubbing = false;
       _isPlaybackStalled = false;
       _userChosePlayRaw = false;
     });
+
+    final newBvid = item?.bvid ??
+        RegExp(r'BV[a-zA-Z0-9]+', caseSensitive: false).firstMatch(newVideoPath)?.group(0);
+    if (newBvid != null && newBvid.isNotEmpty) {
+      _loadRelatedVideos(newBvid);
+    }
 
     _ttsScheduler = TtsAudioScheduler(newDocument);
     await _initPlayerForPath(newVideoPath);
@@ -2897,18 +3042,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         ),
       );
     }
-    if (!_isInitialized) {
-      return const Scaffold(
-        backgroundColor: Colors.black,
-        body: Center(
-          child: CircularProgressIndicator(color: Colors.blueAccent),
-        ),
-      );
-    }
-
     final displayTitle = _currentTitle.isNotEmpty
         ? _currentTitle
-        : (widget.title ?? '');
+        : (widget.title ?? widget.bilibiliItem?.title ?? '');
 
     // Nếu đang ở chế độ Mini-Player (Thu nhỏ kiểu YouTube)
     if (widget.isGlobalPlayer && GlobalPlayerManager.instance.isMiniPlayer) {
@@ -2920,7 +3056,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       return _buildPipPlayer();
     }
 
-    final controller = _controller!;
+    final controller = _controller;
     final isLandscape =
         MediaQuery.of(context).orientation == Orientation.landscape;
     final isLocalVideo = !_currentVideoPath.startsWith('http://') &&
@@ -2931,17 +3067,23 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         !isLocalVideo;
 
     final isBilibili = _bilibiliDetails != null ||
+        widget.bilibiliItem != null ||
         BilibiliResolver.isBilibiliUrl(_sourceVideoUrl) ||
         BilibiliResolver.isBilibiliUrl(_currentVideoPath);
     final isBilibiliPortrait = !isLandscape && !_isPlayerFullScreen && (isBilibili && widget.dramaDetail == null);
 
-    final playerWidget = _buildVideoPlayerArea(
-      controller,
-      isLandscape,
-      isHongguoWaitingTranslation,
-      displayTitle,
-      isBilibiliPortrait: isBilibiliPortrait,
-    );
+    final Widget playerWidget;
+    if (_isInitialized && controller != null && controller.value.isInitialized) {
+      playerWidget = _buildVideoPlayerArea(
+        controller,
+        isLandscape,
+        isHongguoWaitingTranslation,
+        displayTitle,
+        isBilibiliPortrait: isBilibiliPortrait,
+      );
+    } else {
+      playerWidget = _buildPlayerLoadingArea(displayTitle);
+    }
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -2959,6 +3101,95 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                 ],
               )
             : playerWidget,
+      ),
+    );
+  }
+
+  Widget _buildPlayerLoadingArea(String displayTitle) {
+    final cover = _coverUrl ?? _bilibiliDetails?.coverUrl;
+    return AspectRatio(
+      aspectRatio: 16 / 9,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          // 1. Ảnh bìa video (nạp tức thì 0ms từ bộ nhớ RAM cache của thẻ danh sách)
+          if (cover != null && cover.isNotEmpty)
+            Image.network(
+              cover,
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) => Container(color: const Color(0xFF14161E)),
+            )
+          else
+            Container(color: const Color(0xFF14161E)),
+
+          // 2. Lớp phủ làm mờ đen nhẹ
+          Container(
+            color: Colors.black.withValues(alpha: 0.45),
+          ),
+
+          // 3. Vòng xoay nạp mượt phong cách Bilibili
+          Center(
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.65),
+                shape: BoxShape.circle,
+              ),
+              child: const SizedBox(
+                width: 30,
+                height: 30,
+                child: CircularProgressIndicator(
+                  strokeWidth: 3,
+                  color: Color(0xFFFB7299),
+                ),
+              ),
+            ),
+          ),
+
+          // 4. Thanh nút điều hướng trên cùng (Nút Quay lại & Thu nhỏ hoạt động 100% không lo bị kẹt)
+          Positioned(
+            top: 8,
+            left: 8,
+            right: 8,
+            child: Row(
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 20),
+                  onPressed: () {
+                    if (widget.isGlobalPlayer) {
+                      GlobalPlayerManager.instance.minimize();
+                    } else {
+                      Navigator.pop(context);
+                    }
+                  },
+                ),
+                if (widget.isGlobalPlayer)
+                  IconButton(
+                    icon: const Icon(
+                      Icons.keyboard_arrow_down_rounded,
+                      color: Colors.white,
+                      size: 28,
+                    ),
+                    tooltip: 'Thu nhỏ video',
+                    onPressed: () => GlobalPlayerManager.instance.minimize(),
+                  ),
+                if (displayTitle.isNotEmpty)
+                  Expanded(
+                    child: Text(
+                      displayTitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -5087,6 +5318,15 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                   child: VideoPlayer(controller),
                                 ),
                               )
+                            else if (_coverUrl != null && _coverUrl!.isNotEmpty)
+                              Image.network(
+                                _coverUrl!,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, _, _) => Container(
+                                  color: Colors.black54,
+                                  child: const Icon(Icons.movie_rounded, color: Colors.white24),
+                                ),
+                              )
                             else
                               Container(
                                 color: Colors.black54,
@@ -5096,7 +5336,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                     height: 16,
                                     child: CircularProgressIndicator(
                                       strokeWidth: 2,
-                                      color: AppTheme.primaryEmerald,
+                                      color: Color(0xFFFB7299),
                                     ),
                                   ),
                                 ),
