@@ -30,13 +30,13 @@ jobs:
       - name: Run Tests
         run: flutter test
 
-      - name: Build APK Release
-        run: flutter build apk --release
+      - name: Build APK Release (ARM64)
+        run: flutter build apk --release --target-platform android-arm64
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: CapSub-Android-Release-APK
+          name: CapSub-Android-Arm64-Release-APK
           path: build/app/outputs/flutter-apk/app-release.apk
 
   build-ios:
