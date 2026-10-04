@@ -453,17 +453,44 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             _settings.bilibiliSessData,
           );
         }
-      } else if (widget.dramaDetail != null &&
-          (targetPath.startsWith('http://') || targetPath.startsWith('https://'))) {
+      } else if (widget.dramaDetail != null) {
         _bilibiliDetails = null;
+        // Ưu tiên nạp video từ cache nếu đã tải về máy trước đó
         final cached = await VideoCacheManager.findCachedFile(
           url: targetPath,
           seriesId: widget.dramaDetail?.seriesId,
           episodeIndex: _currentEpisodeIndex,
         );
         if (cached != null && await cached.exists() && await cached.length() > 1024 * 50) {
+          debugPrint('[Player] Tìm thấy video Hồng Quả offline trong cache: ${cached.path}');
           targetPath = cached.path;
           playableUrls = [cached.path];
+        } else if (targetPath.startsWith('http://') || targetPath.startsWith('https://')) {
+          // Nếu không có trong cache và URL là online:
+          // Đề phòng URL online bị hết hạn từ hôm qua, tự động lấy link mới còn hạn
+          try {
+            final resolver = HongguoResolver();
+            final detail = widget.dramaDetail!;
+            var vid = '';
+            if (detail.episodes.isNotEmpty && _currentEpisodeIndex <= detail.episodes.length) {
+              vid = detail.episodes[_currentEpisodeIndex - 1].vid;
+            }
+            final freshUrl = await resolver.getEpisodePlayUrl(
+              detail.seriesId,
+              vid.isNotEmpty ? vid : detail.seriesId,
+              episodeIndex: _currentEpisodeIndex,
+            );
+            if (freshUrl.isNotEmpty && freshUrl.startsWith('http')) {
+              targetPath = freshUrl;
+              playableUrls = [freshUrl];
+              try {
+                final history = await HistoryRepository.getInstance();
+                await history.updateVideoPath(_sourceVideoUrl, freshUrl);
+              } catch (_) {}
+            }
+          } catch (e) {
+            debugPrint('[Player] Không thể re-resolve URL mới cho tập $_currentEpisodeIndex: $e');
+          }
         }
       } else {
         _bilibiliDetails = null;
@@ -530,9 +557,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       setState(() {
         _isInitialized = true;
       });
+      final isLocalVideo = !targetPath.startsWith('http://') && !targetPath.startsWith('https://');
+      // Nếu video là file cục bộ (đã tải về máy) -> phát ngay, không chờ dịch
       final bool shouldWaitHongguoTranslation = widget.dramaDetail != null &&
           _currentDocument.isEmpty &&
-          !_userChosePlayRaw;
+          !_userChosePlayRaw &&
+          !isLocalVideo;
 
       if (!shouldWaitHongguoTranslation) {
         await _controller!.play();
@@ -1870,9 +1900,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     final controller = _controller!;
     final isLandscape =
         MediaQuery.of(context).orientation == Orientation.landscape;
+    final isLocalVideo = !_currentVideoPath.startsWith('http://') &&
+        !_currentVideoPath.startsWith('https://');
     final bool isHongguoWaitingTranslation = widget.dramaDetail != null &&
         _currentDocument.isEmpty &&
-        !_userChosePlayRaw;
+        !_userChosePlayRaw &&
+        !isLocalVideo;
 
     return Scaffold(
       backgroundColor: Colors.black,

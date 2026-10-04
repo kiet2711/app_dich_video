@@ -38,9 +38,58 @@ class DramaHistoryGroup {
 
   /// Tập được xem hoặc tương tác gần đây nhất
   HistoryItem get latestWatchedEpisode {
-    final sorted = List<HistoryItem>.from(episodes)
-      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
-    return sorted.first;
+    if (episodes.isEmpty) {
+      throw StateError('Danh sách tập rỗng');
+    }
+
+    // 1. Ưu tiên cao nhất: Tập người dùng đang xem dở (lastPositionMs > 0 và chưa xem hết 95%)
+    // Lấy tập xem dở gần đây nhất (theo lastWatchedAt hoặc timestamp)
+    final inProgressEpisodes = episodes.where((e) {
+      if (e.lastPositionMs <= 0) return false;
+      if (e.durationMs > 0 && e.lastPositionMs >= e.durationMs * 0.95) return false;
+      return true;
+    }).toList();
+
+    if (inProgressEpisodes.isNotEmpty) {
+      inProgressEpisodes.sort((a, b) {
+        final aTime = a.lastWatchedAt ?? a.timestamp;
+        final bTime = b.lastWatchedAt ?? b.timestamp;
+        return bTime.compareTo(aTime);
+      });
+      return inProgressEpisodes.first;
+    }
+
+    // 2. Nếu không có tập nào đang xem dở:
+    // Tìm tập đã được xem gần đây nhất (có lastWatchedAt hoặc lastPositionMs > 0)
+    final watchedEpisodes = episodes.where((e) =>
+      (e.lastWatchedAt != null && e.lastWatchedAt! > 0) || e.lastPositionMs > 0
+    ).toList();
+
+    if (watchedEpisodes.isNotEmpty) {
+      watchedEpisodes.sort((a, b) {
+        final aTime = a.lastWatchedAt ?? a.timestamp;
+        final bTime = b.lastWatchedAt ?? b.timestamp;
+        return bTime.compareTo(aTime);
+      });
+      final lastWatched = watchedEpisodes.first;
+      // Nếu tập này đã xem xong (>= 95%), kiểm tra xem có tập kế tiếp trong danh sách đã lưu không
+      final isFinished = lastWatched.durationMs > 0
+          ? lastWatched.lastPositionMs >= lastWatched.durationMs * 0.95
+          : false;
+      if (isFinished) {
+        final nextEpIndex = lastWatched.extractedEpisodeIndex + 1;
+        final nextEp = episodes.where((e) => e.extractedEpisodeIndex == nextEpIndex).firstOrNull;
+        if (nextEp != null) {
+          return nextEp;
+        }
+      }
+      return lastWatched;
+    }
+
+    // 3. Fallback: Nếu chưa có tập nào được xem thực tế, chọn tập có số tập nhỏ nhất (Tập 1)
+    final sortedByEpisode = List<HistoryItem>.from(episodes)
+      ..sort((a, b) => a.extractedEpisodeIndex.compareTo(b.extractedEpisodeIndex));
+    return sortedByEpisode.first;
   }
 
   /// Tập có số thứ tự lớn nhất trong danh sách đã lưu
@@ -355,7 +404,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
       return;
     }
 
-    final resolvedVideo = await HistoryRepository.resolvePath(item.videoPath);
+    final resolvedVideo = await HistoryRepository.resolveItemVideoPath(item);
+    await repo.markWatched(item.id);
 
     if (mounted) {
       GlobalPlayerManager.instance.openPlayer(
@@ -379,8 +429,11 @@ class _HistoryScreenState extends State<HistoryScreen> {
   }) async {
     final repo = _historyRepo ?? await HistoryRepository.getInstance();
     final doc = await repo.loadSubtitleDocument(item);
-    final resolvedVideo = await HistoryRepository.resolvePath(item.videoPath);
+    final resolvedVideo = await HistoryRepository.resolveItemVideoPath(item);
     final epIndex = customEpisodeIndex ?? item.extractedEpisodeIndex;
+
+    // Đánh dấu tập này đang được người dùng mở xem thực tế
+    await repo.markWatched(item.id);
 
     HongguoDramaDetail? dramaDetail;
     if (group.seriesId != null && group.seriesId!.isNotEmpty) {
@@ -1579,12 +1632,16 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     color: Colors.black,
                   ),
                   label: Text(
-                    'Xem tiếp Tập $latestEpNum',
+                    latest.lastPositionMs > 0
+                        ? 'Xem tiếp Tập $latestEpNum (${_formatMs(latest.lastPositionMs)})'
+                        : 'Xem Tập $latestEpNum',
                     style: const TextStyle(
                       color: Colors.black,
                       fontSize: 13,
                       fontWeight: FontWeight.bold,
                     ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppTheme.primaryEmerald,

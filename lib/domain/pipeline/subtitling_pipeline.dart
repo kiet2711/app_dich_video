@@ -79,6 +79,8 @@ class SubtitlingPipeline {
     File? outputSrtFile,
     bool? downloadBilibiliVideo,
     String? bilibiliQuality,
+    String? seriesId,
+    int? episodeIndex,
   }) async {
     _isCancelled = false;
     if (totalDurationMs <= 0) {
@@ -292,7 +294,7 @@ class SubtitlingPipeline {
             extractionPath = downloadedAudio.path;
           }
         }
-      } else if (sourceDocument == null && HongguoResolver.isHongguoUrl(videoPath)) {
+      } else if (sourceDocument == null && (HongguoResolver.isHongguoUrl(videoPath) || (seriesId != null && seriesId.isNotEmpty))) {
         _emit(
           const ProcessProgress(
             stage: ProcessStage.extractingAudio,
@@ -302,25 +304,25 @@ class SubtitlingPipeline {
         );
         final resolver = HongguoResolver();
         var directMp4 = videoPath;
-        String? seriesId;
-        int? epIndex;
+        String? targetSeriesId = seriesId;
+        int? epIndex = episodeIndex;
 
         // Nếu videoPath là link trang web/chia sẻ (chưa phải direct mp4 link)
         if (!videoPath.contains('.mp4') && !videoPath.contains('qznovelvod.com')) {
-          seriesId = await resolver.resolveSeriesId(videoPath);
+          targetSeriesId ??= await resolver.resolveSeriesId(videoPath);
           final vidMatch = RegExp(r'/player/\d+/(\d+)').firstMatch(videoPath);
-          final vid = vidMatch?.group(1) ?? seriesId;
+          final vid = vidMatch?.group(1) ?? targetSeriesId;
           final epMatch = RegExp(r'Tập\s*(\d+)', caseSensitive: false).firstMatch(videoPath);
-          if (epMatch != null) {
+          if (epMatch != null && epIndex == null) {
             epIndex = int.tryParse(epMatch.group(1)!);
           }
           directMp4 = await resolver.getEpisodePlayUrl(
-            seriesId,
+            targetSeriesId,
             vid,
             episodeIndex: epIndex ?? 1,
           );
           try {
-            final hgDetail = await resolver.getDramaDetail(seriesId);
+            final hgDetail = await resolver.getDramaDetail(targetSeriesId);
             if (hgDetail.cover.isNotEmpty) {
               lastResolvedCover = hgDetail.cover;
             }
@@ -334,13 +336,13 @@ class SubtitlingPipeline {
 
         final cachedVideo = await VideoCacheManager.getCachedVideoFile(
           url: directMp4,
-          seriesId: seriesId,
+          seriesId: targetSeriesId,
           episodeIndex: epIndex,
         );
 
         final isAlreadyCached = await VideoCacheManager.hasValidCache(
           url: directMp4,
-          seriesId: seriesId,
+          seriesId: targetSeriesId,
           episodeIndex: epIndex,
         );
 

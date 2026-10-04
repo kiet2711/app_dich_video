@@ -353,6 +353,8 @@ class HongguoPrefetchManager {
         videoPath: playUrl,
         totalDurationMs: 120000,
         sourceLanguage: 'zh-CN',
+        seriesId: detail.seriesId,
+        episodeIndex: episodeIndex,
       );
 
       if (_isDisposed) {
@@ -380,6 +382,7 @@ class HongguoPrefetchManager {
       final epTitle = '${detail.title} - Tập $episodeIndex';
       try {
         final historyRepo = await HistoryRepository.getInstance();
+        final isPrefetchEp = episodeIndex != _currentPlayingIndex;
         await historyRepo.saveHistory(
           videoPath: finalVideoPath,
           title: epTitle,
@@ -392,6 +395,7 @@ class HongguoPrefetchManager {
           totalEpisodes: detail.totalEpisodes > 0
               ? detail.totalEpisodes
               : detail.episodes.length,
+          isPrefetch: isPrefetchEp,
         );
       } catch (e) {
         debugPrint('[Prefetch] Lỗi lưu history: $e');

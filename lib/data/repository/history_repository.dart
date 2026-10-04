@@ -143,6 +143,38 @@ class HistoryRepository {
     }
   }
 
+  /// Tìm đường dẫn video tối ưu nhất cho một HistoryItem:
+  /// 1. Nếu videoPath là file cục bộ và còn tồn tại -> dùng ngay
+  /// 2. Tìm trong cache video với seriesId và episodeIndex (cho Hồng Quả) hoặc bvid (cho Bilibili)
+  /// 3. Fallback resolvePath(item.videoPath)
+  static Future<String> resolveItemVideoPath(HistoryItem item) async {
+    // 1. Nếu videoPath là file cục bộ trên máy và còn tồn tại
+    if (item.videoPath.isNotEmpty &&
+        !item.videoPath.startsWith('http://') &&
+        !item.videoPath.startsWith('https://')) {
+      final resolved = await resolvePath(item.videoPath);
+      final file = File(resolved);
+      if (await file.exists() && await file.length() > 1024 * 50) {
+        return resolved;
+      }
+    }
+
+    // 2. Tìm trong thư mục video_cache thông qua VideoCacheManager
+    try {
+      final cached = await VideoCacheManager.findCachedFile(
+        url: item.videoPath,
+        seriesId: item.seriesId,
+        episodeIndex: item.extractedEpisodeIndex,
+      );
+      if (cached != null && await cached.exists() && await cached.length() > 1024 * 50) {
+        return cached.path;
+      }
+    } catch (_) {}
+
+    // 3. Fallback resolvePath thông thường
+    return await resolvePath(item.videoPath);
+  }
+
   /// Lưu phụ đề và video vào lịch sử.
   /// Tự động sao chép file SRT và JSON vào thư mục tài liệu của ứng dụng để tránh bị mất.
   Future<HistoryItem> saveHistory({
@@ -156,6 +188,7 @@ class HistoryRepository {
     String? coverUrl,
     int? episodeIndex,
     int? totalEpisodes,
+    bool isPrefetch = false,
   }) async {
     final docs = await getApplicationDocumentsDirectory();
     final savedSubtitlesDir = Directory('${docs.path}/saved_subtitles');
@@ -203,6 +236,11 @@ class HistoryRepository {
       }
     }
 
+    final now = DateTime.now().millisecondsSinceEpoch;
+    // Nếu là prefetch dịch ngầm: không gán lastWatchedAt và không cướp timestamp của tập đang xem dở
+    final lastWatchedAt = existing?.lastWatchedAt ?? (isPrefetch ? null : now);
+    final timestamp = existing?.timestamp ?? (isPrefetch ? (now - 1000) : now);
+
     final item = HistoryItem(
       id: id,
       title: cleanTitle,
@@ -211,12 +249,13 @@ class HistoryRepository {
       videoPath: videoPath,
       srtPath: srtFile.path,
       documentPath: docFile.path,
-      timestamp: DateTime.now().millisecondsSinceEpoch,
+      timestamp: timestamp,
       durationMs: durationMs > 0 ? durationMs : (existing?.durationMs ?? 0),
       sentenceCount: document.items.length,
       ttsVoice: ttsVoice ?? existing?.ttsVoice,
       docKey: docKey,
       lastPositionMs: existing?.lastPositionMs ?? 0,
+      lastWatchedAt: lastWatchedAt,
       seriesId: seriesId ?? existing?.seriesId,
       seriesCover: coverUrl ?? seriesCover ?? existing?.seriesCover,
       episodeIndex: episodeIndex ?? existing?.episodeIndex,
@@ -275,6 +314,18 @@ class HistoryRepository {
     }
   }
 
+  Future<void> markWatched(String id) async {
+    final items = getHistory();
+    final index = items.indexWhere((item) => item.id == id);
+    if (index == -1) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    items[index] = items[index].copyWith(
+      lastWatchedAt: now,
+      timestamp: now,
+    );
+    await _save(items);
+  }
+
   Future<void> updatePlaybackPosition(String id, int positionMs) async {
     final items = getHistory();
     final index = items.indexWhere((item) => item.id == id);
@@ -283,8 +334,13 @@ class HistoryRepository {
     final safePosition = items[index].durationMs > 0
         ? nonNegativePosition.clamp(0, items[index].durationMs)
         : nonNegativePosition;
-    if (items[index].lastPositionMs == safePosition) return;
-    items[index] = items[index].copyWith(lastPositionMs: safePosition);
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (items[index].lastPositionMs == safePosition && items[index].lastWatchedAt != null) return;
+    items[index] = items[index].copyWith(
+      lastPositionMs: safePosition,
+      lastWatchedAt: now,
+      timestamp: now,
+    );
     await _save(items);
   }
 

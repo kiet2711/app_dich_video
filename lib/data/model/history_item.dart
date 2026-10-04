@@ -12,6 +12,7 @@ class HistoryItem {
   final String? ttsVoice;
   final String? docKey;
   final int lastPositionMs;
+  final int? lastWatchedAt;
 
   // Thuộc tính phục vụ ảnh bìa & gom nhóm phim bộ (Hồng Quả, Bilibili, Short Drama)
   final String? seriesId;
@@ -35,6 +36,7 @@ class HistoryItem {
     this.ttsVoice,
     this.docKey,
     this.lastPositionMs = 0,
+    this.lastWatchedAt,
     this.seriesId,
     this.seriesCover,
     this.episodeIndex,
@@ -99,6 +101,7 @@ class HistoryItem {
     String? ttsVoice,
     String? docKey,
     int? lastPositionMs,
+    int? lastWatchedAt,
     String? seriesId,
     String? seriesCover,
     String? coverUrl,
@@ -119,6 +122,7 @@ class HistoryItem {
       ttsVoice: ttsVoice ?? this.ttsVoice,
       docKey: docKey ?? this.docKey,
       lastPositionMs: lastPositionMs ?? this.lastPositionMs,
+      lastWatchedAt: lastWatchedAt ?? this.lastWatchedAt,
       seriesId: seriesId ?? this.seriesId,
       seriesCover: coverUrl ?? seriesCover ?? this.seriesCover,
       episodeIndex: episodeIndex ?? this.episodeIndex,
@@ -140,6 +144,7 @@ class HistoryItem {
     if (ttsVoice != null) 'ttsVoice': ttsVoice,
     if (docKey != null) 'docKey': docKey,
     'lastPositionMs': lastPositionMs,
+    if (lastWatchedAt != null) 'lastWatchedAt': lastWatchedAt,
     if (seriesId != null) 'seriesId': seriesId,
     if (seriesCover != null) 'seriesCover': seriesCover,
     if (episodeIndex != null) 'episodeIndex': episodeIndex,
@@ -160,6 +165,7 @@ class HistoryItem {
     ttsVoice: json['ttsVoice'] as String?,
     docKey: json['docKey'] as String?,
     lastPositionMs: json['lastPositionMs'] as int? ?? 0,
+    lastWatchedAt: json['lastWatchedAt'] as int?,
     seriesId: json['seriesId'] as String?,
     seriesCover: (json['seriesCover'] ?? json['coverUrl']) as String?,
     episodeIndex: json['episodeIndex'] as int?,

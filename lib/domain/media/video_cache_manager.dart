@@ -107,6 +107,8 @@ class VideoCacheManager {
     int? bilibiliPage,
   }) async {
     try {
+      final dir = await getCacheDirectory();
+
       // 1. Kiểm tra trực tiếp theo cache key tiêu chuẩn
       final file = await getCachedVideoFile(
         url: url,
@@ -115,12 +117,57 @@ class VideoCacheManager {
         bvid: bvid,
         bilibiliPage: bilibiliPage,
       );
-      if (await file.exists() && await file.length() > 1024 * 100) {
+      if (await file.exists() && await file.length() > 1024 * 50) {
         return file;
       }
 
-      // 2. Nếu chưa tìm thấy và url có thể là Bilibili (bao gồm link rút gọn b23.tv)
-      if (bvid == null && BilibiliResolver.isBilibiliPageUrl(url)) {
+      // 2. Nếu là phim bộ Hồng Quả (có seriesId & episodeIndex):
+      // Quét thư mục tìm file khớp prefix 'hg_${cleanSid}_ep$episodeIndex'
+      if (seriesId != null && seriesId.isNotEmpty && episodeIndex != null && episodeIndex > 0) {
+        final cleanSid = seriesId.replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '');
+        final targetName = 'hg_${cleanSid}_ep$episodeIndex.mp4';
+        final exactFile = File('${dir.path}${Platform.pathSeparator}$targetName');
+        if (await exactFile.exists() && await exactFile.length() > 1024 * 50) {
+          return exactFile;
+        }
+
+        // Quét danh sách file trong cache đề phòng case-sensitivity hoặc suffix
+        try {
+          final entities = dir.listSync();
+          final prefix = 'hg_${cleanSid}_ep$episodeIndex';
+          for (final e in entities) {
+            if (e is File) {
+              final filename = e.path.split(RegExp(r'[/\\]')).last;
+              if (filename.toLowerCase().startsWith(prefix.toLowerCase()) &&
+                  filename.endsWith('.mp4') &&
+                  !filename.endsWith('.part')) {
+                if (await e.length() > 1024 * 50) {
+                  return e;
+                }
+              }
+            }
+          }
+        } catch (_) {}
+      }
+
+      // 3. Kiểm tra theo URL MD5 hash (cho trường hợp video tải bằng URL online)
+      if (url.isNotEmpty && (url.startsWith('http://') || url.startsWith('https://'))) {
+        final cleanUrl = url.split('?').first.trim();
+        final hash1 = md5.convert(utf8.encode(cleanUrl.isNotEmpty ? cleanUrl : url)).toString();
+        final fileHash1 = File('${dir.path}${Platform.pathSeparator}video_$hash1.mp4');
+        if (await fileHash1.exists() && await fileHash1.length() > 1024 * 50) {
+          return fileHash1;
+        }
+
+        final hash2 = md5.convert(utf8.encode(url)).toString();
+        final fileHash2 = File('${dir.path}${Platform.pathSeparator}video_$hash2.mp4');
+        if (await fileHash2.exists() && await fileHash2.length() > 1024 * 50) {
+          return fileHash2;
+        }
+      }
+
+      // 4. Nếu chưa tìm thấy và url có thể là Bilibili (bao gồm link rút gọn b23.tv)
+      if (bvid == null && url.isNotEmpty && BilibiliResolver.isBilibiliPageUrl(url)) {
         try {
           final target = await BilibiliResolver().resolveUrl(url);
           if (target.bvid != null && target.bvid!.isNotEmpty) {
@@ -130,7 +177,7 @@ class VideoCacheManager {
               bvid: target.bvid,
               bilibiliPage: page,
             );
-            if (await fileResolved.exists() && await fileResolved.length() > 1024 * 100) {
+            if (await fileResolved.exists() && await fileResolved.length() > 1024 * 50) {
               return fileResolved;
             }
           }
