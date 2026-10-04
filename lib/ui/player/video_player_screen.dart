@@ -69,7 +69,7 @@ class VideoPlayerScreen extends StatefulWidget {
 class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     with WidgetsBindingObserver {
   static const _playbackSpeeds = <double>[0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
-  static const _stallThreshold = Duration(milliseconds: 350);
+  static const _stallThreshold = Duration(milliseconds: 1200);
   static const _positionSaveInterval = Duration(seconds: 3);
 
   bool _isSwitchingQuality = false;
@@ -151,6 +151,75 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
   Future<void> _startOnDemandPipeline({required bool enableTts}) async {
     if (_isTranslatingOnDemand) return;
+
+    final bool isBilibili = _bilibiliDetails != null || BilibiliResolver.isBilibiliUrl(_sourceVideoUrl);
+    final bool isHongguo = widget.dramaDetail != null;
+
+    final String selectedVoiceType;
+    if (isHongguo) {
+      selectedVoiceType = _settings.hongguoSelectedTtsVoice;
+    } else if (isBilibili) {
+      selectedVoiceType = _settings.bilibiliSelectedTtsVoice;
+    } else {
+      selectedVoiceType = _settings.selectedTtsVoice;
+    }
+
+    final voice = VoicePresets.vietnameseVoices.firstWhere(
+      (v) => v.voiceType == selectedVoiceType,
+      orElse: () => VoicePresets.vietnameseVoices.first,
+    );
+
+    // TRƯỜNG HỢP 1: Nếu chưa có phụ đề trên màn hình, thử tìm trong Lịch sử trước
+    if (_currentDocument.isEmpty) {
+      try {
+        final history = await HistoryRepository.getInstance();
+        final bvid = RegExp(r'BV[a-zA-Z0-9]+', caseSensitive: false).firstMatch(_sourceVideoUrl)?.group(0);
+        final item = history.getHistory().where((h) {
+          if (h.videoPath == _sourceVideoUrl || h.videoPath == _currentVideoPath) return true;
+          if (bvid != null && h.videoPath.contains(bvid)) return true;
+          return false;
+        }).firstOrNull;
+
+        if (item != null) {
+          final loadedDoc = await history.loadSubtitleDocument(item);
+          if (loadedDoc != null && loadedDoc.isNotEmpty) {
+            setState(() {
+              _currentDocument = loadedDoc;
+              _ttsScheduler.dispose();
+              _ttsScheduler = TtsAudioScheduler(loadedDoc);
+            });
+          }
+        }
+      } catch (_) {}
+    }
+
+    // TRƯỜNG HỢP 2: Nếu ĐÃ CÓ phụ đề (từ trước hoặc vừa xem Vietsub xong):
+    // KHÔNG BAO GIỜ DỊCH LẠI! Trực tiếp tái sử dụng file phụ đề đã có!
+    if (_currentDocument.isNotEmpty) {
+      if (!enableTts) {
+        // Người dùng chọn chế độ chỉ xem Vietsub (tắt lồng tiếng)
+        setState(() {
+          _settings.isTtsPlaybackEnabled = false;
+        });
+        _syncTtsWithVideo();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('🎉 Phụ đề Vietsub đã sẵn sàng (đã tắt lồng tiếng)!'),
+              backgroundColor: Color(0xFF00AEEC),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+        return;
+      }
+
+      // Người dùng chuyển sang Lồng tiếng AI -> Tạo giọng đọc trực tiếp từ sub đã có!
+      await _generateTtsForCurrentDocument(voice);
+      return;
+    }
+
+    // TRƯỜNG HỢP 3: Chưa có bất kỳ phụ đề nào -> Chạy quy trình bóc tách & dịch từ đầu
     final controller = _controller;
     final durationMs = (controller != null && controller.value.isInitialized)
         ? controller.value.duration.inMilliseconds
@@ -161,9 +230,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       _onDemandProgressMessage = 'Đang bóc tách & dịch phụ đề...';
       _onDemandProgressPct = 0.05;
     });
-
-    final bool isBilibili = _bilibiliDetails != null || BilibiliResolver.isBilibiliUrl(_sourceVideoUrl);
-    final bool isHongguo = widget.dramaDetail != null;
 
     String translationEngine = _settings.selectedModel;
     String customPrompt = _settings.geminiCustomPrompt;
@@ -249,7 +315,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         return;
       }
 
-      // BƯỚC 1: Hiển thị ngay phụ đề đã dịch trên màn hình để người dùng đọc ngay lập tức!
+      // BƯỚC 1: Hiển thị ngay phụ đề đã dịch trên màn hình
       setState(() {
         _currentDocument = doc;
         _ttsScheduler.dispose();
@@ -273,7 +339,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       if (!enableTts) {
         setState(() {
           _isTranslatingOnDemand = false;
+          _settings.isTtsPlaybackEnabled = false;
         });
+        _syncTtsWithVideo();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -286,71 +354,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         return;
       }
 
-      // BƯỚC 3: Nếu người dùng chọn Lồng tiếng AI -> Tạo TTS ngầm luỹ tiến
-      setState(() {
-        _settings.isTtsPlaybackEnabled = true;
-        _onDemandProgressMessage = 'Phụ đề đã sẵn sàng! Đang tạo giọng đọc AI ngầm...';
-        _onDemandProgressPct = 0.5;
-      });
-
-      final String selectedVoiceType;
-      if (isHongguo) {
-        selectedVoiceType = _settings.hongguoSelectedTtsVoice;
-      } else if (isBilibili) {
-        selectedVoiceType = _settings.bilibiliSelectedTtsVoice;
-      } else {
-        selectedVoiceType = _settings.selectedTtsVoice;
-      }
-
-      final voice = VoicePresets.vietnameseVoices.firstWhere(
-        (v) => v.voiceType == selectedVoiceType,
-        orElse: () => VoicePresets.vietnameseVoices.first,
-      );
-
-      final ttsManager = TtsGenerationManager();
-      void onTtsProgress() {
-        if (!mounted) return;
-        final p = ttsManager.progress.value;
-        if (p.totalCount > 0) {
-          final ratio = p.completedCount / p.totalCount;
-          setState(() {
-            _onDemandProgressPct = 0.5 + (ratio * 0.5);
-            _onDemandProgressMessage =
-                'Đang lồng tiếng AI: ${p.completedCount}/${p.totalCount} câu (${(ratio * 100).toInt()}%)...';
-          });
-        }
-      }
-      ttsManager.progress.addListener(onTtsProgress);
-
-      try {
-        await ttsManager.generateAll(
-          document: doc,
-          voice: voice,
-          threadCount: _settings.ttsThreadCount,
-        );
-        await TtsCacheHelper.linkAudioFiles(doc, voice.voiceType);
-        if (mounted) {
-          final pos = _controller?.value.position.inMilliseconds ?? 0;
-          await _ttsScheduler.onSeek(pos);
-          _syncTtsWithVideo();
-          await _applyAudioVolumes();
-        }
-      } finally {
-        ttsManager.progress.removeListener(onTtsProgress);
-      }
-
-      if (mounted) {
-        setState(() {
-          _isTranslatingOnDemand = false;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('🎉 Đã hoàn tất Lồng tiếng AI cho video!'),
-            backgroundColor: AppTheme.primaryEmerald,
-            duration: Duration(seconds: 2),
-          ),
-        );
-      }
+      // BƯỚC 3: Nếu chọn Lồng tiếng AI -> Tạo giọng đọc trực tiếp từ doc vừa dịch
+      await _generateTtsForCurrentDocument(voice);
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -363,6 +368,118 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           duration: const Duration(seconds: 3),
         ),
       );
+    }
+  }
+
+  Future<void> _generateTtsForCurrentDocument(VoiceItem voice) async {
+    // 1. Liên kết các file âm thanh đã có trong cache
+    await TtsCacheHelper.linkAudioFiles(_currentDocument, voice.voiceType);
+
+    final unlinked = _currentDocument.items.where(
+      (item) =>
+          (item.audioFilePath == null || item.audioFilePath!.isEmpty) &&
+          TtsGenerationManager.isPronounceable(item.translatedText),
+    ).toList();
+
+    if (unlinked.isEmpty) {
+      // Toàn bộ các câu đã có sẵn file âm thanh
+      setState(() {
+        _settings.isTtsPlaybackEnabled = true;
+        _ttsScheduler.dispose();
+        _ttsScheduler = TtsAudioScheduler(_currentDocument);
+      });
+      final pos = _controller?.value.position.inMilliseconds ?? 0;
+      await _ttsScheduler.onSeek(pos);
+      _syncTtsWithVideo();
+      await _applyAudioVolumes();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('🎉 Đã bật Lồng tiếng AI (${voice.displayName})!'),
+            backgroundColor: AppTheme.primaryEmerald,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+      return;
+    }
+
+    // 2. Cần tạo file âm thanh TTS cho các câu chưa có
+    setState(() {
+      _isTranslatingOnDemand = true;
+      _settings.isTtsPlaybackEnabled = true;
+      _onDemandProgressMessage = 'Phụ đề đã có sẵn! Đang lồng tiếng AI (${voice.displayName})...';
+      _onDemandProgressPct = 0.1;
+    });
+
+    final ttsManager = TtsGenerationManager();
+    void onTtsProgress() {
+      if (!mounted) return;
+      final p = ttsManager.progress.value;
+      if (p.totalCount > 0) {
+        final ratio = p.completedCount / p.totalCount;
+        setState(() {
+          _onDemandProgressPct = ratio;
+          _onDemandProgressMessage =
+              'Đang lồng tiếng AI: ${p.completedCount}/${p.totalCount} câu (${(ratio * 100).toInt()}%)...';
+        });
+      }
+    }
+    ttsManager.progress.addListener(onTtsProgress);
+
+    try {
+      await ttsManager.generateAll(
+        document: _currentDocument,
+        voice: voice,
+        threadCount: _settings.ttsThreadCount,
+      );
+      await TtsCacheHelper.linkAudioFiles(_currentDocument, voice.voiceType);
+      if (mounted) {
+        setState(() {
+          _ttsScheduler.dispose();
+          _ttsScheduler = TtsAudioScheduler(_currentDocument);
+        });
+        final pos = _controller?.value.position.inMilliseconds ?? 0;
+        await _ttsScheduler.onSeek(pos);
+        _syncTtsWithVideo();
+        await _applyAudioVolumes();
+      }
+
+      try {
+        final history = await HistoryRepository.getInstance();
+        await history.saveHistory(
+          videoPath: _sourceVideoUrl,
+          document: _currentDocument,
+          title: _originalTitle ?? _currentTitle,
+          ttsVoice: voice.displayName,
+        );
+      } catch (_) {}
+
+      if (mounted) {
+        setState(() {
+          _isTranslatingOnDemand = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('🎉 Đã hoàn tất Lồng tiếng AI (${voice.displayName})!'),
+            backgroundColor: AppTheme.primaryEmerald,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isTranslatingOnDemand = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Lỗi tạo giọng đọc: $e'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    } finally {
+      ttsManager.progress.removeListener(onTtsProgress);
     }
   }
 
@@ -2616,6 +2733,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     if (positionMs != _lastObservedPositionMs) {
       _lastObservedPositionMs = positionMs;
       _lastPositionAdvanceAt = now;
+      if (_isPlaybackStalled) {
+        _isPlaybackStalled = false;
+      }
     }
     final stallChanged = _refreshPlaybackStall(now);
     if (!_isScrubbing && now.difference(_lastUiUpdate).inMilliseconds >= 50) {
@@ -2633,16 +2753,18 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   bool _refreshPlaybackStall(DateTime now) {
     final value = _controller?.value;
     if (value == null || !value.isInitialized) return false;
-    if (value.isBuffering) {
-      if (!_isPlaybackStalled) {
-        _isPlaybackStalled = true;
+
+    // Nếu video bị tạm dừng (người dùng bấm Pause) hoặc đã chạy hết video -> Không bao giờ hiển thị xoay buffering
+    if (!value.isPlaying || value.position >= value.duration) {
+      if (_isPlaybackStalled) {
+        _isPlaybackStalled = false;
         return true;
       }
       return false;
     }
-    final stalled =
-        value.isPlaying &&
-        now.difference(_lastPositionAdvanceAt) >= _stallThreshold;
+
+    // Video đang trong trạng thái Phát (isPlaying = true) nhưng vị trí video KHÔNG chạy trong ít nhất 1.2s -> Thực sự bị khựng lag chờ mạng
+    final stalled = now.difference(_lastPositionAdvanceAt) >= _stallThreshold;
     if (stalled == _isPlaybackStalled) return false;
     _isPlaybackStalled = stalled;
     return true;
@@ -2916,9 +3038,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             ),
           ),
 
-          // Vòng xoay chờ tải mạng (Buffering indicator)
-          if ((controller.value.isBuffering || _isPlaybackStalled) &&
-              !controller.value.hasError)
+          // Vòng xoay chờ tải mạng (Chỉ hiện khi video đang phát nhưng thực sự bị khựng lag không chạy được)
+          if (_isPlaybackStalled && !controller.value.hasError)
             Center(
               child: Container(
                 padding: const EdgeInsets.all(14),
