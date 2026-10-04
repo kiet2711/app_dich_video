@@ -130,9 +130,11 @@ class HistoryScreen extends StatefulWidget {
   State<HistoryScreen> createState() => _HistoryScreenState();
 }
 
-class _HistoryScreenState extends State<HistoryScreen> {
+class _HistoryScreenState extends State<HistoryScreen>
+    with SingleTickerProviderStateMixin {
   HistoryRepository? _historyRepo;
   final HongguoResolver _hongguoResolver = HongguoResolver();
+  late TabController _historyTabController;
 
   // Quản lý trạng thái hiển thị tiêu đề đã dịch tiếng Việt
   final Set<String> _showTranslatedItemIds = {};
@@ -255,7 +257,92 @@ class _HistoryScreenState extends State<HistoryScreen> {
   @override
   void initState() {
     super.initState();
+    _historyTabController = TabController(length: 3, vsync: this);
+    _historyTabController.addListener(() {
+      if (mounted) setState(() {});
+    });
     _load();
+  }
+
+  @override
+  void dispose() {
+    _historyTabController.dispose();
+    super.dispose();
+  }
+
+  bool _isHongguoItem(HistoryItem it) {
+    if (it.isSeriesEpisode || (it.seriesId != null && it.seriesId!.isNotEmpty)) return true;
+    final vp = it.videoPath.toLowerCase();
+    final id = it.id.toLowerCase();
+    return vp.contains('hongguo') ||
+        vp.contains('pull-hls') ||
+        vp.startsWith('hg_') ||
+        id.startsWith('hg_');
+  }
+
+  bool _isBilibiliItem(HistoryItem it) {
+    if (_isHongguoItem(it)) return false;
+    if (BilibiliResolver.isBilibiliUrl(it.videoPath)) return true;
+    final vp = it.videoPath.toLowerCase();
+    final id = it.id.toLowerCase();
+    return vp.contains('bilibili') ||
+        vp.contains('bili_') ||
+        id.contains('bili_') ||
+        RegExp(r'BV1[0-9a-zA-Z]{9}', caseSensitive: false).hasMatch(vp) ||
+        RegExp(r'BV1[0-9a-zA-Z]{9}', caseSensitive: false).hasMatch(it.title);
+  }
+
+  List<HistoryItem> _filterItemsForTab(List<HistoryItem> allItems, int tabIndex) {
+    if (tabIndex == 0) {
+      return allItems.where(_isHongguoItem).toList();
+    } else if (tabIndex == 1) {
+      return allItems.where(_isBilibiliItem).toList();
+    } else {
+      return allItems.where((it) => !_isHongguoItem(it) && !_isBilibiliItem(it)).toList();
+    }
+  }
+
+  Future<void> _confirmClearTab(int tabIndex, List<HistoryItem> itemsInTab) async {
+    final tabName = tabIndex == 0
+        ? 'Phim Hồng Quả'
+        : (tabIndex == 1 ? 'Bilibili' : 'Video máy & Link ngoài');
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.darkCard,
+        title: Text(
+          'Xóa lịch sử $tabName',
+          style: const TextStyle(color: Colors.white),
+        ),
+        content: Text(
+          'Thao tác này sẽ xóa ${itemsInTab.length} mục trong danh mục $tabName. Bạn có chắc chắn không?',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Hủy', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Xóa', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && mounted) {
+      final repo = _historyRepo ?? await HistoryRepository.getInstance();
+      for (final it in itemsInTab) {
+        await repo.deleteItem(it.id);
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Đã xóa ${itemsInTab.length} mục trong $tabName')),
+        );
+      }
+    }
   }
 
   static Map<String, String>? _imageHeaders(String? url) {
@@ -639,41 +726,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
       for (final ep in group.episodes) {
         await _historyRepo?.deleteItem(ep.id);
       }
-    }
-  }
-
-  Future<void> _confirmClearAll() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.darkCard,
-        title: const Text(
-          'Xóa toàn bộ lịch sử',
-          style: TextStyle(color: Colors.white),
-        ),
-        content: const Text(
-          'Thao tác này sẽ xóa toàn bộ danh sách lịch sử, các file phụ đề và dữ liệu âm thanh đã tạo. Bạn có chắc chắn không?',
-          style: TextStyle(color: Colors.white70),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Hủy', style: TextStyle(color: Colors.grey)),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text(
-              'Xóa tất cả',
-              style: TextStyle(color: Colors.white),
-            ),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true) {
-      await _historyRepo?.clearAll();
     }
   }
 
@@ -1198,161 +1250,233 @@ class _HistoryScreenState extends State<HistoryScreen> {
           ),
         ],
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Banner "Nhập Video & Phụ Đề Có Sẵn"
-            InkWell(
-              onTap: _showImportSubtitleDialog,
-              borderRadius: BorderRadius.circular(16),
-              child: Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: AppTheme.darkCard,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: AppTheme.cardBorder),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 46,
-                      height: 46,
-                      decoration: BoxDecoration(
-                        color: AppTheme.primaryEmerald.withValues(alpha: 0.15),
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        Icons.input,
-                        color: AppTheme.primaryEmerald,
-                        size: 24,
+      body: ValueListenableBuilder<List<HistoryItem>>(
+        valueListenable: HistoryRepository.historyNotifier,
+        builder: (context, allItems, _) {
+          final hgRaw = _filterItemsForTab(allItems, 0);
+          final biliRaw = _filterItemsForTab(allItems, 1);
+          final otherRaw = _filterItemsForTab(allItems, 2);
+
+          final currentTabIndex = _historyTabController.index;
+          final currentRawItems = currentTabIndex == 0
+              ? hgRaw
+              : (currentTabIndex == 1 ? biliRaw : otherRaw);
+          final currentDisplayItems = _groupHistoryItems(currentRawItems);
+
+          final tabTitles = [
+            'Phim Hồng Quả',
+            'Bilibili',
+            'Video máy & Link ngoài',
+          ];
+
+          return SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // 3 Tabs Selector
+                Container(
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: AppTheme.darkSurfaceVariant,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: AppTheme.cardBorder),
+                  ),
+                  child: TabBar(
+                    controller: _historyTabController,
+                    indicatorSize: TabBarIndicatorSize.tab,
+                    indicator: BoxDecoration(
+                      color: currentTabIndex == 0
+                          ? AppTheme.primaryEmerald.withValues(alpha: 0.25)
+                          : (currentTabIndex == 1
+                              ? const Color(0xFF00AEEC).withValues(alpha: 0.25)
+                              : Colors.white24),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: currentTabIndex == 0
+                            ? AppTheme.primaryEmerald
+                            : (currentTabIndex == 1
+                                ? const Color(0xFF00AEEC)
+                                : Colors.white60),
+                        width: 1.2,
                       ),
                     ),
-                    const SizedBox(width: 14),
-                    const Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                    labelColor: currentTabIndex == 0
+                        ? AppTheme.primaryEmerald
+                        : (currentTabIndex == 1 ? const Color(0xFF00AEEC) : Colors.white),
+                    unselectedLabelColor: AppTheme.textSecondary,
+                    labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                    tabs: [
+                      Tab(
+                        icon: const Icon(Icons.movie_filter_rounded, size: 16),
+                        text: 'Hồng Quả (${hgRaw.length})',
+                      ),
+                      Tab(
+                        icon: const Icon(Icons.tv_rounded, size: 16),
+                        text: 'Bilibili (${biliRaw.length})',
+                      ),
+                      Tab(
+                        icon: const Icon(Icons.folder_open_rounded, size: 16),
+                        text: 'Video & Khác (${otherRaw.length})',
+                      ),
+                    ],
+                  ),
+                ),
+
+                // Banner "Nhập Video & Phụ Đề Có Sẵn" (Hiển thị khi ở Tab Video & Khác)
+                if (currentTabIndex == 2) ...[
+                  InkWell(
+                    onTap: _showImportSubtitleDialog,
+                    borderRadius: BorderRadius.circular(16),
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: AppTheme.darkCard,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: AppTheme.cardBorder),
+                      ),
+                      child: Row(
                         children: [
-                          Text(
-                            'Nhập Video & Phụ Đề Có Sẵn',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 15,
-                              fontWeight: FontWeight.bold,
+                          Container(
+                            width: 46,
+                            height: 46,
+                            decoration: BoxDecoration(
+                              color: AppTheme.primaryEmerald.withValues(alpha: 0.15),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.input,
+                              color: AppTheme.primaryEmerald,
+                              size: 24,
                             ),
                           ),
-                          SizedBox(height: 3),
-                          Text(
-                            'Xem với phụ đề rời hoặc dịch file sub gốc bằng AI',
-                            style: TextStyle(color: Colors.grey, fontSize: 12),
+                          const SizedBox(width: 14),
+                          const Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Nhập Video & Phụ Đề Có Sẵn',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                SizedBox(height: 3),
+                                Text(
+                                  'Xem với phụ đề rời hoặc dịch file sub gốc bằng AI',
+                                  style: TextStyle(color: Colors.grey, fontSize: 12),
+                                ),
+                              ],
+                            ),
                           ),
+                          const Icon(Icons.chevron_right, color: Colors.grey),
                         ],
                       ),
                     ),
-                    const Icon(Icons.chevron_right, color: Colors.grey),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 18),
+                  ),
+                  const SizedBox(height: 16),
+                ],
 
-            // Tiêu đề danh sách & Nút xóa tất cả
-            ValueListenableBuilder<List<HistoryItem>>(
-              valueListenable: HistoryRepository.historyNotifier,
-              builder: (context, items, _) {
-                final displayItems = _groupHistoryItems(items);
-
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                // Tiêu đề danh sách tab hiện tại & Nút xóa tab
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          'DANH SÁCH ĐÃ DỊCH (${displayItems.length} MỤC)',
-                          style: const TextStyle(
-                            color: Colors.grey,
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 1,
-                          ),
-                        ),
-                        if (items.isNotEmpty)
-                          TextButton.icon(
-                            onPressed: _confirmClearAll,
-                            icon: const Icon(
-                              Icons.delete_sweep_outlined,
-                              size: 16,
-                              color: Colors.grey,
-                            ),
-                            label: const Text(
-                              'Xóa tất cả',
-                              style:
-                                  TextStyle(color: Colors.grey, fontSize: 12),
-                            ),
-                            style: TextButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 2,
-                              ),
-                            ),
-                          ),
-                      ],
+                    Text(
+                      '${tabTitles[currentTabIndex].toUpperCase()} (${currentDisplayItems.length} MỤC)',
+                      style: const TextStyle(
+                        color: Colors.grey,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 1,
+                      ),
                     ),
-                    const SizedBox(height: 10),
-
-                    if (displayItems.isEmpty)
-                      Container(
-                        padding: const EdgeInsets.symmetric(vertical: 40),
-                        alignment: Alignment.center,
-                        child: Column(
-                          children: const [
-                            Icon(Icons.history,
-                                color: Colors.white24, size: 56),
-                            SizedBox(height: 12),
-                            Text(
-                              'Chưa có video nào trong lịch sử',
-                              style: TextStyle(
-                                  color: Colors.white70, fontSize: 15),
-                            ),
-                            SizedBox(height: 4),
-                            Text(
-                              'Các video tạo phụ đề xong sẽ hiển thị tại đây để xem lại',
-                              style:
-                                  TextStyle(color: Colors.grey, fontSize: 12),
-                            ),
-                          ],
+                    if (currentRawItems.isNotEmpty)
+                      TextButton.icon(
+                        onPressed: () => _confirmClearTab(currentTabIndex, currentRawItems),
+                        icon: const Icon(
+                          Icons.delete_sweep_outlined,
+                          size: 16,
+                          color: Colors.grey,
                         ),
-                      )
-                    else
-                      ListView.separated(
-                        physics: const NeverScrollableScrollPhysics(),
-                        shrinkWrap: true,
-                        itemCount: displayItems.length,
-                        separatorBuilder: (_, _) => const SizedBox(height: 12),
-                        itemBuilder: (context, index) {
-                          final dItem = displayItems[index];
-
-                          if (dItem.isDramaGroup) {
-                            return _buildDramaGroupCard(
-                              dItem.dramaGroup!,
-                              dateFormatter,
-                            );
-                          } else {
-                            return _buildSingleItemCard(
-                              dItem.singleItem!,
-                              dateFormatter,
-                            );
-                          }
-                        },
+                        label: const Text(
+                          'Xóa tab này',
+                          style: TextStyle(color: Colors.grey, fontSize: 12),
+                        ),
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                        ),
                       ),
                   ],
-                );
-              },
+                ),
+                const SizedBox(height: 10),
+
+                // Danh sách hoặc empty state
+                if (currentDisplayItems.isEmpty)
+                  Container(
+                    padding: const EdgeInsets.symmetric(vertical: 40),
+                    alignment: Alignment.center,
+                    child: Column(
+                      children: [
+                        Icon(
+                          currentTabIndex == 0
+                              ? Icons.movie_filter_outlined
+                              : (currentTabIndex == 1 ? Icons.tv_off_rounded : Icons.video_library_outlined),
+                          color: Colors.white24,
+                          size: 56,
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          currentTabIndex == 0
+                              ? 'Chưa có phim Hồng Quả nào trong lịch sử'
+                              : (currentTabIndex == 1
+                                  ? 'Chưa có video Bilibili nào trong lịch sử'
+                                  : 'Chưa có video máy hoặc link ngoài nào'),
+                          style: const TextStyle(color: Colors.white70, fontSize: 15),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          currentTabIndex == 0
+                              ? 'Xem phim tại tab "Phim Hồng Quả" để lưu lịch sử và tập đang xem'
+                              : (currentTabIndex == 1
+                                  ? 'Xem video tại tab "Bilibili" để lưu lại lịch sử xem'
+                                  : 'Dùng nút Nhập Video ở trên để xem video từ máy hoặc link trực tiếp'),
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(color: Colors.grey, fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  )
+                else
+                  ListView.separated(
+                    physics: const NeverScrollableScrollPhysics(),
+                    shrinkWrap: true,
+                    itemCount: currentDisplayItems.length,
+                    separatorBuilder: (_, _) => const SizedBox(height: 12),
+                    itemBuilder: (context, index) {
+                      final dItem = currentDisplayItems[index];
+
+                      if (dItem.isDramaGroup) {
+                        return _buildDramaGroupCard(
+                          dItem.dramaGroup!,
+                          dateFormatter,
+                        );
+                      } else {
+                        return _buildSingleItemCard(
+                          dItem.singleItem!,
+                          dateFormatter,
+                        );
+                      }
+                    },
+                  ),
+              ],
             ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }

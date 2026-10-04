@@ -83,6 +83,141 @@ class BilibiliSubtitleLoginRequiredException implements Exception {
       'P này có phụ đề nhưng Bilibili yêu cầu đăng nhập. Hãy nhập SESSDATA trong Cài đặt.';
 }
 
+class BilibiliAnimeItem {
+  final String title;
+  final String cover;
+  final String? bvid;
+  final int? seasonId;
+  final int? epId;
+  final String badge;
+  final String desc;
+  final String viewCountText;
+  final String followCountText;
+  final String ratingText;
+  final String indexShow;
+  final String author;
+  final List<String> styles;
+  final int durationSeconds;
+  final String durationText;
+  final String upFace;
+  final String danmakuText;
+  final String likeCountText;
+
+  const BilibiliAnimeItem({
+    required this.title,
+    required this.cover,
+    this.bvid,
+    this.seasonId,
+    this.epId,
+    this.badge = '',
+    this.desc = '',
+    this.viewCountText = '',
+    this.followCountText = '',
+    this.ratingText = '',
+    this.indexShow = '',
+    this.author = '',
+    this.styles = const [],
+    this.durationSeconds = 0,
+    this.durationText = '',
+    this.upFace = '',
+    this.danmakuText = '',
+    this.likeCountText = '',
+  });
+
+  static String formatDuration(int seconds) {
+    if (seconds <= 0) return '';
+    final h = seconds ~/ 3600;
+    final m = (seconds % 3600) ~/ 60;
+    final s = seconds % 60;
+    final sStr = s.toString().padLeft(2, '0');
+    final mStr = m.toString().padLeft(2, '0');
+    if (h > 0) {
+      return '$h:$mStr:$sStr';
+    } else {
+      return '$mStr:$sStr';
+    }
+  }
+
+  String get targetPlayUrl {
+    if (bvid != null && bvid!.isNotEmpty) {
+      return 'https://www.bilibili.com/video/$bvid';
+    }
+    if (epId != null && epId! > 0) {
+      return 'https://www.bilibili.com/bangumi/play/ep$epId';
+    }
+    if (seasonId != null && seasonId! > 0) {
+      return 'https://www.bilibili.com/bangumi/play/ss$seasonId';
+    }
+    return '';
+  }
+}
+
+class BilibiliTimelineDay {
+  final int dayOfWeek; // 1 = Thứ Hai, 7 = Chủ Nhật
+  final String dayName;
+  final String dateText;
+  final bool isToday;
+  final List<BilibiliAnimeItem> episodes;
+
+  const BilibiliTimelineDay({
+    required this.dayOfWeek,
+    required this.dayName,
+    required this.dateText,
+    this.isToday = false,
+    required this.episodes,
+  });
+}
+
+class BilibiliUserProfile {
+  final int mid;
+  final String uname;
+  final String avatar;
+  final bool isLogin;
+  final bool isVip;
+  final String vipLabel;
+  final int level;
+
+  const BilibiliUserProfile({
+    this.mid = 0,
+    this.uname = '',
+    this.avatar = '',
+    this.isLogin = false,
+    this.isVip = false,
+    this.vipLabel = '',
+    this.level = 0,
+  });
+}
+
+class BilibiliQrCodeInfo {
+  final String url;
+  final String qrcodeKey;
+
+  const BilibiliQrCodeInfo({
+    required this.url,
+    required this.qrcodeKey,
+  });
+}
+
+class BilibiliQrPollResult {
+  final int code; // 0 = Thành công, 86101 = Chưa quét, 86090 = Đã quét chờ xác nhận, 86038 = Hết hạn
+  final String message;
+  final String? sessData;
+  final String? biliJct;
+  final String? dedeUserId;
+
+  const BilibiliQrPollResult({
+    required this.code,
+    required this.message,
+    this.sessData,
+    this.biliJct,
+    this.dedeUserId,
+  });
+
+  bool get isSuccess => code == 0 && sessData != null && sessData!.isNotEmpty;
+  bool get isPending => code == 86101 || code == 86090;
+  bool get isExpired => code == 86038;
+}
+
 class BilibiliResolver {
   static const _userAgent =
       'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17.0 Mobile/15E148 Safari/604.1';
@@ -250,26 +385,64 @@ class BilibiliResolver {
       r'(?:^|[\/\?&=#])av(\d+)(?:[\/\?&=#]|$)',
       caseSensitive: false,
     ).firstMatch(target)?.group(1);
+    final page = inputPage ??
+        int.tryParse(
+          RegExp(
+            r'[?&]p=(\d+)',
+            caseSensitive: false,
+          ).firstMatch(target)?.group(1) ??
+          RegExp(
+            r'(?:index_|/p)(\d+)',
+            caseSensitive: false,
+          ).firstMatch(target)?.group(1) ??
+          '1',
+        ) ??
+        1;
+    var resolvedBvid = bvid;
+    var resolvedAid = aid;
 
-    final targetPage = int.tryParse(
-      RegExp(r'[?&]p=(\d+)', caseSensitive: false).firstMatch(target)?.group(1) ??
-      RegExp(r'(?:index_|/p)(\d+)', caseSensitive: false).firstMatch(target)?.group(1) ??
-      '',
-    );
-
-    final page = inputPage ?? targetPage ?? 1;
-
-    if (bvid == null && aid == null) {
-      throw FormatException('Không tìm thấy mã BV/av trong link Bilibili.');
+    if (resolvedBvid == null && resolvedAid == null) {
+      final epMatch = RegExp(r'(?:^|[\/\?&=#])ep(\d+)(?:[\/\?&=#]|$)', caseSensitive: false).firstMatch(target);
+      final ssMatch = RegExp(r'(?:^|[\/\?&=#])ss(\d+)(?:[\/\?&=#]|$)', caseSensitive: false).firstMatch(target);
+      if (epMatch != null || ssMatch != null) {
+        final epId = epMatch?.group(1);
+        final ssId = ssMatch?.group(1);
+        try {
+          final queryParam = epId != null ? 'ep_id=$epId' : 'season_id=$ssId';
+          final response = await dio.get<Map<String, dynamic>>(
+            'https://api.bilibili.com/pgc/view/web/season?$queryParam',
+            options: Options(headers: requestHeaders()),
+          );
+          final result = response.data?['result'];
+          if (result is Map<String, dynamic>) {
+            final episodes = (result['episodes'] as List<dynamic>? ?? const []);
+            Map<String, dynamic>? matchedEp;
+            if (epId != null) {
+              matchedEp = episodes.firstWhere(
+                (e) => e is Map<String, dynamic> && e['id']?.toString() == epId,
+                orElse: () => episodes.isNotEmpty ? episodes.first as Map<String, dynamic> : <String, dynamic>{},
+              ) as Map<String, dynamic>?;
+            } else {
+              matchedEp = episodes.isNotEmpty ? episodes.first as Map<String, dynamic> : null;
+            }
+            resolvedBvid = matchedEp?['bvid']?.toString();
+            resolvedAid = matchedEp?['aid']?.toString();
+          }
+        } catch (_) {}
+      }
     }
 
-    final canonicalTarget = bvid != null
-        ? 'https://www.bilibili.com/video/$bvid?p=$page'
-        : (aid != null ? 'https://www.bilibili.com/video/av$aid?p=$page' : target);
+    if (resolvedBvid == null && resolvedAid == null) {
+      throw FormatException('Không tìm thấy mã BV/av/ep/ss trong link Bilibili.');
+    }
+
+    final canonicalTarget = resolvedBvid != null
+        ? 'https://www.bilibili.com/video/$resolvedBvid?p=$page'
+        : (resolvedAid != null ? 'https://www.bilibili.com/video/av$resolvedAid?p=$page' : target);
 
     return BilibiliTarget(
-      bvid: bvid,
-      aid: aid,
+      bvid: resolvedBvid,
+      aid: resolvedAid,
       pageIndex: page,
       rawUrl: canonicalTarget,
     );
@@ -711,4 +884,575 @@ class BilibiliResolver {
     values['w_rid'] = md5.convert(utf8.encode('$query$mixin')).toString();
     return values;
   }
+
+  static String _stripHtml(String html) {
+    return html.replaceAll(RegExp(r'<[^>]*>'), '').trim();
+  }
+
+  static String _normalizeCoverUrl(String url) {
+    final trimmed = url.trim();
+    if (trimmed.isEmpty) return '';
+    if (trimmed.startsWith('//')) {
+      return 'https:$trimmed';
+    }
+    return trimmed;
+  }
+
+  static String _formatCount(dynamic count) {
+    if (count == null) return '';
+    final raw = count.toString().trim();
+    final numVal = num.tryParse(raw);
+    if (numVal == null) {
+      return raw.replaceAll('万', ' vạn').replaceAll('亿', ' trăm triệu');
+    }
+    if (numVal >= 100000000) {
+      return '${(numVal / 100000000).toStringAsFixed(1)} trăm triệu';
+    }
+    if (numVal >= 10000) {
+      return '${(numVal / 10000).toStringAsFixed(1)} vạn';
+    }
+    return numVal.toString();
+  }
+
+  /// Lấy thông tin tài khoản người dùng Bilibili từ cookie
+  Future<BilibiliUserProfile> getUserProfile([String cookie = '']) async {
+    try {
+      final response = await dio.get<Map<String, dynamic>>(
+        'https://api.bilibili.com/x/web-interface/nav',
+        options: Options(headers: requestHeaders(cookie)),
+      );
+      final json = response.data ?? const <String, dynamic>{};
+      final data = json['data'] as Map<String, dynamic>?;
+      if (data == null) return const BilibiliUserProfile();
+
+      final isLogin = data['isLogin'] == true;
+      final mid = (data['mid'] as num?)?.toInt() ?? 0;
+      final uname = data['uname']?.toString() ?? '';
+      final avatar = _normalizeCoverUrl(data['face']?.toString() ?? '');
+      final vipType = (data['vipType'] as num?)?.toInt() ?? 0;
+      final vipStatus = (data['vipStatus'] as num?)?.toInt() ?? 0;
+      final isVip = vipType > 0 || vipStatus == 1;
+
+      String vipLabel = '';
+      if (data['vip_label'] is Map) {
+        vipLabel = data['vip_label']['text']?.toString() ?? '';
+      } else if (data['vip'] is Map && data['vip']['label'] is Map) {
+        vipLabel = data['vip']['label']['text']?.toString() ?? '';
+      }
+      if (vipLabel.isEmpty && isVip) {
+        vipLabel = vipType == 2 ? 'Đại Hội Viên Năm' : 'Đại Hội Viên';
+      }
+
+      final levelInfo = data['level_info'] as Map<String, dynamic>?;
+      final level = (levelInfo?['current_level'] as num?)?.toInt() ?? 0;
+
+      return BilibiliUserProfile(
+        mid: mid,
+        uname: uname,
+        avatar: avatar,
+        isLogin: isLogin,
+        isVip: isVip,
+        vipLabel: vipLabel,
+        level: level,
+      );
+    } catch (_) {
+      return const BilibiliUserProfile();
+    }
+  }
+
+  /// Tạo mã QR đăng nhập Bilibili
+  Future<BilibiliQrCodeInfo> generateLoginQrCode() async {
+    final response = await dio.get<Map<String, dynamic>>(
+      'https://passport.bilibili.com/x/passport-login/web/qrcode/generate',
+      options: Options(headers: requestHeaders()),
+    );
+    final json = response.data ?? const <String, dynamic>{};
+    final data = json['data'] as Map<String, dynamic>?;
+    if (data == null || data['url'] == null || data['qrcode_key'] == null) {
+      throw StateError('Không thể tạo mã QR đăng nhập Bilibili.');
+    }
+    return BilibiliQrCodeInfo(
+      url: data['url'].toString(),
+      qrcodeKey: data['qrcode_key'].toString(),
+    );
+  }
+
+  /// Kiểm tra trạng thái quét mã QR Bilibili
+  Future<BilibiliQrPollResult> pollLoginQrCode(String qrcodeKey) async {
+    final response = await dio.get<Map<String, dynamic>>(
+      'https://passport.bilibili.com/x/passport-login/web/qrcode/poll',
+      queryParameters: {'qrcode_key': qrcodeKey},
+      options: Options(headers: requestHeaders()),
+    );
+    final json = response.data ?? const <String, dynamic>{};
+    final data = json['data'] as Map<String, dynamic>?;
+    if (data == null) {
+      return const BilibiliQrPollResult(
+        code: -1,
+        message: 'Lỗi phản hồi máy chủ Bilibili',
+      );
+    }
+
+    final code = (data['code'] as num?)?.toInt() ?? -1;
+    final message = data['message']?.toString() ?? '';
+    final urlStr = data['url']?.toString() ?? '';
+
+    String? sessData;
+    String? biliJct;
+    String? dedeUserId;
+
+    if (code == 0) {
+      if (urlStr.isNotEmpty) {
+        final uri = Uri.tryParse(urlStr);
+        sessData = uri?.queryParameters['SESSDATA'];
+        biliJct = uri?.queryParameters['bili_jct'];
+        dedeUserId = uri?.queryParameters['DedeUserID'];
+      }
+      if (sessData == null || sessData.isEmpty) {
+        final rawSetCookies = response.headers['set-cookie'] ?? const [];
+        for (final cookieHeader in rawSetCookies) {
+          final parts = cookieHeader.split(';');
+          for (final part in parts) {
+            final kv = part.trim().split('=');
+            if (kv.length >= 2) {
+              final key = kv[0].trim();
+              final val = kv.sublist(1).join('=').trim();
+              if (key == 'SESSDATA') sessData = val;
+              if (key == 'bili_jct') biliJct = val;
+              if (key == 'DedeUserID') dedeUserId = val;
+            }
+          }
+        }
+      }
+    }
+
+    return BilibiliQrPollResult(
+      code: code,
+      message: message,
+      sessData: sessData,
+      biliJct: biliJct,
+      dedeUserId: dedeUserId,
+    );
+  }
+
+  /// Danh sách hoạt hình Trung Quốc (Quốc Mạn - Guochuang)
+  /// [order]: 2 = Xem nhiều nhất, 0 = Cập nhật mới, 3 = Điểm cao nhất, 1 = Theo dõi nhiều
+  Future<List<BilibiliAnimeItem>> getGuochuangList({
+    int page = 1,
+    int pageSize = 20,
+    int order = 2,
+    String cookie = '',
+  }) async {
+    return _getPgcSeasonList(
+      seasonType: 4,
+      page: page,
+      pageSize: pageSize,
+      order: order,
+      cookie: cookie,
+    );
+  }
+
+  /// Danh sách hoạt hình Nhật Bản (Anime)
+  Future<List<BilibiliAnimeItem>> getAnimeList({
+    int page = 1,
+    int pageSize = 20,
+    int order = 2,
+    String cookie = '',
+  }) async {
+    return _getPgcSeasonList(
+      seasonType: 1,
+      page: page,
+      pageSize: pageSize,
+      order: order,
+      cookie: cookie,
+    );
+  }
+
+  Future<List<BilibiliAnimeItem>> _getPgcSeasonList({
+    required int seasonType,
+    int page = 1,
+    int pageSize = 20,
+    int order = 2,
+    String cookie = '',
+  }) async {
+    final response = await dio.get<Map<String, dynamic>>(
+      'https://api.bilibili.com/pgc/season/index/result',
+      queryParameters: {
+        'season_version': '-1',
+        'spoken_language_type': '-1',
+        'area': '-1',
+        'is_finish': '-1',
+        'copyright': '-1',
+        'season_status': '-1',
+        'season_month': '-1',
+        'year': '-1',
+        'style_id': '-1',
+        'order': '$order',
+        'st': '$seasonType',
+        'sort': '0',
+        'page': '$page',
+        'season_type': '$seasonType',
+        'pagesize': '$pageSize',
+        'type': '1',
+      },
+      options: Options(headers: requestHeaders(cookie)),
+    );
+    final json = response.data ?? const <String, dynamic>{};
+    final data = json['data'] as Map<String, dynamic>?;
+    final list = data?['list'] as List<dynamic>? ?? const [];
+
+    return list.map((raw) {
+      final item = raw as Map<String, dynamic>;
+      final stylesList = <String>[];
+      if (item['styles'] is List) {
+        for (final s in item['styles'] as List) {
+          stylesList.add(s.toString());
+        }
+      }
+      return BilibiliAnimeItem(
+        title: item['title']?.toString() ?? '',
+        cover: _normalizeCoverUrl(item['cover']?.toString() ?? ''),
+        seasonId: (item['season_id'] as num?)?.toInt(),
+        badge: item['badge']?.toString() ?? '',
+        desc: item['sub_title']?.toString() ?? item['desc']?.toString() ?? '',
+        viewCountText: item['order']?.toString() ?? '',
+        indexShow: item['index_show']?.toString() ?? '',
+        styles: stylesList,
+      );
+    }).toList();
+  }
+
+  /// Lịch phát sóng Anime / Quốc mạn theo tuần (Thứ Hai - Chủ Nhật)
+  Future<List<BilibiliTimelineDay>> getAnimeTimeline({
+    int seasonType = 4,
+    String cookie = '',
+  }) async {
+    final response = await dio.get<Map<String, dynamic>>(
+      'https://api.bilibili.com/pgc/web/timeline/v2',
+      queryParameters: {'season_type': '$seasonType'},
+      options: Options(headers: requestHeaders(cookie)),
+    );
+    final json = response.data ?? const <String, dynamic>{};
+    final data = json['data'] as Map<String, dynamic>?;
+    final latest = data?['latest'] as List<dynamic>? ?? const [];
+
+    const dayNames = [
+      '',
+      'Thứ Hai',
+      'Thứ Ba',
+      'Thứ Tư',
+      'Thứ Năm',
+      'Thứ Sáu',
+      'Thứ Bảy',
+      'Chủ Nhật',
+    ];
+
+    return latest.map((rawDay) {
+      final dayMap = rawDay as Map<String, dynamic>;
+      final dayOfWeek = (dayMap['day_of_week'] as num?)?.toInt() ?? 1;
+      final dateText = dayMap['date']?.toString() ?? '';
+      final isToday = dayMap['is_today'] == 1 || dayMap['is_today'] == true;
+      final episodesRaw = dayMap['episodes'] as List<dynamic>? ?? const [];
+
+      final episodes = episodesRaw.map((rawEp) {
+        final ep = rawEp as Map<String, dynamic>;
+        final styles = <String>[];
+        if (ep['styles'] is List) {
+          for (final s in ep['styles'] as List) {
+            styles.add(s.toString());
+          }
+        }
+        return BilibiliAnimeItem(
+          title: ep['title']?.toString() ?? '',
+          cover: _normalizeCoverUrl(ep['cover']?.toString() ?? ''),
+          seasonId: (ep['season_id'] as num?)?.toInt(),
+          epId: (ep['episode_id'] as num?)?.toInt() ?? (ep['ep_id'] as num?)?.toInt(),
+          badge: ep['badge']?.toString() ?? '',
+          indexShow: ep['pub_index']?.toString() ?? ep['pub_time']?.toString() ?? '',
+          desc: ep['sub_title']?.toString() ?? '',
+          styles: styles,
+        );
+      }).toList();
+
+      final dayName = (dayOfWeek >= 1 && dayOfWeek <= 7) ? dayNames[dayOfWeek] : 'T$dayOfWeek';
+
+      return BilibiliTimelineDay(
+        dayOfWeek: dayOfWeek,
+        dayName: dayName,
+        dateText: dateText,
+        isToday: isToday,
+        episodes: episodes,
+      );
+    }).toList();
+  }
+
+  /// Bảng xếp hạng Anime / Quốc Mạn
+  Future<List<BilibiliAnimeItem>> getRankingAnime({
+    int seasonType = 4,
+    String cookie = '',
+  }) async {
+    final response = await dio.get<Map<String, dynamic>>(
+      'https://api.bilibili.com/pgc/season/rank/web/list',
+      queryParameters: {'day': '3', 'season_type': '$seasonType'},
+      options: Options(headers: requestHeaders(cookie)),
+    );
+    final json = response.data ?? const <String, dynamic>{};
+    final data = json['data'] as Map<String, dynamic>?;
+    final list = data?['list'] as List<dynamic>? ?? const [];
+
+    return list.map((raw) {
+      final item = raw as Map<String, dynamic>;
+      final stat = item['stat'] as Map<String, dynamic>?;
+      final playCount = stat?['view'];
+      final followCount = stat?['follow'];
+
+      return BilibiliAnimeItem(
+        title: item['title']?.toString() ?? '',
+        cover: _normalizeCoverUrl(item['cover']?.toString() ?? ''),
+        seasonId: (item['season_id'] as num?)?.toInt(),
+        bvid: item['bvid']?.toString(),
+        badge: item['badge']?.toString() ?? '',
+        desc: item['desc']?.toString() ?? '',
+        ratingText: item['rating']?.toString() ?? '',
+        viewCountText: playCount != null ? '${_formatCount(playCount)} xem' : '',
+        followCountText: followCount != null ? '${_formatCount(followCount)} theo dõi' : '',
+        indexShow: item['index_show']?.toString() ?? '',
+      );
+    }).toList();
+  }
+
+  /// Lấy danh sách video Đề xuất (Recommend Feed - 推荐)
+  /// Tự động lấy danh sách cá nhân hóa theo tài khoản (phim AI, AI漫剧...) nếu có SESSDATA
+  Future<List<BilibiliAnimeItem>> getRecommendFeed({
+    int pageSize = 20,
+    int freshIdx = 1,
+    String cookie = '',
+  }) async {
+    try {
+      final response = await dio.get<Map<String, dynamic>>(
+        'https://api.bilibili.com/x/web-interface/wbi/index/top/feed/rcmd',
+        queryParameters: {
+          'ps': '$pageSize',
+          'fresh_idx': '$freshIdx',
+          'feed_version': 'V8',
+        },
+        options: Options(headers: requestHeaders(cookie)),
+      );
+      final json = response.data ?? const <String, dynamic>{};
+      final data = json['data'] as Map<String, dynamic>?;
+      final items = data?['item'] as List<dynamic>? ?? const [];
+
+      return items.map((raw) {
+        final item = raw as Map<String, dynamic>;
+        final bvid = item['bvid']?.toString() ?? '';
+        final title = _stripHtml(item['title']?.toString() ?? '');
+        final cover = _normalizeCoverUrl(item['pic']?.toString() ?? '');
+        final durationSec = (item['duration'] as num?)?.toInt() ?? 0;
+        final owner = item['owner'] as Map<String, dynamic>?;
+        final author = owner?['name']?.toString() ?? '';
+        final upFace = _normalizeCoverUrl(owner?['face']?.toString() ?? '');
+        final stat = item['stat'] as Map<String, dynamic>?;
+        final views = stat?['view'];
+        final danmaku = stat?['danmaku'];
+        final likes = stat?['like'];
+
+        return BilibiliAnimeItem(
+          title: title,
+          cover: cover,
+          bvid: bvid,
+          author: author,
+          upFace: upFace,
+          durationSeconds: durationSec,
+          durationText: durationSec > 0 ? BilibiliAnimeItem.formatDuration(durationSec) : '',
+          viewCountText: views != null ? _formatCount(views) : '',
+          danmakuText: danmaku != null ? _formatCount(danmaku) : '',
+          likeCountText: likes != null ? _formatCount(likes) : '',
+        );
+      }).where((it) => it.bvid != null && it.bvid!.isNotEmpty).toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// Lấy danh sách video Thịnh hành (Popular - 热门)
+  Future<List<BilibiliAnimeItem>> getPopularVideos({
+    int page = 1,
+    int pageSize = 20,
+    String cookie = '',
+  }) async {
+    try {
+      final response = await dio.get<Map<String, dynamic>>(
+        'https://api.bilibili.com/x/web-interface/popular',
+        queryParameters: {
+          'pn': '$page',
+          'ps': '$pageSize',
+        },
+        options: Options(headers: requestHeaders(cookie)),
+      );
+      final json = response.data ?? const <String, dynamic>{};
+      final data = json['data'] as Map<String, dynamic>?;
+      final list = data?['list'] as List<dynamic>? ?? const [];
+
+      return list.map((raw) {
+        final item = raw as Map<String, dynamic>;
+        final bvid = item['bvid']?.toString() ?? '';
+        final title = _stripHtml(item['title']?.toString() ?? '');
+        final cover = _normalizeCoverUrl(item['pic']?.toString() ?? '');
+        final durationSec = (item['duration'] as num?)?.toInt() ?? 0;
+        final owner = item['owner'] as Map<String, dynamic>?;
+        final author = owner?['name']?.toString() ?? '';
+        final upFace = _normalizeCoverUrl(owner?['face']?.toString() ?? '');
+        final stat = item['stat'] as Map<String, dynamic>?;
+        final views = stat?['view'];
+        final danmaku = stat?['danmaku'];
+        final likes = stat?['like'];
+
+        return BilibiliAnimeItem(
+          title: title,
+          cover: cover,
+          bvid: bvid,
+          author: author,
+          upFace: upFace,
+          durationSeconds: durationSec,
+          durationText: durationSec > 0 ? BilibiliAnimeItem.formatDuration(durationSec) : '',
+          viewCountText: views != null ? _formatCount(views) : '',
+          danmakuText: danmaku != null ? _formatCount(danmaku) : '',
+          likeCountText: likes != null ? _formatCount(likes) : '',
+        );
+      }).where((it) => it.bvid != null && it.bvid!.isNotEmpty).toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// Lấy danh sách phim AI / AI漫剧 / AI短剧
+  Future<List<BilibiliAnimeItem>> getAiManhuaVideos({
+    String keyword = 'AI漫剧',
+    int page = 1,
+    int pageSize = 20,
+    String order = 'totalrank', // totalrank, click (xem nhiều), pubdate (mới nhất)
+    String cookie = '',
+  }) async {
+    return searchVideos(
+      keyword,
+      page: page,
+      pageSize: pageSize,
+      order: order,
+      cookie: cookie,
+    );
+  }
+
+  /// Tìm kiếm video trên Bilibili
+  Future<List<BilibiliAnimeItem>> searchVideos(
+    String keyword, {
+    int page = 1,
+    int pageSize = 20,
+    String order = 'totalrank',
+    String cookie = '',
+  }) async {
+    final cleanKeyword = keyword.trim();
+    if (cleanKeyword.isEmpty) return const [];
+
+    Map<String, dynamic>? data;
+    try {
+      data = await _getWbiJson(
+        'https://api.bilibili.com/x/web-interface/wbi/search/type',
+        {
+          'search_type': 'video',
+          'keyword': cleanKeyword,
+          'page': '$page',
+          'page_size': '$pageSize',
+          'order': order,
+        },
+        cookie,
+      );
+    } catch (_) {
+      // Fallback sang search thông thường nếu WBI fail
+      final response = await dio.get<Map<String, dynamic>>(
+        'https://api.bilibili.com/x/web-interface/search/type',
+        queryParameters: {
+          'search_type': 'video',
+          'keyword': cleanKeyword,
+          'page': '$page',
+          'page_size': '$pageSize',
+          'order': order,
+        },
+        options: Options(headers: requestHeaders(cookie)),
+      );
+      data = response.data?['data'] as Map<String, dynamic>?;
+    }
+
+    final resultList = data?['result'] as List<dynamic>? ?? const [];
+
+    return resultList.map((raw) {
+      final item = raw as Map<String, dynamic>;
+      final bvid = item['bvid']?.toString() ?? '';
+      final title = _stripHtml(item['title']?.toString() ?? '');
+      final cover = _normalizeCoverUrl(item['pic']?.toString() ?? '');
+      final author = item['author']?.toString() ?? '';
+      final upFace = _normalizeCoverUrl(item['upic']?.toString() ?? '');
+      final rawDuration = item['duration']?.toString() ?? '';
+      final play = item['play'];
+      final danmaku = item['danmaku'];
+      final desc = _stripHtml(item['description']?.toString() ?? '');
+
+      String durationText = rawDuration;
+      int durationSeconds = 0;
+      if (rawDuration.isNotEmpty) {
+        final parts = rawDuration.split(':');
+        if (parts.length == 3) {
+          final h = int.tryParse(parts[0]) ?? 0;
+          final m = int.tryParse(parts[1]) ?? 0;
+          final s = int.tryParse(parts[2]) ?? 0;
+          durationSeconds = h * 3600 + m * 60 + s;
+          durationText = '$h:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+        } else if (parts.length == 2) {
+          final m = int.tryParse(parts[0]) ?? 0;
+          final s = int.tryParse(parts[1]) ?? 0;
+          durationSeconds = m * 60 + s;
+          if (m >= 60) {
+            final h = m ~/ 60;
+            final remM = m % 60;
+            durationText = '$h:${remM.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+          } else {
+            durationText = '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+          }
+        }
+      }
+
+      return BilibiliAnimeItem(
+        title: title,
+        cover: cover,
+        bvid: bvid,
+        author: author,
+        upFace: upFace,
+        desc: desc,
+        badge: '',
+        durationSeconds: durationSeconds,
+        durationText: durationText,
+        viewCountText: play != null ? _formatCount(play) : '',
+        danmakuText: danmaku != null ? _formatCount(danmaku) : '',
+      );
+    }).toList();
+  }
+
+  /// Lấy danh sách từ khóa tìm kiếm thịnh hành
+  Future<List<String>> getHotSearchKeywords() async {
+    try {
+      final response = await dio.get<Map<String, dynamic>>(
+        'https://api.bilibili.com/x/web-interface/search/square',
+        queryParameters: {'limit': '12'},
+        options: Options(headers: requestHeaders()),
+      );
+      final json = response.data ?? const <String, dynamic>{};
+      final list = json['data']?['trending']?['list'] as List<dynamic>? ?? const [];
+      return list
+          .map((item) => (item['show_name'] ?? item['keyword'])?.toString().trim() ?? '')
+          .where((k) => k.isNotEmpty)
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
 }
+

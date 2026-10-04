@@ -221,6 +221,11 @@ class SettingsRepository {
     );
   }
 
+  String get bilibiliPreferredQuality =>
+      prefs.getString('bilibili_preferred_quality') ?? '1080';
+  set bilibiliPreferredQuality(String v) =>
+      prefs.setString('bilibili_preferred_quality', v);
+
   int get prefetchEpisodeCount =>
       (prefs.getInt('prefetch_episode_count') ?? 1).clamp(1, 5);
   set prefetchEpisodeCount(int v) =>

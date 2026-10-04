@@ -50,6 +50,8 @@ dependencies:
   flutter_secure_storage: ^11.2.0
   wakelock_plus: ^1.8.0
   google_mlkit_translation: ^0.15.1
+  qr_flutter: ^4.1.0
+  webview_flutter: ^4.14.1
 
 dev_dependencies:
   flutter_test:

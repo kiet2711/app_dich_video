@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'data/model/subtitle_document.dart';
+import 'ui/bilibili/bilibili_screen.dart';
 import 'ui/history/history_screen.dart';
 import 'ui/home/home_screen.dart';
 import 'ui/hongguo/hongguo_screen.dart';
@@ -66,7 +67,7 @@ class _MainNavigationState extends State<MainNavigation> {
             _latestDoc = doc;
             _latestVideoPath = videoPath;
             _latestTitle = title;
-            _currentIndex = 2; // Tự động chuyển sang Tab Lồng Tiếng AI
+            _currentIndex = 3; // Tự động chuyển sang Tab Lồng Tiếng AI
           });
         },
       ),
@@ -78,6 +79,7 @@ class _MainNavigationState extends State<MainNavigation> {
           _homeKey.currentState?.loadOnlineVideo(videoUrl, title: title);
         },
       ),
+      const BilibiliScreen(),
       TtsStudioScreen(
         key: ValueKey('tts_${_latestVideoPath ?? ""}_${_latestDoc?.hashCode ?? 0}'),
         initialDoc: _latestDoc,
@@ -90,7 +92,7 @@ class _MainNavigationState extends State<MainNavigation> {
             _latestDoc = doc;
             _latestVideoPath = videoPath;
             _latestTitle = title;
-            _currentIndex = 2;
+            _currentIndex = 3;
           });
         },
       ),
@@ -134,6 +136,14 @@ class _MainNavigationState extends State<MainNavigation> {
                         color: AppColors.primaryEmerald,
                       ),
                       label: 'Phim Hồng Quả',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.tv_rounded, color: Colors.grey),
+                      selectedIcon: Icon(
+                        Icons.tv_rounded,
+                        color: Color(0xFF00AEEC),
+                      ),
+                      label: 'Bilibili',
                     ),
                     NavigationDestination(
                       icon: Icon(Icons.record_voice_over, color: Colors.grey),

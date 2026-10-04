@@ -23,6 +23,11 @@ import '../../domain/tts/audio_file_validator.dart';
 import '../../player/global_player_manager.dart';
 import '../../player/pip_manager.dart';
 import '../../player/tts_audio_scheduler.dart';
+import '../../data/model/voice_model.dart';
+import '../../domain/pipeline/subtitling_pipeline.dart';
+import '../../domain/tts/tts_cache_helper.dart';
+import '../../domain/tts/tts_generation_manager.dart';
+import '../bilibili/bilibili_settings_sheet.dart';
 import '../theme/app_theme.dart';
 import 'dual_volume_sheet.dart';
 import 'subtitle_control_sheet.dart';
@@ -116,6 +121,179 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   String? _translatedTitle;
   bool _showTranslatedTitle = false;
   bool _isTranslatingTitle = false;
+
+  // On-demand subtitling and progressive AI dubbing (Bilibili / External links)
+  bool _isTranslatingOnDemand = false;
+  String _onDemandProgressMessage = '';
+  double _onDemandProgressPct = 0.0;
+
+  Future<void> _startOnDemandPipeline({required bool enableTts}) async {
+    if (_isTranslatingOnDemand) return;
+    final controller = _controller;
+    final durationMs = (controller != null && controller.value.isInitialized)
+        ? controller.value.duration.inMilliseconds
+        : 60000;
+
+    setState(() {
+      _isTranslatingOnDemand = true;
+      _onDemandProgressMessage = 'Đang bóc tách & dịch phụ đề...';
+      _onDemandProgressPct = 0.05;
+    });
+
+    try {
+      final pipeline = SubtitlingPipeline(
+        apiKeys: _settings.geminiApiKeys,
+        groqApiKeys: _settings.groqApiKeys,
+        translationEngine: _settings.selectedModel,
+        stylePreset: _settings.selectedStyle,
+        customPrompt: _settings.geminiCustomPrompt,
+        targetLanguage: _settings.targetLanguage,
+        geminiThreadCount: _settings.geminiThreadCount,
+        geminiBatchSize: _settings.geminiBatchSize,
+        groqThreadCount: _settings.groqThreadCount,
+        groqBatchSize: _settings.groqBatchSize,
+      );
+
+      final sub = pipeline.progressStream.listen((prog) {
+        if (!mounted) return;
+        setState(() {
+          _onDemandProgressPct = prog.progress;
+          _onDemandProgressMessage = prog.message.isNotEmpty
+              ? prog.message
+              : 'Đang dịch (${(prog.progress * 100).toInt()}%)...';
+        });
+      });
+
+      final doc = await pipeline.execute(
+        videoPath: _sourceVideoUrl,
+        totalDurationMs: durationMs,
+        sourceLanguage: _settings.defaultSourceLanguage,
+      );
+      await sub.cancel();
+
+      if (!mounted) return;
+
+      if (doc.isEmpty) {
+        setState(() {
+          _isTranslatingOnDemand = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Không tìm thấy phụ đề hoặc không trích xuất được âm thanh.'),
+            duration: Duration(seconds: 3),
+          ),
+        );
+        return;
+      }
+
+      // BƯỚC 1: Hiển thị ngay phụ đề đã dịch trên màn hình để người dùng đọc ngay lập tức!
+      setState(() {
+        _currentDocument = doc;
+        _ttsScheduler.dispose();
+        _ttsScheduler = TtsAudioScheduler(doc);
+      });
+
+      // Lưu lại vào Lịch sử
+      try {
+        final history = await HistoryRepository.getInstance();
+        final saved = await history.saveHistory(
+          videoPath: _sourceVideoUrl,
+          document: doc,
+          title: _originalTitle ?? _currentTitle,
+        );
+        if (_translatedTitle != null && _translatedTitle!.isNotEmpty) {
+          await history.updateTranslatedTitle(saved.id, _translatedTitle!);
+        }
+      } catch (_) {}
+
+      // BƯỚC 2: Nếu chỉ cần Vietsub (không bật lồng tiếng) -> Hoàn tất ngay
+      if (!enableTts) {
+        setState(() {
+          _isTranslatingOnDemand = false;
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('🎉 Đã tạo Vietsub AI thành công!'),
+              backgroundColor: Color(0xFF00AEEC),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+        return;
+      }
+
+      // BƯỚC 3: Nếu người dùng chọn Lồng tiếng AI -> Tạo TTS ngầm luỹ tiến
+      setState(() {
+        _settings.isTtsPlaybackEnabled = true;
+        _onDemandProgressMessage = 'Phụ đề đã sẵn sàng! Đang tạo giọng đọc AI ngầm...';
+        _onDemandProgressPct = 0.5;
+      });
+
+      final selectedVoiceType = _settings.selectedTtsVoice;
+      final voice = VoicePresets.vietnameseVoices.firstWhere(
+        (v) => v.voiceType == selectedVoiceType,
+        orElse: () => VoicePresets.vietnameseVoices.first,
+      );
+
+      final ttsManager = TtsGenerationManager();
+      void onTtsProgress() {
+        if (!mounted) return;
+        final p = ttsManager.progress.value;
+        if (p.totalCount > 0) {
+          final ratio = p.completedCount / p.totalCount;
+          setState(() {
+            _onDemandProgressPct = 0.5 + (ratio * 0.5);
+            _onDemandProgressMessage =
+                'Đang lồng tiếng AI: ${p.completedCount}/${p.totalCount} câu (${(ratio * 100).toInt()}%)...';
+          });
+        }
+      }
+      ttsManager.progress.addListener(onTtsProgress);
+
+      try {
+        await ttsManager.generateAll(
+          document: doc,
+          voice: voice,
+          threadCount: _settings.ttsThreadCount,
+        );
+        await TtsCacheHelper.linkAudioFiles(doc, voice.voiceType);
+        if (mounted) {
+          final pos = _controller?.value.position.inMilliseconds ?? 0;
+          await _ttsScheduler.onSeek(pos);
+          _syncTtsWithVideo();
+          await _applyAudioVolumes();
+        }
+      } finally {
+        ttsManager.progress.removeListener(onTtsProgress);
+      }
+
+      if (mounted) {
+        setState(() {
+          _isTranslatingOnDemand = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('🎉 Đã hoàn tất Lồng tiếng AI cho video!'),
+            backgroundColor: AppTheme.primaryEmerald,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isTranslatingOnDemand = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Lỗi xử lý: $e'),
+          backgroundColor: Colors.redAccent,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
+  }
 
   bool _isGenericTitle(String? t) {
     if (t == null || t.trim().isEmpty) return true;
@@ -1649,9 +1827,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     final durationMs = controller.value.duration.inMilliseconds;
     final now = DateTime.now();
 
-    // Tự động chuyển sang tập tiếp theo khi xem xong (video kết thúc và còn < 1s)
+    // Tự động chuyển sang tập tiếp theo khi xem xong (video kết thúc và còn < 1s) - Chỉ dành cho phim bộ Hồng Quả
     if (_autoPlayNextEpisode &&
         _hasNextEpisode &&
+        widget.dramaDetail != null &&
         !_isSwitchingEpisode &&
         durationMs > 5000 &&
         (positionMs >= durationMs - 500 ||
@@ -2118,6 +2297,166 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                   ),
                 ),
 
+              // Banner tiến trình dịch theo yêu cầu (Bilibili / Link ngoài)
+              if (_isTranslatingOnDemand)
+                Positioned(
+                  top: 56,
+                  left: 20,
+                  right: 20,
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.85),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: const Color(0xFF00AEEC),
+                          width: 1.2,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.5),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Color(0xFF00AEEC),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Flexible(
+                                child: Text(
+                                  _onDemandProgressMessage,
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.white,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                          if (_onDemandProgressPct > 0) ...[
+                            const SizedBox(height: 6),
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(2),
+                              child: SizedBox(
+                                width: 160,
+                                height: 3,
+                                child: LinearProgressIndicator(
+                                  value: _onDemandProgressPct.clamp(0.0, 1.0),
+                                  backgroundColor: Colors.white12,
+                                  color: const Color(0xFF00AEEC),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+
+              // Gợi ý tạo Vietsub / Lồng tiếng cho video chưa có phụ đề khi mở controls
+              if (_showControls &&
+                  _currentDocument.isEmpty &&
+                  !_isTranslatingOnDemand &&
+                  !isHongguoWaitingTranslation)
+                Positioned(
+                  top: 56,
+                  left: 20,
+                  right: 20,
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.8),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: Colors.white24),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.subtitles_outlined, color: Colors.white70, size: 16),
+                          const SizedBox(width: 8),
+                          const Text(
+                            'Xem thử video gốc',
+                            style: TextStyle(color: Colors.white70, fontSize: 11),
+                          ),
+                          const SizedBox(width: 10),
+                          InkWell(
+                            onTap: () => _startOnDemandPipeline(enableTts: false),
+                            borderRadius: BorderRadius.circular(14),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF00AEEC),
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.translate_rounded, color: Colors.white, size: 12),
+                                  SizedBox(width: 4),
+                                  Text(
+                                    'Vietsub AI',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          InkWell(
+                            onTap: () => _startOnDemandPipeline(enableTts: true),
+                            borderRadius: BorderRadius.circular(14),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: AppTheme.primaryEmerald,
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.record_voice_over_rounded, color: Colors.black, size: 12),
+                                  SizedBox(width: 4),
+                                  Text(
+                                    'Lồng tiếng AI',
+                                    style: TextStyle(
+                                      color: Colors.black,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+
               // Màn hình chờ dịch tập mới (Gatekeeper) khi chưa có sub và chưa chọn xem bản gốc
               if (isHongguoWaitingTranslation)
                 Positioned.fill(
@@ -2469,6 +2808,17 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                           ),
                           tooltip: 'Cài đặt dịch & xem Hồng Quả',
                           onPressed: () => HongguoSettingsSheet.show(context),
+                        ),
+                      ],
+
+                      if (_bilibiliDetails != null || BilibiliResolver.isBilibiliUrl(_sourceVideoUrl)) ...[
+                        IconButton(
+                          icon: const Icon(
+                            Icons.tune_rounded,
+                            color: Color(0xFF00AEEC),
+                          ),
+                          tooltip: 'Cài đặt Bilibili',
+                          onPressed: () => BilibiliSettingsSheet.show(context),
                         ),
                       ],
 
