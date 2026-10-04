@@ -2,18 +2,23 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../data/model/voice_model.dart';
+import '../../domain/tts/voice_preview_helper.dart';
 import '../theme/app_theme.dart';
 
 class VoiceSelectorSheet extends StatefulWidget {
   final String currentVoiceType;
   final Color accentColor;
   final String title;
+  final bool allowPreview;
+  final String? initialPreviewText;
 
   const VoiceSelectorSheet({
     super.key,
     required this.currentVoiceType,
     this.accentColor = AppColors.primaryEmerald,
     this.title = 'Chọn Giọng Lồng Tiếng AI',
+    this.allowPreview = false,
+    this.initialPreviewText,
   });
 
   static Future<VoiceItem?> show(
@@ -21,6 +26,8 @@ class VoiceSelectorSheet extends StatefulWidget {
     required String currentVoiceType,
     Color accentColor = AppColors.primaryEmerald,
     String title = 'Chọn Giọng Lồng Tiếng AI',
+    bool allowPreview = false,
+    String? initialPreviewText,
   }) {
     return showModalBottomSheet<VoiceItem>(
       context: context,
@@ -30,6 +37,8 @@ class VoiceSelectorSheet extends StatefulWidget {
         currentVoiceType: currentVoiceType,
         accentColor: accentColor,
         title: title,
+        allowPreview: allowPreview,
+        initialPreviewText: initialPreviewText,
       ),
     );
   }
@@ -43,10 +52,30 @@ class _VoiceSelectorSheetState extends State<VoiceSelectorSheet> {
   String _searchQuery = '';
   String _selectedCategory = 'all';
 
+  VoicePreviewHelper? _previewHelper;
+  late final TextEditingController _previewController;
+
   @override
   void initState() {
     super.initState();
     _selectedVoiceType = widget.currentVoiceType;
+    if (widget.allowPreview) {
+      _previewHelper = VoicePreviewHelper();
+      _previewController = TextEditingController(
+        text: widget.initialPreviewText?.trim().isNotEmpty == true
+            ? widget.initialPreviewText!
+            : VoicePreviewHelper.defaultPreviewText,
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _previewHelper?.dispose();
+    if (widget.allowPreview) {
+      _previewController.dispose();
+    }
+    super.dispose();
   }
 
   bool _isMaleVoice(VoiceItem v) {
@@ -219,6 +248,82 @@ class _VoiceSelectorSheetState extends State<VoiceSelectorSheet> {
               ),
             ),
 
+            // Ô nhập câu nghe thử giọng (Chỉ hiện khi allowPreview = true)
+            if (widget.allowPreview) ...[
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: AppColors.darkSurfaceVariant,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: widget.accentColor.withValues(alpha: 0.35),
+                      width: 1,
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.record_voice_over_rounded,
+                            size: 14,
+                            color: widget.accentColor,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Câu nghe thử (100% tiếng Việt):',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: widget.accentColor,
+                            ),
+                          ),
+                          const Spacer(),
+                          if (_previewController.text !=
+                              VoicePreviewHelper.defaultPreviewText)
+                            GestureDetector(
+                              onTap: () {
+                                setState(() {
+                                  _previewController.text =
+                                      VoicePreviewHelper.defaultPreviewText;
+                                });
+                              },
+                              child: const Text(
+                                'Đặt lại câu mẫu',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: Colors.white70,
+                                  decoration: TextDecoration.underline,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      TextField(
+                        controller: _previewController,
+                        style: const TextStyle(fontSize: 12, color: Colors.white),
+                        decoration: const InputDecoration(
+                          border: InputBorder.none,
+                          isDense: true,
+                          contentPadding: EdgeInsets.zero,
+                          hintText: 'Nhập câu tiếng Việt muốn nghe thử...',
+                          hintStyle:
+                              TextStyle(fontSize: 12, color: AppColors.textMuted),
+                        ),
+                        maxLines: 2,
+                        minLines: 1,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+
             // Filter Chips
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
@@ -262,6 +367,7 @@ class _VoiceSelectorSheetState extends State<VoiceSelectorSheet> {
 
                         return InkWell(
                           onTap: () {
+                            _previewHelper?.stop();
                             HapticFeedback.selectionClick();
                             setState(() {
                               _selectedVoiceType = voice.voiceType;
@@ -370,6 +476,97 @@ class _VoiceSelectorSheetState extends State<VoiceSelectorSheet> {
                                     ],
                                   ),
                                 ),
+
+                                // Nút Nghe thử giọng (Chỉ hiện khi allowPreview = true)
+                                if (widget.allowPreview && _previewHelper != null) ...[
+                                  ValueListenableBuilder<VoicePreviewState>(
+                                    valueListenable: _previewHelper!.stateNotifier,
+                                    builder: (context, pState, _) {
+                                      final isThisVoice =
+                                          pState.activeVoiceType == voice.voiceType;
+                                      final isLoading =
+                                          isThisVoice && pState.isLoading;
+                                      final isPlaying =
+                                          isThisVoice && pState.isPlaying;
+
+                                      return Padding(
+                                        padding: const EdgeInsets.only(right: 8),
+                                        child: InkWell(
+                                          onTap: () {
+                                            HapticFeedback.selectionClick();
+                                            _previewHelper!.togglePreview(
+                                              voice: voice,
+                                              text: _previewController.text,
+                                            );
+                                          },
+                                          borderRadius:
+                                              BorderRadius.circular(16),
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 8,
+                                              vertical: 5,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: isThisVoice
+                                                  ? widget.accentColor
+                                                      .withValues(alpha: 0.22)
+                                                  : Colors.white.withValues(
+                                                      alpha: 0.06),
+                                              borderRadius:
+                                                  BorderRadius.circular(14),
+                                              border: Border.all(
+                                                color: isThisVoice
+                                                    ? widget.accentColor
+                                                    : Colors.white12,
+                                                width: 1,
+                                              ),
+                                            ),
+                                            child: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                if (isLoading)
+                                                  SizedBox(
+                                                    width: 12,
+                                                    height: 12,
+                                                    child:
+                                                        CircularProgressIndicator(
+                                                      strokeWidth: 2,
+                                                      color: widget.accentColor,
+                                                    ),
+                                                  )
+                                                else
+                                                  Icon(
+                                                    isPlaying
+                                                        ? Icons.stop_rounded
+                                                        : Icons
+                                                            .volume_up_rounded,
+                                                    size: 15,
+                                                    color: isThisVoice
+                                                        ? widget.accentColor
+                                                        : Colors.white70,
+                                                  ),
+                                                const SizedBox(width: 4),
+                                                Text(
+                                                  isPlaying
+                                                      ? 'Dừng'
+                                                      : 'Thử giọng',
+                                                  style: TextStyle(
+                                                    fontSize: 10,
+                                                    fontWeight:
+                                                        FontWeight.bold,
+                                                    color: isThisVoice
+                                                        ? widget.accentColor
+                                                        : Colors.white70,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ],
 
                                 // Checkmark / Radio
                                 if (isSelected)

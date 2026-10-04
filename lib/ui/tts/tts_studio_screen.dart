@@ -20,11 +20,13 @@ import '../../data/repository/history_repository.dart';
 import '../../data/repository/settings_repository.dart';
 import '../../domain/service/foreground_service_manager.dart';
 import '../../domain/tts/tts_generation_manager.dart';
+import '../../domain/tts/voice_preview_helper.dart';
 import '../../player/global_player_manager.dart';
 import '../settings/settings_screen.dart';
 import '../theme/app_theme.dart';
 import 'gemini_translate_subtitle_dialog.dart';
 import 'tts_error_review_dialog.dart';
+import 'voice_selector_sheet.dart';
 
 class TtsStudioScreen extends StatefulWidget {
   final SubtitleDocument? initialDoc;
@@ -59,12 +61,19 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
   bool _errorDialogOpen = false;
   bool _wasRunning = false;
 
+  late final TextEditingController _previewTextController;
+  late final VoicePreviewHelper _previewHelper;
+
   @override
   void initState() {
     super.initState();
     _doc = widget.initialDoc;
     _videoPath = widget.initialVideoPath;
     _videoFileName = widget.initialTitle ?? '';
+    _previewTextController = TextEditingController(
+      text: VoicePreviewHelper.defaultPreviewText,
+    );
+    _previewHelper = VoicePreviewHelper();
     _ttsManager.progress.addListener(_onTtsProgressChanged);
     unawaited(_refreshVideoMetadata());
     _loadSettings();
@@ -72,6 +81,8 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
 
   @override
   void dispose() {
+    _previewHelper.dispose();
+    _previewTextController.dispose();
     _ttsManager.progress.removeListener(_onTtsProgressChanged);
     unawaited(ForegroundServiceManager.stop());
     super.dispose();
@@ -1554,36 +1565,218 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                   fontWeight: FontWeight.bold,
                 ),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: AppColors.primaryEmerald.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(
-                      Icons.mic,
-                      size: 14,
-                      color: AppColors.primaryEmerald,
+              InkWell(
+                onTap: () async {
+                  _previewHelper.stop();
+                  final picked = await VoiceSelectorSheet.show(
+                    context,
+                    currentVoiceType: _selectedVoice.voiceType,
+                    allowPreview: true,
+                    initialPreviewText: _previewTextController.text,
+                    title: 'Chọn Giọng Đọc (Tab Studio)',
+                  );
+                  if (picked != null) {
+                    setState(() => _selectedVoice = picked);
+                    _settings?.selectedTtsVoice = picked.voiceType;
+                    _linkExistingAudio();
+                  }
+                },
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: AppColors.primaryEmerald.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: AppColors.primaryEmerald.withValues(alpha: 0.3),
                     ),
-                    const SizedBox(width: 4),
-                    Text(
-                      _selectedVoice.displayName,
-                      style: const TextStyle(
+                  ),
+                  child: Row(
+                    children: const [
+                      Icon(
+                        Icons.format_list_bulleted_rounded,
+                        size: 13,
                         color: AppColors.primaryEmerald,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
                       ),
-                    ),
-                  ],
+                      SizedBox(width: 4),
+                      Text(
+                        'Tất cả 21 giọng ↗',
+                        style: TextStyle(
+                          color: AppColors.primaryEmerald,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
+
+          // Ô nhập câu nghe thử giọng (100% tiếng Việt)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: const Color(0xFF14151B),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: AppColors.primaryEmerald.withValues(alpha: 0.3),
+                width: 1,
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.record_voice_over_rounded,
+                      size: 14,
+                      color: AppColors.primaryEmerald,
+                    ),
+                    const SizedBox(width: 6),
+                    const Text(
+                      'Câu nghe thử (100% tiếng Việt):',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.primaryEmerald,
+                      ),
+                    ),
+                    const Spacer(),
+                    if (_previewTextController.text !=
+                        VoicePreviewHelper.defaultPreviewText)
+                      GestureDetector(
+                        onTap: () {
+                          setState(() {
+                            _previewTextController.text =
+                                VoicePreviewHelper.defaultPreviewText;
+                          });
+                        },
+                        child: const Text(
+                          'Đặt lại câu mẫu',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: Colors.white70,
+                            decoration: TextDecoration.underline,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                TextField(
+                  controller: _previewTextController,
+                  style: const TextStyle(fontSize: 12, color: Colors.white),
+                  decoration: const InputDecoration(
+                    border: InputBorder.none,
+                    isDense: true,
+                    contentPadding: EdgeInsets.zero,
+                    hintText: 'Nhập câu tiếng Việt muốn nghe thử...',
+                    hintStyle:
+                        TextStyle(fontSize: 12, color: AppColors.textMuted),
+                  ),
+                  maxLines: 2,
+                  minLines: 1,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+
+          // Thanh công cụ: Nút nghe thử giọng đang chọn
+          ValueListenableBuilder<VoicePreviewState>(
+            valueListenable: _previewHelper.stateNotifier,
+            builder: (context, pState, _) {
+              final isThisVoice =
+                  pState.activeVoiceType == _selectedVoice.voiceType;
+              final isLoading = isThisVoice && pState.isLoading;
+              final isPlaying = isThisVoice && pState.isPlaying;
+
+              return Row(
+                children: [
+                  InkWell(
+                    onTap: () {
+                      HapticFeedback.selectionClick();
+                      _previewHelper.togglePreview(
+                        voice: _selectedVoice,
+                        text: _previewTextController.text,
+                      );
+                    },
+                    borderRadius: BorderRadius.circular(10),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: isThisVoice
+                            ? AppColors.primaryEmerald.withValues(alpha: 0.25)
+                            : Colors.white.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: isThisVoice
+                              ? AppColors.primaryEmerald
+                              : Colors.white24,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (isLoading)
+                            const SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: AppColors.primaryEmerald,
+                              ),
+                            )
+                          else
+                            Icon(
+                              isPlaying
+                                  ? Icons.stop_rounded
+                                  : Icons.volume_up_rounded,
+                              size: 16,
+                              color: isThisVoice
+                                  ? AppColors.primaryEmerald
+                                  : Colors.white,
+                            ),
+                          const SizedBox(width: 6),
+                          Text(
+                            isPlaying
+                                ? 'Dừng phát'
+                                : 'Nghe thử: ${_selectedVoice.displayName}',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: isThisVoice
+                                  ? AppColors.primaryEmerald
+                                  : Colors.white,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const Spacer(),
+                  const Text(
+                    'Bấm loa trên từng thẻ để thử',
+                    style: TextStyle(fontSize: 10, color: Colors.white54),
+                  ),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 10),
+
+          // Danh sách cuộn ngang các thẻ giọng đọc
           SizedBox(
-            height: 76,
+            height: 84,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               itemCount: voices.length,
@@ -1598,7 +1791,7 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                     _linkExistingAudio();
                   },
                   child: Container(
-                    width: 145,
+                    width: 155,
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
                       color: const Color(0xFF14151B),
@@ -1630,25 +1823,74 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                                 overflow: TextOverflow.ellipsis,
                               ),
                             ),
+                            ValueListenableBuilder<VoicePreviewState>(
+                              valueListenable: _previewHelper.stateNotifier,
+                              builder: (context, pState, _) {
+                                final isThisVoice =
+                                    pState.activeVoiceType == v.voiceType;
+                                final isLoading =
+                                    isThisVoice && pState.isLoading;
+                                final isPlaying =
+                                    isThisVoice && pState.isPlaying;
+
+                                return InkWell(
+                                  onTap: () {
+                                    HapticFeedback.selectionClick();
+                                    _previewHelper.togglePreview(
+                                      voice: v,
+                                      text: _previewTextController.text,
+                                    );
+                                  },
+                                  borderRadius: BorderRadius.circular(12),
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(2),
+                                    child: isLoading
+                                        ? const SizedBox(
+                                            width: 12,
+                                            height: 12,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 1.8,
+                                              color: AppColors.primaryEmerald,
+                                            ),
+                                          )
+                                        : Icon(
+                                            isPlaying
+                                                ? Icons.stop_circle_rounded
+                                                : Icons.volume_up_rounded,
+                                            size: 16,
+                                            color: isThisVoice
+                                                ? AppColors.primaryEmerald
+                                                : Colors.white54,
+                                          ),
+                                  ),
+                                );
+                              },
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                v.description.isNotEmpty
+                                    ? v.description
+                                    : 'Giọng đọc CapCut',
+                                style: const TextStyle(
+                                  color: Colors.grey,
+                                  fontSize: 10,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
                             if (isSelected)
                               const Icon(
                                 Icons.check_circle,
                                 color: AppColors.primaryEmerald,
-                                size: 14,
+                                size: 13,
                               ),
                           ],
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          v.description.isNotEmpty
-                              ? v.description
-                              : 'Giọng đọc CapCut',
-                          style: const TextStyle(
-                            color: Colors.grey,
-                            fontSize: 10,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
                         ),
                       ],
                     ),

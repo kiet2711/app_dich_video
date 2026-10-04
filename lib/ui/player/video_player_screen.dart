@@ -1,10 +1,8 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:share_plus/share_plus.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../data/model/subtitle_document.dart';
@@ -33,7 +31,6 @@ import '../theme/app_theme.dart';
 import 'dual_volume_sheet.dart';
 import 'subtitle_control_sheet.dart';
 import 'subtitle_overlay.dart';
-import 'transcript_sheet.dart';
 import '../hongguo/hongguo_settings_sheet.dart';
 
 class VideoPlayerScreen extends StatefulWidget {
@@ -678,26 +675,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     }
   }
 
-  void _toggleBackgroundPlay() {
-    final newVal = !_settings.backgroundPlayEnabled;
-    setState(() {
-      _settings.backgroundPlayEnabled = newVal;
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          newVal
-              ? '🎧 Đã BẬT phát nền (Âm thanh & AI lồng tiếng tiếp tục chạy khi tắt màn hình)'
-              : '⏸️ Đã TẮT phát nền (Dừng khi tắt màn hình / ra ngoài app)',
-        ),
-        duration: const Duration(seconds: 2),
-        backgroundColor: newVal ? AppTheme.primaryEmerald : Colors.grey[800],
-      ),
-    );
-  }
 
   Future<void> _initSettingsAndPlayer() async {
     _settings = await SettingsRepository.getInstance();
+    _settings.backgroundPlayEnabled = true; // Luôn tự động bật phát âm thanh nền
     if (widget.initialTtsEnabled != null) {
       _settings.isTtsPlaybackEnabled = widget.initialTtsEnabled!;
     }
@@ -2897,37 +2878,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     }
   }
 
-  Future<void> _shareSubtitle() async {
-    final doc = _currentDocument;
-    if (doc.items.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Không có phụ đề để xuất!')),
-      );
-      return;
-    }
-    final rawName = _currentVideoPath
-        .split(RegExp(r'[/\\]'))
-        .last
-        .split('?')
-        .first;
-    final baseName = rawName.replaceAll(RegExp(r'\.[^.]+$'), '').trim();
-    final renderBox = context.findRenderObject() as RenderBox?;
-    await SharePlus.instance.share(
-      ShareParams(
-        files: [
-          XFile.fromData(
-            utf8.encode(doc.toSrtString()),
-            mimeType: 'application/x-subrip',
-          ),
-        ],
-        fileNameOverrides: ['${baseName.isEmpty ? 'capsub' : baseName}.srt'],
-        subject: 'Phụ đề CapSub',
-        sharePositionOrigin: renderBox == null
-            ? null
-            : renderBox.localToGlobal(Offset.zero) & renderBox.size,
-      ),
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -3655,344 +3605,287 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                // Nút PiP ngoài màn hình (Picture-in-Picture)
+                                // 1. Nút Tự Chuyển Tập & Dịch Ngầm (Đưa lên vị trí đầu tiên)
+                                if (widget.dramaDetail != null) ...[
+                                  InkWell(
+                                    onTap: () {
+                                      final newVal = !_autoPlayNextEpisode;
+                                      setState(() {
+                                        _autoPlayNextEpisode = newVal;
+                                      });
+                                      _settings.autoPlayNextEpisode = newVal;
+                                      if (newVal) {
+                                        _prefetchManager
+                                            ?.onEpisodePlaying(_currentEpisodeIndex);
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(
+                                            content: Text(
+                                                '▶️ Đã BẬT tự chuyển tập & dịch ngầm'),
+                                            duration: Duration(seconds: 2),
+                                          ),
+                                        );
+                                      } else {
+                                        _prefetchManager?.cancelPrefetch();
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(
+                                            content: Text(
+                                                '⏸️ Đã TẮT tự chuyển tập (Dừng dịch ngầm)'),
+                                            duration: Duration(seconds: 2),
+                                          ),
+                                        );
+                                      }
+                                    },
+                                    borderRadius: BorderRadius.circular(20),
+                                    child: AnimatedContainer(
+                                      duration: const Duration(milliseconds: 200),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 10,
+                                        vertical: 5,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: _autoPlayNextEpisode
+                                            ? AppTheme.primaryEmerald
+                                                .withValues(alpha: 0.25)
+                                            : Colors.black.withValues(alpha: 0.6),
+                                        borderRadius: BorderRadius.circular(20),
+                                        border: Border.all(
+                                          color: _autoPlayNextEpisode
+                                              ? AppTheme.primaryEmerald
+                                              : Colors.white24,
+                                          width: 1.2,
+                                        ),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            _autoPlayNextEpisode
+                                                ? Icons.play_circle_fill_rounded
+                                                : Icons.pause_circle_outline_rounded,
+                                            size: 16,
+                                            color: _autoPlayNextEpisode
+                                                ? AppTheme.primaryEmerald
+                                                : Colors.white70,
+                                          ),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            _autoPlayNextEpisode
+                                                ? 'Tự chuyển'
+                                                : 'Dừng tập',
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.bold,
+                                              color: _autoPlayNextEpisode
+                                                  ? AppTheme.primaryEmerald
+                                                  : Colors.white70,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 4),
                                   IconButton(
                                     icon: const Icon(
-                                      Icons.picture_in_picture_alt_rounded,
+                                      Icons.format_list_numbered_rounded,
                                       color: Colors.white,
                                     ),
-                                    tooltip: Platform.isIOS
-                                        ? 'Thu nhỏ video (Mini-Player)'
-                                        : 'Hình thu nhỏ ngoài màn hình (PiP)',
-                                    onPressed: _enterPipMode,
+                                    tooltip: 'Danh sách tập phim',
+                                    onPressed: _showEpisodeListSheet,
                                   ),
+                                  IconButton(
+                                    icon: const Icon(
+                                      Icons.tune_rounded,
+                                      color: Colors.white70,
+                                    ),
+                                    tooltip: 'Cài đặt dịch & xem Hồng Quả',
+                                    onPressed: () => HongguoSettingsSheet.show(context),
+                                  ),
+                                ],
 
-                                // Nút Bật/Tắt phát nền (Background Play)
+                                // 2. Nút PiP ngoài màn hình (Picture-in-Picture)
+                                IconButton(
+                                  icon: const Icon(
+                                    Icons.picture_in_picture_alt_rounded,
+                                    color: Colors.white,
+                                  ),
+                                  tooltip: Platform.isIOS
+                                      ? 'Thu nhỏ video (Mini-Player)'
+                                      : 'Hình thu nhỏ ngoài màn hình (PiP)',
+                                  onPressed: _enterPipMode,
+                                ),
+
+                                // 3. Cài đặt Bilibili
+                                if (_bilibiliDetails != null || BilibiliResolver.isBilibiliUrl(_sourceVideoUrl)) ...[
+                                  IconButton(
+                                    icon: const Icon(
+                                      Icons.tune_rounded,
+                                      color: Color(0xFF00AEEC),
+                                    ),
+                                    tooltip: 'Cài đặt Bilibili',
+                                    onPressed: () => BilibiliSettingsSheet.show(context),
+                                  ),
+                                ],
+
+                                // 4. Nút Bật/Tắt Lồng tiếng AI
                                 IconButton(
                                   icon: Icon(
-                                    _settings.backgroundPlayEnabled
-                                        ? Icons.headphones_rounded
-                                        : Icons.headset_off_rounded,
-                                    color: _settings.backgroundPlayEnabled
-                                        ? AppTheme.primaryEmerald
+                                    _settings.isTtsPlaybackEnabled
+                                        ? Icons.record_voice_over
+                                        : Icons.voice_over_off,
+                                    color: _settings.isTtsPlaybackEnabled
+                                        ? Colors.lightGreenAccent
                                         : Colors.white70,
                                   ),
-                                  tooltip: _settings.backgroundPlayEnabled
-                                      ? 'Phát nền: ĐANG BẬT (Tiếp tục phát khi tắt màn hình)'
-                                      : 'Phát nền: ĐANG TẮT (Bấm để bật)',
-                                  onPressed: _toggleBackgroundPlay,
-                                ),
-
-                                // Nút YouTube-style: Bật/Tắt Tự Động Chuyển Tập & Dịch Ngầm
-                                if (widget.dramaDetail != null) ...[
-                        InkWell(
-                          onTap: () {
-                            final newVal = !_autoPlayNextEpisode;
-                            setState(() {
-                              _autoPlayNextEpisode = newVal;
-                            });
-                            _settings.autoPlayNextEpisode = newVal;
-                            if (newVal) {
-                              _prefetchManager
-                                  ?.onEpisodePlaying(_currentEpisodeIndex);
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text(
-                                      '▶️ Đã BẬT tự chuyển tập & dịch ngầm'),
-                                  duration: Duration(seconds: 2),
-                                ),
-                              );
-                            } else {
-                              _prefetchManager?.cancelPrefetch();
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text(
-                                      '⏸️ Đã TẮT tự chuyển tập (Dừng dịch ngầm)'),
-                                  duration: Duration(seconds: 2),
-                                ),
-                              );
-                            }
-                          },
-                          borderRadius: BorderRadius.circular(20),
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 200),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 5,
-                            ),
-                            decoration: BoxDecoration(
-                              color: _autoPlayNextEpisode
-                                  ? AppTheme.primaryEmerald
-                                      .withValues(alpha: 0.25)
-                                  : Colors.black.withValues(alpha: 0.6),
-                              borderRadius: BorderRadius.circular(20),
-                              border: Border.all(
-                                color: _autoPlayNextEpisode
-                                    ? AppTheme.primaryEmerald
-                                    : Colors.white24,
-                                width: 1.2,
-                              ),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  _autoPlayNextEpisode
-                                      ? Icons.play_circle_fill_rounded
-                                      : Icons.pause_circle_outline_rounded,
-                                  size: 16,
-                                  color: _autoPlayNextEpisode
-                                      ? AppTheme.primaryEmerald
-                                      : Colors.white70,
-                                ),
-                                const SizedBox(width: 4),
-                                Text(
-                                  _autoPlayNextEpisode
-                                      ? 'Tự chuyển'
-                                      : 'Dừng tập',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.bold,
-                                    color: _autoPlayNextEpisode
-                                        ? AppTheme.primaryEmerald
-                                        : Colors.white70,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        IconButton(
-                          icon: const Icon(
-                            Icons.format_list_numbered_rounded,
-                            color: Colors.white,
-                          ),
-                          tooltip: 'Danh sách tập phim',
-                          onPressed: _showEpisodeListSheet,
-                        ),
-                        IconButton(
-                          icon: const Icon(
-                            Icons.tune_rounded,
-                            color: Colors.white70,
-                          ),
-                          tooltip: 'Cài đặt dịch & xem Hồng Quả',
-                          onPressed: () => HongguoSettingsSheet.show(context),
-                        ),
-                      ],
-
-                      if (_bilibiliDetails != null || BilibiliResolver.isBilibiliUrl(_sourceVideoUrl)) ...[
-                        IconButton(
-                          icon: const Icon(
-                            Icons.tune_rounded,
-                            color: Color(0xFF00AEEC),
-                          ),
-                          tooltip: 'Cài đặt Bilibili',
-                          onPressed: () => BilibiliSettingsSheet.show(context),
-                        ),
-                      ],
-
-                      IconButton(
-                        icon: Icon(
-                          _settings.isBlackBoxEnabled
-                              ? Icons.crop_portrait
-                              : Icons.crop_portrait_outlined,
-                          color: _settings.isBlackBoxEnabled
-                              ? Colors.yellowAccent
-                              : Colors.white70,
-                        ),
-                        tooltip: 'Bật/Tắt Hộp Đen',
-                        onPressed: () {
-                          setState(() {
-                            _settings.isBlackBoxEnabled =
-                                !_settings.isBlackBoxEnabled;
-                          });
-                        },
-                      ),
-                      IconButton(
-                        icon: Icon(
-                          _settings.isTtsPlaybackEnabled
-                              ? Icons.record_voice_over
-                              : Icons.voice_over_off,
-                          color: _settings.isTtsPlaybackEnabled
-                              ? Colors.lightGreenAccent
-                              : Colors.white70,
-                        ),
-                        tooltip: 'Bật/Tắt lồng tiếng AI',
-                        onPressed: () async {
-                          setState(() {
-                            _settings.isTtsPlaybackEnabled =
-                                !_settings.isTtsPlaybackEnabled;
-                          });
-                          await _applyAudioVolumes();
-                          if (_settings.isTtsPlaybackEnabled) {
-                            if (_prefetchManager != null && _currentDocument.items.isNotEmpty) {
-                              _prefetchManager!.ensureTtsGenerated(_currentDocument, episodeIndex: _currentEpisodeIndex);
-                            }
-                            final positionMs =
-                                controller.value.position.inMilliseconds;
-                            await _ttsScheduler.onSeek(positionMs);
-                            _syncTtsWithVideo();
-                          }
-                        },
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.graphic_eq, color: Colors.white),
-                        tooltip: 'Chỉnh âm lượng độc lập',
-                        onPressed: () {
-                          showModalBottomSheet(
-                            context: context,
-                            backgroundColor: Colors.transparent,
-                            isScrollControlled: true,
-                            builder: (ctx) => StatefulBuilder(
-                              builder: (context, setSheetState) {
-                                return DualVolumeSheet(
-                                  originalVolume: _settings.originalVideoVolume,
-                                  aiVolume: _settings.ttsVolume,
-                                  onOriginalVolumeChanged: (val) async {
+                                  tooltip: 'Bật/Tắt lồng tiếng AI',
+                                  onPressed: () async {
                                     setState(() {
-                                      _settings.originalVideoVolume = val;
+                                      _settings.isTtsPlaybackEnabled =
+                                          !_settings.isTtsPlaybackEnabled;
                                     });
-                                    await _controller?.setVolume(val);
-                                    setSheetState(() {});
+                                    await _applyAudioVolumes();
+                                    if (_settings.isTtsPlaybackEnabled) {
+                                      if (_prefetchManager != null && _currentDocument.items.isNotEmpty) {
+                                        _prefetchManager!.ensureTtsGenerated(_currentDocument, episodeIndex: _currentEpisodeIndex);
+                                      }
+                                      final positionMs =
+                                          controller.value.position.inMilliseconds;
+                                      await _ttsScheduler.onSeek(positionMs);
+                                      _syncTtsWithVideo();
+                                    }
                                   },
-                                  onAiVolumeChanged: (val) async {
-                                    setState(() {
-                                      _settings.ttsVolume = val;
-                                    });
-                                    await _ttsScheduler.setVolume(val);
-                                    setSheetState(() {});
-                                  },
-                                );
-                              },
-                            ),
-                          );
-                        },
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.tune, color: Colors.white),
-                        tooltip: 'Tùy chỉnh phụ đề & vị trí',
-                        onPressed: () {
-                          showModalBottomSheet(
-                            context: context,
-                            backgroundColor: Colors.transparent,
-                            isScrollControlled: true,
-                            builder: (ctx) => SubtitleControlSheet(
-                              settings: _settings,
-                              onChanged: () {
-                                setState(() {});
-                              },
-                            ),
-                          );
-                        },
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.ios_share, color: Colors.white),
-                        tooltip: 'Xuất/Chia sẻ SRT',
-                        onPressed: _shareSubtitle,
-                      ),
-                      if (_currentVideoPath.startsWith('http')) ...[
-                        if (_isDownloadingVideo)
-                          GestureDetector(
-                            onTap: () {
-                              setState(() {
-                                _showDownloadBanner = !_showDownloadBanner;
-                              });
-                            },
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 4),
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 4,
                                 ),
-                                decoration: BoxDecoration(
-                                  color: AppTheme.primaryEmerald.withValues(
-                                    alpha: _showDownloadBanner ? 0.22 : 0.10,
-                                  ),
-                                  borderRadius: BorderRadius.circular(16),
-                                  border: Border.all(
-                                    color: AppTheme.primaryEmerald.withValues(
-                                      alpha: _showDownloadBanner ? 0.7 : 0.35,
-                                    ),
-                                    width: 1,
-                                  ),
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    SizedBox(
-                                      width: 13,
-                                      height: 13,
-                                      child: CircularProgressIndicator(
-                                        value: _downloadProgress > 0
-                                            ? _downloadProgress.clamp(0.0, 1.0)
-                                            : null,
-                                        strokeWidth: 2,
-                                        color: AppTheme.primaryEmerald,
-                                        backgroundColor: Colors.white12,
+
+                                // 5. Chỉnh âm lượng độc lập (Âm lượng kép)
+                                IconButton(
+                                  icon: const Icon(Icons.graphic_eq, color: Colors.white),
+                                  tooltip: 'Chỉnh âm lượng độc lập',
+                                  onPressed: () {
+                                    showModalBottomSheet(
+                                      context: context,
+                                      backgroundColor: Colors.transparent,
+                                      isScrollControlled: true,
+                                      builder: (ctx) => StatefulBuilder(
+                                        builder: (context, setSheetState) {
+                                          return DualVolumeSheet(
+                                            originalVolume: _settings.originalVideoVolume,
+                                            aiVolume: _settings.ttsVolume,
+                                            onOriginalVolumeChanged: (val) async {
+                                              setState(() {
+                                                _settings.originalVideoVolume = val;
+                                              });
+                                              await _controller?.setVolume(val);
+                                              setSheetState(() {});
+                                            },
+                                            onAiVolumeChanged: (val) async {
+                                              setState(() {
+                                                _settings.ttsVolume = val;
+                                              });
+                                              await _ttsScheduler.setVolume(val);
+                                              setSheetState(() {});
+                                            },
+                                          );
+                                        },
                                       ),
-                                    ),
-                                    const SizedBox(width: 5),
-                                    Text(
-                                      '${(_downloadProgress * 100).toInt()}%',
-                                      style: const TextStyle(
-                                        color: AppTheme.primaryEmerald,
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 4),
-                                    Icon(
-                                      _showDownloadBanner
-                                          ? Icons.visibility_rounded
-                                          : Icons.visibility_off_rounded,
-                                      color: AppTheme.primaryEmerald
-                                          .withValues(alpha: 0.8),
-                                      size: 13,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          )
-                        else
-                          IconButton(
-                            icon: const Icon(
-                              Icons.download_for_offline_rounded,
-                              color: Colors.white,
-                            ),
-                            tooltip: 'Tải video về máy để xem offline (không lag)',
-                            onPressed: _showDownloadSelectionSheet,
-                          ),
-                      ],
-                      IconButton(
-                        icon: const Icon(Icons.subtitles, color: Colors.white),
-                        tooltip: 'Kịch bản phụ đề',
-                        onPressed: () {
-                          showModalBottomSheet(
-                            context: context,
-                            backgroundColor: Colors.transparent,
-                            isScrollControlled: true,
-                            builder: (ctx) =>
-                                ValueListenableBuilder<VideoPlayerValue>(
-                              valueListenable: controller,
-                              builder: (_, value, _) => FractionallySizedBox(
-                                heightFactor: 0.6,
-                                child: TranscriptSheet(
-                                  document: _currentDocument,
-                                  currentPositionMs:
-                                      value.position.inMilliseconds,
-                                  onSeekTo: (ms) {
-                                    _seekTo(ms);
-                                    Navigator.pop(ctx);
+                                    );
                                   },
                                 ),
-                              ),
-                            ),
-                          );
-                        },
-                      ),
+
+                                // 6. Tùy chỉnh phụ đề & vị trí
+                                IconButton(
+                                  icon: const Icon(Icons.tune, color: Colors.white),
+                                  tooltip: 'Tùy chỉnh phụ đề & vị trí',
+                                  onPressed: () {
+                                    showModalBottomSheet(
+                                      context: context,
+                                      backgroundColor: Colors.transparent,
+                                      isScrollControlled: true,
+                                      builder: (ctx) => SubtitleControlSheet(
+                                        settings: _settings,
+                                        onChanged: () {
+                                          setState(() {});
+                                        },
+                                      ),
+                                    );
+                                  },
+                                ),
+
+                                // 7. Tải video offline (nếu là video online)
+                                if (_currentVideoPath.startsWith('http')) ...[
+                                  if (_isDownloadingVideo)
+                                    GestureDetector(
+                                      onTap: () {
+                                        setState(() {
+                                          _showDownloadBanner = !_showDownloadBanner;
+                                        });
+                                      },
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 8,
+                                            vertical: 4,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: AppTheme.primaryEmerald.withValues(
+                                              alpha: _showDownloadBanner ? 0.22 : 0.10,
+                                            ),
+                                            borderRadius: BorderRadius.circular(16),
+                                            border: Border.all(
+                                              color: AppTheme.primaryEmerald.withValues(
+                                                alpha: _showDownloadBanner ? 0.7 : 0.35,
+                                              ),
+                                              width: 1,
+                                            ),
+                                          ),
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              SizedBox(
+                                                width: 13,
+                                                height: 13,
+                                                child: CircularProgressIndicator(
+                                                  value: _downloadProgress > 0
+                                                      ? _downloadProgress.clamp(0.0, 1.0)
+                                                      : null,
+                                                  strokeWidth: 2,
+                                                  color: AppTheme.primaryEmerald,
+                                                  backgroundColor: Colors.white12,
+                                                ),
+                                              ),
+                                              const SizedBox(width: 5),
+                                              Text(
+                                                '${(_downloadProgress * 100).toInt()}%',
+                                                style: const TextStyle(
+                                                  color: AppTheme.primaryEmerald,
+                                                  fontSize: 11,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+                                              const SizedBox(width: 4),
+                                              Icon(
+                                                _showDownloadBanner
+                                                    ? Icons.visibility_rounded
+                                                    : Icons.visibility_off_rounded,
+                                                color: AppTheme.primaryEmerald
+                                                    .withValues(alpha: 0.8),
+                                                size: 13,
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    )
+                                  else
+                                    IconButton(
+                                      icon: const Icon(
+                                        Icons.download_for_offline_rounded,
+                                        color: Colors.white,
+                                      ),
+                                      tooltip: 'Tải video về máy để xem offline (không lag)',
+                                      onPressed: _showDownloadSelectionSheet,
+                                    ),
+                                ],
                               ],
                             ),
                           ),
