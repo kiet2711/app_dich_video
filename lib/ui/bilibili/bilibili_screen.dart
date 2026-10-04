@@ -771,9 +771,9 @@ class _BilibiliScreenState extends State<BilibiliScreen>
               sliver: SliverGrid(
                 gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: 2,
-                  childAspectRatio: 0.76,
-                  crossAxisSpacing: 10,
-                  mainAxisSpacing: 12,
+                  childAspectRatio: 0.90,
+                  crossAxisSpacing: 8,
+                  mainAxisSpacing: 10,
                 ),
                 delegate: SliverChildBuilderDelegate(
                   (context, index) => _buildVideoCard(_recommendList[index]),
@@ -920,9 +920,9 @@ class _BilibiliScreenState extends State<BilibiliScreen>
                           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                             crossAxisCount: 2,
-                            childAspectRatio: 0.76,
-                            crossAxisSpacing: 10,
-                            mainAxisSpacing: 12,
+                            childAspectRatio: 0.90,
+                            crossAxisSpacing: 8,
+                            mainAxisSpacing: 10,
                           ),
                           itemCount: _aiList.length + (_isLoadingMoreAi ? 1 : 0),
                           itemBuilder: (context, index) {
@@ -1062,9 +1062,9 @@ class _BilibiliScreenState extends State<BilibiliScreen>
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: 2,
-            childAspectRatio: 0.76,
-            crossAxisSpacing: 10,
-            mainAxisSpacing: 12,
+            childAspectRatio: 0.90,
+            crossAxisSpacing: 8,
+            mainAxisSpacing: 10,
           ),
           itemCount: _popularList.length + (_isLoadingMorePopular ? 1 : 0),
           itemBuilder: (context, index) {
@@ -1128,9 +1128,9 @@ class _BilibiliScreenState extends State<BilibiliScreen>
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: 2,
-            childAspectRatio: 0.76,
-            crossAxisSpacing: 10,
-            mainAxisSpacing: 12,
+            childAspectRatio: 0.90,
+            crossAxisSpacing: 8,
+            mainAxisSpacing: 10,
           ),
           itemCount: _comicList.length + (_isLoadingMoreComic ? 1 : 0),
           itemBuilder: (context, index) {
@@ -1197,9 +1197,9 @@ class _BilibiliScreenState extends State<BilibiliScreen>
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
-        childAspectRatio: 0.76,
-        crossAxisSpacing: 10,
-        mainAxisSpacing: 12,
+        childAspectRatio: 0.90,
+        crossAxisSpacing: 8,
+        mainAxisSpacing: 10,
       ),
       itemCount: _searchResults.length,
       itemBuilder: (ctx, idx) => _buildVideoCard(_searchResults[idx]),
@@ -1310,57 +1310,57 @@ class _BilibiliScreenState extends State<BilibiliScreen>
             ),
 
             // 2. Title & Channel Row
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Title (2 lines max)
-                    Expanded(
-                      child: _buildTitleText(item.title),
-                    ),
-                    const SizedBox(height: 4),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Title (2 lines max, height 32px vừa vặn 2 dòng)
+                  SizedBox(
+                    height: 32,
+                    child: _buildTitleText(item.title),
+                  ),
+                  const SizedBox(height: 5),
 
-                    // Channel / UP row with UP badge and 3-dots icon
-                    Row(
-                      children: [
-                        // UP Badge
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
-                          decoration: BoxDecoration(
-                            border: Border.all(color: Colors.white30, width: 0.8),
-                            borderRadius: BorderRadius.circular(3),
-                          ),
-                          child: const Text(
-                            'UP',
-                            style: TextStyle(
-                              color: Colors.white60,
-                              fontSize: 8,
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: -0.2,
-                            ),
-                          ),
+                  // Channel / UP row with UP badge and 3-dots icon
+                  Row(
+                    children: [
+                      // UP Badge
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.white30, width: 0.8),
+                          borderRadius: BorderRadius.circular(3),
                         ),
-                        const SizedBox(width: 4),
-
-                        // Channel name
-                        Expanded(
-                          child: _buildUpName(item.author),
-                        ),
-
-                        // 3-dots options icon
-                        InkWell(
-                          onTap: () => _showItemMoreOptions(item),
-                          child: const Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 2),
-                            child: Icon(Icons.more_vert_rounded, size: 15, color: Colors.white38),
+                        child: const Text(
+                          'UP',
+                          style: TextStyle(
+                            color: Colors.white60,
+                            fontSize: 8,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: -0.2,
                           ),
                         ),
-                      ],
-                    ),
-                  ],
-                ),
+                      ),
+                      const SizedBox(width: 4),
+
+                      // Channel name
+                      Expanded(
+                        child: _buildUpName(item.author),
+                      ),
+
+                      // 3-dots options icon
+                      InkWell(
+                        onTap: () => _showItemMoreOptions(item),
+                        child: const Padding(
+                          padding: EdgeInsets.symmetric(horizontal: 2),
+                          child: Icon(Icons.more_vert_rounded, size: 15, color: Colors.white38),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
             ),
           ],

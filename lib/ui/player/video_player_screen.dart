@@ -10,6 +10,7 @@ import 'package:video_player/video_player.dart';
 import '../../data/model/subtitle_document.dart';
 import '../../data/repository/history_repository.dart';
 import '../../data/repository/settings_repository.dart';
+import '../../domain/ai/offline_mlkit_translator.dart';
 import '../../domain/ai/title_translator.dart';
 import '../../domain/media/bilibili_resolver.dart';
 import '../../domain/media/hongguo_prefetch_manager.dart';
@@ -68,8 +69,29 @@ class VideoPlayerScreen extends StatefulWidget {
 class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     with WidgetsBindingObserver {
   static const _playbackSpeeds = <double>[0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
-  static const _stallThreshold = Duration(milliseconds: 700);
+  static const _stallThreshold = Duration(milliseconds: 350);
   static const _positionSaveInterval = Duration(seconds: 3);
+
+  bool _isSwitchingQuality = false;
+  String _currentQualityKey = '64';
+  bool _isPlayerFullScreen = false;
+  List<BilibiliAnimeItem> _relatedVideos = [];
+  bool _isLoadingRelated = false;
+
+  String get _currentQualityLabel {
+    switch (_currentQualityKey) {
+      case '80':
+        return '1080P';
+      case '64':
+        return '720P';
+      case '32':
+        return '480P';
+      case '16':
+        return '360P';
+      default:
+        return 'HD';
+    }
+  }
 
   VideoPlayerController? _controller;
   late TtsAudioScheduler _ttsScheduler;
@@ -620,6 +642,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         if (cached != null && await cached.exists() && await cached.length() > 1024 * 100) {
           targetPath = cached.path;
           playableUrls = [cached.path];
+          _loadRelatedVideos(details.bvid);
         } else {
           playableUrls = await resolver.getMuxedVideoUrls(
             details,
@@ -630,6 +653,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           httpHeaders = BilibiliResolver.requestHeaders(
             _settings.bilibiliSessData,
           );
+          _currentQualityKey = _settings.preferredVideoQuality;
+          _loadRelatedVideos(details.bvid);
         }
       } else if (widget.dramaDetail != null) {
         _bilibiliDetails = null;
@@ -1136,6 +1161,698 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         });
       }
     }
+  }
+
+  Future<void> _loadRelatedVideos(String bvid) async {
+    if (bvid.isEmpty) return;
+    if (mounted) {
+      setState(() {
+        _isLoadingRelated = true;
+        _relatedVideos = [];
+      });
+    }
+    try {
+      final resolver = BilibiliResolver();
+      final related = await resolver.getRelatedVideos(
+        bvid,
+        cookie: _settings.bilibiliSessData,
+      );
+      if (mounted) {
+        setState(() {
+          _relatedVideos = related;
+          _isLoadingRelated = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _isLoadingRelated = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _showQualitySelectionSheet() async {
+    final details = _bilibiliDetails;
+    if (details == null) return;
+
+    final qualities = [
+      {
+        'key': '80',
+        'title': '1080p (Full HD)',
+        'subtitle': 'Độ nét cao nhất, xem đã mắt',
+        'badge': 'VIP / SESSDATA',
+      },
+      {
+        'key': '64',
+        'title': '720p (HD - Chuẩn)',
+        'subtitle': 'Cân bằng tối ưu giữa độ nét và mượt mà',
+        'badge': 'Chuẩn',
+      },
+      {
+        'key': '32',
+        'title': '480p (Tiết kiệm)',
+        'subtitle': 'Dung lượng nhẹ, phù hợp mạng yếu / 4G',
+        'badge': null,
+      },
+      {
+        'key': '16',
+        'title': '360p (Siêu nhẹ)',
+        'subtitle': 'Tải siêu tốc, tốn rất ít dữ liệu mạng',
+        'badge': null,
+      },
+    ];
+
+    await showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return Container(
+          decoration: const BoxDecoration(
+            color: Color(0xFF1E202A),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 14),
+                  decoration: BoxDecoration(
+                    color: Colors.white24,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const Padding(
+                padding: EdgeInsets.only(left: 4, bottom: 12),
+                child: Row(
+                  children: [
+                    Icon(Icons.high_quality_rounded, color: Color(0xFF00AEEC), size: 22),
+                    SizedBox(width: 8),
+                    Text(
+                      'Chọn chất lượng video Bilibili',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              ...qualities.map((q) {
+                final isSelected = q['key'] == _currentQualityKey;
+                return ListTile(
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  tileColor: isSelected ? const Color(0xFF00AEEC).withValues(alpha: 0.15) : null,
+                  leading: Icon(
+                    isSelected ? Icons.check_circle_rounded : Icons.radio_button_unchecked,
+                    color: isSelected ? const Color(0xFF00AEEC) : Colors.white38,
+                  ),
+                  title: Row(
+                    children: [
+                      Text(
+                        q['title']!,
+                        style: TextStyle(
+                          color: isSelected ? const Color(0xFF00AEEC) : Colors.white,
+                          fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
+                          fontSize: 14,
+                        ),
+                      ),
+                      if (q['badge'] != null) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                          decoration: BoxDecoration(
+                            color: q['badge'] == 'VIP / SESSDATA'
+                                ? const Color(0xFFFB7299).withValues(alpha: 0.2)
+                                : Colors.white12,
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(
+                              color: q['badge'] == 'VIP / SESSDATA'
+                                  ? const Color(0xFFFB7299)
+                                  : Colors.white24,
+                              width: 0.8,
+                            ),
+                          ),
+                          child: Text(
+                            q['badge']!,
+                            style: TextStyle(
+                              color: q['badge'] == 'VIP / SESSDATA'
+                                  ? const Color(0xFFFB7299)
+                                  : Colors.white70,
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  subtitle: Text(
+                    q['subtitle']!,
+                    style: const TextStyle(color: Colors.white54, fontSize: 11.5),
+                  ),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    if (q['key'] != _currentQualityKey) {
+                      _switchBilibiliQuality(q['key']!);
+                    }
+                  },
+                );
+              }),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _switchBilibiliQuality(String newQuality) async {
+    final details = _bilibiliDetails;
+    final controller = _controller;
+    if (details == null || controller == null) return;
+
+    final currentPositionMs = _currentPosMs;
+    final wasPlaying = controller.value.isPlaying;
+
+    setState(() {
+      _isSwitchingQuality = true;
+    });
+
+    try {
+      final resolver = BilibiliResolver();
+      final urls = await resolver.getMuxedVideoUrls(
+        details,
+        _settings.bilibiliSessData,
+        newQuality,
+      );
+      if (urls.isEmpty) throw Exception('Không lấy được luồng video cho chất lượng này');
+      final newUrl = urls.first;
+      final headers = BilibiliResolver.requestHeaders(_settings.bilibiliSessData);
+
+      _controller?.removeListener(_onPlayerUpdate);
+      await _controller?.pause();
+      await _controller?.dispose();
+
+      final newController = await _initializeNetworkController(
+        [newUrl],
+        headers,
+        VideoPlayerOptions(
+          mixWithOthers: true,
+          allowBackgroundPlayback: true,
+        ),
+      );
+
+      if (!mounted) {
+        await newController.dispose();
+        return;
+      }
+
+      await newController.seekTo(Duration(milliseconds: currentPositionMs));
+      if (wasPlaying) {
+        await newController.play();
+      }
+
+      _settings.preferredVideoQuality = newQuality;
+
+      setState(() {
+        _controller = newController;
+        _currentVideoPath = newUrl;
+        _currentQualityKey = newQuality;
+        _isSwitchingQuality = false;
+      });
+
+      _controller!.addListener(_onPlayerUpdate);
+      _syncTtsWithVideo();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✨ Đã chuyển sang chất lượng $_currentQualityLabel'),
+            duration: const Duration(seconds: 2),
+            backgroundColor: const Color(0xFF00AEEC),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isSwitchingQuality = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Không thể đổi chất lượng: $e'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    }
+  }
+
+  Widget _buildBilibiliBelowContent() {
+    final details = _bilibiliDetails;
+    final displayTitle = _currentTitle.isNotEmpty
+        ? _currentTitle
+        : (widget.title ?? '');
+
+    return Container(
+      color: const Color(0xFF14161E),
+      child: ListView(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        children: [
+          // 1. Tiêu đề video đang xem & nút dịch
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(
+                  displayTitle,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                    height: 1.3,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 8),
+              InkWell(
+                onTap: _isTranslatingTitle ? null : _togglePlayerTitleTranslation,
+                borderRadius: BorderRadius.circular(6),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: _showTranslatedTitle
+                        ? AppTheme.primaryEmerald.withValues(alpha: 0.25)
+                        : Colors.white12,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color: _showTranslatedTitle
+                          ? AppTheme.primaryEmerald.withValues(alpha: 0.5)
+                          : Colors.white24,
+                    ),
+                  ),
+                  child: _isTranslatingTitle
+                      ? const SizedBox(
+                          width: 12,
+                          height: 12,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.translate_rounded,
+                              size: 13,
+                              color: _showTranslatedTitle
+                                  ? AppTheme.primaryEmerald
+                                  : Colors.white,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              _showTranslatedTitle ? 'Gốc' : 'Dịch',
+                              style: TextStyle(
+                                color: _showTranslatedTitle
+                                    ? AppTheme.primaryEmerald
+                                    : Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+
+          // 2. Thông tin UP tác giả
+          if (details != null && details.author.isNotEmpty)
+            Row(
+              children: [
+                if (details.upFace != null && details.upFace!.isNotEmpty)
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: Image.network(
+                      details.upFace!,
+                      width: 32,
+                      height: 32,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, _, _) => const CircleAvatar(
+                        radius: 16,
+                        backgroundColor: Color(0xFF282B37),
+                        child: Icon(Icons.person, size: 18, color: Colors.white54),
+                      ),
+                    ),
+                  )
+                else
+                  const CircleAvatar(
+                    radius: 16,
+                    backgroundColor: Color(0xFF282B37),
+                    child: Icon(Icons.person, size: 18, color: Colors.white54),
+                  ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        details.author,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          if (details.viewCountText.isNotEmpty)
+                            Text(
+                              '${details.viewCountText} lượt xem',
+                              style: const TextStyle(color: Colors.white54, fontSize: 11),
+                            ),
+                          if (details.viewCountText.isNotEmpty && details.danmakuText.isNotEmpty)
+                            const Text(' • ', style: TextStyle(color: Colors.white38)),
+                          if (details.danmakuText.isNotEmpty)
+                            Text(
+                              '${details.danmakuText} đạn mạc',
+                              style: const TextStyle(color: Colors.white54, fontSize: 11),
+                            ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          const SizedBox(height: 14),
+
+          // 3. Thanh nút thao tác nhanh
+          Row(
+            children: [
+              // Nút Vietsub AI
+              Expanded(
+                child: InkWell(
+                  onTap: () => _startOnDemandPipeline(enableTts: false),
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF00AEEC).withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFF00AEEC).withValues(alpha: 0.4)),
+                    ),
+                    child: const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.subtitles_rounded, color: Color(0xFF00AEEC), size: 16),
+                        SizedBox(width: 6),
+                        Text(
+                          'Vietsub AI',
+                          style: TextStyle(
+                            color: Color(0xFF00AEEC),
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+
+              // Nút Lồng tiếng AI
+              Expanded(
+                child: InkWell(
+                  onTap: () => _startOnDemandPipeline(enableTts: true),
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    decoration: BoxDecoration(
+                      color: AppTheme.primaryEmerald.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: AppTheme.primaryEmerald.withValues(alpha: 0.4)),
+                    ),
+                    child: const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.record_voice_over_rounded, color: AppTheme.primaryEmerald, size: 16),
+                        SizedBox(width: 6),
+                        Text(
+                          'Lồng tiếng AI',
+                          style: TextStyle(
+                            color: AppTheme.primaryEmerald,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+
+              // Nút Chọn chất lượng
+              InkWell(
+                onTap: _showQualitySelectionSheet,
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.white10,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.white24),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.high_quality_rounded, color: Colors.white70, size: 16),
+                      const SizedBox(width: 4),
+                      Text(
+                        _currentQualityLabel,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+
+              // Nút Tải về
+              IconButton(
+                icon: const Icon(Icons.download_for_offline_rounded, color: Colors.white70, size: 20),
+                tooltip: 'Tải video về máy',
+                onPressed: _showDownloadSelectionSheet,
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          const Divider(color: Colors.white12, height: 1),
+          const SizedBox(height: 12),
+
+          // 4. Header "Video đề xuất"
+          Row(
+            children: [
+              const Icon(Icons.recommend_rounded, color: Color(0xFF00AEEC), size: 20),
+              const SizedBox(width: 8),
+              const Text(
+                'Video đề xuất',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const Spacer(),
+              if (_isLoadingRelated)
+                const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF00AEEC)),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+
+          // 5. Danh sách video đề xuất
+          if (_isLoadingRelated && _relatedVideos.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 30),
+              child: Center(
+                child: CircularProgressIndicator(color: Color(0xFF00AEEC)),
+              ),
+            )
+          else if (_relatedVideos.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 24),
+              child: Center(
+                child: Text(
+                  'Không có video đề xuất liên quan',
+                  style: TextStyle(color: Colors.white54, fontSize: 13),
+                ),
+              ),
+            )
+          else
+            ..._relatedVideos.map((item) => _buildRelatedVideoTile(item)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRelatedVideoTile(BilibiliAnimeItem item) {
+    return InkWell(
+      onTap: () {
+        _switchVideo(
+          newVideoPath: item.targetPlayUrl,
+          newDocument: SubtitleDocument(),
+          newTitle: item.title,
+        );
+      },
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Thumbnail 16:9 bo góc kèm thời lượng
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: SizedBox(
+                width: 124,
+                height: 70,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    if (item.cover.isNotEmpty)
+                      Image.network(
+                        item.cover,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, _, _) => Container(
+                          color: const Color(0xFF282B37),
+                          child: const Icon(Icons.movie_rounded, color: Colors.white24),
+                        ),
+                      )
+                    else
+                      Container(
+                        color: const Color(0xFF282B37),
+                        child: const Icon(Icons.movie_rounded, color: Colors.white24),
+                      ),
+                    if (item.durationText.isNotEmpty)
+                      Positioned(
+                        right: 4,
+                        bottom: 4,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1.5),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.8),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            item.durationText,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+
+            // Tiêu đề & tác giả UP
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  FutureBuilder<String>(
+                    future: OfflineMlKitTranslator.translateHongguoTitle(item.title),
+                    initialData: item.title,
+                    builder: (context, snapshot) {
+                      return Text(
+                        snapshot.data ?? item.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                          height: 1.25,
+                        ),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 5),
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 0.8),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.white30, width: 0.8),
+                          borderRadius: BorderRadius.circular(3),
+                        ),
+                        child: const Text(
+                          'UP',
+                          style: TextStyle(
+                            color: Colors.white60,
+                            fontSize: 7.5,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          item.author,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white54,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (item.viewCountText.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      '${item.viewCountText} lượt xem',
+                      style: const TextStyle(color: Colors.white38, fontSize: 10),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _switchVideo({
@@ -1866,10 +2583,16 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
   bool _refreshPlaybackStall(DateTime now) {
     final value = _controller?.value;
-    if (value == null) return false;
+    if (value == null || !value.isInitialized) return false;
+    if (value.isBuffering) {
+      if (!_isPlaybackStalled) {
+        _isPlaybackStalled = true;
+        return true;
+      }
+      return false;
+    }
     final stalled =
         value.isPlaying &&
-        value.isBuffering &&
         now.difference(_lastPositionAdvanceAt) >= _stallThreshold;
     if (stalled == _isPlaybackStalled) return false;
     _isPlaybackStalled = stalled;
@@ -2086,34 +2809,105 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         !_userChosePlayRaw &&
         !isLocalVideo;
 
+    final isBilibili = _bilibiliDetails != null ||
+        BilibiliResolver.isBilibiliUrl(_sourceVideoUrl) ||
+        BilibiliResolver.isBilibiliUrl(_currentVideoPath);
+    final isBilibiliPortrait = !isLandscape && !_isPlayerFullScreen && (isBilibili && widget.dramaDetail == null);
+
+    final playerWidget = _buildVideoPlayerArea(
+      controller,
+      isLandscape,
+      isHongguoWaitingTranslation,
+      displayTitle,
+      isBilibiliPortrait: isBilibiliPortrait,
+    );
+
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
-        child: GestureDetector(
-          onTap: () {
-            if (isHongguoWaitingTranslation) return;
-            setState(() {
-              _showControls = !_showControls;
-            });
-          },
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              // 1. Trình phát Video
-              Center(
-                child: AspectRatio(
-                  aspectRatio: controller.value.aspectRatio,
-                  child: VideoPlayer(controller),
+        child: isBilibiliPortrait
+            ? Column(
+                children: [
+                  AspectRatio(
+                    aspectRatio: 16 / 9,
+                    child: playerWidget,
+                  ),
+                  Expanded(
+                    child: _buildBilibiliBelowContent(),
+                  ),
+                ],
+              )
+            : playerWidget,
+      ),
+    );
+  }
+
+  Widget _buildVideoPlayerArea(
+    VideoPlayerController controller,
+    bool isLandscape,
+    bool isHongguoWaitingTranslation,
+    String displayTitle, {
+    required bool isBilibiliPortrait,
+  }) {
+    return GestureDetector(
+      onTap: () {
+        if (isHongguoWaitingTranslation) return;
+        setState(() {
+          _showControls = !_showControls;
+        });
+      },
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          // 1. Trình phát Video
+          Center(
+            child: AspectRatio(
+              aspectRatio: controller.value.aspectRatio,
+              child: VideoPlayer(controller),
+            ),
+          ),
+
+          // Vòng xoay chờ tải mạng (Buffering indicator)
+          if ((controller.value.isBuffering || _isPlaybackStalled) &&
+              !controller.value.hasError)
+            Center(
+              child: Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.65),
+                  shape: BoxShape.circle,
+                ),
+                child: const CircularProgressIndicator(
+                  strokeWidth: 3.5,
+                  color: Color(0xFF00AEEC),
                 ),
               ),
+            ),
 
-              // Vòng xoay chờ tải mạng (Buffering indicator)
-              if (_isPlaybackStalled)
-                const Center(
-                  child: CircularProgressIndicator(
-                    color: AppTheme.primaryEmerald,
-                  ),
+          // Lớp chuyển đổi chất lượng video
+          if (_isSwitchingQuality)
+            Container(
+              color: Colors.black54,
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const CircularProgressIndicator(
+                      color: Color(0xFF00AEEC),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Đang đổi chất lượng sang $_currentQualityLabel...',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
                 ),
+              ),
+            ),
 
               // 2. Lớp Hộp Đen (BlackBox) và Phụ đề nổi
               SubtitleOverlay(
@@ -2475,6 +3269,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                       IconButton(
                         icon: const Icon(Icons.arrow_back, color: Colors.white),
                         onPressed: () {
+                          if (_isPlayerFullScreen) {
+                            setState(() {
+                              _isPlayerFullScreen = false;
+                            });
+                            return;
+                          }
                           if (widget.isGlobalPlayer) {
                             if (_settings.miniPlayerEnabled) {
                               GlobalPlayerManager.instance.minimize();
@@ -3184,13 +3984,67 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                               ),
                             ),
                           ),
-                          Text(
-                            _formatDuration(controller.value.duration),
-                            style: const TextStyle(
-                              color: Colors.white70,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                            ),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              // Nút chất lượng video Bilibili (1080P, 720P, ...)
+                              if (_bilibiliDetails != null ||
+                                  BilibiliResolver.isBilibiliUrl(_sourceVideoUrl) ||
+                                  BilibiliResolver.isBilibiliUrl(_currentVideoPath)) ...[
+                                InkWell(
+                                  onTap: _showQualitySelectionSheet,
+                                  borderRadius: BorderRadius.circular(4),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF00AEEC).withValues(alpha: 0.2),
+                                      borderRadius: BorderRadius.circular(4),
+                                      border: Border.all(
+                                        color: const Color(0xFF00AEEC).withValues(alpha: 0.6),
+                                        width: 1,
+                                      ),
+                                    ),
+                                    child: Text(
+                                      _currentQualityLabel,
+                                      style: const TextStyle(
+                                        color: Color(0xFF00AEEC),
+                                        fontSize: 10.5,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                              ],
+                              Text(
+                                _formatDuration(controller.value.duration),
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              IconButton(
+                                iconSize: 22,
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                                icon: Icon(
+                                  (isLandscape || _isPlayerFullScreen)
+                                      ? Icons.fullscreen_exit_rounded
+                                      : Icons.fullscreen_rounded,
+                                  color: Colors.white,
+                                ),
+                                tooltip: (isLandscape || _isPlayerFullScreen)
+                                    ? 'Thu nhỏ'
+                                    : 'Toàn màn hình',
+                                onPressed: () {
+                                  setState(() {
+                                    _isPlayerFullScreen = !_isPlayerFullScreen;
+                                  });
+                                },
+                              ),
+                            ],
                           ),
                         ],
                       ),
@@ -3275,9 +4129,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                 ),
             ],
           ),
-        ),
-      ),
-    );
+        );
   }
 
   Widget _buildLandscapeDownloadBanner() {

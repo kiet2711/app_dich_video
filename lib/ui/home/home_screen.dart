@@ -28,11 +28,13 @@ class HomeScreen extends StatefulWidget {
   final VoidCallback? onNavigateToSettings;
   final void Function(SubtitleDocument doc, String videoPath, [String? title])?
   onProcessCompleted;
+  final bool hideAppBar;
 
   const HomeScreen({
     super.key,
     this.onNavigateToSettings,
     this.onProcessCompleted,
+    this.hideAppBar = false,
   });
 
   @override
@@ -914,39 +916,41 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.darkBackground,
-      appBar: AppBar(
-        backgroundColor: AppColors.darkBackground,
-        elevation: 0,
-        title: const Row(
-          children: [
-            Icon(Icons.movie, color: AppColors.primaryEmerald, size: 26),
-            SizedBox(width: 10),
-            Text(
-              'CapSub AI Studio',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
+      appBar: widget.hideAppBar
+          ? null
+          : AppBar(
+              backgroundColor: AppColors.darkBackground,
+              elevation: 0,
+              title: const Row(
+                children: [
+                  Icon(Icons.movie, color: AppColors.primaryEmerald, size: 26),
+                  SizedBox(width: 10),
+                  Text(
+                    'CapSub AI Studio',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                ],
               ),
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.settings, color: Colors.white),
+                  tooltip: 'Cài đặt',
+                  onPressed: () {
+                    if (widget.onNavigateToSettings != null) {
+                      widget.onNavigateToSettings!();
+                    } else {
+                      Navigator.pushNamed(
+                        context,
+                        '/settings',
+                      ).then((_) => _loadSettings());
+                    }
+                  },
+                ),
+              ],
             ),
-          ],
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings, color: Colors.white),
-            tooltip: 'Cài đặt',
-            onPressed: () {
-              if (widget.onNavigateToSettings != null) {
-                widget.onNavigateToSettings!();
-              } else {
-                Navigator.pushNamed(
-                  context,
-                  '/settings',
-                ).then((_) => _loadSettings());
-              }
-            },
-          ),
-        ],
-      ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.symmetric(horizontal: 20),
         child: Column(

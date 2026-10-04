@@ -48,6 +48,11 @@ class BilibiliVideoDetails {
   final List<BilibiliPageInfo> pages;
   final int selectedPageIndex;
 
+  final String author;
+  final String? upFace;
+  final String viewCountText;
+  final String danmakuText;
+
   const BilibiliVideoDetails({
     required this.bvid,
     required this.aid,
@@ -58,6 +63,10 @@ class BilibiliVideoDetails {
     required this.durationSeconds,
     this.pages = const [],
     this.selectedPageIndex = 1,
+    this.author = '',
+    this.upFace,
+    this.viewCountText = '',
+    this.danmakuText = '',
   });
 }
 
@@ -514,6 +523,16 @@ class BilibiliResolver {
       }
     }
 
+    final owner = data['owner'] as Map<String, dynamic>?;
+    final author = owner?['name']?.toString() ?? '';
+    var upFace = owner?['face']?.toString() ?? '';
+    if (upFace.startsWith('http://')) {
+      upFace = upFace.replaceFirst('http://', 'https://');
+    }
+    final stat = data['stat'] as Map<String, dynamic>?;
+    final view = stat?['view'];
+    final danmaku = stat?['danmaku'];
+
     return BilibiliVideoDetails(
       bvid: data['bvid']?.toString() ?? target.bvid ?? '',
       aid: (data['aid'] as num?)?.toInt() ?? 0,
@@ -526,6 +545,10 @@ class BilibiliResolver {
           : ((data['duration'] as num?)?.toInt() ?? 0),
       pages: pages,
       selectedPageIndex: target.pageIndex,
+      author: author,
+      upFace: upFace.isNotEmpty ? upFace : null,
+      viewCountText: view != null ? _formatCount(view) : '',
+      danmakuText: danmaku != null ? _formatCount(danmaku) : '',
     );
   }
 
@@ -1450,6 +1473,59 @@ class BilibiliResolver {
           .map((item) => (item['show_name'] ?? item['keyword'])?.toString().trim() ?? '')
           .where((k) => k.isNotEmpty)
           .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// Lấy danh sách video đề xuất / liên quan theo bvid
+  Future<List<BilibiliAnimeItem>> getRelatedVideos(
+    String bvid, {
+    String cookie = '',
+  }) async {
+    if (bvid.isEmpty) return const [];
+    try {
+      final response = await dio.get<Map<String, dynamic>>(
+        'https://api.bilibili.com/x/web-interface/archive/related',
+        queryParameters: {'bvid': bvid},
+        options: Options(
+          headers: requestHeaders(cookie),
+          sendTimeout: const Duration(seconds: 10),
+          receiveTimeout: const Duration(seconds: 10),
+        ),
+      );
+      final json = response.data;
+      if (json == null || json['code'] != 0) return const [];
+      final data = json['data'] as List<dynamic>? ?? const [];
+      final list = <BilibiliAnimeItem>[];
+      for (final item in data) {
+        if (item is! Map<String, dynamic>) continue;
+        final itemBvid = item['bvid']?.toString() ?? '';
+        final title = item['title']?.toString() ?? '';
+        final pic = item['pic']?.toString() ?? '';
+        final duration = (item['duration'] as num?)?.toInt() ?? 0;
+        final owner = item['owner'] as Map<String, dynamic>?;
+        final author = owner?['name']?.toString() ?? '';
+        final upFace = owner?['face']?.toString() ?? '';
+        final stat = item['stat'] as Map<String, dynamic>?;
+        final view = stat?['view'];
+        final danmaku = stat?['danmaku'];
+
+        list.add(
+          BilibiliAnimeItem(
+            title: title.replaceAll(RegExp(r'<[^>]*>'), ''),
+            cover: pic.startsWith('http://') ? pic.replaceFirst('http://', 'https://') : pic,
+            bvid: itemBvid,
+            author: author,
+            upFace: upFace.startsWith('http://') ? upFace.replaceFirst('http://', 'https://') : upFace,
+            durationSeconds: duration,
+            durationText: BilibiliAnimeItem.formatDuration(duration),
+            viewCountText: view != null ? _formatCount(view) : '',
+            danmakuText: danmaku != null ? _formatCount(danmaku) : '',
+          ),
+        );
+      }
+      return list;
     } catch (_) {
       return const [];
     }

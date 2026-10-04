@@ -30,12 +30,14 @@ class TtsStudioScreen extends StatefulWidget {
   final SubtitleDocument? initialDoc;
   final String? initialVideoPath;
   final String? initialTitle;
+  final bool hideAppBar;
 
   const TtsStudioScreen({
     super.key,
     this.initialDoc,
     this.initialVideoPath,
     this.initialTitle,
+    this.hideAppBar = false,
   });
 
   @override
@@ -865,39 +867,41 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.darkBackground,
-      appBar: AppBar(
-        backgroundColor: AppColors.darkBackground,
-        elevation: 0,
-        title: Row(
-          children: const [
-            Icon(
-              Icons.record_voice_over,
-              color: AppColors.primaryEmerald,
-              size: 22,
-            ),
-            SizedBox(width: 8),
-            Text(
-              'Lồng Tiếng AI (TTS Studio)',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
+      appBar: widget.hideAppBar
+          ? null
+          : AppBar(
+              backgroundColor: AppColors.darkBackground,
+              elevation: 0,
+              title: Row(
+                children: const [
+                  Icon(
+                    Icons.record_voice_over,
+                    color: AppColors.primaryEmerald,
+                    size: 22,
+                  ),
+                  SizedBox(width: 8),
+                  Text(
+                    'Lồng Tiếng AI (TTS Studio)',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
               ),
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.settings, color: Colors.white70),
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (ctx) => const SettingsScreen()),
+                    );
+                  },
+                ),
+              ],
             ),
-          ],
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings, color: Colors.white70),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (ctx) => const SettingsScreen()),
-              );
-            },
-          ),
-        ],
-      ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Column(
