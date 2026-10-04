@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
+import '../../data/model/voice_model.dart';
 import '../../data/repository/settings_repository.dart';
 import '../../domain/media/bilibili_resolver.dart';
 import '../theme/app_theme.dart';
+import '../tts/voice_selector_sheet.dart';
 import 'bilibili_login_sheet.dart';
 
 class BilibiliSettingsSheet extends StatefulWidget {
@@ -27,6 +30,10 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
   BilibiliUserProfile? _profile;
   bool _isLoadingProfile = true;
 
+  String _translationMode = 'capcut';
+  VoiceItem _selectedVoice = VoicePresets.defaultVoice;
+  bool _downloadOffline = false;
+
   @override
   void initState() {
     super.initState();
@@ -38,6 +45,12 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
     if (!mounted) return;
     setState(() {
       _settings = settings;
+      _translationMode = settings.bilibiliTranslationMode;
+      _selectedVoice = VoicePresets.vietnameseVoices.firstWhere(
+        (v) => v.voiceType == settings.bilibiliSelectedTtsVoice,
+        orElse: () => VoicePresets.defaultVoice,
+      );
+      _downloadOffline = settings.downloadBilibiliVideo;
     });
 
     final sess = settings.bilibiliSessData;
@@ -104,12 +117,49 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
     }
   }
 
+  Future<void> _pickVoice() async {
+    HapticFeedback.selectionClick();
+    final picked = await VoiceSelectorSheet.show(
+      context,
+      currentVoiceType: _selectedVoice.voiceType,
+      accentColor: const Color(0xFF00AEEC),
+      title: 'Chọn Giọng Đọc Bilibili',
+    );
+
+    if (picked != null && mounted) {
+      setState(() {
+        _selectedVoice = picked;
+      });
+      _settings?.bilibiliSelectedTtsVoice = picked.voiceType;
+    }
+  }
+
+  Future<void> _saveAndClose() async {
+    HapticFeedback.lightImpact();
+    if (_settings != null) {
+      _settings!.bilibiliTranslationMode = _translationMode;
+      _settings!.bilibiliSelectedTtsVoice = _selectedVoice.voiceType;
+      _settings!.downloadBilibiliVideo = _downloadOffline;
+    }
+    Navigator.of(context).pop();
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Đã cập nhật cài đặt Bilibili thành công!'),
+        duration: Duration(seconds: 2),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final settings = _settings;
+    final bottomPadding = MediaQuery.of(context).viewInsets.bottom;
 
     return Container(
-      padding: const EdgeInsets.only(bottom: 24),
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.90,
+      ),
+      padding: EdgeInsets.fromLTRB(20, 12, 20, 20 + bottomPadding),
       decoration: const BoxDecoration(
         color: AppTheme.darkSurface,
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
@@ -123,7 +173,7 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
             // Drag handle
             Center(
               child: Container(
-                margin: const EdgeInsets.only(top: 12, bottom: 12),
+                margin: const EdgeInsets.only(bottom: 12),
                 width: 44,
                 height: 4,
                 decoration: BoxDecoration(
@@ -134,96 +184,439 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
             ),
 
             // Header
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF00AEEC).withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Icon(Icons.tune_rounded, color: Color(0xFF00AEEC), size: 20),
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF00AEEC).withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(10),
                   ),
-                  const SizedBox(width: 12),
-                  const Expanded(
-                    child: Text(
-                      'Cài đặt Bilibili',
+                  child: const Icon(Icons.tune_rounded, color: Color(0xFF00AEEC), size: 20),
+                ),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Text(
+                    'Cài đặt Bilibili',
+                    style: TextStyle(
+                      color: AppTheme.textPrimary,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.close_rounded, color: Colors.white70),
+                  tooltip: 'Đóng',
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 10),
+
+            // Scrollable Settings Content
+            Flexible(
+              child: SingleChildScrollView(
+                physics: const BouncingScrollPhysics(),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Account Profile Box
+                    _buildAccountBox(),
+
+                    const SizedBox(height: 18),
+
+                    // ===== 1. CHỌN CHẾ ĐỘ DỊCH (CAPCUT VS AI) =====
+                    const Text(
+                      'CHẾ ĐỘ DỊCH PHỤ ĐỀ (BILIBILI):',
                       style: TextStyle(
-                        color: AppTheme.textPrimary,
-                        fontSize: 18,
+                        color: AppTheme.textSecondary,
+                        fontSize: 12,
                         fontWeight: FontWeight.bold,
+                        letterSpacing: 0.5,
                       ),
                     ),
-                  ),
-                  IconButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(Icons.close_rounded, color: Colors.white70),
-                  ),
-                ],
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Tùy chọn phương thức bóc tách & dịch thuật khi xem video Bilibili.',
+                      style: TextStyle(color: AppTheme.textMuted, fontSize: 11),
+                    ),
+                    const SizedBox(height: 10),
+
+                    // Option 1: CapCut Free
+                    _buildModeOption(
+                      mode: 'capcut',
+                      title: 'CapCut Free',
+                      badge: 'MIỄN PHÍ',
+                      badgeColor: Colors.amber,
+                      icon: Icons.bolt_rounded,
+                      iconColor: Colors.amber,
+                      description:
+                          'Tự động bóc tách âm thanh & dịch miễn phí qua CapCut. Nhanh chóng, không tốn API key.',
+                      isSelected: _translationMode == 'capcut',
+                      onTap: () {
+                        HapticFeedback.selectionClick();
+                        setState(() => _translationMode = 'capcut');
+                      },
+                    ),
+                    const SizedBox(height: 10),
+
+                    // Option 2: AI Online
+                    _buildModeOption(
+                      mode: 'api_online',
+                      title: 'Dịch Bằng AI Online',
+                      badge: 'GEMINI / GROQ',
+                      badgeColor: const Color(0xFF00AEEC),
+                      icon: Icons.auto_awesome_rounded,
+                      iconColor: const Color(0xFF00AEEC),
+                      description:
+                          'Dịch AI ngữ cảnh thông minh, chuẩn xác từng câu thoại, câu từ tự nhiên và mượt mà.',
+                      isSelected: _translationMode == 'api_online',
+                      onTap: () {
+                        HapticFeedback.selectionClick();
+                        setState(() => _translationMode = 'api_online');
+                      },
+                    ),
+
+                    const SizedBox(height: 18),
+
+                    // ===== 2. CHỌN GIỌNG LỒNG TIẾNG AI =====
+                    const Text(
+                      'GIỌNG LỒNG TIẾNG AI (BILIBILI):',
+                      style: TextStyle(
+                        color: AppTheme.textSecondary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Giọng đọc AI tự động phát khi bật chế độ "Lồng tiếng AI" cho video.',
+                      style: TextStyle(color: AppTheme.textMuted, fontSize: 11),
+                    ),
+                    const SizedBox(height: 8),
+
+                    InkWell(
+                      onTap: _pickVoice,
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: AppTheme.darkSurfaceVariant,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: const Color(0xFF00AEEC).withValues(alpha: 0.3),
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF00AEEC).withValues(alpha: 0.15),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                Icons.record_voice_over_rounded,
+                                color: Color(0xFF00AEEC),
+                                size: 20,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Flexible(
+                                        child: Text(
+                                          _selectedVoice.displayName,
+                                          style: const TextStyle(
+                                            color: AppTheme.textPrimary,
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 6, vertical: 1),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFF00AEEC).withValues(alpha: 0.2),
+                                          borderRadius: BorderRadius.circular(4),
+                                        ),
+                                        child: const Text(
+                                          'Đang dùng',
+                                          style: TextStyle(
+                                            color: Color(0xFF00AEEC),
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 3),
+                                  Text(
+                                    _selectedVoice.description.isNotEmpty
+                                        ? _selectedVoice.description
+                                        : 'Giọng đọc chuẩn tiếng Việt',
+                                    style: const TextStyle(
+                                      color: AppTheme.textSecondary,
+                                      fontSize: 11,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF00AEEC).withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                  color: const Color(0xFF00AEEC).withValues(alpha: 0.4),
+                                ),
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    'Đổi giọng',
+                                    style: TextStyle(
+                                      color: Color(0xFF00AEEC),
+                                      fontSize: 11.5,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  SizedBox(width: 2),
+                                  Icon(Icons.chevron_right_rounded,
+                                      size: 16, color: Color(0xFF00AEEC)),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 18),
+
+                    // ===== 3. CÀI ĐẶT PHÁT VIDEO & TẢI VỀ =====
+                    const Text(
+                      'TÙY CHỌN PHÁT & TẢI VIDEO:',
+                      style: TextStyle(
+                        color: AppTheme.textSecondary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+
+                    if (settings != null)
+                      Container(
+                        decoration: BoxDecoration(
+                          color: AppTheme.darkSurfaceVariant,
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: AppTheme.cardBorder),
+                        ),
+                        child: Column(
+                          children: [
+                            // Video Quality Option
+                            ListTile(
+                              leading: const Icon(Icons.high_quality_rounded, color: Color(0xFF00AEEC)),
+                              title: const Text(
+                                'Độ phân giải ưu tiên',
+                                style: TextStyle(color: AppTheme.textPrimary, fontSize: 13.5),
+                              ),
+                              subtitle: Text(
+                                _getQualityLabel(settings.bilibiliPreferredQuality),
+                                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11.5),
+                              ),
+                              trailing: DropdownButtonHideUnderline(
+                                child: DropdownButton<String>(
+                                  value: settings.bilibiliPreferredQuality,
+                                  dropdownColor: AppTheme.darkSurfaceVariant,
+                                  icon: const Icon(Icons.arrow_drop_down, color: Colors.white70),
+                                  items: const [
+                                    DropdownMenuItem(value: '1080', child: Text('1080p FHD', style: TextStyle(color: Colors.white, fontSize: 12.5))),
+                                    DropdownMenuItem(value: '720', child: Text('720p HD', style: TextStyle(color: Colors.white, fontSize: 12.5))),
+                                    DropdownMenuItem(value: '480', child: Text('480p SD', style: TextStyle(color: Colors.white, fontSize: 12.5))),
+                                    DropdownMenuItem(value: '360', child: Text('360p Tiết kiệm', style: TextStyle(color: Colors.white, fontSize: 12.5))),
+                                  ],
+                                  onChanged: (val) {
+                                    if (val != null) {
+                                      setState(() {
+                                        settings.bilibiliPreferredQuality = val;
+                                      });
+                                    }
+                                  },
+                                ),
+                              ),
+                            ),
+                            const Divider(color: AppTheme.cardBorder, height: 1),
+                            // Download offline toggle
+                            SwitchListTile(
+                              dense: true,
+                              activeThumbColor: const Color(0xFF00AEEC),
+                              secondary: const Icon(Icons.download_rounded, color: Color(0xFF00AEEC)),
+                              title: const Text(
+                                'Tự động tải video về máy',
+                                style: TextStyle(color: AppTheme.textPrimary, fontSize: 13.5),
+                              ),
+                              subtitle: const Text(
+                                'Tải trước MP4 để phát offline 100% mượt mà không giật lag',
+                                style: TextStyle(color: AppTheme.textMuted, fontSize: 11),
+                              ),
+                              value: _downloadOffline,
+                              onChanged: (val) {
+                                setState(() => _downloadOffline = val);
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+
+                    const SizedBox(height: 20),
+                  ],
+                ),
               ),
             ),
 
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
 
-            // Account Profile Box
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: _buildAccountBox(),
-            ),
-
-            const SizedBox(height: 16),
-
-            // Settings List
-            if (settings != null) ...[
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: AppTheme.darkSurfaceVariant,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: AppTheme.cardBorder),
+            // Nút Lưu Cài Đặt
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF00AEEC),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 13),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                  child: Column(
+                  elevation: 0,
+                ),
+                icon: const Icon(Icons.check_circle_rounded, size: 18),
+                label: const Text(
+                  'Lưu Cài Đặt',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                ),
+                onPressed: _saveAndClose,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildModeOption({
+    required String mode,
+    required String title,
+    required String badge,
+    required Color badgeColor,
+    required IconData icon,
+    required Color iconColor,
+    required String description,
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? const Color(0xFF00AEEC).withValues(alpha: 0.12)
+              : AppTheme.darkSurfaceVariant,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isSelected ? const Color(0xFF00AEEC) : AppTheme.cardBorder,
+            width: isSelected ? 1.5 : 1,
+          ),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              margin: const EdgeInsets.only(top: 2),
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: iconColor.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(icon, color: iconColor, size: 20),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
                     children: [
-                      // Video Quality Option
-                      ListTile(
-                        leading: const Icon(Icons.high_quality_rounded, color: Color(0xFF00AEEC)),
-                        title: const Text(
-                          'Độ phân giải ưu tiên',
-                          style: TextStyle(color: AppTheme.textPrimary, fontSize: 14),
+                      Text(
+                        title,
+                        style: TextStyle(
+                          color: isSelected ? const Color(0xFF00AEEC) : AppTheme.textPrimary,
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
                         ),
-                        subtitle: Text(
-                          _getQualityLabel(settings.bilibiliPreferredQuality),
-                          style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                      ),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: badgeColor.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(
+                            color: badgeColor.withValues(alpha: 0.5),
+                            width: 0.8,
+                          ),
                         ),
-                        trailing: DropdownButtonHideUnderline(
-                          child: DropdownButton<String>(
-                            value: settings.bilibiliPreferredQuality,
-                            dropdownColor: AppTheme.darkSurfaceVariant,
-                            icon: const Icon(Icons.arrow_drop_down, color: Colors.white70),
-                            items: const [
-                              DropdownMenuItem(value: '1080', child: Text('1080p FHD', style: TextStyle(color: Colors.white, fontSize: 13))),
-                              DropdownMenuItem(value: '720', child: Text('720p HD', style: TextStyle(color: Colors.white, fontSize: 13))),
-                              DropdownMenuItem(value: '480', child: Text('480p SD', style: TextStyle(color: Colors.white, fontSize: 13))),
-                              DropdownMenuItem(value: '360', child: Text('360p Tiết kiệm', style: TextStyle(color: Colors.white, fontSize: 13))),
-                            ],
-                            onChanged: (val) {
-                              if (val != null) {
-                                setState(() {
-                                  settings.bilibiliPreferredQuality = val;
-                                });
-                              }
-                            },
+                        child: Text(
+                          badge,
+                          style: TextStyle(
+                            color: badgeColor,
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
                           ),
                         ),
                       ),
                     ],
                   ),
+                  const SizedBox(height: 4),
+                  Text(
+                    description,
+                    style: const TextStyle(
+                      color: AppTheme.textMuted,
+                      fontSize: 11.5,
+                      height: 1.35,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (isSelected)
+              const Padding(
+                padding: EdgeInsets.only(top: 2, left: 4),
+                child: Icon(
+                  Icons.check_circle_rounded,
+                  color: Color(0xFF00AEEC),
+                  size: 20,
                 ),
               ),
-            ],
           ],
         ),
       ),

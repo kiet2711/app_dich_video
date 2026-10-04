@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../data/model/voice_model.dart';
 import '../../data/repository/settings_repository.dart';
 import '../theme/app_theme.dart';
+import '../tts/voice_selector_sheet.dart';
 
 class HongguoSettingsSheet extends StatefulWidget {
   const HongguoSettingsSheet({super.key});
@@ -25,6 +27,7 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
   late TextEditingController _promptController;
 
   String _translationMode = 'api_online';
+  VoiceItem _selectedVoice = VoicePresets.defaultVoice;
   bool _autoPlay = true;
   int _prefetchCount = 1;
   bool _isLoading = true;
@@ -42,6 +45,10 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
     setState(() {
       _settings = s;
       _translationMode = s.hongguoTranslationMode;
+      _selectedVoice = VoicePresets.vietnameseVoices.firstWhere(
+        (v) => v.voiceType == s.hongguoSelectedTtsVoice,
+        orElse: () => VoicePresets.defaultVoice,
+      );
       _autoPlay = s.autoPlayNextEpisode;
       _prefetchCount = s.prefetchEpisodeCount;
       _promptController.text = s.hongguoCustomPrompt;
@@ -55,10 +62,27 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
     super.dispose();
   }
 
+  Future<void> _pickVoice() async {
+    HapticFeedback.selectionClick();
+    final picked = await VoiceSelectorSheet.show(
+      context,
+      currentVoiceType: _selectedVoice.voiceType,
+      accentColor: AppColors.primaryEmerald,
+      title: 'Chọn Giọng Đọc Hồng Quả',
+    );
+
+    if (picked != null && mounted) {
+      setState(() {
+        _selectedVoice = picked;
+      });
+    }
+  }
+
   Future<void> _saveAndClose() async {
     HapticFeedback.lightImpact();
     if (_settings != null) {
       _settings!.hongguoTranslationMode = _translationMode;
+      _settings!.hongguoSelectedTtsVoice = _selectedVoice.voiceType;
       _settings!.autoPlayNextEpisode = _autoPlay;
       _settings!.prefetchEpisodeCount = _prefetchCount;
       _settings!.hongguoCustomPrompt = _promptController.text.trim();
@@ -282,7 +306,135 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
                       const SizedBox(height: 16),
                     ],
 
-                    // ===== 3. TỰ ĐỘNG CHUYỂN TẬP & DỊCH NGẦM =====
+                    // ===== 3. CHỌN GIỌNG LỒNG TIẾNG AI =====
+                    const Text(
+                      'GIỌNG LỒNG TIẾNG AI (HỒNG QUẢ):',
+                      style: TextStyle(
+                        color: AppColors.textSecondary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Giọng đọc AI tự động lồng tiếng cho các tập phim ngắn Hồng Quả.',
+                      style: TextStyle(color: AppColors.textMuted, fontSize: 11),
+                    ),
+                    const SizedBox(height: 8),
+
+                    InkWell(
+                      onTap: _pickVoice,
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: AppColors.darkSurfaceVariant,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: AppColors.primaryEmerald.withValues(alpha: 0.3),
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: AppColors.primaryEmerald.withValues(alpha: 0.15),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                Icons.record_voice_over_rounded,
+                                color: AppColors.primaryEmerald,
+                                size: 20,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Flexible(
+                                        child: Text(
+                                          _selectedVoice.displayName,
+                                          style: const TextStyle(
+                                            color: AppColors.textPrimary,
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 6, vertical: 1),
+                                        decoration: BoxDecoration(
+                                          color: AppColors.primaryEmerald.withValues(alpha: 0.2),
+                                          borderRadius: BorderRadius.circular(4),
+                                        ),
+                                        child: const Text(
+                                          'Đang dùng',
+                                          style: TextStyle(
+                                            color: AppColors.primaryEmerald,
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 3),
+                                  Text(
+                                    _selectedVoice.description.isNotEmpty
+                                        ? _selectedVoice.description
+                                        : 'Giọng đọc CapCut tự nhiên',
+                                    style: const TextStyle(
+                                      color: AppColors.textSecondary,
+                                      fontSize: 11,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: AppColors.primaryEmerald.withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                  color: AppColors.primaryEmerald.withValues(alpha: 0.4),
+                                ),
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    'Đổi giọng',
+                                    style: TextStyle(
+                                      color: AppColors.primaryEmerald,
+                                      fontSize: 11.5,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  SizedBox(width: 2),
+                                  Icon(Icons.chevron_right_rounded,
+                                      size: 16, color: AppColors.primaryEmerald),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // ===== 4. TỰ ĐỘNG CHUYỂN TẬP & DỊCH NGẦM =====
                     Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(

@@ -162,13 +162,54 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       _onDemandProgressPct = 0.05;
     });
 
+    final bool isBilibili = _bilibiliDetails != null || BilibiliResolver.isBilibiliUrl(_sourceVideoUrl);
+    final bool isHongguo = widget.dramaDetail != null;
+
+    String translationEngine = _settings.selectedModel;
+    String customPrompt = _settings.geminiCustomPrompt;
+
+    if (isBilibili) {
+      if (_settings.bilibiliTranslationMode == 'capcut') {
+        translationEngine = 'capcut';
+      } else {
+        if (_settings.geminiApiKeys.isNotEmpty) {
+          translationEngine = _settings.selectedGeminiModel.isNotEmpty
+              ? _settings.selectedGeminiModel
+              : 'gemini-3.1-flash-lite';
+        } else if (_settings.groqApiKeys.isNotEmpty) {
+          translationEngine = _settings.selectedGroqModel.isNotEmpty
+              ? _settings.selectedGroqModel
+              : 'openai/gpt-oss-120b';
+        } else {
+          translationEngine = 'capcut';
+        }
+      }
+    } else if (isHongguo) {
+      customPrompt = _settings.hongguoCustomPrompt;
+      if (_settings.hongguoTranslationMode == 'capcut') {
+        translationEngine = 'capcut';
+      } else {
+        if (_settings.geminiApiKeys.isNotEmpty) {
+          translationEngine = _settings.selectedGeminiModel.isNotEmpty
+              ? _settings.selectedGeminiModel
+              : 'gemini-3.1-flash-lite';
+        } else if (_settings.groqApiKeys.isNotEmpty) {
+          translationEngine = _settings.selectedGroqModel.isNotEmpty
+              ? _settings.selectedGroqModel
+              : 'openai/gpt-oss-120b';
+        } else {
+          translationEngine = 'capcut';
+        }
+      }
+    }
+
     try {
       final pipeline = SubtitlingPipeline(
         apiKeys: _settings.geminiApiKeys,
         groqApiKeys: _settings.groqApiKeys,
-        translationEngine: _settings.selectedModel,
+        translationEngine: translationEngine,
         stylePreset: _settings.selectedStyle,
-        customPrompt: _settings.geminiCustomPrompt,
+        customPrompt: customPrompt,
         targetLanguage: _settings.targetLanguage,
         geminiThreadCount: _settings.geminiThreadCount,
         geminiBatchSize: _settings.geminiBatchSize,
@@ -252,7 +293,15 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         _onDemandProgressPct = 0.5;
       });
 
-      final selectedVoiceType = _settings.selectedTtsVoice;
+      final String selectedVoiceType;
+      if (isHongguo) {
+        selectedVoiceType = _settings.hongguoSelectedTtsVoice;
+      } else if (isBilibili) {
+        selectedVoiceType = _settings.bilibiliSelectedTtsVoice;
+      } else {
+        selectedVoiceType = _settings.selectedTtsVoice;
+      }
+
       final voice = VoicePresets.vietnameseVoices.firstWhere(
         (v) => v.voiceType == selectedVoiceType,
         orElse: () => VoicePresets.vietnameseVoices.first,

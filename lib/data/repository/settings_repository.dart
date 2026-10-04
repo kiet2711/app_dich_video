@@ -252,6 +252,24 @@ class SettingsRepository {
   set hongguoTranslationMode(String v) =>
       prefs.setString('hongguo_translation_mode', v);
 
+  /// Giọng đọc lồng tiếng AI riêng cho phim ngắn Hồng Quả
+  String get hongguoSelectedTtsVoice =>
+      prefs.getString('hongguo_selected_tts_voice') ?? selectedTtsVoice;
+  set hongguoSelectedTtsVoice(String v) =>
+      prefs.setString('hongguo_selected_tts_voice', v);
+
+  /// Chế độ dịch riêng của Bilibili: 'capcut' (CapCut Free) hoặc 'api_online' (AI Online)
+  String get bilibiliTranslationMode =>
+      prefs.getString('bilibili_translation_mode') ?? 'capcut';
+  set bilibiliTranslationMode(String v) =>
+      prefs.setString('bilibili_translation_mode', v);
+
+  /// Giọng đọc lồng tiếng AI riêng cho Bilibili
+  String get bilibiliSelectedTtsVoice =>
+      prefs.getString('bilibili_selected_tts_voice') ?? selectedTtsVoice;
+  set bilibiliSelectedTtsVoice(String v) =>
+      prefs.setString('bilibili_selected_tts_voice', v);
+
   /// Tùy chọn tải video Bilibili về máy để phát offline (chống giật lag)
   bool get downloadBilibiliVideo =>
       prefs.getBool('download_bilibili_video') ?? false;

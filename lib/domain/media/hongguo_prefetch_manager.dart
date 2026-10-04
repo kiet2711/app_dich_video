@@ -135,7 +135,7 @@ class HongguoPrefetchManager {
     if (_isDisposed) return null;
     try {
       final settings = await SettingsRepository.getInstance();
-      final voiceType = settings.selectedTtsVoice;
+      final voiceType = settings.hongguoSelectedTtsVoice;
       final voice = VoicePresets.vietnameseVoices.firstWhere(
         (v) => v.voiceType == voiceType,
         orElse: () => VoicePresets.defaultVoice,
