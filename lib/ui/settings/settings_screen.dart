@@ -21,6 +21,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _customPromptController = TextEditingController();
   final _bilibiliSessDataController = TextEditingController();
   int _selectedAiProviderTab = 0; // 0: Gemini, 1: Groq
+  bool _isAutoResilientExpanded = false;
 
   @override
   void initState() {
@@ -710,130 +711,208 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                 ],
                 const SizedBox(height: 14),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF161822),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(
-                      color: AppColors.primaryEmerald.withValues(alpha: 0.3),
-                    ),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
+                // Card Cơ chế xoay thông minh & Cân bằng tải (có thể thu gọn/mở rộng)
+                Builder(
+                  builder: (context) {
+                    int activeCount = 0;
+                    if (_settings!.enableSmartModelFallback) activeCount++;
+                    if (_settings!.enableCrossProviderFallback) activeCount++;
+                    if (_settings!.enableDualModelBalancing) activeCount++;
+
+                    return Container(
+                      clipBehavior: Clip.antiAlias,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF161822),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: AppColors.primaryEmerald.withValues(alpha: 0.3),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Icon(
-                            Icons.auto_mode_rounded,
-                            color: AppColors.primaryEmerald,
-                            size: 18,
-                          ),
-                          const SizedBox(width: 8),
-                          const Expanded(
-                            child: Text(
-                              'CƠ CHẾ XOAY THÔNG MINH & CÂN BẰNG TẢI',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 13,
+                          InkWell(
+                            onTap: () {
+                              setState(() {
+                                _isAutoResilientExpanded = !_isAutoResilientExpanded;
+                              });
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      const Icon(
+                                        Icons.auto_mode_rounded,
+                                        color: AppColors.primaryEmerald,
+                                        size: 18,
+                                      ),
+                                      const SizedBox(width: 8),
+                                      const Expanded(
+                                        child: Text(
+                                          'CƠ CHẾ XOAY THÔNG MINH & CÂN BẰNG TẢI',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 12.5,
+                                          ),
+                                        ),
+                                      ),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 6,
+                                          vertical: 2,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: AppColors.primaryEmerald.withValues(alpha: 0.15),
+                                          borderRadius: BorderRadius.circular(4),
+                                        ),
+                                        child: const Text(
+                                          'AUTO RESILIENT',
+                                          style: TextStyle(
+                                            color: AppColors.primaryEmerald,
+                                            fontSize: 9.5,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 4),
+                                      AnimatedRotation(
+                                        turns: _isAutoResilientExpanded ? 0.5 : 0.0,
+                                        duration: const Duration(milliseconds: 200),
+                                        child: const Icon(
+                                          Icons.keyboard_arrow_down_rounded,
+                                          color: Colors.white60,
+                                          size: 20,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  if (!_isAutoResilientExpanded) ...[
+                                    const SizedBox(height: 4),
+                                    Row(
+                                      children: [
+                                        Container(
+                                          width: 6,
+                                          height: 6,
+                                          decoration: BoxDecoration(
+                                            color: activeCount > 0
+                                                ? AppColors.primaryEmerald
+                                                : Colors.white30,
+                                            shape: BoxShape.circle,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 6),
+                                        Text(
+                                          activeCount > 0
+                                              ? '$activeCount/3 cơ chế bảo vệ đang bật • Chạm để mở'
+                                              : 'Đang tắt • Chạm để mở',
+                                          style: const TextStyle(
+                                            color: Colors.white54,
+                                            fontSize: 11,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ],
                               ),
                             ),
                           ),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color: AppColors.primaryEmerald.withValues(alpha: 0.15),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: const Text(
-                              'AUTO RESILIENT',
-                              style: TextStyle(
-                                color: AppColors.primaryEmerald,
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
+                          AnimatedSize(
+                            duration: const Duration(milliseconds: 250),
+                            curve: Curves.easeInOut,
+                            alignment: Alignment.topCenter,
+                            child: _isAutoResilientExpanded
+                                ? Padding(
+                                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        const Divider(color: Color(0xFF262A38), height: 1),
+                                        const SizedBox(height: 4),
+                                        SwitchListTile(
+                                          contentPadding: EdgeInsets.zero,
+                                          dense: true,
+                                          activeThumbColor: AppColors.primaryEmerald,
+                                          title: const Text(
+                                            'Đổi Model phụ trên cùng Key khi chạm Quota (429)',
+                                            style: TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                          subtitle: const Text(
+                                            'Khi model 3.1 chạm limit, tự đổi sang 3.5 trên cùng Key trước khi đổi sang Key khác.',
+                                            style: TextStyle(color: Colors.white60, fontSize: 11),
+                                          ),
+                                          value: _settings!.enableSmartModelFallback,
+                                          onChanged: (val) {
+                                            setState(() {
+                                              _settings!.enableSmartModelFallback = val;
+                                            });
+                                          },
+                                        ),
+                                        const Divider(color: Color(0xFF262A38)),
+                                        SwitchListTile(
+                                          contentPadding: EdgeInsets.zero,
+                                          dense: true,
+                                          activeThumbColor: AppColors.primaryEmerald,
+                                          title: const Text(
+                                            'Chuyển sang Groq AI khi toàn bộ Key Gemini cạn',
+                                            style: TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                          subtitle: const Text(
+                                            'Tự động nhảy sang Groq Cloud (hoặc ngược lại) để đảm bảo không đứt gánh giữa chừng.',
+                                            style: TextStyle(color: Colors.white60, fontSize: 11),
+                                          ),
+                                          value: _settings!.enableCrossProviderFallback,
+                                          onChanged: (val) {
+                                            setState(() {
+                                              _settings!.enableCrossProviderFallback = val;
+                                            });
+                                          },
+                                        ),
+                                        const Divider(color: Color(0xFF262A38)),
+                                        SwitchListTile(
+                                          contentPadding: EdgeInsets.zero,
+                                          dense: true,
+                                          activeThumbColor: AppColors.primaryEmerald,
+                                          title: const Text(
+                                            'Cân bằng tải song song đa Model (Dual-Model)',
+                                            style: TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                          subtitle: const Text(
+                                            'Chạy đồng thời các luồng giữa Model 3.1 & 3.5 trên các Key để nhân đôi tốc độ dịch.',
+                                            style: TextStyle(color: Colors.white60, fontSize: 11),
+                                          ),
+                                          value: _settings!.enableDualModelBalancing,
+                                          onChanged: (val) {
+                                            setState(() {
+                                              _settings!.enableDualModelBalancing = val;
+                                            });
+                                          },
+                                        ),
+                                      ],
+                                    ),
+                                  )
+                                : const SizedBox.shrink(),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 10),
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        dense: true,
-                        activeThumbColor: AppColors.primaryEmerald,
-                        title: const Text(
-                          'Đổi Model phụ trên cùng Key khi chạm Quota (429)',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        subtitle: const Text(
-                          'Khi model 3.1 chạm limit, tự đổi sang 3.5 trên cùng Key trước khi đổi sang Key khác.',
-                          style: TextStyle(color: Colors.white60, fontSize: 11),
-                        ),
-                        value: _settings!.enableSmartModelFallback,
-                        onChanged: (val) {
-                          setState(() {
-                            _settings!.enableSmartModelFallback = val;
-                          });
-                        },
-                      ),
-                      const Divider(color: Color(0xFF262A38)),
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        dense: true,
-                        activeThumbColor: AppColors.primaryEmerald,
-                        title: const Text(
-                          'Chuyển sang Groq AI khi toàn bộ Key Gemini cạn',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        subtitle: const Text(
-                          'Tự động nhảy sang Groq Cloud (hoặc ngược lại) để đảm bảo không đứt gánh giữa chừng.',
-                          style: TextStyle(color: Colors.white60, fontSize: 11),
-                        ),
-                        value: _settings!.enableCrossProviderFallback,
-                        onChanged: (val) {
-                          setState(() {
-                            _settings!.enableCrossProviderFallback = val;
-                          });
-                        },
-                      ),
-                      const Divider(color: Color(0xFF262A38)),
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        dense: true,
-                        activeThumbColor: AppColors.primaryEmerald,
-                        title: const Text(
-                          'Cân bằng tải song song đa Model (Dual-Model)',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        subtitle: const Text(
-                          'Chạy đồng thời các luồng giữa Model 3.1 & 3.5 trên các Key để nhân đôi tốc độ dịch.',
-                          style: TextStyle(color: Colors.white60, fontSize: 11),
-                        ),
-                        value: _settings!.enableDualModelBalancing,
-                        onChanged: (val) {
-                          setState(() {
-                            _settings!.enableDualModelBalancing = val;
-                          });
-                        },
-                      ),
-                    ],
-                  ),
+                    );
+                  },
                 ),
                 const SizedBox(height: 12),
                 const Divider(color: AppColors.cardBorder),
@@ -1314,6 +1393,144 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       _settings!.downloadBilibiliVideo = val;
                     });
                   },
+                ),
+                const SizedBox(height: 8),
+                const Divider(color: AppColors.cardBorder),
+                const SizedBox(height: 8),
+                const Text(
+                  'CÔNG CỤ DỊCH BÌNH LUẬN BILIBILI:',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Chọn công cụ dịch khi bấm dịch các bình luận trong video Bilibili (có thể chuyển nhanh ngay tại tab bình luận).',
+                  style: TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: InkWell(
+                        onTap: () {
+                          setState(() {
+                            _settings!.commentTranslationEngine = 'local';
+                          });
+                        },
+                        borderRadius: BorderRadius.circular(10),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: _settings!.commentTranslationEngine == 'local'
+                                ? const Color(0xFF2E7D32).withValues(alpha: 0.25)
+                                : AppColors.darkSurfaceVariant,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: _settings!.commentTranslationEngine == 'local'
+                                  ? const Color(0xFF4CAF50)
+                                  : AppColors.cardBorder,
+                              width: _settings!.commentTranslationEngine == 'local' ? 1.5 : 1,
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(
+                                    Icons.phone_android_rounded,
+                                    size: 16,
+                                    color: _settings!.commentTranslationEngine == 'local'
+                                        ? const Color(0xFF81C784)
+                                        : Colors.white60,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    'Dịch Local',
+                                    style: TextStyle(
+                                      color: _settings!.commentTranslationEngine == 'local'
+                                          ? Colors.white
+                                          : Colors.white70,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              const Text(
+                                'Google ML Kit ngoại tuyến, 100% miễn phí, không tốn Token API',
+                                style: TextStyle(color: Colors.white54, fontSize: 10.5),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: InkWell(
+                        onTap: () {
+                          setState(() {
+                            _settings!.commentTranslationEngine = 'api';
+                          });
+                        },
+                        borderRadius: BorderRadius.circular(10),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: _settings!.commentTranslationEngine == 'api'
+                                ? const Color(0xFF00AEEC).withValues(alpha: 0.22)
+                                : AppColors.darkSurfaceVariant,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: _settings!.commentTranslationEngine == 'api'
+                                  ? const Color(0xFF00AEEC)
+                                  : AppColors.cardBorder,
+                              width: _settings!.commentTranslationEngine == 'api' ? 1.5 : 1,
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(
+                                    Icons.auto_awesome_rounded,
+                                    size: 16,
+                                    color: _settings!.commentTranslationEngine == 'api'
+                                        ? const Color(0xFF00AEEC)
+                                        : Colors.white60,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    'Dịch AI (API)',
+                                    style: TextStyle(
+                                      color: _settings!.commentTranslationEngine == 'api'
+                                          ? Colors.white
+                                          : Colors.white70,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              const Text(
+                                'Gemini/Groq AI, dịch mượt mà theo ngữ cảnh tiếng lóng mạng',
+                                style: TextStyle(color: Colors.white54, fontSize: 10.5),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),

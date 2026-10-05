@@ -99,7 +99,7 @@ class _BilibiliLoginSheetState extends State<BilibiliLoginSheet>
         if (result.isSuccess) {
           timer.cancel();
           final sessData = result.sessData!;
-          await _saveAndCompleteLogin(sessData);
+          await _saveAndCompleteLogin(sessData, result.biliJct);
         } else if (result.code == 86090) {
           setState(() {
             _qrStatusMessage = '📱 Đã quét! Vui lòng bấm Xác nhận trên điện thoại...';
@@ -167,21 +167,26 @@ class _BilibiliLoginSheetState extends State<BilibiliLoginSheet>
       );
       final cookieStr = cookies.toString();
       final match = RegExp(r'SESSDATA=([^;]+)').firstMatch(cookieStr);
+      final jctMatch = RegExp(r'bili_jct=([^;]+)').firstMatch(cookieStr);
+      final biliJct = jctMatch?.group(1)?.replaceAll('"', '') ?? '';
       if (match != null) {
         final sessData = match.group(1)?.replaceAll('"', '') ?? '';
         if (sessData.isNotEmpty) {
-          await _saveAndCompleteLogin(sessData);
+          await _saveAndCompleteLogin(sessData, biliJct);
         }
       }
     } catch (_) {}
   }
 
   // =================== SAVE & FINISH ===================
-  Future<void> _saveAndCompleteLogin(String sessData) async {
+  Future<void> _saveAndCompleteLogin(String sessData, [String? biliJct]) async {
     _qrPollTimer?.cancel();
     final cleanSess = sessData.trim();
     final settings = await SettingsRepository.getInstance();
     settings.bilibiliSessData = cleanSess;
+    if (biliJct != null && biliJct.trim().isNotEmpty) {
+      settings.bilibiliBiliJct = biliJct.trim();
+    }
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(

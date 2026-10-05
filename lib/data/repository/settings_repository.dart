@@ -221,6 +221,33 @@ class SettingsRepository {
     );
   }
 
+  String get bilibiliBiliJct => prefs.getString('bilibili_bili_jct') ?? '';
+  set bilibiliBiliJct(String v) => prefs.setString('bilibili_bili_jct', v.trim());
+
+  Set<int> get bilibiliFollowedMids {
+    final list = prefs.getStringList('bilibili_followed_mids') ?? const [];
+    return list.map((e) => int.tryParse(e) ?? 0).where((m) => m > 0).toSet();
+  }
+
+  void addBilibiliFollowedMid(int mid) {
+    if (mid <= 0) return;
+    final set = bilibiliFollowedMids;
+    set.add(mid);
+    prefs.setStringList('bilibili_followed_mids', set.map((e) => e.toString()).toList());
+  }
+
+  void removeBilibiliFollowedMid(int mid) {
+    if (mid <= 0) return;
+    final set = bilibiliFollowedMids;
+    set.remove(mid);
+    prefs.setStringList('bilibili_followed_mids', set.map((e) => e.toString()).toList());
+  }
+
+  bool isBilibiliMidFollowed(int mid) {
+    if (mid <= 0) return false;
+    return bilibiliFollowedMids.contains(mid);
+  }
+
   String get bilibiliPreferredQuality =>
       prefs.getString('bilibili_preferred_quality') ?? '1080';
   set bilibiliPreferredQuality(String v) =>
@@ -305,4 +332,10 @@ class SettingsRepository {
       prefs.getBool('mini_player_enabled') ?? true;
   set miniPlayerEnabled(bool v) =>
       prefs.setBool('mini_player_enabled', v);
+
+  /// Công cụ dịch bình luận Bilibili: 'local' (Google ML Kit on-device, 0 token API) hoặc 'api' (AI Gemini/Groq)
+  String get commentTranslationEngine =>
+      prefs.getString('comment_translation_engine') ?? 'local';
+  set commentTranslationEngine(String v) =>
+      prefs.setString('comment_translation_engine', v);
 }

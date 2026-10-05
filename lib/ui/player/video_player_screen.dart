@@ -27,6 +27,8 @@ import '../../domain/pipeline/subtitling_pipeline.dart';
 import '../../domain/tts/tts_cache_helper.dart';
 import '../../domain/tts/tts_generation_manager.dart';
 import '../bilibili/bilibili_settings_sheet.dart';
+import '../bilibili/bilibili_uploader_sheet.dart';
+import '../bilibili/bilibili_season_sheet.dart';
 import '../theme/app_theme.dart';
 import 'dual_volume_sheet.dart';
 import 'subtitle_control_sheet.dart';
@@ -152,6 +154,22 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   String? _translatedTitle;
   bool _showTranslatedTitle = false;
   bool _isTranslatingTitle = false;
+
+  // Bilibili Tab & Interactive State (Giới thiệu / Bình luận)
+  int _bilibiliTabIndex = 0; // 0: Giới thiệu, 1: Bình luận
+  BilibiliUploaderProfile? _bilibiliUploaderProfile;
+  bool _isFollowingBilibiliUploader = false;
+  bool _isTogglingBilibiliFollow = false;
+  BilibiliCommentResult? _bilibiliCommentResult;
+  List<BilibiliCommentItem> _bilibiliComments = [];
+  bool _isLoadingBilibiliComments = false;
+  bool _isLoadingMoreComments = false;
+  bool _hasMoreComments = true;
+  int _bilibiliCommentPage = 1;
+  int _bilibiliCommentSort = 2; // 2: Mới nhất, 0: Nổi bật
+  final Map<int, String> _bilibiliCommentTranslations = {};
+  final Set<int> _bilibiliTranslatingCommentIds = {};
+  String _commentTranslationEngine = 'local';
 
   // On-demand subtitling and progressive AI dubbing (Bilibili / External links)
   bool _isTranslatingOnDemand = false;
@@ -725,6 +743,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     if (mounted) {
       setState(() {
         _autoPlayNextEpisode = _settings.autoPlayNextEpisode;
+        _commentTranslationEngine = _settings.commentTranslationEngine;
       });
     }
 
@@ -832,6 +851,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           targetPath = cached.path;
           playableUrls = [cached.path];
           _loadRelatedVideos(details.bvid);
+          _loadBilibiliUploaderInfo(details);
+          _loadBilibiliComments(details.aid, reset: true);
         } else {
           playableUrls = await resolver.getMuxedVideoUrls(
             details,
@@ -844,6 +865,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           );
           _currentQualityKey = _settings.preferredVideoQuality;
           _loadRelatedVideos(details.bvid);
+          _loadBilibiliUploaderInfo(details);
+          _loadBilibiliComments(details.aid, reset: true);
         }
       } else if (widget.dramaDetail != null) {
         _bilibiliDetails = null;
@@ -1614,9 +1637,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       if (wasPlaying) {
         await newController.play();
       }
-
       _settings.preferredVideoQuality = newQuality;
-
       setState(() {
         _controller = newController;
         _currentVideoPath = newUrl;
@@ -1651,8 +1672,496 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     }
   }
 
+  Future<void> _goToBilibiliPage(int targetPage) async {
+    final details = _bilibiliDetails;
+    if (details == null || targetPage == details.selectedPageIndex) return;
+
+    final newUrl = 'https://www.bilibili.com/video/${details.bvid}?p=$targetPage';
+    String partTitle = 'P$targetPage';
+    for (final p in details.pages) {
+      if (p.page == targetPage) {
+        if (p.part.isNotEmpty) partTitle = 'P$targetPage (${p.part})';
+        break;
+      }
+    }
+    final rawMain = details.rawTitle ?? details.title;
+    final newTitle = '$rawMain - $partTitle';
+
+    await _switchVideo(
+      newVideoPath: newUrl,
+      newDocument: SubtitleDocument(),
+      newTitle: newTitle,
+      newCoverUrl: details.coverUrl,
+      newAuthor: details.author,
+    );
+  }
+
+  Future<void> _goToBilibiliUgcEpisode(BilibiliUgcEpisode ep) async {
+    final newUrl = ep.targetPlayUrl;
+    await _switchVideo(
+      newVideoPath: newUrl,
+      newDocument: SubtitleDocument(),
+      newTitle: ep.title,
+      newCoverUrl: ep.cover.isNotEmpty ? ep.cover : null,
+      newAuthor: _bilibiliDetails?.author,
+    );
+  }
+
+  void _showAllBilibiliPagesSheet(BilibiliVideoDetails details) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) {
+        return Container(
+          height: MediaQuery.of(context).size.height * 0.7,
+          decoration: const BoxDecoration(
+            color: Color(0xFF14161E),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          child: Column(
+            children: [
+              Container(
+                margin: const EdgeInsets.only(top: 10, bottom: 8),
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Danh sách các phần (${details.pages.length} phần)',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close_rounded, color: Colors.white60, size: 20),
+                      onPressed: () => Navigator.pop(ctx),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(color: Colors.white12, height: 1),
+              Expanded(
+                child: GridView.builder(
+                  padding: const EdgeInsets.all(14),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 4,
+                    crossAxisSpacing: 10,
+                    mainAxisSpacing: 10,
+                    childAspectRatio: 1.4,
+                  ),
+                  itemCount: details.pages.length,
+                  itemBuilder: (ctx, i) {
+                    final p = details.pages[i];
+                    final isPlaying = p.page == details.selectedPageIndex;
+
+                    return InkWell(
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        if (!isPlaying) {
+                          _goToBilibiliPage(p.page);
+                        }
+                      },
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: isPlaying
+                              ? const Color(0xFFFB7299).withValues(alpha: 0.2)
+                              : const Color(0xFF1E212B),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: isPlaying
+                                ? const Color(0xFFFB7299)
+                                : Colors.white12,
+                            width: isPlaying ? 1.5 : 1,
+                          ),
+                        ),
+                        alignment: Alignment.center,
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (isPlaying) ...[
+                                  const Icon(
+                                    Icons.graphic_eq_rounded,
+                                    size: 14,
+                                    color: Color(0xFFFB7299),
+                                  ),
+                                  const SizedBox(width: 4),
+                                ],
+                                Text(
+                                  'P${p.page}',
+                                  style: TextStyle(
+                                    color: isPlaying
+                                        ? const Color(0xFFFB7299)
+                                        : Colors.white,
+                                    fontWeight: isPlaying
+                                        ? FontWeight.bold
+                                        : FontWeight.w600,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            if (p.part.isNotEmpty) ...[
+                              const SizedBox(height: 2),
+                              Text(
+                                p.part,
+                                style: TextStyle(
+                                  color: isPlaying
+                                      ? const Color(0xFFFB7299).withValues(alpha: 0.8)
+                                      : Colors.white54,
+                                  fontSize: 9.5,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _loadBilibiliUploaderInfo(BilibiliVideoDetails details) async {
+    final mid = details.ownerMid;
+    final settings = await SettingsRepository.getInstance();
+    final isFollowedLocal = settings.isBilibiliMidFollowed(mid);
+    if (mounted) {
+      setState(() {
+        _isFollowingBilibiliUploader = isFollowedLocal;
+      });
+    }
+    if (mid > 0) {
+      final resolver = BilibiliResolver();
+      final profile = await resolver.getUploaderProfile(mid, cookie: settings.bilibiliSessData);
+      if (mounted) {
+        setState(() {
+          _bilibiliUploaderProfile = profile;
+          _isFollowingBilibiliUploader = isFollowedLocal || (profile?.isFollowing ?? false);
+        });
+      }
+    }
+  }
+
+  Future<void> _toggleBilibiliFollow() async {
+    final details = _bilibiliDetails;
+    final mid = details?.ownerMid ?? 0;
+    if (mid <= 0 || _isTogglingBilibiliFollow) return;
+    setState(() => _isTogglingBilibiliFollow = true);
+
+    final settings = await SettingsRepository.getInstance();
+    final targetFollow = !_isFollowingBilibiliUploader;
+    setState(() {
+      _isFollowingBilibiliUploader = targetFollow;
+    });
+
+    if (targetFollow) {
+      settings.addBilibiliFollowedMid(mid);
+    } else {
+      settings.removeBilibiliFollowedMid(mid);
+    }
+
+    if (settings.bilibiliSessData.isNotEmpty) {
+      unawaited(
+        BilibiliResolver().modifyRelation(
+          mid: mid,
+          follow: targetFollow,
+          cookie: settings.bilibiliSessData,
+          csrf: settings.bilibiliBiliJct,
+        ),
+      );
+    }
+
+    if (mounted) {
+      setState(() => _isTogglingBilibiliFollow = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            targetFollow
+                ? '🎉 Đã đăng ký theo dõi "${details?.author ?? 'kênh'}"'
+                : 'Đã hủy đăng ký theo dõi',
+          ),
+          duration: const Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: targetFollow
+              ? const Color(0xFFFB7299)
+              : const Color(0xFF282B37),
+        ),
+      );
+    }
+  }
+
+  Future<void> _loadBilibiliComments(int aid, {bool reset = false}) async {
+    if (aid <= 0) return;
+    if (reset) {
+      setState(() {
+        _isLoadingBilibiliComments = true;
+        _bilibiliComments.clear();
+        _bilibiliCommentPage = 1;
+        _hasMoreComments = true;
+      });
+    }
+    try {
+      final settings = await SettingsRepository.getInstance();
+      final resolver = BilibiliResolver();
+      final res = await resolver.getComments(
+        aid: aid,
+        page: _bilibiliCommentPage,
+        pageSize: 20,
+        sort: _bilibiliCommentSort,
+        cookie: settings.bilibiliSessData,
+      );
+      if (mounted) {
+        setState(() {
+          _bilibiliCommentResult = res;
+          if (reset) {
+            _bilibiliComments = res.comments;
+          } else {
+            _bilibiliComments.addAll(res.comments);
+          }
+          _isLoadingBilibiliComments = false;
+          _isLoadingMoreComments = false;
+          if (res.comments.length < 15) {
+            _hasMoreComments = false;
+          }
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _isLoadingBilibiliComments = false;
+          _isLoadingMoreComments = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadMoreBilibiliComments() async {
+    final details = _bilibiliDetails;
+    if (details == null || _isLoadingMoreComments || !_hasMoreComments) return;
+    setState(() {
+      _isLoadingMoreComments = true;
+      _bilibiliCommentPage++;
+    });
+    await _loadBilibiliComments(details.aid, reset: false);
+  }
+
+  Future<void> _toggleCommentTranslationEngine() async {
+    final next = _commentTranslationEngine == 'local' ? 'api' : 'local';
+    setState(() {
+      _commentTranslationEngine = next;
+    });
+    _settings.commentTranslationEngine = next;
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              Icon(
+                next == 'local'
+                    ? Icons.phone_android_rounded
+                    : Icons.auto_awesome_rounded,
+                color: Colors.white,
+                size: 18,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  next == 'local'
+                      ? '📱 Đã chuyển sang Dịch Local (Google ML Kit - Miễn phí, 0 token API)'
+                      : '🤖 Đã chuyển sang Dịch AI (Gemini/Groq - Bắt trend, chuẩn văn phong)',
+                  style: const TextStyle(fontSize: 12.5),
+                ),
+              ),
+            ],
+          ),
+          duration: const Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: next == 'local'
+              ? const Color(0xFF2E7D32)
+              : const Color(0xFF0077A8),
+        ),
+      );
+    }
+  }
+
+  Future<void> _toggleTranslateComment(int rpid, String rawText) async {
+    if (_bilibiliCommentTranslations.containsKey(rpid)) {
+      setState(() {
+        _bilibiliCommentTranslations.remove(rpid);
+      });
+      return;
+    }
+
+    setState(() {
+      _bilibiliTranslatingCommentIds.add(rpid);
+    });
+
+    try {
+      final translated = await TitleTranslator.translateComment(
+        rawText,
+        engine: _commentTranslationEngine,
+      );
+      if (mounted && translated != null && translated.isNotEmpty) {
+        setState(() {
+          _bilibiliCommentTranslations[rpid] = translated;
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _bilibiliTranslatingCommentIds.remove(rpid);
+        });
+      }
+    }
+  }
+
+  Color _getBilibiliLevelColor(int level) {
+    switch (level) {
+      case 1:
+        return const Color(0xFF999999);
+      case 2:
+        return const Color(0xFF5AB664);
+      case 3:
+        return const Color(0xFF5DB6F2);
+      case 4:
+        return const Color(0xFFFFB03B);
+      case 5:
+        return const Color(0xFFFF6600);
+      case 6:
+        return const Color(0xFFFF0000);
+      default:
+        return const Color(0xFF999999);
+    }
+  }
+
   Widget _buildBilibiliBelowContent() {
     final details = _bilibiliDetails;
+    final commentCount = _bilibiliCommentResult?.totalCount ?? 0;
+    final commentLabel = commentCount > 0 ? 'Bình luận $commentCount' : 'Bình luận';
+
+    return Container(
+      color: const Color(0xFF14161E),
+      child: Column(
+        children: [
+          // 1. Thanh TabBar: 简介 (Giới thiệu) / 评论 (Bình luận)
+          Container(
+            height: 44,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            decoration: const BoxDecoration(
+              border: Border(bottom: BorderSide(color: Colors.white12, width: 0.8)),
+            ),
+            child: Row(
+              children: [
+                _buildBilibiliTabItem(
+                  index: 0,
+                  label: 'Giới thiệu',
+                  isSelected: _bilibiliTabIndex == 0,
+                ),
+                const SizedBox(width: 24),
+                _buildBilibiliTabItem(
+                  index: 1,
+                  label: commentLabel,
+                  isSelected: _bilibiliTabIndex == 1,
+                ),
+                const Spacer(),
+                if (_bilibiliTabIndex == 0 && details != null && details.pages.length > 1)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFB7299).withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(
+                        color: const Color(0xFFFB7299).withValues(alpha: 0.4),
+                        width: 0.8,
+                      ),
+                    ),
+                    child: Text(
+                      'P${details.selectedPageIndex}/${details.pages.length}',
+                      style: const TextStyle(
+                        color: Color(0xFFFB7299),
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+
+          // 2. Nội dung Tab (Giới thiệu hoặc Bình luận)
+          Expanded(
+            child: _bilibiliTabIndex == 0
+                ? _buildBilibiliIntroTab(details)
+                : _buildBilibiliCommentTab(details),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBilibiliTabItem({
+    required int index,
+    required String label,
+    required bool isSelected,
+  }) {
+    return InkWell(
+      onTap: () {
+        setState(() {
+          _bilibiliTabIndex = index;
+        });
+      },
+      child: Container(
+        height: 44,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: BorderSide(
+              color: isSelected ? const Color(0xFFFB7299) : Colors.transparent,
+              width: 2.5,
+            ),
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: isSelected ? Colors.white : Colors.white60,
+            fontSize: 14,
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBilibiliIntroTab(BilibiliVideoDetails? details) {
     final displayTitle = _currentTitle.isNotEmpty
         ? _currentTitle
         : (widget.title ?? widget.bilibiliItem?.title ?? '');
@@ -1669,234 +2178,264 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         ? details.danmakuText
         : (widget.bilibiliItem?.danmakuText ?? '');
 
-    return Container(
-      color: const Color(0xFF14161E),
-      child: ListView(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        children: [
-          // 1. Tiêu đề video đang xem & nút dịch
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Text(
-                  displayTitle,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 15,
-                    fontWeight: FontWeight.bold,
-                    height: 1.3,
+    final fansText = _bilibiliUploaderProfile?.fansText.isNotEmpty == true
+        ? _bilibiliUploaderProfile!.fansText
+        : '';
+    final videoCount = _bilibiliUploaderProfile?.videoCount ?? 0;
+
+    return ListView(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      children: [
+        // 1. Thẻ Thông tin UP tác giả (Avatar, Tên, Fans, Video + Nút Đăng ký)
+        if (author.isNotEmpty)
+          InkWell(
+            onTap: () {
+              final mid = details?.ownerMid ?? 0;
+              BilibiliUploaderSheet.show(
+                context: context,
+                mid: mid,
+                authorName: author,
+                initialAvatar: upFace,
+                onSelectVideo: (item) {
+                  _switchVideo(
+                    newVideoPath: item.targetPlayUrl,
+                    newDocument: SubtitleDocument(),
+                    newTitle: item.title,
+                    newCoverUrl: item.cover,
+                    newAuthor: item.author,
+                    newBilibiliItem: item,
+                  );
+                },
+              );
+            },
+            borderRadius: BorderRadius.circular(12),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(20),
+                    child: (upFace != null && upFace.isNotEmpty)
+                        ? Image.network(
+                            upFace,
+                            width: 40,
+                            height: 40,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, _, _) => const CircleAvatar(
+                              radius: 20,
+                              backgroundColor: Color(0xFF282B37),
+                              child: Icon(Icons.person, size: 22, color: Colors.white54),
+                            ),
+                          )
+                        : const CircleAvatar(
+                            radius: 20,
+                            backgroundColor: Color(0xFF282B37),
+                            child: Icon(Icons.person, size: 22, color: Colors.white54),
+                          ),
                   ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              const SizedBox(width: 8),
-              InkWell(
-                onTap: _isTranslatingTitle ? null : _togglePlayerTitleTranslation,
-                borderRadius: BorderRadius.circular(6),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: _showTranslatedTitle
-                        ? AppTheme.primaryEmerald.withValues(alpha: 0.25)
-                        : Colors.white12,
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(
-                      color: _showTranslatedTitle
-                          ? AppTheme.primaryEmerald.withValues(alpha: 0.5)
-                          : Colors.white24,
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          author,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 2),
+                        Row(
+                          children: [
+                            if (fansText.isNotEmpty) ...[
+                              Text(
+                                '$fansText fans',
+                                style: const TextStyle(color: Colors.white60, fontSize: 11),
+                              ),
+                              if (videoCount > 0)
+                                const Text(' • ', style: TextStyle(color: Colors.white38)),
+                            ],
+                            if (videoCount > 0)
+                              Text(
+                                '$videoCount video',
+                                style: const TextStyle(color: Colors.white60, fontSize: 11),
+                              )
+                            else if (fansText.isEmpty && viewCount.isNotEmpty)
+                              Text(
+                                '$viewCount lượt xem',
+                                style: const TextStyle(color: Colors.white54, fontSize: 11),
+                              ),
+                          ],
+                        ),
+                      ],
                     ),
                   ),
-                  child: _isTranslatingTitle
-                      ? const SizedBox(
-                          width: 12,
-                          height: 12,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
+
+                  // Nút Đăng ký / Theo dõi (+ 关注)
+                  InkWell(
+                    onTap: _toggleBilibiliFollow,
+                    borderRadius: BorderRadius.circular(16),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: _isFollowingBilibiliUploader
+                            ? Colors.white12
+                            : const Color(0xFFFB7299),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: _isFollowingBilibiliUploader
+                              ? Colors.white24
+                              : const Color(0xFFFB7299),
+                          width: 1,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (!_isFollowingBilibiliUploader) ...[
+                            const Icon(Icons.add, color: Colors.white, size: 13),
+                            const SizedBox(width: 3),
+                          ],
+                          Text(
+                            _isFollowingBilibiliUploader ? 'Đã theo dõi' : 'Theo dõi',
+                            style: TextStyle(
+                              color: _isFollowingBilibiliUploader
+                                  ? Colors.white70
+                                  : Colors.white,
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
-                        )
-                      : Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.translate_rounded,
-                              size: 13,
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        const SizedBox(height: 10),
+
+        // 2. Tiêu đề video & nút Dịch
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Text(
+                displayTitle,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                  height: 1.3,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(width: 8),
+            InkWell(
+              onTap: _isTranslatingTitle ? null : _togglePlayerTitleTranslation,
+              borderRadius: BorderRadius.circular(6),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: _showTranslatedTitle
+                      ? AppTheme.primaryEmerald.withValues(alpha: 0.25)
+                      : Colors.white12,
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                    color: _showTranslatedTitle
+                        ? AppTheme.primaryEmerald.withValues(alpha: 0.5)
+                        : Colors.white24,
+                  ),
+                ),
+                child: _isTranslatingTitle
+                    ? const SizedBox(
+                        width: 12,
+                        height: 12,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.translate_rounded,
+                            size: 13,
+                            color: _showTranslatedTitle
+                                ? AppTheme.primaryEmerald
+                                : Colors.white,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            _showTranslatedTitle ? 'Gốc' : 'Dịch',
+                            style: TextStyle(
                               color: _showTranslatedTitle
                                   ? AppTheme.primaryEmerald
                                   : Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
                             ),
-                            const SizedBox(width: 4),
-                            Text(
-                              _showTranslatedTitle ? 'Gốc' : 'Dịch',
-                              style: TextStyle(
-                                color: _showTranslatedTitle
-                                    ? AppTheme.primaryEmerald
-                                    : Colors.white,
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-
-          // 2. Thông tin UP tác giả
-          if (author.isNotEmpty)
-            Row(
-              children: [
-                if (upFace != null && upFace.isNotEmpty)
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(16),
-                    child: Image.network(
-                      upFace,
-                      width: 32,
-                      height: 32,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, _, _) => const CircleAvatar(
-                        radius: 16,
-                        backgroundColor: Color(0xFF282B37),
-                        child: Icon(Icons.person, size: 18, color: Colors.white54),
-                      ),
-                    ),
-                  )
-                else
-                  const CircleAvatar(
-                    radius: 16,
-                    backgroundColor: Color(0xFF282B37),
-                    child: Icon(Icons.person, size: 18, color: Colors.white54),
-                  ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        author,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 2),
-                      Row(
-                        children: [
-                          if (viewCount.isNotEmpty)
-                            Text(
-                              '$viewCount lượt xem',
-                              style: const TextStyle(color: Colors.white54, fontSize: 11),
-                            ),
-                          if (viewCount.isNotEmpty && danmaku.isNotEmpty)
-                            const Text(' • ', style: TextStyle(color: Colors.white38)),
-                          if (danmaku.isNotEmpty)
-                            Text(
-                              '$danmaku đạn mạc',
-                              style: const TextStyle(color: Colors.white54, fontSize: 11),
-                            ),
+                          ),
                         ],
                       ),
-                    ],
-                  ),
-                ),
-              ],
+              ),
             ),
-          const SizedBox(height: 14),
+          ],
+        ),
+        const SizedBox(height: 4),
 
-          // 3. Thanh nút thao tác nhanh
-          Row(
-            children: [
-              // Nút Vietsub AI
-              Expanded(
-                child: InkWell(
-                  onTap: () => _startOnDemandPipeline(enableTts: false),
-                  borderRadius: BorderRadius.circular(8),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF00AEEC).withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: const Color(0xFF00AEEC).withValues(alpha: 0.4)),
-                    ),
-                    child: const Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.subtitles_rounded, color: Color(0xFF00AEEC), size: 16),
-                        SizedBox(width: 6),
-                        Text(
-                          'Vietsub AI',
-                          style: TextStyle(
-                            color: Color(0xFF00AEEC),
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
+        // Lượt xem, đạn mạc
+        Row(
+          children: [
+            if (viewCount.isNotEmpty)
+              Text(
+                '$viewCount lượt xem',
+                style: const TextStyle(color: Colors.white54, fontSize: 11),
               ),
-              const SizedBox(width: 8),
-
-              // Nút Lồng tiếng AI
-              Expanded(
-                child: InkWell(
-                  onTap: () => _startOnDemandPipeline(enableTts: true),
-                  borderRadius: BorderRadius.circular(8),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    decoration: BoxDecoration(
-                      color: AppTheme.primaryEmerald.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: AppTheme.primaryEmerald.withValues(alpha: 0.4)),
-                    ),
-                    child: const Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.record_voice_over_rounded, color: AppTheme.primaryEmerald, size: 16),
-                        SizedBox(width: 6),
-                        Text(
-                          'Lồng tiếng AI',
-                          style: TextStyle(
-                            color: AppTheme.primaryEmerald,
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
+            if (viewCount.isNotEmpty && danmaku.isNotEmpty)
+              const Text(' • ', style: TextStyle(color: Colors.white38)),
+            if (danmaku.isNotEmpty)
+              Text(
+                '$danmaku đạn mạc',
+                style: const TextStyle(color: Colors.white54, fontSize: 11),
               ),
-              const SizedBox(width: 8),
+          ],
+        ),
+        const SizedBox(height: 12),
 
-              // Nút Chọn chất lượng
-              InkWell(
-                onTap: _showQualitySelectionSheet,
+        // 3. Thanh nút thao tác nhanh
+        Row(
+          children: [
+            // Nút Vietsub AI
+            Expanded(
+              child: InkWell(
+                onTap: () => _startOnDemandPipeline(enableTts: false),
                 borderRadius: BorderRadius.circular(8),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  padding: const EdgeInsets.symmetric(vertical: 8),
                   decoration: BoxDecoration(
-                    color: Colors.white10,
+                    color: const Color(0xFF00AEEC).withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.white24),
+                    border: Border.all(color: const Color(0xFF00AEEC).withValues(alpha: 0.4)),
                   ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
+                  child: const Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Icon(Icons.high_quality_rounded, color: Colors.white70, size: 16),
-                      const SizedBox(width: 4),
+                      Icon(Icons.subtitles_rounded, color: Color(0xFF00AEEC), size: 16),
+                      SizedBox(width: 6),
                       Text(
-                        _currentQualityLabel,
-                        style: const TextStyle(
-                          color: Colors.white,
+                        'Vietsub AI',
+                        style: TextStyle(
+                          color: Color(0xFF00AEEC),
                           fontSize: 12,
                           fontWeight: FontWeight.bold,
                         ),
@@ -1905,61 +2444,787 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
+            ),
+            const SizedBox(width: 8),
 
-              // Nút Tải về
-              IconButton(
-                icon: const Icon(Icons.download_for_offline_rounded, color: Colors.white70, size: 20),
-                tooltip: 'Tải video về máy',
-                onPressed: _showDownloadSelectionSheet,
+            // Nút Lồng tiếng AI
+            Expanded(
+              child: InkWell(
+                onTap: () => _startOnDemandPipeline(enableTts: true),
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  decoration: BoxDecoration(
+                    color: AppTheme.primaryEmerald.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: AppTheme.primaryEmerald.withValues(alpha: 0.4)),
+                  ),
+                  child: const Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.record_voice_over_rounded, color: AppTheme.primaryEmerald, size: 16),
+                      SizedBox(width: 6),
+                      Text(
+                        'Lồng tiếng AI',
+                        style: TextStyle(
+                          color: AppTheme.primaryEmerald,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          const Divider(color: Colors.white12, height: 1),
-          const SizedBox(height: 12),
+            ),
+            const SizedBox(width: 8),
 
-          // 4. Header "Video đề xuất"
-          Row(
-            children: [
-              const Icon(Icons.recommend_rounded, color: Color(0xFF00AEEC), size: 20),
-              const SizedBox(width: 8),
-              const Text(
-                'Video đề xuất',
-                style: TextStyle(
+            // Nút Chọn chất lượng
+            InkWell(
+              onTap: _showQualitySelectionSheet,
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.white10,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.white24),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.high_quality_rounded, color: Colors.white70, size: 16),
+                    const SizedBox(width: 4),
+                    Text(
+                      _currentQualityLabel,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+
+            // Nút Tải về
+            IconButton(
+              icon: const Icon(Icons.download_for_offline_rounded, color: Colors.white70, size: 20),
+              tooltip: 'Tải video về máy',
+              onPressed: _showDownloadSelectionSheet,
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+
+        // 4. KHỐI CHỌN PHẦN (P1, P2...) - Yêu cầu người dùng
+        if (details != null && details.pages.length > 1) ...[
+          _buildBilibiliPagesSelector(details),
+          const SizedBox(height: 14),
+        ],
+
+        // 5. KHỐI HỢP TẬP (合集 - UGC Season)
+        if (details?.ugcSeason != null) ...[
+          _buildBilibiliUgcSeasonCard(details!.ugcSeason!, details.bvid),
+          const SizedBox(height: 14),
+        ],
+
+        const Divider(color: Colors.white12, height: 1),
+        const SizedBox(height: 12),
+
+        // 6. Header "Video đề xuất"
+        Row(
+          children: [
+            const Icon(Icons.recommend_rounded, color: Color(0xFF00AEEC), size: 20),
+            const SizedBox(width: 8),
+            const Text(
+              'Video đề xuất',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 15,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const Spacer(),
+            if (_isLoadingRelated)
+              const SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF00AEEC)),
+              ),
+          ],
+        ),
+        const SizedBox(height: 10),
+
+        // 7. Danh sách video đề xuất
+        if (_isLoadingRelated && _relatedVideos.isEmpty)
+          _buildRelatedVideosSkeleton()
+        else if (_relatedVideos.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 24),
+            child: Center(
+              child: Text(
+                'Không có video đề xuất liên quan',
+                style: TextStyle(color: Colors.white54, fontSize: 13),
+              ),
+            ),
+          )
+        else
+          ..._relatedVideos.map((item) => _buildRelatedVideoTile(item)),
+      ],
+    );
+  }
+
+  /// Khối chọn phần P1, P2... như app gốc Bilibili
+  Widget _buildBilibiliPagesSelector(BilibiliVideoDetails details) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Row(
+              children: [
+                const Icon(
+                  Icons.format_list_numbered_rounded,
+                  color: Color(0xFFFB7299),
+                  size: 18,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  'Chọn phần (Đang phát P${details.selectedPageIndex}/${details.pages.length})',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+            if (details.pages.length > 4)
+              InkWell(
+                onTap: () => _showAllBilibiliPagesSheet(details),
+                borderRadius: BorderRadius.circular(4),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                  child: Row(
+                    children: const [
+                      Text(
+                        'Xem tất cả',
+                        style: TextStyle(
+                          color: Colors.white60,
+                          fontSize: 12,
+                        ),
+                      ),
+                      Icon(Icons.chevron_right_rounded, size: 16, color: Colors.white60),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        SizedBox(
+          height: 48,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: details.pages.length,
+            separatorBuilder: (_, _) => const SizedBox(width: 10),
+            itemBuilder: (ctx, index) {
+              final pageInfo = details.pages[index];
+              final isSelected = pageInfo.page == details.selectedPageIndex;
+
+              return InkWell(
+                onTap: () {
+                  if (!isSelected) {
+                    _goToBilibiliPage(pageInfo.page);
+                  }
+                },
+                borderRadius: BorderRadius.circular(8),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  constraints: const BoxConstraints(minWidth: 84),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: isSelected
+                        ? const Color(0xFFFB7299).withValues(alpha: 0.18)
+                        : const Color(0xFF1E212B),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: isSelected
+                          ? const Color(0xFFFB7299)
+                          : Colors.white12,
+                      width: isSelected ? 1.5 : 1,
+                    ),
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (isSelected) ...[
+                            const Icon(
+                              Icons.graphic_eq_rounded,
+                              size: 14,
+                              color: Color(0xFFFB7299),
+                            ),
+                            const SizedBox(width: 4),
+                          ],
+                          Text(
+                            'P${pageInfo.page}',
+                            style: TextStyle(
+                              color: isSelected
+                                  ? const Color(0xFFFB7299)
+                                  : Colors.white,
+                              fontSize: 13,
+                              fontWeight: isSelected
+                                  ? FontWeight.bold
+                                  : FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (pageInfo.part.isNotEmpty)
+                        Text(
+                          pageInfo.part,
+                          style: TextStyle(
+                            color: isSelected
+                                ? const Color(0xFFFB7299).withValues(alpha: 0.8)
+                                : Colors.white54,
+                            fontSize: 9.5,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Thẻ Hợp tập (合集 - UGC Season)
+  Widget _buildBilibiliUgcSeasonCard(BilibiliUgcSeason season, String currentBvid) {
+    int currentIdx = 1;
+    for (var i = 0; i < season.episodes.length; i++) {
+      if (season.episodes[i].bvid == currentBvid) {
+        currentIdx = i + 1;
+        break;
+      }
+    }
+
+    return InkWell(
+      onTap: () {
+        BilibiliSeasonSheet.show(
+          context: context,
+          season: season,
+          currentBvid: currentBvid,
+          onSelectEpisode: _goToBilibiliUgcEpisode,
+        );
+      },
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1E212B),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.white12),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(5),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFB7299).withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: const Icon(
+                Icons.video_library_rounded,
+                color: Color(0xFFFB7299),
+                size: 16,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                '合集 · ${season.title}',
+                style: const TextStyle(
                   color: Colors.white,
-                  fontSize: 15,
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            Row(
+              children: [
+                const Icon(
+                  Icons.graphic_eq_rounded,
+                  size: 13,
+                  color: Color(0xFFFB7299),
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  '$currentIdx/${season.episodes.length}',
+                  style: const TextStyle(
+                    color: Colors.white60,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const Icon(Icons.chevron_right_rounded, size: 18, color: Colors.white38),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Tab xem bình luận video Bilibili
+  Widget _buildBilibiliCommentTab(BilibiliVideoDetails? details) {
+    if (details == null) {
+      return const Center(
+        child: CircularProgressIndicator(color: Color(0xFFFB7299)),
+      );
+    }
+
+    final commentCount = _bilibiliCommentResult?.totalCount ?? 0;
+
+    return Column(
+      children: [
+        // Header bộ lọc bình luận
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: Row(
+            children: [
+              Text(
+                'Bình luận ($commentCount)',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13.5,
                   fontWeight: FontWeight.bold,
                 ),
               ),
+              const SizedBox(width: 8),
+              _buildCommentEngineChip(),
               const Spacer(),
-              if (_isLoadingRelated)
-                const SizedBox(
-                  width: 14,
-                  height: 14,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF00AEEC)),
-                ),
+              _buildCommentSortChip(
+                label: 'Mới nhất',
+                isSelected: _bilibiliCommentSort == 2,
+                onTap: () {
+                  if (_bilibiliCommentSort != 2) {
+                    setState(() => _bilibiliCommentSort = 2);
+                    _loadBilibiliComments(details.aid, reset: true);
+                  }
+                },
+              ),
+              const SizedBox(width: 8),
+              _buildCommentSortChip(
+                label: 'Nổi bật',
+                isSelected: _bilibiliCommentSort == 0,
+                onTap: () {
+                  if (_bilibiliCommentSort != 0) {
+                    setState(() => _bilibiliCommentSort = 0);
+                    _loadBilibiliComments(details.aid, reset: true);
+                  }
+                },
+              ),
             ],
           ),
-          const SizedBox(height: 10),
+        ),
+        const Divider(color: Colors.white12, height: 1),
 
-          // 5. Danh sách video đề xuất
-          if (_isLoadingRelated && _relatedVideos.isEmpty)
-            _buildRelatedVideosSkeleton()
-          else if (_relatedVideos.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 24),
-              child: Center(
-                child: Text(
-                  'Không có video đề xuất liên quan',
-                  style: TextStyle(color: Colors.white54, fontSize: 13),
+        // Danh sách bình luận
+        Expanded(
+          child: _isLoadingBilibiliComments
+              ? const Center(
+                  child: CircularProgressIndicator(color: Color(0xFFFB7299)),
+                )
+              : _bilibiliComments.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: const [
+                          Icon(Icons.chat_bubble_outline_rounded, size: 48, color: Colors.white24),
+                          SizedBox(height: 10),
+                          Text(
+                            'Chưa có bình luận nào cho video này',
+                            style: TextStyle(color: Colors.white54, fontSize: 13),
+                          ),
+                        ],
+                      ),
+                    )
+                  : NotificationListener<ScrollNotification>(
+                      onNotification: (scrollInfo) {
+                        if (scrollInfo.metrics.pixels >=
+                                scrollInfo.metrics.maxScrollExtent - 200 &&
+                            !_isLoadingMoreComments &&
+                            _hasMoreComments &&
+                            !_isLoadingBilibiliComments) {
+                          _loadMoreBilibiliComments();
+                        }
+                        return false;
+                      },
+                      child: ListView.separated(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                        itemCount: _bilibiliComments.length + (_hasMoreComments ? 1 : 0),
+                        separatorBuilder: (_, _) => const Divider(color: Colors.white10, height: 16),
+                        itemBuilder: (ctx, index) {
+                          if (index == _bilibiliComments.length) {
+                            return const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 16),
+                              child: Center(
+                                child: SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Color(0xFFFB7299),
+                                  ),
+                                ),
+                              ),
+                            );
+                          }
+                          final comment = _bilibiliComments[index];
+                          return _buildBilibiliCommentTile(comment);
+                        },
+                      ),
+                    ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCommentEngineChip() {
+    final isLocal = _commentTranslationEngine == 'local';
+    final activeColor = isLocal ? const Color(0xFF5AB664) : const Color(0xFF00AEEC);
+
+    return InkWell(
+      onTap: _toggleCommentTranslationEngine,
+      borderRadius: BorderRadius.circular(12),
+      child: Tooltip(
+        message: 'Chạm để đổi qua lại giữa dịch Local (miễn phí) và dịch AI (API)',
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
+          decoration: BoxDecoration(
+            color: activeColor.withValues(alpha: 0.16),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: activeColor.withValues(alpha: 0.55),
+              width: 0.8,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                isLocal ? Icons.phone_android_rounded : Icons.auto_awesome_rounded,
+                size: 11.5,
+                color: activeColor,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                isLocal ? 'Dịch Local' : 'Dịch AI',
+                style: TextStyle(
+                  color: activeColor,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
-            )
-          else
-            ..._relatedVideos.map((item) => _buildRelatedVideoTile(item)),
-        ],
+              const SizedBox(width: 2),
+              Icon(
+                Icons.swap_horiz_rounded,
+                size: 12,
+                color: activeColor.withValues(alpha: 0.7),
+              ),
+            ],
+          ),
+        ),
       ),
+    );
+  }
+
+  Widget _buildCommentSortChip({
+    required String label,
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? const Color(0xFFFB7299).withValues(alpha: 0.18)
+              : Colors.white10,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isSelected ? const Color(0xFFFB7299) : Colors.white12,
+            width: 0.8,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: isSelected ? const Color(0xFFFB7299) : Colors.white60,
+            fontSize: 11,
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Thẻ hiển thị một bình luận Bilibili (có avatar, tên, level, dịch sang tiếng Việt)
+  Widget _buildBilibiliCommentTile(BilibiliCommentItem comment) {
+    final hasTranslation = _bilibiliCommentTranslations.containsKey(comment.rpid);
+    final translatedText = _bilibiliCommentTranslations[comment.rpid] ?? '';
+    final isTranslating = _bilibiliTranslatingCommentIds.contains(comment.rpid);
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Avatar người bình luận
+        ClipRRect(
+          borderRadius: BorderRadius.circular(17),
+          child: comment.avatar.isNotEmpty
+              ? Image.network(
+                  comment.avatar,
+                  width: 34,
+                  height: 34,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) => const CircleAvatar(
+                    radius: 17,
+                    backgroundColor: Color(0xFF282B37),
+                    child: Icon(Icons.person, size: 18, color: Colors.white54),
+                  ),
+                )
+              : const CircleAvatar(
+                  radius: 17,
+                  backgroundColor: Color(0xFF282B37),
+                  child: Icon(Icons.person, size: 18, color: Colors.white54),
+                ),
+        ),
+        const SizedBox(width: 10),
+
+        // Cột nội dung bình luận
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Tên + Badge Level + Nút Dịch
+              Row(
+                children: [
+                  Flexible(
+                    child: Text(
+                      comment.uname,
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  if (comment.level > 0) ...[
+                    const SizedBox(width: 5),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0.5),
+                      decoration: BoxDecoration(
+                        color: _getBilibiliLevelColor(comment.level).withValues(alpha: 0.18),
+                        borderRadius: BorderRadius.circular(3),
+                        border: Border.all(
+                          color: _getBilibiliLevelColor(comment.level).withValues(alpha: 0.5),
+                          width: 0.6,
+                        ),
+                      ),
+                      child: Text(
+                        'Lv${comment.level}',
+                        style: TextStyle(
+                          color: _getBilibiliLevelColor(comment.level),
+                          fontSize: 8.5,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
+                  const Spacer(),
+
+                  // Nút Dịch bình luận sang tiếng Việt
+                  InkWell(
+                    onTap: isTranslating ? null : () => _toggleTranslateComment(comment.rpid, comment.message),
+                    borderRadius: BorderRadius.circular(4),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      child: isTranslating
+                          ? const SizedBox(
+                              width: 11,
+                              height: 11,
+                              child: CircularProgressIndicator(strokeWidth: 1.5, color: AppTheme.primaryEmerald),
+                            )
+                          : Row(
+                              children: [
+                                Icon(
+                                  Icons.translate_rounded,
+                                  size: 11.5,
+                                  color: hasTranslation ? AppTheme.primaryEmerald : Colors.white38,
+                                ),
+                                const SizedBox(width: 3),
+                                Text(
+                                  hasTranslation ? 'Gốc' : 'Dịch',
+                                  style: TextStyle(
+                                    color: hasTranslation ? AppTheme.primaryEmerald : Colors.white38,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+
+              // Nội dung bình luận tiếng Trung gốc
+              Text(
+                comment.message,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  height: 1.35,
+                ),
+              ),
+
+              // Bản dịch Tiếng Việt (nếu người dùng bấm Dịch)
+              if (hasTranslation && translatedText.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: AppTheme.primaryEmerald.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: AppTheme.primaryEmerald.withValues(alpha: 0.35),
+                      width: 0.8,
+                    ),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(
+                        Icons.g_translate_rounded,
+                        size: 13,
+                        color: AppTheme.primaryEmerald,
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          translatedText,
+                          style: const TextStyle(
+                            color: Color(0xFFD1F2E0),
+                            fontSize: 12.5,
+                            height: 1.35,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+
+              const SizedBox(height: 6),
+
+              // Chân trang: Thời gian + Thích + Phản hồi
+              Row(
+                children: [
+                  if (comment.timeText.isNotEmpty)
+                    Text(
+                      comment.timeText,
+                      style: const TextStyle(color: Colors.white38, fontSize: 10.5),
+                    ),
+                  const Spacer(),
+                  if (comment.likeCount > 0) ...[
+                    const Icon(Icons.thumb_up_alt_outlined, size: 12, color: Colors.white38),
+                    const SizedBox(width: 3),
+                    Text(
+                      '${comment.likeCount}',
+                      style: const TextStyle(color: Colors.white38, fontSize: 10.5),
+                    ),
+                    const SizedBox(width: 12),
+                  ],
+                  if (comment.replyCount > 0) ...[
+                    const Icon(Icons.chat_bubble_outline_rounded, size: 12, color: Colors.white38),
+                    const SizedBox(width: 3),
+                    Text(
+                      '${comment.replyCount}',
+                      style: const TextStyle(color: Colors.white38, fontSize: 10.5),
+                    ),
+                  ],
+                ],
+              ),
+
+              // Phản hồi con (subReplies)
+              if (comment.subReplies.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF191B24),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: comment.subReplies.take(2).map((sub) {
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: RichText(
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          text: TextSpan(
+                            children: [
+                              TextSpan(
+                                text: '${sub.uname}: ',
+                                style: const TextStyle(
+                                  color: Color(0xFF00AEEC),
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              TextSpan(
+                                text: sub.message,
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 11.5,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
     );
   }
 
