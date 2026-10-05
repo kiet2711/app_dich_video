@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 
+import '../../data/model/history_item.dart';
 import '../../data/model/subtitle_document.dart';
 import '../../data/model/voice_model.dart';
 import '../../data/repository/history_repository.dart';
@@ -51,6 +53,65 @@ class HongguoPrefetchManager {
   int _currentPlayingIndex = 1;
 
   HongguoPrefetchManager(this.detail);
+
+  /// Nạp nóng (Preload) toàn bộ các tập đã có trong Lịch sử của bộ phim vào RAM
+  /// Giúp khi chuyển sang các tập đã dịch trước đó (do dịch gối đầu), video và sub
+  /// phát được ngay lập tức 0ms mà không bị kẹt quay tròn hay chờ dịch lại.
+  Future<void> preloadFromHistory({List<HistoryItem>? seedItems}) async {
+    if (_isDisposed) return;
+    try {
+      final historyRepo = await HistoryRepository.getInstance();
+      final items = seedItems ?? historyRepo.getHistory();
+      final targetSeriesId = detail.seriesId.trim();
+      final targetTitle = detail.title.trim().toLowerCase();
+
+      for (final item in items) {
+        if (_isDisposed) break;
+        final epIdx = item.extractedEpisodeIndex;
+        if (epIdx <= 0) continue;
+
+        final isSameSeries = (targetSeriesId.isNotEmpty && item.seriesId == targetSeriesId) ||
+            (targetTitle.isNotEmpty &&
+                (item.extractedSeriesTitle.trim().toLowerCase() == targetTitle ||
+                    item.title.toLowerCase().contains(targetTitle) ||
+                    targetTitle.contains(item.extractedSeriesTitle.trim().toLowerCase())));
+
+        if (!isSameSeries) continue;
+
+        // 1. Nạp SubtitleDocument nếu chưa có trong RAM
+        if (!_cachedDocs.containsKey(epIdx)) {
+          final doc = await historyRepo.loadSubtitleDocument(item);
+          if (doc != null && doc.isNotEmpty) {
+            _cachedDocs[epIdx] = doc;
+          }
+        }
+
+        // 2. Nạp file video nếu hợp lệ
+        if (!_cachedUrls.containsKey(epIdx)) {
+          final resolvedVideo = await HistoryRepository.resolveItemVideoPath(item);
+          if (resolvedVideo.isNotEmpty) {
+            final isLocal = !resolvedVideo.startsWith('http://') && !resolvedVideo.startsWith('https://');
+            if (isLocal &&
+                await File(resolvedVideo).exists() &&
+                (await File(resolvedVideo).length()) > 1024 * 50) {
+              _cachedUrls[epIdx] = resolvedVideo;
+            } else if (!isLocal) {
+              _cachedUrls[epIdx] = resolvedVideo;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[Prefetch] Lỗi preloadFromHistory: $e');
+    }
+  }
+
+  /// Tìm nhanh tài liệu phụ đề từ RAM hoặc Lịch sử cho một tập cụ thể
+  Future<SubtitleDocument?> findDocumentInHistory(int episodeIndex) async {
+    final cached = _cachedDocs[episodeIndex];
+    if (cached != null && cached.isNotEmpty) return cached;
+    return await _findInHistory(episodeIndex);
+  }
 
   /// Đăng ký tài liệu đã dịch sẵn (nếu có từ trước)
   void registerDocument(int episodeIndex, SubtitleDocument doc) {
@@ -443,8 +504,28 @@ class HongguoPrefetchManager {
 
   /// Lấy hoặc phân giải URL của tập phim
   Future<String?> getOrResolveUrl(int episodeIndex) async {
-    if (_cachedUrls.containsKey(episodeIndex)) {
-      return _cachedUrls[episodeIndex];
+    final cachedUrl = _cachedUrls[episodeIndex];
+    if (cachedUrl != null && cachedUrl.isNotEmpty) {
+      final isRemote = cachedUrl.startsWith('http://') ||
+          cachedUrl.startsWith('https://');
+      if (isRemote ||
+          (await File(cachedUrl).exists() &&
+              await File(cachedUrl).length() > 1024 * 50)) {
+        return cachedUrl;
+      }
+      // Cache video có thể đã bị dọn tự động sau khi xem các tập tiếp theo.
+      _cachedUrls.remove(episodeIndex);
+    }
+
+    // 1. Thử tìm nhanh video offline trong Lịch sử trước khi gọi mạng
+    await _findInHistory(episodeIndex);
+    final historyUrl = _cachedUrls[episodeIndex];
+    if (historyUrl != null && historyUrl.isNotEmpty) {
+      final isRemote = historyUrl.startsWith('http://') || historyUrl.startsWith('https://');
+      if (isRemote ||
+          (await File(historyUrl).exists() && await File(historyUrl).length() > 1024 * 50)) {
+        return historyUrl;
+      }
     }
 
     if (_inFlightUrlCompleters.containsKey(episodeIndex)) {
@@ -490,22 +571,49 @@ class HongguoPrefetchManager {
     try {
       final historyRepo = await HistoryRepository.getInstance();
       final list = historyRepo.getHistory();
+      final targetSeriesId = detail.seriesId.trim();
+      final targetTitle = detail.title.trim().toLowerCase();
+
       final item = list.firstWhere(
         (it) {
-          if (it.seriesId != null &&
-              it.seriesId == detail.seriesId &&
-              it.extractedEpisodeIndex == episodeIndex) {
+          if (it.extractedEpisodeIndex != episodeIndex) return false;
+          if (targetSeriesId.isNotEmpty && it.seriesId == targetSeriesId) {
             return true;
           }
+          if (targetTitle.isNotEmpty) {
+            final itSeries = it.extractedSeriesTitle.trim().toLowerCase();
+            if (itSeries == targetTitle ||
+                it.title.toLowerCase().contains(targetTitle) ||
+                targetTitle.contains(itSeries)) {
+              return true;
+            }
+          }
           final epTitle = '${detail.title} - Tập $episodeIndex';
-          if (it.title.trim() == epTitle.trim()) return true;
-          return it.title.contains(detail.title) &&
-              it.title.contains('Tập $episodeIndex');
+          if (it.title.trim().toLowerCase() == epTitle.toLowerCase()) {
+            return true;
+          }
+          return false;
         },
         orElse: () => throw 'not_found',
       );
 
-      return await historyRepo.loadSubtitleDocument(item);
+      final resolvedVideo = await HistoryRepository.resolveItemVideoPath(item);
+      final isLocalVideo = resolvedVideo.isNotEmpty &&
+          !resolvedVideo.startsWith('http://') &&
+          !resolvedVideo.startsWith('https://');
+      if (isLocalVideo &&
+          await File(resolvedVideo).exists() &&
+          await File(resolvedVideo).length() > 1024 * 50) {
+        _cachedUrls[episodeIndex] = resolvedVideo;
+      } else if (resolvedVideo.isNotEmpty && !_cachedUrls.containsKey(episodeIndex)) {
+        _cachedUrls[episodeIndex] = resolvedVideo;
+      }
+
+      final doc = await historyRepo.loadSubtitleDocument(item);
+      if (doc != null && doc.isNotEmpty) {
+        _cachedDocs[episodeIndex] = doc;
+      }
+      return doc;
     } catch (_) {
       return null;
     }

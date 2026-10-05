@@ -74,6 +74,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   static const _playbackSpeeds = <double>[0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
   static const _stallThreshold = Duration(milliseconds: 1200);
   static const _positionSaveInterval = Duration(seconds: 3);
+  static const _videoInitializeTimeout = Duration(seconds: 20);
 
   bool _isSwitchingQuality = false;
   String _currentQualityKey = '64';
@@ -751,6 +752,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       if (_currentDocument.isNotEmpty) {
         _prefetchManager!.registerDocument(_currentEpisodeIndex, _currentDocument);
       }
+      unawaited(_prefetchManager!.preloadFromHistory());
 
       // Kích hoạt dịch ngay tập hiện tại (nếu trống) và gối đầu tập tiếp theo
       _prefetchManager!.onEpisodePlaying(
@@ -787,6 +789,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   Future<void> _initPlayerForPath(
     String playablePath, {
     int startPosMs = 0,
+    bool refreshHongguoUrl = true,
   }) async {
     try {
       var targetPath = playablePath;
@@ -854,7 +857,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           debugPrint('[Player] Tìm thấy video Hồng Quả offline trong cache: ${cached.path}');
           targetPath = cached.path;
           playableUrls = [cached.path];
-        } else if (targetPath.startsWith('http://') || targetPath.startsWith('https://')) {
+        } else if (refreshHongguoUrl &&
+            (targetPath.startsWith('http://') || targetPath.startsWith('https://'))) {
           // Nếu không có trong cache và URL là online:
           // Đề phòng URL online bị hết hạn từ hôm qua, tự động lấy link mới còn hạn
           try {
@@ -914,13 +918,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           Uri.parse(targetPath),
           videoPlayerOptions: videoOptions,
         );
-        await _controller!.initialize();
+        await _controller!.initialize().timeout(_videoInitializeTimeout);
       } else {
         _controller = VideoPlayerController.file(
           File(targetPath),
           videoPlayerOptions: videoOptions,
         );
-        await _controller!.initialize();
+        await _controller!.initialize().timeout(_videoInitializeTimeout);
       }
 
       if (!mounted) {
@@ -943,6 +947,18 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       setState(() {
         _isInitialized = true;
       });
+      final detail = widget.dramaDetail;
+      if (detail != null && detail.seriesId.isNotEmpty) {
+        unawaited(
+          HistoryRepository.getInstance().then(
+            (history) => history.markSeriesEpisodeWatched(
+              seriesId: detail.seriesId,
+              episodeIndex: _currentEpisodeIndex,
+              seriesTitle: detail.title,
+            ),
+          ).catchError((_) => false),
+        );
+      }
       final isLocalVideo = !targetPath.startsWith('http://') && !targetPath.startsWith('https://');
       // Nếu video là file cục bộ (đã tải về máy) -> phát ngay, không chờ dịch
       final bool shouldWaitHongguoTranslation = widget.dramaDetail != null &&
@@ -978,6 +994,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       }
     } catch (e) {
       if (!mounted) return;
+      final failedController = _controller;
+      _controller = null;
+      if (failedController != null) {
+        try {
+          await failedController.dispose();
+        } catch (_) {}
+      }
       setState(() => _playerError = 'Không mở được video: $e');
     }
   }
@@ -1003,7 +1026,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         videoPlayerOptions: options,
       );
       try {
-        await controller.initialize();
+        await controller.initialize().timeout(_videoInitializeTimeout);
         return controller;
       } catch (error) {
         lastError = error;
@@ -1043,6 +1066,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     final previousIndex = _currentEpisodeIndex;
 
     try {
+      await _persistPlaybackPosition(force: true);
       final playUrl = await _prefetchManager?.getOrResolveUrl(targetIndex);
       if (playUrl == null) {
         if (mounted) {
@@ -1062,6 +1086,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       if (!mounted) return;
 
       var doc = _prefetchManager?.getCachedDocument(targetIndex);
+      if (doc == null || doc.isEmpty) {
+        doc = await _prefetchManager?.findDocumentInHistory(targetIndex);
+      }
       final epTitle = '${widget.dramaDetail!.title} - Tập $targetIndex';
 
       _currentEpisodeIndex = targetIndex;
@@ -2153,6 +2180,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     final item = newBilibiliItem;
     setState(() {
       _isInitialized = false;
+      _playerError = null;
       _sourceVideoUrl = newVideoPath;
       _currentVideoPath = newVideoPath;
       _currentDocument = newDocument;
@@ -2180,6 +2208,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       }
       _currentPosMs = 0;
       _lastObservedPositionMs = 0;
+      _lastSavedPositionMs = -1;
+      _lastPositionSaveAt = DateTime.fromMillisecondsSinceEpoch(0);
       _isScrubbing = false;
       _isPlaybackStalled = false;
       _userChosePlayRaw = false;
@@ -2192,7 +2222,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     }
 
     _ttsScheduler = TtsAudioScheduler(newDocument);
-    await _initPlayerForPath(newVideoPath);
+    await _initPlayerForPath(
+      newVideoPath,
+      refreshHongguoUrl: false,
+    );
   }
 
   void _showDownloadSelectionSheet() {
@@ -2795,6 +2828,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
   @override
   void dispose() {
+    unawaited(_persistPlaybackPosition(force: true));
     _pipControlsTimer?.cancel();
     _pipFeedbackTimer?.cancel();
     PipManager.isInPipMode.removeListener(_onPipModeChanged);
@@ -2814,6 +2848,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         state == AppLifecycleState.inactive ||
         state == AppLifecycleState.hidden) {
       _isInBackground = true;
+      unawaited(_persistPlaybackPosition(force: true));
       final isPlaying = _controller?.value.isPlaying ?? false;
       final allowBackground =
           _settings.backgroundPlayEnabled || PipManager.isInPipMode.value;
@@ -2936,19 +2971,40 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     );
   }
 
-  Future<void> _persistPlaybackPosition() async {
-    final callback = widget.onPlaybackPositionChanged;
-    if (callback == null || _isScrubbing) return;
+  Future<void> _persistPlaybackPosition({bool force = false}) async {
+    if (_isScrubbing && !force) return;
     final now = DateTime.now();
-    if (now.difference(_lastPositionSaveAt) < _positionSaveInterval) {
+    if (!force &&
+        now.difference(_lastPositionSaveAt) < _positionSaveInterval) {
       return;
     }
-    final positionMs = _currentPosMs;
-    if (positionMs == _lastSavedPositionMs) return;
+    final controller = _controller;
+    final positionMs = controller?.value.isInitialized == true
+        ? controller!.value.position.inMilliseconds
+        : _currentPosMs;
+    if (!force && positionMs == _lastSavedPositionMs) return;
     _lastPositionSaveAt = now;
     _lastSavedPositionMs = positionMs;
     try {
-      await callback(positionMs);
+      final detail = widget.dramaDetail;
+      if (detail != null && detail.seriesId.isNotEmpty) {
+        final history = await HistoryRepository.getInstance();
+        final updated = await history.updateSeriesPlaybackPosition(
+          seriesId: detail.seriesId,
+          episodeIndex: _currentEpisodeIndex,
+          positionMs: positionMs,
+          durationMs: controller?.value.duration.inMilliseconds,
+          seriesTitle: detail.title,
+        );
+        // Bản ghi cũ có thể chưa có seriesId. Chỉ fallback callback cho đúng
+        // tập ban đầu, tuyệt đối không ghi tiến độ tập mới vào tập đã mở trước đó.
+        if (!updated &&
+            _currentEpisodeIndex == (widget.currentEpisodeIndex ?? 1)) {
+          await widget.onPlaybackPositionChanged?.call(positionMs);
+        }
+      } else {
+        await widget.onPlaybackPositionChanged?.call(positionMs);
+      }
     } catch (_) {}
 
     if (_isInBackground && (_controller?.value.isPlaying ?? false)) {
@@ -3051,10 +3107,27 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         body: Center(
           child: Padding(
             padding: const EdgeInsets.all(24),
-            child: Text(
-              _playerError!,
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.white),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  _playerError!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.white),
+                ),
+                const SizedBox(height: 18),
+                FilledButton.icon(
+                  onPressed: () {
+                    setState(() {
+                      _playerError = null;
+                      _isInitialized = false;
+                    });
+                    unawaited(_initPlayerForPath(_sourceVideoUrl));
+                  },
+                  icon: const Icon(Icons.refresh_rounded),
+                  label: const Text('Thử lại'),
+                ),
+              ],
             ),
           ),
         ),

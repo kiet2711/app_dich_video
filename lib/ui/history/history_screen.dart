@@ -36,43 +36,42 @@ class DramaHistoryGroup {
     required this.episodes,
   });
 
-  /// Tập được xem hoặc tương tác gần đây nhất
+  List<HistoryItem> get _watchedEpisodes {
+    final watched = episodes.where((episode) {
+      return (episode.lastWatchedAt != null && episode.lastWatchedAt! > 0) ||
+          episode.lastPositionMs > 0;
+    }).toList();
+    watched.sort((a, b) {
+      final aTime = a.lastWatchedAt ?? (a.lastPositionMs > 0 ? a.timestamp : 0);
+      final bTime = b.lastWatchedAt ?? (b.lastPositionMs > 0 ? b.timestamp : 0);
+      return bTime.compareTo(aTime);
+    });
+    return watched;
+  }
+
+  int get lastActivityTimestamp {
+    final watched = _watchedEpisodes;
+    if (watched.isNotEmpty) {
+      return watched.first.lastWatchedAt ?? (watched.first.lastPositionMs > 0 ? watched.first.timestamp : 0);
+    }
+    return episodes.fold<int>(
+      0,
+      (latest, episode) => episode.timestamp > latest
+          ? episode.timestamp
+          : latest,
+    );
+  }
+
+  /// Tập người dùng thực sự tương tác gần nhất. Các tập chỉ được dịch gối đầu
+  /// không được phép lấn át tập đang xem dở.
   HistoryItem get latestWatchedEpisode {
     if (episodes.isEmpty) {
       throw StateError('Danh sách tập rỗng');
     }
 
-    // 1. Ưu tiên cao nhất: Tập người dùng đang xem dở (lastPositionMs > 0 và chưa xem hết 95%)
-    // Lấy tập xem dở gần đây nhất (theo lastWatchedAt hoặc timestamp)
-    final inProgressEpisodes = episodes.where((e) {
-      if (e.lastPositionMs <= 0) return false;
-      if (e.durationMs > 0 && e.lastPositionMs >= e.durationMs * 0.95) return false;
-      return true;
-    }).toList();
-
-    if (inProgressEpisodes.isNotEmpty) {
-      inProgressEpisodes.sort((a, b) {
-        final aTime = a.lastWatchedAt ?? a.timestamp;
-        final bTime = b.lastWatchedAt ?? b.timestamp;
-        return bTime.compareTo(aTime);
-      });
-      return inProgressEpisodes.first;
-    }
-
-    // 2. Nếu không có tập nào đang xem dở:
-    // Tìm tập đã được xem gần đây nhất (có lastWatchedAt hoặc lastPositionMs > 0)
-    final watchedEpisodes = episodes.where((e) =>
-      (e.lastWatchedAt != null && e.lastWatchedAt! > 0) || e.lastPositionMs > 0
-    ).toList();
-
+    final watchedEpisodes = _watchedEpisodes;
     if (watchedEpisodes.isNotEmpty) {
-      watchedEpisodes.sort((a, b) {
-        final aTime = a.lastWatchedAt ?? a.timestamp;
-        final bTime = b.lastWatchedAt ?? b.timestamp;
-        return bTime.compareTo(aTime);
-      });
       final lastWatched = watchedEpisodes.first;
-      // Nếu tập này đã xem xong (>= 95%), kiểm tra xem có tập kế tiếp trong danh sách đã lưu không
       final isFinished = lastWatched.durationMs > 0
           ? lastWatched.lastPositionMs >= lastWatched.durationMs * 0.95
           : false;
@@ -86,7 +85,7 @@ class DramaHistoryGroup {
       return lastWatched;
     }
 
-    // 3. Fallback: Nếu chưa có tập nào được xem thực tế, chọn tập có số tập nhỏ nhất (Tập 1)
+    // Fallback: Nếu chưa có tập nào được xem thực tế, chọn tập nhỏ nhất.
     final sortedByEpisode = List<HistoryItem>.from(episodes)
       ..sort((a, b) => a.extractedEpisodeIndex.compareTo(b.extractedEpisodeIndex));
     return sortedByEpisode.first;
@@ -113,7 +112,7 @@ class HistoryDisplayItem {
   HistoryDisplayItem.drama(this.dramaGroup)
       : isDramaGroup = true,
         singleItem = null,
-        sortTimestamp = dramaGroup!.latestWatchedEpisode.timestamp;
+        sortTimestamp = dramaGroup!.lastActivityTimestamp;
 
   HistoryDisplayItem.single(this.singleItem)
       : isDramaGroup = false,
@@ -534,9 +533,18 @@ class _HistoryScreenState extends State<HistoryScreen>
 
     for (final it in items) {
       if (it.isSeriesEpisode) {
+        final normTitle = it.extractedSeriesTitle.toLowerCase().trim();
+        final matchedSeriesId = items
+            .where((o) =>
+                o.isSeriesEpisode &&
+                o.seriesId != null &&
+                o.seriesId!.isNotEmpty &&
+                o.extractedSeriesTitle.toLowerCase().trim() == normTitle)
+            .firstOrNull
+            ?.seriesId;
         final key = (it.seriesId != null && it.seriesId!.isNotEmpty)
             ? it.seriesId!
-            : it.extractedSeriesTitle.toLowerCase().trim();
+            : (matchedSeriesId ?? normTitle);
         dramaMap.putIfAbsent(key, () => []).add(it);
       } else {
         singleItems.add(it);
@@ -670,6 +678,28 @@ class _HistoryScreenState extends State<HistoryScreen>
         intro: '',
         totalEpisodes: group.totalEpisodes > 0 ? group.totalEpisodes : 100,
         episodes: [],
+      );
+    }
+
+    if (dramaDetail.episodes.isEmpty && group.episodes.isNotEmpty) {
+      final fallbackEpisodes = group.episodes.map((e) {
+        return HongguoEpisodeItem(
+          index: e.extractedEpisodeIndex,
+          vid: e.seriesId ?? '',
+          title: e.title,
+          isAccessible: true,
+        );
+      }).toList();
+      fallbackEpisodes.sort((a, b) => a.index.compareTo(b.index));
+      dramaDetail = HongguoDramaDetail(
+        seriesId: dramaDetail.seriesId.isNotEmpty ? dramaDetail.seriesId : (group.seriesId ?? ''),
+        title: dramaDetail.title.isNotEmpty ? dramaDetail.title : group.seriesTitle,
+        cover: dramaDetail.cover.isNotEmpty ? dramaDetail.cover : (group.seriesCover ?? ''),
+        intro: dramaDetail.intro,
+        totalEpisodes: dramaDetail.totalEpisodes > 0
+            ? dramaDetail.totalEpisodes
+            : (group.totalEpisodes > 0 ? group.totalEpisodes : fallbackEpisodes.length),
+        episodes: fallbackEpisodes,
       );
     }
 

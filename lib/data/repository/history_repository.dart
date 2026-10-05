@@ -198,7 +198,17 @@ class HistoryRepository {
 
     final items = getHistory();
     final bvidMatch = RegExp(r'BV[a-zA-Z0-9]+', caseSensitive: false).firstMatch(videoPath)?.group(0);
+    final normalizedSeriesId = seriesId?.trim();
+    final hasEpisodeIdentity = normalizedSeriesId != null &&
+        normalizedSeriesId.isNotEmpty &&
+        episodeIndex != null &&
+        episodeIndex > 0;
     final existing = items.where((it) {
+      if (hasEpisodeIdentity &&
+          it.seriesId == normalizedSeriesId &&
+          it.extractedEpisodeIndex == episodeIndex) {
+        return true;
+      }
       if (it.videoPath == videoPath) return true;
       if (bvidMatch != null && it.videoPath.contains(bvidMatch)) return true;
       return false;
@@ -295,12 +305,18 @@ class HistoryRepository {
 
   Future<void> addItem(HistoryItem item) async {
     final items = getHistory();
-    final replaced = items
-        .where((it) => it.id == item.id || it.videoPath == item.videoPath)
-        .toList();
-    items.removeWhere(
-      (it) => it.id == item.id || it.videoPath == item.videoPath,
-    );
+    bool isSameItem(HistoryItem candidate) {
+      final sameSeriesEpisode = item.seriesId != null &&
+          item.seriesId!.isNotEmpty &&
+          candidate.seriesId == item.seriesId &&
+          candidate.extractedEpisodeIndex == item.extractedEpisodeIndex;
+      return candidate.id == item.id ||
+          candidate.videoPath == item.videoPath ||
+          sameSeriesEpisode;
+    }
+
+    final replaced = items.where(isSameItem).toList();
+    items.removeWhere(isSameItem);
     items.insert(0, item);
     if (items.length > 50) items.removeLast();
     await _save(items);
@@ -342,6 +358,77 @@ class HistoryRepository {
       timestamp: now,
     );
     await _save(items);
+  }
+
+  /// Cập nhật đúng tập đang phát trong một bộ Hồng Quả. URL video có thể đổi
+  /// theo phiên nên không dùng videoPath làm định danh cho trường hợp này.
+  Future<bool> updateSeriesPlaybackPosition({
+    required String seriesId,
+    required int episodeIndex,
+    required int positionMs,
+    int? durationMs,
+    String? seriesTitle,
+  }) async {
+    if (seriesId.trim().isEmpty || episodeIndex <= 0) return false;
+    final items = getHistory();
+    final normalizedTitle = seriesTitle?.trim().toLowerCase();
+    final index = items.indexWhere((item) {
+      final sameSeriesId = item.seriesId == seriesId;
+      final legacyTitleMatch =
+          (item.seriesId == null || item.seriesId!.isEmpty) &&
+          normalizedTitle != null &&
+          normalizedTitle.isNotEmpty &&
+          item.extractedSeriesTitle.trim().toLowerCase() == normalizedTitle;
+      return (sameSeriesId || legacyTitleMatch) &&
+          item.extractedEpisodeIndex == episodeIndex;
+    });
+    if (index == -1) return false;
+
+    final current = items[index];
+    final effectiveDuration = durationMs != null && durationMs > 0
+        ? durationMs
+        : current.durationMs;
+    final nonNegativePosition = positionMs < 0 ? 0 : positionMs;
+    final safePosition = effectiveDuration > 0
+        ? nonNegativePosition.clamp(0, effectiveDuration)
+        : nonNegativePosition;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    items[index] = current.copyWith(
+      durationMs: effectiveDuration,
+      lastPositionMs: safePosition,
+      lastWatchedAt: now,
+      timestamp: now,
+    );
+    await _save(items);
+    return true;
+  }
+
+  Future<bool> markSeriesEpisodeWatched({
+    required String seriesId,
+    required int episodeIndex,
+    String? seriesTitle,
+  }) async {
+    if (seriesId.trim().isEmpty || episodeIndex <= 0) return false;
+    final items = getHistory();
+    final normalizedTitle = seriesTitle?.trim().toLowerCase();
+    final index = items.indexWhere((item) {
+      final sameSeriesId = item.seriesId == seriesId;
+      final legacyTitleMatch =
+          (item.seriesId == null || item.seriesId!.isEmpty) &&
+          normalizedTitle != null &&
+          normalizedTitle.isNotEmpty &&
+          item.extractedSeriesTitle.trim().toLowerCase() == normalizedTitle;
+      return (sameSeriesId || legacyTitleMatch) &&
+          item.extractedEpisodeIndex == episodeIndex;
+    });
+    if (index == -1) return false;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    items[index] = items[index].copyWith(
+      lastWatchedAt: now,
+      timestamp: now,
+    );
+    await _save(items);
+    return true;
   }
 
   Future<void> updateVideoPath(String oldPath, String newPath) async {

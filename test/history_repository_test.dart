@@ -204,4 +204,96 @@ void main() {
     await repo.deleteItem(item.id);
     expect(repo.getHistory().any((it) => it.videoPath == contentUri), isFalse);
   });
+
+  test('uses series and episode as stable identity when Hongguo URL changes', () async {
+    final repo = await HistoryRepository.getInstance();
+    final doc = SubtitleDocument([
+      SubtitleItem(
+        id: 1,
+        startMs: 0,
+        endMs: 1000,
+        originalText: '测试',
+        translatedText: 'Kiểm tra',
+      ),
+    ]);
+
+    final first = await repo.saveHistory(
+      videoPath: 'https://cdn.example/old-token.mp4',
+      title: 'Bộ phim - Tập 5',
+      document: doc,
+      durationMs: 120000,
+      seriesId: 'series-123',
+      episodeIndex: 5,
+      totalEpisodes: 20,
+      isPrefetch: true,
+    );
+    await repo.updateSeriesPlaybackPosition(
+      seriesId: 'series-123',
+      episodeIndex: 5,
+      positionMs: 42000,
+      durationMs: 90000,
+    );
+
+    final updated = await repo.saveHistory(
+      videoPath: 'https://cdn.example/new-token.mp4',
+      title: 'Bộ phim - Tập 5',
+      document: doc,
+      durationMs: 90000,
+      seriesId: 'series-123',
+      episodeIndex: 5,
+      totalEpisodes: 20,
+    );
+
+    final history = repo.getHistory();
+    expect(history, hasLength(1));
+    expect(updated.id, first.id);
+    expect(history.single.videoPath, 'https://cdn.example/new-token.mp4');
+    expect(history.single.lastPositionMs, 42000);
+    expect(history.single.durationMs, 90000);
+  });
+
+  test('updates playback progress only for the currently playing series episode', () async {
+    final repo = await HistoryRepository.getInstance();
+    final doc = SubtitleDocument([
+      SubtitleItem(
+        id: 1,
+        startMs: 0,
+        endMs: 1000,
+        originalText: '测试',
+      ),
+    ]);
+
+    await repo.saveHistory(
+      videoPath: '/cache/ep5.mp4',
+      title: 'Bộ phim - Tập 5',
+      document: doc,
+      durationMs: 100000,
+      seriesId: 'series-456',
+      episodeIndex: 5,
+    );
+    await repo.saveHistory(
+      videoPath: '/cache/ep6.mp4',
+      title: 'Bộ phim - Tập 6',
+      document: doc,
+      durationMs: 80000,
+      seriesId: 'series-456',
+      episodeIndex: 6,
+      isPrefetch: true,
+    );
+
+    final didUpdate = await repo.updateSeriesPlaybackPosition(
+      seriesId: 'series-456',
+      episodeIndex: 6,
+      positionMs: 15000,
+      durationMs: 80000,
+    );
+    final history = repo.getHistory();
+    final ep5 = history.singleWhere((item) => item.episodeIndex == 5);
+    final ep6 = history.singleWhere((item) => item.episodeIndex == 6);
+
+    expect(didUpdate, isTrue);
+    expect(ep5.lastPositionMs, 0);
+    expect(ep6.lastPositionMs, 15000);
+    expect(ep6.lastWatchedAt, isNotNull);
+  });
 }
