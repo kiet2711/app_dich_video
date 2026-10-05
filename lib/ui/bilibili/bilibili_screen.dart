@@ -69,15 +69,48 @@ class _BilibiliScreenState extends State<BilibiliScreen>
   // Individual card translation overrides: map item title -> translated text
   final Map<String, String> _manualTranslationCache = {};
 
-  final List<({String label, String query})> _aiTags = [
+  static const List<({String label, String query})> _aiTags = [
+    // Định dạng nội dung AI
     (label: 'Phim AI', query: 'AI漫剧'),
     (label: 'Đoản kịch AI', query: 'AI短剧'),
     (label: 'Hoạt hình AI', query: 'AI动画'),
+    (label: 'Truyện tranh động', query: '动态漫'),
+    (label: 'Xem trọn bộ', query: '一口气看完'),
+
+    // Trọng sinh & Nghịch tập & Sảng văn
     (label: 'Trọng sinh học đường', query: '重生回到高中时代'),
-    (label: 'Tu tiên nghịch tập', query: '修仙逆袭'),
+    (label: 'Trọng sinh nghịch tập', query: '重生逆袭'),
+    (label: 'Vô địch lưu', query: '无敌流'),
+    (label: 'Phản đòn cực đã', query: '打脸爽文'),
+    (label: 'Thiên kim thật giả', query: '真假千金'),
+
+    // Hệ thống & Đô thị & Thần hào
+    (label: 'Hệ thống lưu', query: '系统流'),
+    (label: 'Thần hào / Tiêu tiền', query: '神豪系统'),
     (label: 'Đô thị chiến thần', query: '都市战神'),
+    (label: 'Đô thị dị năng', query: '都市异能'),
+
+    // Tu tiên & Huyền huyễn
+    (label: 'Tu tiên nghịch tập', query: '修仙逆袭'),
+    (label: 'Phàm nhân tu tiên', query: '凡人修仙'),
+    (label: 'Linh khí khôi phục', query: '灵气复苏'),
+    (label: 'Cao võ kỷ nguyên', query: '高武纪元'),
+    (label: 'Huyền huyễn não động', query: '玄幻脑洞'),
+
+    // Xuyên không & Cổ đại
     (label: 'Xuyên không', query: '穿越'),
+    (label: 'Xuyên không cổ đại', query: '穿越古代'),
+    (label: 'Cung đấu / Trạch đấu', query: '宫斗宅斗'),
+
+    // Mạt thế & Sinh tồn & Kinh dị
+    (label: 'Mạt thế sinh tồn', query: '末日求生'),
+    (label: 'Quy tắc quái đàm', query: '规则怪谈'),
+    (label: 'Vô hạn lưu', query: '无限流'),
+
+    // Khoa học viễn tưởng & Cyber
     (label: 'Khoa học viễn tưởng', query: '科幻AI'),
+    (label: 'Cyberpunk tương lai', query: '赛博朋克'),
+    (label: 'Võng du / Game thủ', query: '网游'),
   ];
 
   @override

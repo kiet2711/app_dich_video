@@ -22,6 +22,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _bilibiliSessDataController = TextEditingController();
   int _selectedAiProviderTab = 0; // 0: Gemini, 1: Groq
   bool _isAutoResilientExpanded = false;
+  bool _isCapcutConcurrencyExpanded = false;
 
   @override
   void initState() {
@@ -915,178 +916,305 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   },
                 ),
                 const SizedBox(height: 12),
-                const Divider(color: AppColors.cardBorder),
-                const SizedBox(height: 6),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      'SỐ LUỒNG NHẬN DIỆN CAPCUT (STT):',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13,
-                      ),
+                // Card Cấu hình đa luồng & phân đoạn CapCut (thu gọn/mở rộng)
+                Container(
+                  clipBehavior: Clip.antiAlias,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF161822),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: AppColors.primaryEmerald.withValues(alpha: 0.3),
                     ),
-                    Text(
-                      '${_settings!.capcutSttConcurrency} LUỒNG',
-                      style: const TextStyle(
-                        color: AppColors.primaryEmerald,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                const Text(
-                  'Xử lý song song nhiều phân đoạn âm thanh qua CapCut Cloud, giúp tạo sub cho video dài (1-3 tiếng) nhanh gấp nhiều lần (Tối đa 20 luồng).',
-                  style: TextStyle(color: Colors.white70, fontSize: 12),
-                ),
-                Slider(
-                  value: _settings!.capcutSttConcurrency.toDouble(),
-                  min: 1,
-                  max: 20,
-                  divisions: 19,
-                  activeColor: AppColors.primaryEmerald,
-                  onChanged: (val) {
-                    setState(() {
-                      _settings!.capcutSttConcurrency = val.toInt();
-                    });
-                  },
-                ),
-                const SizedBox(height: 12),
-                const Divider(color: AppColors.cardBorder),
-                const SizedBox(height: 6),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      'SỐ LUỒNG CẮT ÂM THANH ĐỒNG THỜI:',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13,
-                      ),
-                    ),
-                    Text(
-                      '${_settings!.audioSliceConcurrency} LUỒNG',
-                      style: const TextStyle(
-                        color: AppColors.primaryEmerald,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                const Text(
-                  'Số luồng trích xuất các phân đoạn âm thanh song song từ file âm thanh tổng (Tối đa 20 luồng).',
-                  style: TextStyle(color: Colors.white70, fontSize: 12),
-                ),
-                Slider(
-                  value: _settings!.audioSliceConcurrency.toDouble(),
-                  min: 1,
-                  max: 20,
-                  divisions: 19,
-                  activeColor: AppColors.primaryEmerald,
-                  onChanged: (val) {
-                    setState(() {
-                      _settings!.audioSliceConcurrency = val.toInt();
-                    });
-                  },
-                ),
-                const SizedBox(height: 12),
-                const Divider(color: AppColors.cardBorder),
-                const SizedBox(height: 6),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Expanded(
-                      child: Text(
-                        'THỜI LƯỢNG MỖI PHÂN ĐOẠN (GỬI CAPCUT):',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 13,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      InkWell(
+                        onTap: () {
+                          setState(() {
+                            _isCapcutConcurrencyExpanded = !_isCapcutConcurrencyExpanded;
+                          });
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  const Icon(
+                                    Icons.speed_rounded,
+                                    color: AppColors.primaryEmerald,
+                                    size: 18,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  const Expanded(
+                                    child: Text(
+                                      'CẤU HÌNH ĐA LUỒNG & PHÂN ĐOẠN CAPCUT',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 12.5,
+                                      ),
+                                    ),
+                                  ),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                      vertical: 2,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: AppColors.primaryEmerald.withValues(alpha: 0.15),
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: const Text(
+                                      'SPEED BOOST',
+                                      style: TextStyle(
+                                        color: AppColors.primaryEmerald,
+                                        fontSize: 9.5,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  AnimatedRotation(
+                                    turns: _isCapcutConcurrencyExpanded ? 0.5 : 0.0,
+                                    duration: const Duration(milliseconds: 200),
+                                    child: const Icon(
+                                      Icons.keyboard_arrow_down_rounded,
+                                      color: Colors.white60,
+                                      size: 20,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              if (!_isCapcutConcurrencyExpanded) ...[
+                                const SizedBox(height: 4),
+                                Row(
+                                  children: [
+                                    Container(
+                                      width: 6,
+                                      height: 6,
+                                      decoration: const BoxDecoration(
+                                        color: AppColors.primaryEmerald,
+                                        shape: BoxShape.circle,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Expanded(
+                                      child: Text(
+                                        '${_settings!.capcutSttConcurrency} luồng STT • ${_settings!.audioSliceConcurrency} luồng cắt • ${_settings!.audioChunkDurationMin}p/đoạn • Chạm để mở',
+                                        style: const TextStyle(
+                                          color: Colors.white54,
+                                          fontSize: 11,
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ],
+                          ),
                         ),
                       ),
-                    ),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF1E202A),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: AppColors.cardBorder),
+                      AnimatedSize(
+                        duration: const Duration(milliseconds: 250),
+                        curve: Curves.easeInOut,
+                        alignment: Alignment.topCenter,
+                        child: _isCapcutConcurrencyExpanded
+                            ? Padding(
+                                padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Divider(color: Color(0xFF262A38), height: 1),
+                                    const SizedBox(height: 10),
+                                    Row(
+                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        const Expanded(
+                                          child: Text(
+                                            'SỐ LUỒNG NHẬN DIỆN CAPCUT (STT):',
+                                            style: TextStyle(
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 13,
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          '${_settings!.capcutSttConcurrency} LUỒNG',
+                                          style: const TextStyle(
+                                            color: AppColors.primaryEmerald,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 13,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 4),
+                                    const Text(
+                                      'Xử lý song song nhiều phân đoạn âm thanh qua CapCut Cloud, giúp tạo sub cho video dài (1-3 tiếng) nhanh gấp nhiều lần (Tối đa 20 luồng).',
+                                      style: TextStyle(color: Colors.white70, fontSize: 12),
+                                    ),
+                                    Slider(
+                                      value: _settings!.capcutSttConcurrency.toDouble(),
+                                      min: 1,
+                                      max: 20,
+                                      divisions: 19,
+                                      activeColor: AppColors.primaryEmerald,
+                                      onChanged: (val) {
+                                        setState(() {
+                                          _settings!.capcutSttConcurrency = val.toInt();
+                                        });
+                                      },
+                                    ),
+                                    const SizedBox(height: 6),
+                                    const Divider(color: Color(0xFF262A38)),
+                                    const SizedBox(height: 6),
+                                    Row(
+                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        const Expanded(
+                                          child: Text(
+                                            'SỐ LUỒNG CẮT ÂM THANH ĐỒNG THỜI:',
+                                            style: TextStyle(
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 13,
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          '${_settings!.audioSliceConcurrency} LUỒNG',
+                                          style: const TextStyle(
+                                            color: AppColors.primaryEmerald,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 13,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 4),
+                                    const Text(
+                                      'Số luồng trích xuất các phân đoạn âm thanh song song từ file âm thanh tổng (Tối đa 20 luồng).',
+                                      style: TextStyle(color: Colors.white70, fontSize: 12),
+                                    ),
+                                    Slider(
+                                      value: _settings!.audioSliceConcurrency.toDouble(),
+                                      min: 1,
+                                      max: 20,
+                                      divisions: 19,
+                                      activeColor: AppColors.primaryEmerald,
+                                      onChanged: (val) {
+                                        setState(() {
+                                          _settings!.audioSliceConcurrency = val.toInt();
+                                        });
+                                      },
+                                    ),
+                                    const SizedBox(height: 6),
+                                    const Divider(color: Color(0xFF262A38)),
+                                    const SizedBox(height: 6),
+                                    Row(
+                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        const Expanded(
+                                          child: Text(
+                                            'THỜI LƯỢNG MỖI PHÂN ĐOẠN (GỬI CAPCUT):',
+                                            style: TextStyle(
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 13,
+                                            ),
+                                          ),
+                                        ),
+                                        Container(
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFF1E202A),
+                                            borderRadius: BorderRadius.circular(10),
+                                            border: Border.all(color: AppColors.cardBorder),
+                                          ),
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              IconButton(
+                                                visualDensity: VisualDensity.compact,
+                                                icon: const Icon(
+                                                  Icons.remove_circle_outline_rounded,
+                                                  size: 20,
+                                                  color: AppColors.primaryEmerald,
+                                                ),
+                                                tooltip: 'Giảm 1 phút',
+                                                onPressed: _settings!.audioChunkDurationMin > 1
+                                                    ? () {
+                                                        setState(() {
+                                                          _settings!.audioChunkDurationMin--;
+                                                        });
+                                                      }
+                                                    : null,
+                                              ),
+                                              Container(
+                                                constraints: const BoxConstraints(minWidth: 64),
+                                                alignment: Alignment.center,
+                                                padding: const EdgeInsets.symmetric(horizontal: 4),
+                                                child: Text(
+                                                  '${_settings!.audioChunkDurationMin} PHÚT',
+                                                  style: const TextStyle(
+                                                    color: Colors.white,
+                                                    fontWeight: FontWeight.bold,
+                                                    fontSize: 13,
+                                                  ),
+                                                ),
+                                              ),
+                                              IconButton(
+                                                visualDensity: VisualDensity.compact,
+                                                icon: const Icon(
+                                                  Icons.add_circle_outline_rounded,
+                                                  size: 20,
+                                                  color: AppColors.primaryEmerald,
+                                                ),
+                                                tooltip: 'Tăng 1 phút',
+                                                onPressed: _settings!.audioChunkDurationMin < 15
+                                                    ? () {
+                                                        setState(() {
+                                                          _settings!.audioChunkDurationMin++;
+                                                        });
+                                                      }
+                                                    : null,
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 4),
+                                    const Text(
+                                      'Thời lượng tối đa của mỗi đoạn âm thanh khi gửi nhận diện CapCut Cloud (từ 1 đến 15 phút, mặc định: 10 phút). Video ngắn hơn mốc này sẽ gửi nguyên file.',
+                                      style: TextStyle(color: Colors.white70, fontSize: 12),
+                                    ),
+                                    Slider(
+                                      value: _settings!.audioChunkDurationMin.toDouble(),
+                                      min: 1,
+                                      max: 15,
+                                      divisions: 14,
+                                      activeColor: AppColors.primaryEmerald,
+                                      onChanged: (val) {
+                                        setState(() {
+                                          _settings!.audioChunkDurationMin = val.toInt();
+                                        });
+                                      },
+                                    ),
+                                  ],
+                                ),
+                              )
+                            : const SizedBox.shrink(),
                       ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            visualDensity: VisualDensity.compact,
-                            icon: const Icon(
-                              Icons.remove_circle_outline_rounded,
-                              size: 20,
-                              color: AppColors.primaryEmerald,
-                            ),
-                            tooltip: 'Giảm 1 phút',
-                            onPressed: _settings!.audioChunkDurationMin > 1
-                                ? () {
-                                    setState(() {
-                                      _settings!.audioChunkDurationMin--;
-                                    });
-                                  }
-                                : null,
-                          ),
-                          Container(
-                            constraints: const BoxConstraints(minWidth: 64),
-                            alignment: Alignment.center,
-                            padding: const EdgeInsets.symmetric(horizontal: 4),
-                            child: Text(
-                              '${_settings!.audioChunkDurationMin} PHÚT',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 13,
-                              ),
-                            ),
-                          ),
-                          IconButton(
-                            visualDensity: VisualDensity.compact,
-                            icon: const Icon(
-                              Icons.add_circle_outline_rounded,
-                              size: 20,
-                              color: AppColors.primaryEmerald,
-                            ),
-                            tooltip: 'Tăng 1 phút',
-                            onPressed: _settings!.audioChunkDurationMin < 15
-                                ? () {
-                                    setState(() {
-                                      _settings!.audioChunkDurationMin++;
-                                    });
-                                  }
-                                : null,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                const Text(
-                  'Thời lượng tối đa của mỗi đoạn âm thanh khi gửi nhận diện CapCut Cloud (từ 1 đến 15 phút, mặc định: 10 phút). Video ngắn hơn mốc này sẽ gửi nguyên file.',
-                  style: TextStyle(color: Colors.white70, fontSize: 12),
-                ),
-                Slider(
-                  value: _settings!.audioChunkDurationMin.toDouble(),
-                  min: 1,
-                  max: 15,
-                  divisions: 14,
-                  activeColor: AppColors.primaryEmerald,
-                  onChanged: (val) {
-                    setState(() {
-                      _settings!.audioChunkDurationMin = val.toInt();
-                    });
-                  },
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -1289,8 +1417,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 16),
 
-          // Section 3: Tải video & Bilibili VIP
-          _buildSectionHeader('TẢI VIDEO ONLINE & BILIBILI VIP'),
+          // Section 3: Tải video trực tuyến (Đa luồng CDN)
+          _buildSectionHeader('TẢI VIDEO ONLINE (ĐA LUỒNG CDN)'),
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
@@ -1304,20 +1432,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text(
-                      'SỐ LUỒNG TẢI VIDEO & AUDIO SONG SONG:',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
+                    const Expanded(
+                      child: Text(
+                        'SỐ LUỒNG TẢI VIDEO & AUDIO:',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
                       ),
                     ),
+                    const SizedBox(width: 8),
                     Text(
                       '${_settings!.downloadThreadCount} LUỒNG',
                       style: const TextStyle(
                         color: AppColors.primaryEmerald,
                         fontWeight: FontWeight.bold,
-                        fontSize: 14,
+                        fontSize: 13,
                       ),
                     ),
                   ],
@@ -1338,283 +1469,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   onChanged: (val) {
                     setState(() {
                       _settings!.downloadThreadCount = val.toInt();
-                    });
-                  },
-                ),
-                const Divider(color: AppColors.cardBorder),
-                const SizedBox(height: 4),
-                const Text(
-                  'BILIBILI COOKIE (SESSDATA):',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                const Text(
-                  'Nhập mã SESSDATA tài khoản Bilibili để mở khóa xem và tải chất lượng cao 1080P+, 4K và các video giới hạn VIP.',
-                  style: TextStyle(color: Colors.white70, fontSize: 12),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _bilibiliSessDataController,
-                  style: const TextStyle(color: Colors.white, fontSize: 13),
-                  decoration: InputDecoration(
-                    filled: true,
-                    fillColor: const Color(0xFF1E202A),
-                    hintText: 'Nhập mã SESSDATA...',
-                    hintStyle: const TextStyle(color: Colors.white38),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                const Divider(color: AppColors.cardBorder),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text(
-                    'Tự động tải video Bilibili để xem offline',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  subtitle: const Text(
-                    'Khi tạo phụ đề cho Bilibili, tự động tải luôn video MP4 về máy để phát offline 100% không giật lag.',
-                    style: TextStyle(color: Colors.white70, fontSize: 12),
-                  ),
-                  value: _settings!.downloadBilibiliVideo,
-                  activeTrackColor: AppColors.primaryEmerald,
-                  onChanged: (val) {
-                    setState(() {
-                      _settings!.downloadBilibiliVideo = val;
-                    });
-                  },
-                ),
-                const SizedBox(height: 8),
-                const Divider(color: AppColors.cardBorder),
-                const SizedBox(height: 8),
-                const Text(
-                  'CÔNG CỤ DỊCH BÌNH LUẬN BILIBILI:',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 13,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                const Text(
-                  'Chọn công cụ dịch khi bấm dịch các bình luận trong video Bilibili (có thể chuyển nhanh ngay tại tab bình luận).',
-                  style: TextStyle(color: Colors.white70, fontSize: 12),
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Expanded(
-                      child: InkWell(
-                        onTap: () {
-                          setState(() {
-                            _settings!.commentTranslationEngine = 'local';
-                          });
-                        },
-                        borderRadius: BorderRadius.circular(10),
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 200),
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-                          decoration: BoxDecoration(
-                            color: _settings!.commentTranslationEngine == 'local'
-                                ? const Color(0xFF2E7D32).withValues(alpha: 0.25)
-                                : AppColors.darkSurfaceVariant,
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(
-                              color: _settings!.commentTranslationEngine == 'local'
-                                  ? const Color(0xFF4CAF50)
-                                  : AppColors.cardBorder,
-                              width: _settings!.commentTranslationEngine == 'local' ? 1.5 : 1,
-                            ),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Icon(
-                                    Icons.phone_android_rounded,
-                                    size: 16,
-                                    color: _settings!.commentTranslationEngine == 'local'
-                                        ? const Color(0xFF81C784)
-                                        : Colors.white60,
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    'Dịch Local',
-                                    style: TextStyle(
-                                      color: _settings!.commentTranslationEngine == 'local'
-                                          ? Colors.white
-                                          : Colors.white70,
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 4),
-                              const Text(
-                                'Google ML Kit ngoại tuyến, 100% miễn phí, không tốn Token API',
-                                style: TextStyle(color: Colors.white54, fontSize: 10.5),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: InkWell(
-                        onTap: () {
-                          setState(() {
-                            _settings!.commentTranslationEngine = 'api';
-                          });
-                        },
-                        borderRadius: BorderRadius.circular(10),
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 200),
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-                          decoration: BoxDecoration(
-                            color: _settings!.commentTranslationEngine == 'api'
-                                ? const Color(0xFF00AEEC).withValues(alpha: 0.22)
-                                : AppColors.darkSurfaceVariant,
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(
-                              color: _settings!.commentTranslationEngine == 'api'
-                                  ? const Color(0xFF00AEEC)
-                                  : AppColors.cardBorder,
-                              width: _settings!.commentTranslationEngine == 'api' ? 1.5 : 1,
-                            ),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Icon(
-                                    Icons.auto_awesome_rounded,
-                                    size: 16,
-                                    color: _settings!.commentTranslationEngine == 'api'
-                                        ? const Color(0xFF00AEEC)
-                                        : Colors.white60,
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    'Dịch AI (API)',
-                                    style: TextStyle(
-                                      color: _settings!.commentTranslationEngine == 'api'
-                                          ? Colors.white
-                                          : Colors.white70,
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 4),
-                              const Text(
-                                'Gemini/Groq AI, dịch mượt mà theo ngữ cảnh tiếng lóng mạng',
-                                style: TextStyle(color: Colors.white54, fontSize: 10.5),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // Section 4.5: Trình phát Video & Phát Nền
-          _buildSectionHeader('Trình phát Video & Âm thanh nền'),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: AppColors.darkSurface,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: AppColors.cardBorder),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  secondary: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: AppColors.primaryEmerald.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Icon(
-                      Icons.headphones_rounded,
-                      color: AppColors.primaryEmerald,
-                      size: 22,
-                    ),
-                  ),
-                  title: const Text(
-                    'Phát âm thanh khi khóa màn hình / Chuyển app',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  subtitle: const Text(
-                    'Duy trì âm thanh gốc và giọng đọc lồng tiếng AI chạy nền liên tục khi bạn tắt màn hình hoặc chuyển sang ứng dụng khác (kiểu YouTube Premium).',
-                    style: TextStyle(color: Colors.white70, fontSize: 12),
-                  ),
-                  value: _settings!.backgroundPlayEnabled,
-                  activeTrackColor: AppColors.primaryEmerald,
-                  onChanged: (val) {
-                    setState(() {
-                      _settings!.backgroundPlayEnabled = val;
-                    });
-                  },
-                ),
-                const Divider(color: AppColors.cardBorder),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  secondary: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.lightBlueAccent.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Icon(
-                      Icons.picture_in_picture_rounded,
-                      color: Colors.lightBlueAccent,
-                      size: 22,
-                    ),
-                  ),
-                  title: const Text(
-                    'Thu nhỏ kiểu YouTube (Mini-player)',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  subtitle: const Text(
-                    'Tự động thu nhỏ trình phát xuống góc dưới khi vuốt xuống hoặc bấm nút quay lại. Vừa xem vừa lướt Phim Hồng Quả, Lịch Sử, Tạo Phụ Đề.',
-                    style: TextStyle(color: Colors.white70, fontSize: 12),
-                  ),
-                  value: _settings!.miniPlayerEnabled,
-                  activeTrackColor: AppColors.primaryEmerald,
-                  onChanged: (val) {
-                    setState(() {
-                      _settings!.miniPlayerEnabled = val;
                     });
                   },
                 ),

@@ -463,14 +463,6 @@ class _HongguoScreenState extends State<HongguoScreen> {
             tooltip: 'Cài đặt tự chuyển tập & dịch ngầm',
             onPressed: _showHongguoSettingsSheet,
           ),
-          IconButton(
-            icon: const Icon(Icons.refresh_rounded, color: AppColors.textSecondary),
-            tooltip: 'Làm mới',
-            onPressed: () {
-              HapticFeedback.lightImpact();
-              _loadDramas();
-            },
-          ),
         ],
       ),
       body: SafeArea(

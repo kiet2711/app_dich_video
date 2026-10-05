@@ -4,15 +4,26 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
+import 'package:dio/io.dart';
 
 class MultiThreadDownloader {
-  static final Dio _dio = Dio(
-    BaseOptions(
-      connectTimeout: const Duration(seconds: 35),
-      receiveTimeout: const Duration(seconds: 60),
-      followRedirects: true,
-    ),
-  );
+  static final Dio _dio = () {
+    final dio = Dio(
+      BaseOptions(
+        connectTimeout: const Duration(seconds: 35),
+        receiveTimeout: const Duration(seconds: 60),
+        followRedirects: true,
+      ),
+    );
+    dio.httpClientAdapter = IOHttpClientAdapter(
+      createHttpClient: () {
+        final client = HttpClient();
+        client.maxConnectionsPerHost = 64;
+        return client;
+      },
+    );
+    return dio;
+  }();
 
   static const List<String> cdnFallbackHosts = [
     'upos-sz-mirrorcos.bilivideo.com',
@@ -37,9 +48,12 @@ class MultiThreadDownloader {
     }
 
     final totalBytes = await _probeFileSize(cleanUrl, headers);
-    // Với file nhỏ <= 15MB hoặc server không trả Content-Length (totalBytes <= 0):
-    // Tải 1 luồng trực tiếp là tối ưu và an toàn nhất (1-2s giống tool PC).
-    if (totalBytes <= 15 * 1024 * 1024) {
+    // Kích thước chuẩn mỗi khối là 3MB
+    const chunkSize = 3 * 1024 * 1024;
+
+    // Nếu không lấy được kích thước file (totalBytes <= 0) hoặc file <= 3MB:
+    // Tải 1 luồng trực tiếp là tối ưu nhất.
+    if (totalBytes <= chunkSize) {
       return _downloadSingleStream(
         cleanUrl,
         outputFile,
@@ -51,10 +65,9 @@ class MultiThreadDownloader {
     }
 
     final totalMb = totalBytes / (1024.0 * 1024.0);
-    // Tối ưu hóa số luồng song song theo cấu hình cài đặt (tối đa 16 luồng)
-    final effectiveConcurrency = concurrency.clamp(2, 16);
-    // Chunk size 3MB chuẩn theo tool PC để các luồng kéo liên tục theo hàng đợi động
-    const chunkSize = 3 * 1024 * 1024;
+    // Tối ưu hóa số luồng song song theo cấu hình cài đặt (hỗ trợ tối đa 32 luồng)
+    final effectiveConcurrency = concurrency.clamp(2, 32);
+
     final chunks = <_Chunk>[];
     var curr = 0;
     var chunkIdx = 0;
@@ -63,6 +76,8 @@ class MultiThreadDownloader {
       chunks.add(_Chunk(index: chunkIdx++, start: curr, end: end));
       curr = end + 1;
     }
+
+    final activeConcurrency = min(effectiveConcurrency, chunks.length);
 
     final raf = await outputFile.open(mode: FileMode.write);
     try {
@@ -112,14 +127,14 @@ class MultiThreadDownloader {
               : 0.0;
           final pct = (downloadedBytes / totalBytes).clamp(0.0, 1.0);
           final msg =
-              'Đang tải tốc độ cao ($effectiveConcurrency luồng): ${(downloadedBytes / (1024 * 1024)).toStringAsFixed(1)} / ${totalMb.toStringAsFixed(1)} MB (${speedMBs.toStringAsFixed(1)} MB/s)';
+              'Đang tải tốc độ cao ($activeConcurrency luồng): ${(downloadedBytes / (1024 * 1024)).toStringAsFixed(1)} / ${totalMb.toStringAsFixed(1)} MB (${speedMBs.toStringAsFixed(1)} MB/s)';
           progressCallback?.call(pct, msg);
         }
       }
     }
 
     try {
-      final futures = List.generate(effectiveConcurrency, (id) => worker(id));
+      final futures = List.generate(activeConcurrency, (id) => worker(id));
       await Future.wait(futures);
       await writeQueue;
       await raf.flush();
@@ -138,12 +153,14 @@ class MultiThreadDownloader {
   }
 
   static Future<int> _probeFileSize(String url, Map<String, String> headers) async {
-    // 1. Thử HEAD request trước (không tốn băng thông tải body)
+    // 1. Thử HEAD request trước với timeout nhanh 5s (không tốn băng thông tải body)
     try {
       final headResp = await _dio.head<dynamic>(
         url,
         options: Options(
           headers: Map<String, dynamic>.from(headers),
+          sendTimeout: const Duration(seconds: 5),
+          receiveTimeout: const Duration(seconds: 5),
           validateStatus: (status) => status != null && status < 400,
         ),
       );
@@ -154,7 +171,7 @@ class MultiThreadDownloader {
       }
     } catch (_) {}
 
-    // 2. Thử Range 0-0 nếu server hỗ trợ partial content
+    // 2. Thử Range 0-0 nếu server hỗ trợ partial content (timeout nhanh 6s)
     try {
       final reqHeaders = Map<String, dynamic>.from(headers);
       reqHeaders['Range'] = 'bytes=0-0';
@@ -163,6 +180,8 @@ class MultiThreadDownloader {
         url,
         options: Options(
           headers: reqHeaders,
+          sendTimeout: const Duration(seconds: 6),
+          receiveTimeout: const Duration(seconds: 6),
           responseType: ResponseType.stream,
           validateStatus: (status) => status != null && (status >= 200 && status < 300),
         ),

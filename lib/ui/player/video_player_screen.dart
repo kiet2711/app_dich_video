@@ -81,8 +81,15 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   bool _isSwitchingQuality = false;
   String _currentQualityKey = '64';
   bool _isPlayerFullScreen = false;
-  List<BilibiliAnimeItem> _relatedVideos = [];
+  List<BilibiliAnimeItem> _rawDirectRelated = [];
+  List<BilibiliAnimeItem> _rawRecommendFeed = [];
+  List<BilibiliAnimeItem> _rawPopularVideos = [];
+  List<BilibiliAnimeItem> _blendedRelatedVideos = [];
+  String _selectedRelatedTab = 'blended';
+  int _recommendFreshIdx = 1;
   bool _isLoadingRelated = false;
+  bool _isRefreshingRelated = false;
+  bool _isLoadingMoreRelated = false;
   String? _lastLoadedRelatedBvid;
   String? _coverUrl;
   String? _authorName;
@@ -563,6 +570,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       _loadRelatedVideos(initialBvid);
     }
 
+    if (widget.dramaDetail != null) {
+      _prefetchManager = HongguoPrefetchManager(widget.dramaDetail!);
+      _prefetchManager!.registerVideoUrl(_currentEpisodeIndex, widget.videoPath);
+      if (_currentDocument.isNotEmpty) {
+        _prefetchManager!.registerDocument(_currentEpisodeIndex, _currentDocument);
+      }
+    }
+
     _ttsScheduler = TtsAudioScheduler(_currentDocument);
 
     _initSettingsAndPlayer();
@@ -766,10 +781,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
     // Khởi tạo HongguoPrefetchManager nếu có thông tin phim bộ
     if (widget.dramaDetail != null) {
-      _prefetchManager = HongguoPrefetchManager(widget.dramaDetail!);
-      _prefetchManager!.registerVideoUrl(_currentEpisodeIndex, widget.videoPath);
-      if (_currentDocument.isNotEmpty) {
-        _prefetchManager!.registerDocument(_currentEpisodeIndex, _currentDocument);
+      if (_prefetchManager == null) {
+        _prefetchManager = HongguoPrefetchManager(widget.dramaDetail!);
+        _prefetchManager!.registerVideoUrl(_currentEpisodeIndex, widget.videoPath);
+        if (_currentDocument.isNotEmpty) {
+          _prefetchManager!.registerDocument(_currentEpisodeIndex, _currentDocument);
+        }
       }
       unawaited(_prefetchManager!.preloadFromHistory());
 
@@ -1419,26 +1436,83 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     }
   }
 
+  List<BilibiliAnimeItem> get _displayedRelatedVideos {
+    final currentAuthor = _authorName ?? _bilibiliDetails?.author ?? _bilibiliItem?.author ?? '';
+    switch (_selectedRelatedTab) {
+      case 'same_author':
+        if (currentAuthor.isEmpty) return _blendedRelatedVideos;
+        final list = _blendedRelatedVideos
+            .where((it) => it.author.trim() == currentAuthor.trim())
+            .toList();
+        if (list.isNotEmpty) return list;
+        final fromRelated = _rawDirectRelated
+            .where((it) => it.author.trim() == currentAuthor.trim())
+            .toList();
+        return fromRelated.isNotEmpty ? fromRelated : _blendedRelatedVideos;
+      case 'related':
+        return _rawDirectRelated.isNotEmpty ? _rawDirectRelated : _blendedRelatedVideos;
+      case 'explore':
+        final explore = <BilibiliAnimeItem>[];
+        final seen = <String>{};
+        final curBvid = _bilibiliDetails?.bvid ?? _bilibiliItem?.bvid ?? _lastLoadedRelatedBvid ?? '';
+        if (curBvid.isNotEmpty) seen.add(curBvid);
+        for (final it in [..._rawRecommendFeed, ..._rawPopularVideos]) {
+          if (it.bvid != null && it.bvid!.isNotEmpty && seen.add(it.bvid!)) {
+            explore.add(it);
+          }
+        }
+        return explore.isNotEmpty ? explore : _blendedRelatedVideos;
+      case 'blended':
+      default:
+        return _blendedRelatedVideos;
+    }
+  }
+
   Future<void> _loadRelatedVideos(String bvid) async {
     if (bvid.isEmpty) return;
-    if (_lastLoadedRelatedBvid == bvid && _relatedVideos.isNotEmpty) return;
+    if (_lastLoadedRelatedBvid == bvid && _blendedRelatedVideos.isNotEmpty) return;
     _lastLoadedRelatedBvid = bvid;
     if (mounted) {
       setState(() {
         _isLoadingRelated = true;
-        _relatedVideos = [];
+        _rawDirectRelated = [];
+        _rawRecommendFeed = [];
+        _rawPopularVideos = [];
+        _blendedRelatedVideos = [];
+        _selectedRelatedTab = 'blended';
       });
     }
     try {
       final settings = await SettingsRepository.getInstance();
       final resolver = BilibiliResolver();
-      final related = await resolver.getRelatedVideos(
-        bvid,
-        cookie: settings.bilibiliSessData,
+      final cookie = settings.bilibiliSessData;
+
+      // Nạp song song: Liên quan trực tiếp, Đề xuất AI/Feed cá nhân hóa, và Thịnh hành
+      final results = await Future.wait([
+        resolver.getRelatedVideos(bvid, cookie: cookie).catchError((_) => <BilibiliAnimeItem>[]),
+        resolver.getRecommendFeed(pageSize: 15, freshIdx: _recommendFreshIdx, cookie: cookie).catchError((_) => <BilibiliAnimeItem>[]),
+        resolver.getPopularVideos(page: 1, pageSize: 12, cookie: cookie).catchError((_) => <BilibiliAnimeItem>[]),
+      ]);
+
+      final related = results[0];
+      final feed = results[1];
+      final popular = results[2];
+
+      final currentAuthor = _authorName ?? _bilibiliDetails?.author ?? _bilibiliItem?.author ?? '';
+      final blended = _blendRecommendations(
+        currentBvid: bvid,
+        currentAuthor: currentAuthor,
+        related: related,
+        feed: feed,
+        popular: popular,
       );
+
       if (mounted) {
         setState(() {
-          _relatedVideos = related;
+          _rawDirectRelated = related;
+          _rawRecommendFeed = feed;
+          _rawPopularVideos = popular;
+          _blendedRelatedVideos = blended;
           _isLoadingRelated = false;
         });
       }
@@ -1449,6 +1523,193 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         });
       }
     }
+  }
+
+  Future<void> _refreshRecommendations() async {
+    final bvid = _bilibiliDetails?.bvid ??
+        _bilibiliItem?.bvid ??
+        _lastLoadedRelatedBvid ??
+        '';
+    if (bvid.isEmpty || _isRefreshingRelated) return;
+    if (mounted) {
+      setState(() {
+        _isRefreshingRelated = true;
+      });
+    }
+    try {
+      _recommendFreshIdx++;
+      final settings = await SettingsRepository.getInstance();
+      final resolver = BilibiliResolver();
+      final cookie = settings.bilibiliSessData;
+
+      final popularPage = (_recommendFreshIdx % 5) + 1;
+      final results = await Future.wait([
+        resolver.getRecommendFeed(pageSize: 16, freshIdx: _recommendFreshIdx, cookie: cookie).catchError((_) => <BilibiliAnimeItem>[]),
+        resolver.getPopularVideos(page: popularPage, pageSize: 12, cookie: cookie).catchError((_) => <BilibiliAnimeItem>[]),
+      ]);
+
+      final feed = results[0];
+      final popular = results[1];
+
+      final currentAuthor = _authorName ?? _bilibiliDetails?.author ?? _bilibiliItem?.author ?? '';
+      final blended = _blendRecommendations(
+        currentBvid: bvid,
+        currentAuthor: currentAuthor,
+        related: _rawDirectRelated,
+        feed: feed,
+        popular: popular,
+      );
+
+      if (mounted) {
+        setState(() {
+          _rawRecommendFeed = feed;
+          _rawPopularVideos = popular;
+          _blendedRelatedVideos = blended;
+          _isRefreshingRelated = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _isRefreshingRelated = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadMoreRecommendations() async {
+    final bvid = _bilibiliDetails?.bvid ??
+        _bilibiliItem?.bvid ??
+        _lastLoadedRelatedBvid ??
+        '';
+    if (bvid.isEmpty || _isLoadingMoreRelated) return;
+    if (mounted) {
+      setState(() {
+        _isLoadingMoreRelated = true;
+      });
+    }
+    try {
+      _recommendFreshIdx++;
+      final settings = await SettingsRepository.getInstance();
+      final resolver = BilibiliResolver();
+      final cookie = settings.bilibiliSessData;
+
+      final moreFeed = await resolver.getRecommendFeed(
+        pageSize: 15,
+        freshIdx: _recommendFreshIdx,
+        cookie: cookie,
+      ).catchError((_) => <BilibiliAnimeItem>[]);
+
+      if (mounted && moreFeed.isNotEmpty) {
+        final existingBvids = _blendedRelatedVideos.map((e) => e.bvid).whereType<String>().toSet();
+        existingBvids.add(bvid);
+
+        final newItems = moreFeed.where((it) => it.bvid != null && it.bvid!.isNotEmpty && !existingBvids.contains(it.bvid!)).toList();
+
+        setState(() {
+          _rawRecommendFeed.addAll(newItems);
+          _blendedRelatedVideos.addAll(newItems);
+          _isLoadingMoreRelated = false;
+        });
+      } else if (mounted) {
+        setState(() {
+          _isLoadingMoreRelated = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _isLoadingMoreRelated = false;
+        });
+      }
+    }
+  }
+
+  List<BilibiliAnimeItem> _blendRecommendations({
+    required String currentBvid,
+    required String currentAuthor,
+    required List<BilibiliAnimeItem> related,
+    required List<BilibiliAnimeItem> feed,
+    required List<BilibiliAnimeItem> popular,
+  }) {
+    final result = <BilibiliAnimeItem>[];
+    final seenBvids = <String>{currentBvid};
+
+    // 1. Phân nhóm video liên quan
+    final sameAuthorList = <BilibiliAnimeItem>[];
+    final directRelatedList = <BilibiliAnimeItem>[];
+
+    for (final item in related) {
+      final b = item.bvid;
+      if (b == null || b.isEmpty || seenBvids.contains(b)) continue;
+      if (currentAuthor.isNotEmpty && item.author.trim() == currentAuthor.trim()) {
+        sameAuthorList.add(item);
+      } else {
+        directRelatedList.add(item);
+      }
+    }
+
+    // 2. Gom video khám phá / xu hướng
+    final exploreList = <BilibiliAnimeItem>[];
+    for (final item in [...feed, ...popular]) {
+      final b = item.bvid;
+      if (b == null || b.isEmpty || seenBvids.contains(b)) continue;
+      exploreList.add(item);
+    }
+
+    // 3. Trộn thông minh (YouTube / Bilibili interleave ratio):
+    // 2 video liên quan (hoặc 1 cùng kênh + 1 liên quan) -> 1 video khám phá -> 2 liên quan -> 1 khám phá...
+    var rIdx = 0;
+    var sIdx = 0;
+    var eIdx = 0;
+
+    while (rIdx < directRelatedList.length || sIdx < sameAuthorList.length || eIdx < exploreList.length) {
+      var addedRelated = 0;
+      if (sIdx < sameAuthorList.length && (result.isEmpty || sIdx < 2)) {
+        final it = sameAuthorList[sIdx++];
+        if (seenBvids.add(it.bvid!)) {
+          result.add(it);
+          addedRelated++;
+        }
+      }
+      while (rIdx < directRelatedList.length && addedRelated < 2) {
+        final it = directRelatedList[rIdx++];
+        if (seenBvids.add(it.bvid!)) {
+          result.add(it);
+          addedRelated++;
+        }
+      }
+
+      // Xen 1 video khám phá / đề xuất rộng
+      if (eIdx < exploreList.length) {
+        final it = exploreList[eIdx++];
+        if (seenBvids.add(it.bvid!)) {
+          result.add(it);
+        }
+      }
+
+      // Xử lý nốt nếu 1 trong các nguồn cạn
+      if (rIdx >= directRelatedList.length && sIdx >= sameAuthorList.length) {
+        while (eIdx < exploreList.length) {
+          final it = exploreList[eIdx++];
+          if (seenBvids.add(it.bvid!)) result.add(it);
+        }
+        break;
+      }
+      if (eIdx >= exploreList.length) {
+        while (sIdx < sameAuthorList.length) {
+          final it = sameAuthorList[sIdx++];
+          if (seenBvids.add(it.bvid!)) result.add(it);
+        }
+        while (rIdx < directRelatedList.length) {
+          final it = directRelatedList[rIdx++];
+          if (seenBvids.add(it.bvid!)) result.add(it);
+        }
+        break;
+      }
+    }
+
+    return result;
   }
 
   Future<void> _showQualitySelectionSheet() async {
@@ -2534,11 +2795,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         const Divider(color: Colors.white12, height: 1),
         const SizedBox(height: 12),
 
-        // 6. Header "Video đề xuất"
+        // 6. Header "Video đề xuất" & Nút "Đổi đề xuất"
         Row(
           children: [
-            const Icon(Icons.recommend_rounded, color: Color(0xFF00AEEC), size: 20),
-            const SizedBox(width: 8),
+            const Icon(Icons.auto_awesome_rounded, color: Color(0xFF00AEEC), size: 18),
+            const SizedBox(width: 7),
             const Text(
               'Video đề xuất',
               style: TextStyle(
@@ -2553,15 +2814,54 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                 width: 14,
                 height: 14,
                 child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF00AEEC)),
+              )
+            else
+              InkWell(
+                onTap: _isRefreshingRelated ? null : () => _refreshRecommendations(),
+                borderRadius: BorderRadius.circular(14),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: Colors.white12),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_isRefreshingRelated)
+                        const SizedBox(
+                          width: 11,
+                          height: 11,
+                          child: CircularProgressIndicator(strokeWidth: 1.6, color: Color(0xFF00AEEC)),
+                        )
+                      else
+                        const Icon(Icons.refresh_rounded, size: 14, color: Color(0xFF00AEEC)),
+                      const SizedBox(width: 4),
+                      const Text(
+                        'Đổi đề xuất',
+                        style: TextStyle(
+                          color: Color(0xFF00AEEC),
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
           ],
         ),
         const SizedBox(height: 10),
 
-        // 7. Danh sách video đề xuất
-        if (_isLoadingRelated && _relatedVideos.isEmpty)
+        // 7. Thanh lọc đề xuất (Đa dạng, Liên quan, Cùng kênh, Khám phá)
+        _buildRelatedFilterBar(),
+        const SizedBox(height: 10),
+
+        // 8. Danh sách video đề xuất
+        if (_isLoadingRelated && _displayedRelatedVideos.isEmpty)
           _buildRelatedVideosSkeleton()
-        else if (_relatedVideos.isEmpty)
+        else if (_displayedRelatedVideos.isEmpty)
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 24),
             child: Center(
@@ -2571,8 +2871,37 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
               ),
             ),
           )
-        else
-          ..._relatedVideos.map((item) => _buildRelatedVideoTile(item)),
+        else ...[
+          ..._displayedRelatedVideos.map((item) => _buildRelatedVideoTile(item)),
+          if (_selectedRelatedTab == 'blended' || _selectedRelatedTab == 'explore')
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Center(
+                child: TextButton.icon(
+                  onPressed: _isLoadingMoreRelated ? null : () => _loadMoreRecommendations(),
+                  icon: _isLoadingMoreRelated
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF00AEEC)),
+                        )
+                      : const Icon(Icons.expand_more_rounded, size: 18, color: Color(0xFF00AEEC)),
+                  label: Text(
+                    _isLoadingMoreRelated ? 'Đang nạp thêm...' : 'Tải thêm video đề xuất',
+                    style: const TextStyle(color: Color(0xFF00AEEC), fontSize: 12.5, fontWeight: FontWeight.w600),
+                  ),
+                  style: TextButton.styleFrom(
+                    backgroundColor: Colors.white.withValues(alpha: 0.05),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
+                      side: const BorderSide(color: Colors.white12),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
       ],
     );
   }
@@ -3228,6 +3557,78 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     );
   }
 
+  Widget _buildRelatedFilterBar() {
+    final currentAuthor = _authorName ?? _bilibiliDetails?.author ?? _bilibiliItem?.author ?? '';
+    final hasSameAuthorVideos = currentAuthor.isNotEmpty &&
+        (_rawDirectRelated.any((it) => it.author.trim() == currentAuthor.trim()) ||
+         _blendedRelatedVideos.any((it) => it.author.trim() == currentAuthor.trim()));
+
+    return SizedBox(
+      height: 30,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        children: [
+          _buildRelatedFilterChip('blended', 'Đa dạng', Icons.auto_awesome_rounded),
+          const SizedBox(width: 8),
+          _buildRelatedFilterChip('related', 'Liên quan', Icons.tune_rounded),
+          if (hasSameAuthorVideos) ...[
+            const SizedBox(width: 8),
+            _buildRelatedFilterChip('same_author', 'Cùng kênh', Icons.person_rounded),
+          ],
+          const SizedBox(width: 8),
+          _buildRelatedFilterChip('explore', 'Khám phá', Icons.explore_rounded),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRelatedFilterChip(String key, String label, IconData icon) {
+    final isSelected = _selectedRelatedTab == key;
+    return InkWell(
+      onTap: () {
+        if (_selectedRelatedTab != key) {
+          setState(() {
+            _selectedRelatedTab = key;
+          });
+        }
+      },
+      borderRadius: BorderRadius.circular(15),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? const Color(0xFF00AEEC).withValues(alpha: 0.22)
+              : Colors.white.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(15),
+          border: Border.all(
+            color: isSelected ? const Color(0xFF00AEEC) : Colors.white12,
+            width: 1,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 13,
+              color: isSelected ? const Color(0xFF00AEEC) : Colors.white60,
+            ),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: TextStyle(
+                color: isSelected ? Colors.white : Colors.white70,
+                fontSize: 11.5,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildRelatedVideosSkeleton() {
     return Column(
       children: List.generate(4, (index) {
@@ -3289,6 +3690,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   }
 
   Widget _buildRelatedVideoTile(BilibiliAnimeItem item) {
+    final currentAuthor = _authorName ?? _bilibiliDetails?.author ?? _bilibiliItem?.author ?? '';
+    final isSameAuthor = currentAuthor.isNotEmpty && item.author.trim() == currentAuthor.trim();
+
     return InkWell(
       onTap: () {
         _switchVideo(
@@ -3384,13 +3788,16 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 0.8),
                         decoration: BoxDecoration(
-                          border: Border.all(color: Colors.white30, width: 0.8),
+                          border: Border.all(
+                            color: isSameAuthor ? const Color(0xFFFB7299) : Colors.white30,
+                            width: 0.8,
+                          ),
                           borderRadius: BorderRadius.circular(3),
                         ),
-                        child: const Text(
+                        child: Text(
                           'UP',
                           style: TextStyle(
-                            color: Colors.white60,
+                            color: isSameAuthor ? const Color(0xFFFB7299) : Colors.white60,
                             fontSize: 7.5,
                             fontWeight: FontWeight.bold,
                           ),
@@ -3402,12 +3809,35 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                           item.author,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white54,
+                          style: TextStyle(
+                            color: isSameAuthor ? const Color(0xFFFB7299) : Colors.white54,
                             fontSize: 11,
+                            fontWeight: isSameAuthor ? FontWeight.w600 : FontWeight.normal,
                           ),
                         ),
                       ),
+                      if (isSameAuthor) ...[
+                        const SizedBox(width: 4),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFB7299).withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(3),
+                            border: Border.all(
+                              color: const Color(0xFFFB7299).withValues(alpha: 0.5),
+                              width: 0.8,
+                            ),
+                          ),
+                          child: const Text(
+                            'Cùng kênh',
+                            style: TextStyle(
+                              color: Color(0xFFFB7299),
+                              fontSize: 8,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                   if (item.viewCountText.isNotEmpty) ...[
@@ -4422,6 +4852,16 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         !_userChosePlayRaw &&
         !isLocalVideo;
 
+    // NẾU LÀ HỒNG QUẢ VÀ ĐANG CHỜ DỊCH: NHẢY THẲNG VÀO GATE OVERLAY (PHOTO 2)
+    if (isHongguoWaitingTranslation) {
+      return Scaffold(
+        backgroundColor: const Color(0xFF0D1117),
+        body: SafeArea(
+          child: _buildHongguoTranslatingGateOverlay(displayTitle),
+        ),
+      );
+    }
+
     final isBilibili = _bilibiliDetails != null ||
         widget.bilibiliItem != null ||
         BilibiliResolver.isBilibiliUrl(_sourceVideoUrl) ||
@@ -4462,7 +4902,87 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   }
 
   Widget _buildPlayerLoadingArea(String displayTitle) {
+    final isHongguo = widget.dramaDetail != null;
     final cover = _coverUrl ?? _bilibiliDetails?.coverUrl;
+
+    // Loading toàn màn hình dọc cho Hồng Quả (khi đã chọn xem bản gốc hoặc có sub nhưng đang nạp controller)
+    if (isHongguo) {
+      return Container(
+        color: const Color(0xFF0D1117),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (cover != null && cover.isNotEmpty)
+              Image.network(
+                cover,
+                fit: BoxFit.cover,
+                errorBuilder: (_, _, _) => Container(color: const Color(0xFF0D1117)),
+              )
+            else
+              Container(color: const Color(0xFF0D1117)),
+            Container(color: Colors.black.withValues(alpha: 0.6)),
+            Center(
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.65),
+                  shape: BoxShape.circle,
+                ),
+                child: const SizedBox(
+                  width: 32,
+                  height: 32,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 3,
+                    color: AppTheme.primaryEmerald,
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              top: 8,
+              left: 8,
+              right: 8,
+              child: Row(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.arrow_back, color: Colors.white, size: 22),
+                    onPressed: () {
+                      if (widget.isGlobalPlayer) {
+                        GlobalPlayerManager.instance.minimize();
+                      } else {
+                        Navigator.pop(context);
+                      }
+                    },
+                  ),
+                  if (displayTitle.isNotEmpty)
+                    Expanded(
+                      child: Text(
+                        displayTitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  IconButton(
+                    icon: const Icon(
+                      Icons.format_list_numbered_rounded,
+                      color: Colors.white,
+                    ),
+                    tooltip: 'Danh sách tập',
+                    onPressed: _showEpisodeListSheet,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     return AspectRatio(
       aspectRatio: 16 / 9,
       child: Stack(
@@ -4502,7 +5022,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             ),
           ),
 
-          // 4. Thanh nút điều hướng trên cùng (Nút Quay lại & Thu nhỏ hoạt động 100% không lo bị kẹt)
+          // 4. Thanh nút điều hướng trên cùng (chỉ giữ nút quay lại, xóa nút mũi tên chỉ xuống)
           Positioned(
             top: 8,
             left: 8,
@@ -4519,16 +5039,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                     }
                   },
                 ),
-                if (widget.isGlobalPlayer)
-                  IconButton(
-                    icon: const Icon(
-                      Icons.keyboard_arrow_down_rounded,
-                      color: Colors.white,
-                      size: 28,
-                    ),
-                    tooltip: 'Thu nhỏ video',
-                    onPressed: () => GlobalPlayerManager.instance.minimize(),
-                  ),
                 if (displayTitle.isNotEmpty)
                   Expanded(
                     child: Text(
@@ -4993,16 +5503,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                           }
                         },
                       ),
-                      if (widget.isGlobalPlayer)
-                        IconButton(
-                          icon: const Icon(
-                            Icons.keyboard_arrow_down_rounded,
-                            color: Colors.white,
-                            size: 28,
-                          ),
-                          tooltip: 'Thu nhỏ video (Mini-player)',
-                          onPressed: () => GlobalPlayerManager.instance.minimize(),
-                        ),
                       if (displayTitle.isNotEmpty) ...[
                         const SizedBox(width: 4),
                         ConstrainedBox(
@@ -5962,6 +6462,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   }
 
   Widget _buildHongguoTranslatingGateOverlay(String displayTitle) {
+    if (_prefetchManager == null && widget.dramaDetail != null) {
+      _prefetchManager = HongguoPrefetchManager(widget.dramaDetail!);
+      _prefetchManager!.registerVideoUrl(_currentEpisodeIndex, widget.videoPath);
+      if (_currentDocument.isNotEmpty) {
+        _prefetchManager!.registerDocument(_currentEpisodeIndex, _currentDocument);
+      }
+    }
     return Container(
       color: const Color(0xFF0D1117),
       child: Stack(
@@ -6752,15 +7259,19 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                 ),
                                 const SizedBox(width: 6),
                               ],
-                              Text(
-                                '${_formatDuration(Duration(milliseconds: currentPosMs))} / ${_formatDuration(Duration(milliseconds: durationMs))}',
-                                style: TextStyle(
-                                  color: Colors.white.withValues(alpha: 0.65),
-                                  fontSize: 11,
+                              Flexible(
+                                child: Text(
+                                  '${_formatDuration(Duration(milliseconds: currentPosMs))} / ${_formatDuration(Duration(milliseconds: durationMs))}',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: Colors.white.withValues(alpha: 0.65),
+                                    fontSize: 11,
+                                  ),
                                 ),
                               ),
                               if (_settings.isTtsPlaybackEnabled) ...[
-                                const SizedBox(width: 6),
+                                const SizedBox(width: 4),
                                 const Icon(
                                   Icons.record_voice_over,
                                   size: 11,
@@ -6775,6 +7286,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
                     // Nút Tua lùi 10s
                     IconButton(
+                      visualDensity: VisualDensity.compact,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                       icon: const Icon(Icons.replay_10, color: Colors.white70, size: 20),
                       tooltip: 'Lùi 10 giây',
                       onPressed: () => _skipBy(-10000),
@@ -6782,10 +7296,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
                     // Nút Play / Pause
                     IconButton(
+                      visualDensity: VisualDensity.compact,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                       icon: Icon(
                         isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
                         color: AppTheme.primaryEmerald,
-                        size: 28,
+                        size: 26,
                       ),
                       tooltip: isPlaying ? 'Tạm dừng' : 'Phát tiếp',
                       onPressed: () async {
@@ -6803,6 +7320,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
                     // Nút Tua tới 10s
                     IconButton(
+                      visualDensity: VisualDensity.compact,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                       icon: const Icon(Icons.forward_10, color: Colors.white70, size: 20),
                       tooltip: 'Tới 10 giây',
                       onPressed: () => _skipBy(10000),
@@ -6810,7 +7330,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
                     // Nút Đóng mini-player (X)
                     IconButton(
-                      icon: const Icon(Icons.close_rounded, color: Colors.white70, size: 22),
+                      visualDensity: VisualDensity.compact,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                      icon: const Icon(Icons.close_rounded, color: Colors.white70, size: 20),
                       tooltip: 'Đóng trình phát',
                       onPressed: () {
                         GlobalPlayerManager.instance.close();
