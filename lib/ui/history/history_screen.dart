@@ -254,12 +254,126 @@ class _HistoryScreenState extends State<HistoryScreen>
     }
   }
 
+  // Quản lý chế độ đa chọn để xóa nhiều phim/video cùng lúc
+  bool _isMultiSelectMode = false;
+  final Set<String> _selectedItemKeys = {};
+
+  String _getDisplayItemKey(HistoryDisplayItem item) {
+    if (item.isDramaGroup) {
+      return 'drama_${item.dramaGroup!.seriesKey}';
+    } else {
+      return 'single_${item.singleItem!.id}';
+    }
+  }
+
+  void _enterMultiSelectMode([String? initialKey]) {
+    HapticFeedback.mediumImpact();
+    setState(() {
+      _isMultiSelectMode = true;
+      _selectedItemKeys.clear();
+      if (initialKey != null) {
+        _selectedItemKeys.add(initialKey);
+      }
+    });
+  }
+
+  void _exitMultiSelectMode() {
+    setState(() {
+      _isMultiSelectMode = false;
+      _selectedItemKeys.clear();
+    });
+  }
+
+  void _toggleItemSelection(String key) {
+    HapticFeedback.selectionClick();
+    setState(() {
+      if (_selectedItemKeys.contains(key)) {
+        _selectedItemKeys.remove(key);
+      } else {
+        _selectedItemKeys.add(key);
+        _isMultiSelectMode = true;
+      }
+    });
+  }
+
+  void _toggleSelectAll(List<HistoryDisplayItem> items) {
+    HapticFeedback.selectionClick();
+    setState(() {
+      final allKeys = items.map(_getDisplayItemKey).toSet();
+      if (allKeys.isNotEmpty && _selectedItemKeys.containsAll(allKeys)) {
+        _selectedItemKeys.clear();
+      } else {
+        _selectedItemKeys.addAll(allKeys);
+      }
+    });
+  }
+
+  Future<void> _confirmDeleteSelected(List<HistoryDisplayItem> items) async {
+    if (_selectedItemKeys.isEmpty) return;
+
+    final selectedDisplayItems = items
+        .where((it) => _selectedItemKeys.contains(_getDisplayItemKey(it)))
+        .toList();
+    final List<String> idsToDelete = [];
+    int totalCount = 0;
+
+    for (final dItem in selectedDisplayItems) {
+      if (dItem.isDramaGroup) {
+        final group = dItem.dramaGroup!;
+        idsToDelete.addAll(group.episodes.map((e) => e.id));
+        totalCount += group.episodes.length;
+      } else {
+        idsToDelete.add(dItem.singleItem!.id);
+        totalCount += 1;
+      }
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.darkCard,
+        title: const Text('Xóa các mục đã chọn', style: TextStyle(color: Colors.white)),
+        content: Text(
+          'Bạn có chắc chắn muốn xóa ${_selectedItemKeys.length} mục đã chọn (tổng cộng $totalCount tập phim / video) không?\n\nToàn bộ dữ liệu phụ đề và video offline tương ứng sẽ được dọn dẹp khỏi máy.',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Hủy', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text('Xóa ($totalCount)', style: const TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && mounted) {
+      final repo = _historyRepo ?? await HistoryRepository.getInstance();
+      final count = _selectedItemKeys.length;
+      _exitMultiSelectMode();
+      await repo.deleteItems(idsToDelete);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Đã xóa $count mục ($totalCount tập / video) khỏi lịch sử')),
+        );
+      }
+    }
+  }
+
   @override
   void initState() {
     super.initState();
     _historyTabController = TabController(length: 3, vsync: this);
     _historyTabController.addListener(() {
-      if (mounted) setState(() {});
+      if (_isMultiSelectMode) {
+        _exitMultiSelectMode();
+      } else if (mounted) {
+        setState(() {});
+      }
     });
     _load();
   }
@@ -334,9 +448,7 @@ class _HistoryScreenState extends State<HistoryScreen>
 
     if (confirmed == true && mounted) {
       final repo = _historyRepo ?? await HistoryRepository.getInstance();
-      for (final it in itemsInTab) {
-        await repo.deleteItem(it.id);
-      }
+      await repo.deleteItems(itemsInTab.map((it) => it.id));
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Đã xóa ${itemsInTab.length} mục trong $tabName')),
@@ -725,9 +837,8 @@ class _HistoryScreenState extends State<HistoryScreen>
     );
 
     if (confirmed == true) {
-      for (final ep in group.episodes) {
-        await _historyRepo?.deleteItem(ep.id);
-      }
+      final ids = group.episodes.map((ep) => ep.id).toList();
+      await _historyRepo?.deleteItems(ids);
     }
   }
 
@@ -753,457 +864,32 @@ class _HistoryScreenState extends State<HistoryScreen>
     return '${min.toString().padLeft(2, '0')}:${sec.toString().padLeft(2, '0')}';
   }
 
-  /// Hiển thị Modal Bottom Sheet chi tiết danh sách các tập của bộ phim
+  /// Hiển thị Modal Bottom Sheet chi tiết danh sách các tập của bộ phim (hỗ trợ chọn nhiều tập để xóa)
   void _showDramaEpisodesSheet(DramaHistoryGroup group) {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      builder: (ctx) {
-        return DefaultTabController(
-          length: 2,
-          child: Container(
-            height: MediaQuery.of(context).size.height * 0.82,
-            decoration: const BoxDecoration(
-              color: Color(0xFF161822),
-              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-            ),
-            child: Column(
-              children: [
-                // Drag handle
-                Center(
-                  child: Container(
-                    margin: const EdgeInsets.only(top: 10, bottom: 8),
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: Colors.white24,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                ),
-
-                // Header phim
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-                  child: Row(
-                    children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: (group.seriesCover != null &&
-                                group.seriesCover!.isNotEmpty)
-                            ? Image.network(
-                                group.seriesCover!,
-                                headers: _imageHeaders(group.seriesCover),
-                                width: 56,
-                                height: 74,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, _, _) => Container(
-                                  width: 56,
-                                  height: 74,
-                                  color: AppTheme.darkCard,
-                                  child: const Icon(
-                                    Icons.movie,
-                                    color: Colors.white30,
-                                  ),
-                                ),
-                              )
-                            : Container(
-                                width: 56,
-                                height: 74,
-                                color: AppTheme.darkCard,
-                                child: const Icon(
-                                  Icons.movie,
-                                  color: AppTheme.primaryEmerald,
-                                ),
-                              ),
-                      ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              group.seriesTitle,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                              ),
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            const SizedBox(height: 6),
-                            Wrap(
-                              spacing: 8,
-                              children: [
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 3,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: AppTheme.primaryEmerald
-                                        .withValues(alpha: 0.15),
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: Text(
-                                    'Đã lưu ${group.episodes.length} tập',
-                                    style: const TextStyle(
-                                      color: AppTheme.primaryEmerald,
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
-                                if (group.totalEpisodes > 0)
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 8,
-                                      vertical: 3,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFF252631),
-                                      borderRadius: BorderRadius.circular(6),
-                                    ),
-                                    child: Text(
-                                      'Tổng ${group.totalEpisodes} tập',
-                                      style: const TextStyle(
-                                        color: Colors.white70,
-                                        fontSize: 11,
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-
-                // Tab Bar: "Tập Đã Xem" và "Lướt Tất Cả Tập"
-                TabBar(
-                  indicatorColor: AppTheme.primaryEmerald,
-                  labelColor: AppTheme.primaryEmerald,
-                  unselectedLabelColor: Colors.white60,
-                  labelStyle: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 13,
-                  ),
-                  tabs: [
-                    Tab(text: 'TẬP ĐÃ LƯU (${group.episodes.length})'),
-                    Tab(
-                      text: group.totalEpisodes > 0
-                          ? 'TẤT CẢ TẬP (${group.totalEpisodes})'
-                          : 'TẤT CẢ TẬP',
-                    ),
-                  ],
-                ),
-                const Divider(color: Colors.white12, height: 1),
-
-                // Nội dung 2 tab
-                Expanded(
-                  child: TabBarView(
-                    children: [
-                      // TAB 1: Danh sách các tập đã lưu trong máy
-                      ListView.separated(
-                        padding: const EdgeInsets.all(16),
-                        itemCount: group.episodes.length,
-                        separatorBuilder: (_, _) => const SizedBox(height: 10),
-                        itemBuilder: (ctx, i) {
-                          final ep = group.episodes[i];
-                          final epNum = ep.extractedEpisodeIndex;
-                          final hasVoice =
-                              ep.ttsVoice != null && ep.ttsVoice!.isNotEmpty;
-                          final posStr = _formatMs(ep.lastPositionMs);
-                          final durStr = _formatMs(ep.durationMs);
-
-                          return Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: AppTheme.darkCard,
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: AppTheme.cardBorder),
-                            ),
-                            child: Row(
-                              children: [
-                                // Số tập badge
-                                Container(
-                                  width: 44,
-                                  height: 44,
-                                  decoration: BoxDecoration(
-                                    color: AppTheme.primaryEmerald
-                                        .withValues(alpha: 0.15),
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                  alignment: Alignment.center,
-                                  child: Text(
-                                    '$epNum',
-                                    style: const TextStyle(
-                                      color: AppTheme.primaryEmerald,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 16,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        'Tập $epNum',
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 14,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 3),
-                                      Text(
-                                        'Đã xem: $posStr / $durStr  •  ${ep.sentenceCount} câu',
-                                        style: const TextStyle(
-                                          color: Colors.grey,
-                                          fontSize: 11,
-                                        ),
-                                      ),
-                                      if (hasVoice)
-                                        Text(
-                                          '🎤 ${ep.ttsVoice}',
-                                          style: const TextStyle(
-                                            color: AppTheme.primaryEmerald,
-                                            fontSize: 10,
-                                          ),
-                                        ),
-                                    ],
-                                  ),
-                                ),
-                                IconButton(
-                                  icon: const Icon(
-                                    Icons.play_circle_fill_rounded,
-                                    color: AppTheme.primaryEmerald,
-                                    size: 32,
-                                  ),
-                                  tooltip: 'Xem tập $epNum',
-                                  onPressed: () {
-                                    Navigator.pop(ctx);
-                                    _openSeriesEpisode(ep, group);
-                                  },
-                                ),
-                                PopupMenuButton<String>(
-                                  icon: const Icon(
-                                    Icons.more_vert,
-                                    color: Colors.white70,
-                                    size: 20,
-                                  ),
-                                  color: const Color(0xFF252631),
-                                  onSelected: (val) {
-                                    if (val == 'tts') {
-                                      Navigator.pop(ctx);
-                                      _openInTts(ep);
-                                    } else if (val == 'srt') {
-                                      _exportSrt(ep);
-                                    } else if (val == 'delete') {
-                                      _confirmDelete(ep);
-                                    }
-                                  },
-                                  itemBuilder: (_) => [
-                                    if (widget.onOpenInTts != null)
-                                      const PopupMenuItem(
-                                        value: 'tts',
-                                        child: Text(
-                                          'Lồng tiếng AI',
-                                          style: TextStyle(color: Colors.white),
-                                        ),
-                                      ),
-                                    const PopupMenuItem(
-                                      value: 'srt',
-                                      child: Text(
-                                        'Xuất file SRT',
-                                        style: TextStyle(color: Colors.white),
-                                      ),
-                                    ),
-                                    const PopupMenuItem(
-                                      value: 'delete',
-                                      child: Text(
-                                        'Xóa tập này',
-                                        style: TextStyle(
-                                          color: Colors.redAccent,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          );
-                        },
-                      ),
-
-                      // TAB 2: Lướt tất cả các tập của phim từ Hồng Quả
-                      _buildAllDramaEpisodesView(group),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  /// Xây dựng Tab 2: Lướt tất cả tập phim từ server Hồng Quả
-  Widget _buildAllDramaEpisodesView(DramaHistoryGroup group) {
-    if (group.seriesId == null || group.seriesId!.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.search, size: 48, color: Colors.white30),
-              const SizedBox(height: 12),
-              const Text(
-                'Phim này chưa liên kết mã Hồng Quả',
-                style: TextStyle(color: Colors.white70, fontSize: 14),
-              ),
-              const SizedBox(height: 12),
-              OutlinedButton.icon(
-                icon: const Icon(Icons.explore_outlined,
-                    color: AppTheme.primaryEmerald),
-                label: const Text('Tìm trên Hồng Quả',
-                    style: TextStyle(color: Colors.white)),
-                style: OutlinedButton.styleFrom(
-                  side: const BorderSide(color: AppTheme.cardBorder),
-                ),
-                onPressed: () {
-                  Navigator.pop(context);
-                  // Chuyển hướng người dùng sang tab Hồng Quả nếu cần
-                },
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    return FutureBuilder<HongguoDramaDetail>(
-      future: _hongguoResolver.getDramaDetail(group.seriesId!),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(
-            child: CircularProgressIndicator(color: AppTheme.primaryEmerald),
-          );
-        }
-
-        if (snapshot.hasError || !snapshot.hasData) {
-          return Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.cloud_off_rounded,
-                    size: 44, color: Colors.white30),
-                const SizedBox(height: 10),
-                const Text(
-                  'Không thể tải danh sách tập từ máy chủ',
-                  style: TextStyle(color: Colors.white70),
-                ),
-                const SizedBox(height: 12),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF252631),
-                  ),
-                  onPressed: () => setState(() {}),
-                  child: const Text('Thử lại',
-                      style: TextStyle(color: Colors.white)),
-                ),
-              ],
-            ),
-          );
-        }
-
-        final detail = snapshot.data!;
-        final total = detail.episodes.isNotEmpty
-            ? detail.episodes.length
-            : (detail.totalEpisodes > 0 ? detail.totalEpisodes : 1);
-
-        // Tạo tập hợp các tập đã có trong lịch sử để đánh dấu
-        final savedIndices = group.episodes
-            .map((e) => e.extractedEpisodeIndex)
-            .toSet();
-
-        return GridView.builder(
-          padding: const EdgeInsets.all(16),
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 5,
-            crossAxisSpacing: 8,
-            mainAxisSpacing: 8,
-            childAspectRatio: 1.25,
-          ),
-          itemCount: total,
-          itemBuilder: (ctx, i) {
-            final epIndex = i + 1;
-            final isSaved = savedIndices.contains(epIndex);
-
-            return InkWell(
-              onTap: () {
-                Navigator.pop(ctx);
-                if (isSaved) {
-                  final existingItem = group.episodes.firstWhere(
-                    (e) => e.extractedEpisodeIndex == epIndex,
-                  );
-                  _openSeriesEpisode(existingItem, group);
-                } else {
-                  _openUnwatchedDramaEpisode(epIndex, group, detail);
-                }
-              },
-              borderRadius: BorderRadius.circular(8),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: isSaved
-                      ? const Color(0xFF132F24)
-                      : const Color(0xFF252631),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: isSaved
-                        ? AppTheme.primaryEmerald
-                        : Colors.white12,
-                    width: isSaved ? 1.5 : 1,
-                  ),
-                ),
-                alignment: Alignment.center,
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      '$epIndex',
-                      style: TextStyle(
-                        color: isSaved ? AppTheme.primaryEmerald : Colors.white,
-                        fontWeight:
-                            isSaved ? FontWeight.bold : FontWeight.normal,
-                        fontSize: 13,
-                      ),
-                    ),
-                    if (isSaved)
-                      const Text(
-                        'Đã sub',
-                        style: TextStyle(
-                          color: AppTheme.primaryEmerald,
-                          fontSize: 8,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
+      builder: (ctx) => _DramaEpisodesSheetWidget(
+        group: group,
+        hongguoResolver: _hongguoResolver,
+        onOpenEpisode: (ep, g) {
+          Navigator.pop(ctx);
+          _openSeriesEpisode(ep, g);
+        },
+        onOpenUnwatchedEpisode: (epIndex, g, detail) {
+          Navigator.pop(ctx);
+          _openUnwatchedDramaEpisode(epIndex, g, detail);
+        },
+        onOpenTts: (ep) {
+          Navigator.pop(ctx);
+          _openInTts(ep);
+        },
+        onExportSrt: (ep) => _exportSrt(ep),
+        onConfirmDeleteSingle: (ep) => _confirmDelete(ep),
+        imageHeaders: _imageHeaders,
+        formatMs: _formatMs,
+      ),
     );
   }
 
@@ -1211,606 +897,723 @@ class _HistoryScreenState extends State<HistoryScreen>
   Widget build(BuildContext context) {
     final dateFormatter = DateFormat('dd/MM/yyyy HH:mm');
 
-    return Scaffold(
-      backgroundColor: AppTheme.darkBackground,
-      appBar: AppBar(
-        backgroundColor: AppTheme.darkBackground,
-        elevation: 0,
-        title: Row(
-          children: const [
-            Icon(Icons.video_library, color: AppTheme.primaryEmerald, size: 24),
-            SizedBox(width: 10),
-            Text(
-              'Trình Phát & Lịch Sử',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.cleaning_services_rounded, color: Colors.orangeAccent),
-            tooltip: 'Dọn dẹp bộ nhớ',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (ctx) => const StorageCleanerScreen()),
-              );
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.settings, color: Colors.white70),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (ctx) => const SettingsScreen()),
-              );
-            },
-          ),
-        ],
-      ),
-      body: ValueListenableBuilder<List<HistoryItem>>(
-        valueListenable: HistoryRepository.historyNotifier,
-        builder: (context, allItems, _) {
-          final hgRaw = _filterItemsForTab(allItems, 0);
-          final biliRaw = _filterItemsForTab(allItems, 1);
-          final otherRaw = _filterItemsForTab(allItems, 2);
+    return ValueListenableBuilder<List<HistoryItem>>(
+      valueListenable: HistoryRepository.historyNotifier,
+      builder: (context, allItems, _) {
+        final hgRaw = _filterItemsForTab(allItems, 0);
+        final biliRaw = _filterItemsForTab(allItems, 1);
+        final otherRaw = _filterItemsForTab(allItems, 2);
 
-          final currentTabIndex = _historyTabController.index;
-          final currentRawItems = currentTabIndex == 0
-              ? hgRaw
-              : (currentTabIndex == 1 ? biliRaw : otherRaw);
-          final currentDisplayItems = _groupHistoryItems(currentRawItems);
+        final currentTabIndex = _historyTabController.index;
+        final currentRawItems = currentTabIndex == 0
+            ? hgRaw
+            : (currentTabIndex == 1 ? biliRaw : otherRaw);
+        final currentDisplayItems = _groupHistoryItems(currentRawItems);
 
-          final tabTitles = [
-            'Phim Hồng Quả',
-            'Bilibili',
-            'Video máy & Link ngoài',
-          ];
+        final tabTitles = [
+          'Phim Hồng Quả',
+          'Bilibili',
+          'Video máy & Link ngoài',
+        ];
 
-          return SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // 3 Tabs Selector
-                Container(
-                  margin: const EdgeInsets.only(bottom: 16),
-                  decoration: BoxDecoration(
-                    color: AppTheme.darkSurfaceVariant,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: AppTheme.cardBorder),
-                  ),
-                  child: TabBar(
-                    controller: _historyTabController,
-                    indicatorSize: TabBarIndicatorSize.tab,
-                    indicator: BoxDecoration(
-                      color: currentTabIndex == 0
-                          ? AppTheme.primaryEmerald.withValues(alpha: 0.25)
-                          : (currentTabIndex == 1
-                              ? const Color(0xFF00AEEC).withValues(alpha: 0.25)
-                              : Colors.white24),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: currentTabIndex == 0
-                            ? AppTheme.primaryEmerald
-                            : (currentTabIndex == 1
-                                ? const Color(0xFF00AEEC)
-                                : Colors.white60),
-                        width: 1.2,
+        final isAllSelected = currentDisplayItems.isNotEmpty &&
+            _selectedItemKeys.length >= currentDisplayItems.length &&
+            currentDisplayItems.every((item) => _selectedItemKeys.contains(_getDisplayItemKey(item)));
+
+        return PopScope(
+          canPop: !_isMultiSelectMode,
+          onPopInvokedWithResult: (didPop, _) {
+            if (!didPop) {
+              _exitMultiSelectMode();
+            }
+          },
+          child: Scaffold(
+            backgroundColor: AppTheme.darkBackground,
+            appBar: _isMultiSelectMode
+                ? AppBar(
+                    backgroundColor: const Color(0xFF1E212A),
+                    elevation: 2,
+                    leading: IconButton(
+                      icon: const Icon(Icons.close_rounded, color: Colors.white),
+                      onPressed: _exitMultiSelectMode,
+                      tooltip: 'Hủy chọn',
+                    ),
+                    title: Text(
+                      'Đã chọn ${_selectedItemKeys.length}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 17,
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
-                    labelColor: currentTabIndex == 0
-                        ? AppTheme.primaryEmerald
-                        : (currentTabIndex == 1 ? const Color(0xFF00AEEC) : Colors.white),
-                    unselectedLabelColor: AppTheme.textSecondary,
-                    labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
-                    tabs: [
-                      Tab(
-                        icon: const Icon(Icons.movie_filter_rounded, size: 16),
-                        text: 'Hồng Quả (${hgRaw.length})',
+                    actions: [
+                      TextButton(
+                        onPressed: currentDisplayItems.isEmpty
+                            ? null
+                            : () => _toggleSelectAll(currentDisplayItems),
+                        child: Text(
+                          isAllSelected ? 'Bỏ chọn' : 'Tất cả',
+                          style: const TextStyle(
+                            color: AppTheme.primaryEmerald,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                          ),
+                        ),
                       ),
-                      Tab(
-                        icon: const Icon(Icons.tv_rounded, size: 16),
-                        text: 'Bilibili (${biliRaw.length})',
-                      ),
-                      Tab(
-                        icon: const Icon(Icons.folder_open_rounded, size: 16),
-                        text: 'Video & Khác (${otherRaw.length})',
+                      IconButton(
+                        icon: Icon(
+                          Icons.delete_outline_rounded,
+                          color: _selectedItemKeys.isEmpty ? Colors.white30 : Colors.redAccent,
+                          size: 24,
+                        ),
+                        tooltip: 'Xóa mục đã chọn',
+                        onPressed: _selectedItemKeys.isEmpty
+                            ? null
+                            : () => _confirmDeleteSelected(currentDisplayItems),
                       ),
                     ],
-                  ),
-                ),
-
-                // Banner "Nhập Video & Phụ Đề Có Sẵn" (Hiển thị khi ở Tab Video & Khác)
-                if (currentTabIndex == 2) ...[
-                  InkWell(
-                    onTap: _showImportSubtitleDialog,
-                    borderRadius: BorderRadius.circular(16),
-                    child: Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: AppTheme.darkCard,
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: AppTheme.cardBorder),
-                      ),
-                      child: Row(
-                        children: [
-                          Container(
-                            width: 46,
-                            height: 46,
-                            decoration: BoxDecoration(
-                              color: AppTheme.primaryEmerald.withValues(alpha: 0.15),
-                              shape: BoxShape.circle,
-                            ),
-                            child: const Icon(
-                              Icons.input,
-                              color: AppTheme.primaryEmerald,
-                              size: 24,
-                            ),
-                          ),
-                          const SizedBox(width: 14),
-                          const Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Nhập Video & Phụ Đề Có Sẵn',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                SizedBox(height: 3),
-                                Text(
-                                  'Xem với phụ đề rời hoặc dịch file sub gốc bằng AI',
-                                  style: TextStyle(color: Colors.grey, fontSize: 12),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const Icon(Icons.chevron_right, color: Colors.grey),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                ],
-
-                // Tiêu đề danh sách tab hiện tại & Nút xóa tab
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      '${tabTitles[currentTabIndex].toUpperCase()} (${currentDisplayItems.length} MỤC)',
-                      style: const TextStyle(
-                        color: Colors.grey,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 1,
-                      ),
-                    ),
-                    if (currentRawItems.isNotEmpty)
-                      TextButton.icon(
-                        onPressed: () => _confirmClearTab(currentTabIndex, currentRawItems),
-                        icon: const Icon(
-                          Icons.delete_sweep_outlined,
-                          size: 16,
-                          color: Colors.grey,
-                        ),
-                        label: const Text(
-                          'Xóa tab này',
-                          style: TextStyle(color: Colors.grey, fontSize: 12),
-                        ),
-                        style: TextButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-
-                // Danh sách hoặc empty state
-                if (currentDisplayItems.isEmpty)
-                  Container(
-                    padding: const EdgeInsets.symmetric(vertical: 40),
-                    alignment: Alignment.center,
-                    child: Column(
-                      children: [
-                        Icon(
-                          currentTabIndex == 0
-                              ? Icons.movie_filter_outlined
-                              : (currentTabIndex == 1 ? Icons.tv_off_rounded : Icons.video_library_outlined),
-                          color: Colors.white24,
-                          size: 56,
-                        ),
-                        const SizedBox(height: 12),
+                  )
+                : AppBar(
+                    backgroundColor: AppTheme.darkBackground,
+                    elevation: 0,
+                    title: Row(
+                      children: const [
+                        Icon(Icons.video_library, color: AppTheme.primaryEmerald, size: 24),
+                        SizedBox(width: 10),
                         Text(
-                          currentTabIndex == 0
-                              ? 'Chưa có phim Hồng Quả nào trong lịch sử'
-                              : (currentTabIndex == 1
-                                  ? 'Chưa có video Bilibili nào trong lịch sử'
-                                  : 'Chưa có video máy hoặc link ngoài nào'),
-                          style: const TextStyle(color: Colors.white70, fontSize: 15),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          currentTabIndex == 0
-                              ? 'Xem phim tại tab "Phim Hồng Quả" để lưu lịch sử và tập đang xem'
-                              : (currentTabIndex == 1
-                                  ? 'Xem video tại tab "Bilibili" để lưu lại lịch sử xem'
-                                  : 'Dùng nút Nhập Video ở trên để xem video từ máy hoặc link trực tiếp'),
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(color: Colors.grey, fontSize: 12),
+                          'Trình Phát & Lịch Sử',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ],
                     ),
-                  )
-                else
-                  ListView.separated(
-                    physics: const NeverScrollableScrollPhysics(),
-                    shrinkWrap: true,
-                    itemCount: currentDisplayItems.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: 12),
-                    itemBuilder: (context, index) {
-                      final dItem = currentDisplayItems[index];
-
-                      if (dItem.isDramaGroup) {
-                        return _buildDramaGroupCard(
-                          dItem.dramaGroup!,
-                          dateFormatter,
-                        );
-                      } else {
-                        return _buildSingleItemCard(
-                          dItem.singleItem!,
-                          dateFormatter,
-                        );
-                      }
-                    },
+                    actions: [
+                      if (currentDisplayItems.isNotEmpty)
+                        IconButton(
+                          icon: const Icon(Icons.checklist_rounded, color: Colors.white70),
+                          tooltip: 'Chọn nhiều mục để xóa',
+                          onPressed: () => _enterMultiSelectMode(),
+                        ),
+                      IconButton(
+                        icon: const Icon(Icons.cleaning_services_rounded, color: Colors.orangeAccent),
+                        tooltip: 'Dọn dẹp bộ nhớ',
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (ctx) => const StorageCleanerScreen()),
+                          );
+                        },
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.settings, color: Colors.white70),
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (ctx) => const SettingsScreen()),
+                          );
+                        },
+                      ),
+                    ],
                   ),
-              ],
+            body: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // 3 Tabs Selector
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: AppTheme.darkSurfaceVariant,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: AppTheme.cardBorder),
+                    ),
+                    child: TabBar(
+                      controller: _historyTabController,
+                      indicatorSize: TabBarIndicatorSize.tab,
+                      indicator: BoxDecoration(
+                        color: currentTabIndex == 0
+                            ? AppTheme.primaryEmerald.withValues(alpha: 0.25)
+                            : (currentTabIndex == 1
+                                ? const Color(0xFF00AEEC).withValues(alpha: 0.25)
+                                : Colors.white24),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: currentTabIndex == 0
+                              ? AppTheme.primaryEmerald
+                              : (currentTabIndex == 1
+                                  ? const Color(0xFF00AEEC)
+                                  : Colors.white60),
+                          width: 1.2,
+                        ),
+                      ),
+                      labelColor: currentTabIndex == 0
+                          ? AppTheme.primaryEmerald
+                          : (currentTabIndex == 1 ? const Color(0xFF00AEEC) : Colors.white),
+                      unselectedLabelColor: AppTheme.textSecondary,
+                      labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                      tabs: [
+                        Tab(
+                          icon: const Icon(Icons.movie_filter_rounded, size: 16),
+                          text: 'Hồng Quả (${hgRaw.length})',
+                        ),
+                        Tab(
+                          icon: const Icon(Icons.tv_rounded, size: 16),
+                          text: 'Bilibili (${biliRaw.length})',
+                        ),
+                        Tab(
+                          icon: const Icon(Icons.folder_open_rounded, size: 16),
+                          text: 'Video & Khác (${otherRaw.length})',
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // Banner "Nhập Video & Phụ Đề Có Sẵn" (Hiển thị khi ở Tab Video & Khác)
+                  if (currentTabIndex == 2) ...[
+                    InkWell(
+                      onTap: _isMultiSelectMode ? null : _showImportSubtitleDialog,
+                      borderRadius: BorderRadius.circular(16),
+                      child: Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: AppTheme.darkCard,
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: AppTheme.cardBorder),
+                        ),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 46,
+                              height: 46,
+                              decoration: BoxDecoration(
+                                color: AppTheme.primaryEmerald.withValues(alpha: 0.15),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                Icons.input,
+                                color: AppTheme.primaryEmerald,
+                                size: 24,
+                              ),
+                            ),
+                            const SizedBox(width: 14),
+                            const Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Nhập Video & Phụ Đề Có Sẵn',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  SizedBox(height: 3),
+                                  Text(
+                                    'Xem với phụ đề rời hoặc dịch file sub gốc bằng AI',
+                                    style: TextStyle(color: Colors.grey, fontSize: 12),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const Icon(Icons.chevron_right, color: Colors.grey),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+
+                  // Tiêu đề danh sách tab hiện tại & Nút xóa tab
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        '${tabTitles[currentTabIndex].toUpperCase()} (${currentDisplayItems.length} MỤC)',
+                        style: const TextStyle(
+                          color: Colors.grey,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1,
+                        ),
+                      ),
+                      if (currentRawItems.isNotEmpty && !_isMultiSelectMode)
+                        TextButton.icon(
+                          onPressed: () => _confirmClearTab(currentTabIndex, currentRawItems),
+                          icon: const Icon(
+                            Icons.delete_sweep_outlined,
+                            size: 16,
+                            color: Colors.grey,
+                          ),
+                          label: const Text(
+                            'Xóa tab này',
+                            style: TextStyle(color: Colors.grey, fontSize: 12),
+                          ),
+                          style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+
+                  // Danh sách hoặc empty state
+                  if (currentDisplayItems.isEmpty)
+                    Container(
+                      padding: const EdgeInsets.symmetric(vertical: 40),
+                      alignment: Alignment.center,
+                      child: Column(
+                        children: [
+                          Icon(
+                            currentTabIndex == 0
+                                ? Icons.movie_filter_outlined
+                                : (currentTabIndex == 1 ? Icons.tv_off_rounded : Icons.video_library_outlined),
+                            color: Colors.white24,
+                            size: 56,
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            currentTabIndex == 0
+                                ? 'Chưa có phim Hồng Quả nào trong lịch sử'
+                                : (currentTabIndex == 1
+                                    ? 'Chưa có video Bilibili nào trong lịch sử'
+                                    : 'Chưa có video máy hoặc link ngoài nào'),
+                            style: const TextStyle(color: Colors.white70, fontSize: 15),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            currentTabIndex == 0
+                                ? 'Xem phim tại tab "Phim Hồng Quả" để lưu lịch sử và tập đang xem'
+                                : (currentTabIndex == 1
+                                    ? 'Xem video tại tab "Bilibili" để lưu lại lịch sử xem'
+                                    : 'Dùng nút Nhập Video ở trên để xem video từ máy hoặc link trực tiếp'),
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(color: Colors.grey, fontSize: 12),
+                          ),
+                        ],
+                      ),
+                    )
+                  else
+                    ListView.separated(
+                      physics: const NeverScrollableScrollPhysics(),
+                      shrinkWrap: true,
+                      itemCount: currentDisplayItems.length,
+                      separatorBuilder: (_, _) => const SizedBox(height: 12),
+                      itemBuilder: (context, index) {
+                        final dItem = currentDisplayItems[index];
+                        final key = _getDisplayItemKey(dItem);
+                        final isSelected = _selectedItemKeys.contains(key);
+
+                        if (dItem.isDramaGroup) {
+                          return _buildDramaGroupCard(
+                            dItem.dramaGroup!,
+                            dateFormatter,
+                            isSelected: isSelected,
+                            isMultiSelectMode: _isMultiSelectMode,
+                            onToggleSelect: () => _toggleItemSelection(key),
+                            onEnterMultiSelect: () => _enterMultiSelectMode(key),
+                          );
+                        } else {
+                          return _buildSingleItemCard(
+                            dItem.singleItem!,
+                            dateFormatter,
+                            isSelected: isSelected,
+                            isMultiSelectMode: _isMultiSelectMode,
+                            onToggleSelect: () => _toggleItemSelection(key),
+                            onEnterMultiSelect: () => _enterMultiSelectMode(key),
+                          );
+                        }
+                      },
+                    ),
+                ],
+              ),
             ),
-          );
-        },
-      ),
+          ),
+        );
+      },
     );
   }
 
   /// Card gom nhóm cho Phim Bộ (Hồng Quả / Short Drama)
   Widget _buildDramaGroupCard(
     DramaHistoryGroup group,
-    DateFormat dateFormatter,
-  ) {
+    DateFormat dateFormatter, {
+    bool isSelected = false,
+    bool isMultiSelectMode = false,
+    VoidCallback? onToggleSelect,
+    VoidCallback? onEnterMultiSelect,
+  }) {
     final latest = group.latestWatchedEpisode;
     final latestEpNum = latest.extractedEpisodeIndex;
     final dateStr = dateFormatter.format(
       DateTime.fromMillisecondsSinceEpoch(latest.timestamp),
     );
 
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppTheme.darkCard,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: AppTheme.primaryEmerald.withValues(alpha: 0.3),
-          width: 1.2,
+    return InkWell(
+      onTap: isMultiSelectMode ? onToggleSelect : null,
+      onLongPress: !isMultiSelectMode ? onEnterMultiSelect : null,
+      borderRadius: BorderRadius.circular(16),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? AppTheme.primaryEmerald.withValues(alpha: 0.12)
+              : AppTheme.darkCard,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: isSelected
+                ? AppTheme.primaryEmerald
+                : (isMultiSelectMode
+                    ? Colors.white24
+                    : AppTheme.primaryEmerald.withValues(alpha: 0.3)),
+            width: isSelected ? 1.8 : 1.2,
+          ),
         ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Hàng 1: Poster + Tiêu đề phim bộ + Nút xóa cả bộ
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: (group.seriesCover != null &&
-                        group.seriesCover!.isNotEmpty)
-                    ? Image.network(
-                        group.seriesCover!,
-                        headers: _imageHeaders(group.seriesCover),
-                        width: 52,
-                        height: 70,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, _, _) => Container(
-                          width: 52,
-                          height: 70,
-                          color: const Color(0xFF252631),
-                          child: const Icon(Icons.movie, color: Colors.white30),
-                        ),
-                      )
-                    : Container(
-                        width: 52,
-                        height: 70,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF132F24),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: const Icon(
-                          Icons.movie_filter_rounded,
-                          color: AppTheme.primaryEmerald,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Hàng 1: Poster + Tiêu đề phim bộ + Nút xóa cả bộ
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (isMultiSelectMode) ...[
+                  Padding(
+                    padding: const EdgeInsets.only(right: 10, top: 24),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 150),
+                      width: 22,
+                      height: 22,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: isSelected ? AppTheme.primaryEmerald : Colors.transparent,
+                        border: Border.all(
+                          color: isSelected ? AppTheme.primaryEmerald : Colors.white54,
+                          width: 2,
                         ),
                       ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Builder(
-                      builder: (context) {
-                        final isGroupTranslated = _showTranslatedGroupKeys.contains(group.seriesKey);
-                        final translatedTitle = _groupTranslatedTitles[group.seriesKey];
-                        final displayGroupTitle = isGroupTranslated && translatedTitle != null && translatedTitle.isNotEmpty
-                            ? translatedTitle
-                            : group.seriesTitle;
-                        final isGroupTranslating = _translatingGroupKeys.contains(group.seriesKey);
+                      child: isSelected
+                          ? const Icon(Icons.check, size: 14, color: Colors.black)
+                          : null,
+                    ),
+                  ),
+                ],
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: (group.seriesCover != null &&
+                          group.seriesCover!.isNotEmpty)
+                      ? Image.network(
+                          group.seriesCover!,
+                          headers: _imageHeaders(group.seriesCover),
+                          width: 52,
+                          height: 70,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, _, _) => Container(
+                            width: 52,
+                            height: 70,
+                            color: const Color(0xFF252631),
+                            child: const Icon(Icons.movie, color: Colors.white30),
+                          ),
+                        )
+                      : Container(
+                          width: 52,
+                          height: 70,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF132F24),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Icon(
+                            Icons.movie_filter_rounded,
+                            color: AppTheme.primaryEmerald,
+                          ),
+                        ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Builder(
+                        builder: (context) {
+                          final isGroupTranslated = _showTranslatedGroupKeys.contains(group.seriesKey);
+                          final translatedTitle = _groupTranslatedTitles[group.seriesKey];
+                          final displayGroupTitle = isGroupTranslated && translatedTitle != null && translatedTitle.isNotEmpty
+                              ? translatedTitle
+                              : group.seriesTitle;
+                          final isGroupTranslating = _translatingGroupKeys.contains(group.seriesKey);
 
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Expanded(
-                                  child: Tooltip(
-                                    message: 'Chạm để sao chép',
-                                    child: InkWell(
-                                      onTap: () {
-                                        Clipboard.setData(ClipboardData(text: displayGroupTitle));
-                                        ScaffoldMessenger.of(context).showSnackBar(
-                                          SnackBar(
-                                            content: Text('📋 Đã sao chép: "$displayGroupTitle"'),
-                                            duration: const Duration(seconds: 2),
-                                            behavior: SnackBarBehavior.floating,
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Expanded(
+                                    child: Tooltip(
+                                      message: 'Chạm để sao chép',
+                                      child: InkWell(
+                                        onTap: isMultiSelectMode
+                                            ? null
+                                            : () {
+                                                Clipboard.setData(ClipboardData(text: displayGroupTitle));
+                                                ScaffoldMessenger.of(context).showSnackBar(
+                                                  SnackBar(
+                                                    content: Text('📋 Đã sao chép: "$displayGroupTitle"'),
+                                                    duration: const Duration(seconds: 2),
+                                                    behavior: SnackBarBehavior.floating,
+                                                  ),
+                                                );
+                                              },
+                                        borderRadius: BorderRadius.circular(4),
+                                        child: Text(
+                                          displayGroupTitle,
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 15,
+                                            fontWeight: FontWeight.bold,
                                           ),
-                                        );
-                                      },
-                                      borderRadius: BorderRadius.circular(4),
-                                      child: Text(
-                                        displayGroupTitle,
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 15,
-                                          fontWeight: FontWeight.bold,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
                                         ),
-                                        maxLines: 2,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  if (!isMultiSelectMode)
+                                    InkWell(
+                                      onTap: isGroupTranslating ? null : () => _toggleTranslateDramaTitle(group),
+                                      borderRadius: BorderRadius.circular(6),
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: isGroupTranslated
+                                              ? AppTheme.primaryEmerald.withValues(alpha: 0.18)
+                                              : const Color(0xFF2A2D3A),
+                                          borderRadius: BorderRadius.circular(6),
+                                          border: Border.all(
+                                            color: isGroupTranslated
+                                                ? AppTheme.primaryEmerald.withValues(alpha: 0.5)
+                                                : Colors.white24,
+                                          ),
+                                        ),
+                                        child: isGroupTranslating
+                                            ? const SizedBox(
+                                                width: 10,
+                                                height: 10,
+                                                child: CircularProgressIndicator(
+                                                  strokeWidth: 2,
+                                                  color: AppTheme.primaryEmerald,
+                                                ),
+                                              )
+                                            : Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  Icon(
+                                                    Icons.translate_rounded,
+                                                    size: 11,
+                                                    color: isGroupTranslated
+                                                        ? AppTheme.primaryEmerald
+                                                        : Colors.white70,
+                                                  ),
+                                                  const SizedBox(width: 3),
+                                                  Text(
+                                                    isGroupTranslated ? 'Gốc' : 'Dịch',
+                                                    style: TextStyle(
+                                                      color: isGroupTranslated
+                                                          ? AppTheme.primaryEmerald
+                                                          : Colors.white70,
+                                                      fontSize: 10,
+                                                      fontWeight: FontWeight.bold,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              if (isGroupTranslated && group.seriesTitle != displayGroupTitle) ...[
+                                const SizedBox(height: 3),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        '🇨🇳 Gốc: ${group.seriesTitle}',
+                                        style: const TextStyle(
+                                          color: Colors.grey,
+                                          fontSize: 11,
+                                          fontStyle: FontStyle.italic,
+                                        ),
+                                        maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
                                       ),
                                     ),
-                                  ),
-                                ),
-                                const SizedBox(width: 6),
-                                InkWell(
-                                  onTap: isGroupTranslating ? null : () => _toggleTranslateDramaTitle(group),
-                                  borderRadius: BorderRadius.circular(6),
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                    decoration: BoxDecoration(
-                                      color: isGroupTranslated
-                                          ? AppTheme.primaryEmerald.withValues(alpha: 0.18)
-                                          : const Color(0xFF2A2D3A),
-                                      borderRadius: BorderRadius.circular(6),
-                                      border: Border.all(
-                                        color: isGroupTranslated
-                                            ? AppTheme.primaryEmerald.withValues(alpha: 0.5)
-                                            : Colors.white24,
-                                      ),
-                                    ),
-                                    child: isGroupTranslating
-                                        ? const SizedBox(
-                                            width: 10,
-                                            height: 10,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                              color: AppTheme.primaryEmerald,
+                                    if (!isMultiSelectMode)
+                                      InkWell(
+                                        onTap: () {
+                                          Clipboard.setData(ClipboardData(text: group.seriesTitle));
+                                          ScaffoldMessenger.of(context).showSnackBar(
+                                            SnackBar(
+                                              content: Text('📋 Đã sao chép: "${group.seriesTitle}"'),
+                                              duration: const Duration(seconds: 2),
                                             ),
-                                          )
-                                        : Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              Icon(
-                                                Icons.translate_rounded,
-                                                size: 11,
-                                                color: isGroupTranslated
-                                                    ? AppTheme.primaryEmerald
-                                                    : Colors.white70,
-                                              ),
-                                              const SizedBox(width: 3),
-                                              Text(
-                                                isGroupTranslated ? 'Gốc' : 'Dịch',
-                                                style: TextStyle(
-                                                  color: isGroupTranslated
-                                                      ? AppTheme.primaryEmerald
-                                                      : Colors.white70,
-                                                  fontSize: 10,
-                                                  fontWeight: FontWeight.bold,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                  ),
+                                          );
+                                        },
+                                        child: const Padding(
+                                          padding: EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                          child: Icon(Icons.copy_rounded, size: 12, color: Colors.grey),
+                                        ),
+                                      ),
+                                  ],
                                 ),
                               ],
-                            ),
-                            if (isGroupTranslated && group.seriesTitle != displayGroupTitle) ...[
-                              const SizedBox(height: 3),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      '🇨🇳 Gốc: ${group.seriesTitle}',
-                                      style: const TextStyle(
-                                        color: Colors.grey,
-                                        fontSize: 11,
-                                        fontStyle: FontStyle.italic,
-                                      ),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                  InkWell(
-                                    onTap: () {
-                                      Clipboard.setData(ClipboardData(text: group.seriesTitle));
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        SnackBar(
-                                          content: Text('📋 Đã sao chép: "${group.seriesTitle}"'),
-                                          duration: const Duration(seconds: 2),
-                                        ),
-                                      );
-                                    },
-                                    child: const Padding(
-                                      padding: EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                                      child: Icon(Icons.copy_rounded, size: 12, color: Colors.grey),
-                                    ),
-                                  ),
-                                ],
-                              ),
                             ],
-                          ],
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 6),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 4,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 7,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: AppTheme.primaryEmerald
-                                .withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(5),
-                          ),
-                          child: Text(
-                            '🎬 Đã lưu ${group.episodes.length} tập',
-                            style: const TextStyle(
-                              color: AppTheme.primaryEmerald,
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 6),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 7,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: AppTheme.primaryEmerald
+                                  .withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(5),
+                            ),
+                            child: Text(
+                              '🎬 Đã lưu ${group.episodes.length} tập',
+                              style: const TextStyle(
+                                color: AppTheme.primaryEmerald,
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
                           ),
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 7,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF1E2029),
-                            borderRadius: BorderRadius.circular(5),
-                          ),
-                          child: Text(
-                            'Gần nhất: Tập $latestEpNum',
-                            style: const TextStyle(
-                              color: AppTheme.accentGold,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 7,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF1E2029),
+                              borderRadius: BorderRadius.circular(5),
+                            ),
+                            child: Text(
+                              'Gần nhất: Tập $latestEpNum',
+                              style: const TextStyle(
+                                color: AppTheme.accentGold,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        dateStr,
+                        style: const TextStyle(color: Colors.grey, fontSize: 11),
+                      ),
+                    ],
+                  ),
+                ),
+                if (!isMultiSelectMode)
+                  InkWell(
+                    onTap: () => _confirmDeleteDramaGroup(group),
+                    child: const Padding(
+                      padding: EdgeInsets.all(4),
+                      child: Icon(Icons.delete_outline,
+                          color: Colors.grey, size: 20),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+
+            // Hàng 2: Nút hành động chính
+            IgnorePointer(
+              ignoring: isMultiSelectMode,
+              child: Row(
+                children: [
+                  // Nút Xem tiếp tập gần nhất
+                  Expanded(
+                    flex: 5,
+                    child: ElevatedButton.icon(
+                      onPressed: () => _openSeriesEpisode(latest, group),
+                      icon: const Icon(
+                        Icons.play_arrow_rounded,
+                        size: 20,
+                        color: Colors.black,
+                      ),
+                      label: Text(
+                        latest.lastPositionMs > 0
+                            ? 'Xem tiếp Tập $latestEpNum (${_formatMs(latest.lastPositionMs)})'
+                            : 'Xem Tập $latestEpNum',
+                        style: const TextStyle(
+                          color: Colors.black,
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
                         ),
-                      ],
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTheme.primaryEmerald,
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        elevation: 0,
+                      ),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      dateStr,
-                      style: const TextStyle(color: Colors.grey, fontSize: 11),
-                    ),
-                  ],
-                ),
-              ),
-              InkWell(
-                onTap: () => _confirmDeleteDramaGroup(group),
-                child: const Padding(
-                  padding: EdgeInsets.all(4),
-                  child: Icon(Icons.delete_outline,
-                      color: Colors.grey, size: 20),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
+                  ),
+                  const SizedBox(width: 8),
 
-          // Hàng 2: Nút hành động chính
-          Row(
-            children: [
-              // Nút Xem tiếp tập gần nhất
-              Expanded(
-                flex: 5,
-                child: ElevatedButton.icon(
-                  onPressed: () => _openSeriesEpisode(latest, group),
-                  icon: const Icon(
-                    Icons.play_arrow_rounded,
-                    size: 20,
-                    color: Colors.black,
-                  ),
-                  label: Text(
-                    latest.lastPositionMs > 0
-                        ? 'Xem tiếp Tập $latestEpNum (${_formatMs(latest.lastPositionMs)})'
-                        : 'Xem Tập $latestEpNum',
-                    style: const TextStyle(
-                      color: Colors.black,
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold,
+                  // Nút mở danh sách các tập
+                  Expanded(
+                    flex: 4,
+                    child: OutlinedButton.icon(
+                      onPressed: () => _showDramaEpisodesSheet(group),
+                      icon: const Icon(
+                        Icons.list_alt_rounded,
+                        size: 18,
+                        color: Colors.white,
+                      ),
+                      label: Text(
+                        'Tất cả tập (${group.episodes.length})',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: AppTheme.cardBorder),
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
                     ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
                   ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.primaryEmerald,
-                    padding: const EdgeInsets.symmetric(vertical: 10),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    elevation: 0,
-                  ),
-                ),
+                ],
               ),
-              const SizedBox(width: 8),
-
-              // Nút mở danh sách các tập
-              Expanded(
-                flex: 4,
-                child: OutlinedButton.icon(
-                  onPressed: () => _showDramaEpisodesSheet(group),
-                  icon: const Icon(
-                    Icons.list_alt_rounded,
-                    size: 18,
-                    color: Colors.white,
-                  ),
-                  label: Text(
-                    'Tất cả tập (${group.episodes.length})',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  style: OutlinedButton.styleFrom(
-                    side: const BorderSide(color: AppTheme.cardBorder),
-                    padding: const EdgeInsets.symmetric(vertical: 10),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1818,8 +1621,12 @@ class _HistoryScreenState extends State<HistoryScreen>
   /// Card video đơn lẻ thông thường (Bilibili, Video máy, v.v.)
   Widget _buildSingleItemCard(
     HistoryItem it,
-    DateFormat dateFormatter,
-  ) {
+    DateFormat dateFormatter, {
+    bool isSelected = false,
+    bool isMultiSelectMode = false,
+    VoidCallback? onToggleSelect,
+    VoidCallback? onEnterMultiSelect,
+  }) {
     final dateStr = dateFormatter.format(
       DateTime.fromMillisecondsSinceEpoch(it.timestamp),
     );
@@ -1838,19 +1645,52 @@ class _HistoryScreenState extends State<HistoryScreen>
         RegExp(r'BV1[0-9a-zA-Z]{9}', caseSensitive: false).hasMatch(it.title);
     final showCoverSlot = hasCover || isBilibiliVideo;
 
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppTheme.darkCard,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppTheme.cardBorder),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
+    return InkWell(
+      onTap: isMultiSelectMode ? onToggleSelect : null,
+      onLongPress: !isMultiSelectMode ? onEnterMultiSelect : null,
+      borderRadius: BorderRadius.circular(14),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? AppTheme.primaryEmerald.withValues(alpha: 0.12)
+              : AppTheme.darkCard,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: isSelected
+                ? AppTheme.primaryEmerald
+                : (isMultiSelectMode ? Colors.white24 : AppTheme.cardBorder),
+            width: isSelected ? 1.8 : 1,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (isMultiSelectMode) ...[
+                  Padding(
+                    padding: const EdgeInsets.only(right: 10, top: 24),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 150),
+                      width: 22,
+                      height: 22,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: isSelected ? AppTheme.primaryEmerald : Colors.transparent,
+                        border: Border.all(
+                          color: isSelected ? AppTheme.primaryEmerald : Colors.white54,
+                          width: 2,
+                        ),
+                      ),
+                      child: isSelected
+                          ? const Icon(Icons.check, size: 14, color: Colors.black)
+                          : null,
+                    ),
+                  ),
+                ],
               if (showCoverSlot) ...[
                 ClipRRect(
                   borderRadius: BorderRadius.circular(8),
@@ -1970,18 +1810,20 @@ class _HistoryScreenState extends State<HistoryScreen>
                         ),
                 ),
               ),
-              const SizedBox(width: 6),
-              InkWell(
-                onTap: () => _confirmDelete(it),
-                child: const Padding(
-                  padding: EdgeInsets.all(4),
-                  child: Icon(
-                    Icons.delete_outline,
-                    color: Colors.grey,
-                    size: 20,
+              if (!isMultiSelectMode) ...[
+                const SizedBox(width: 6),
+                InkWell(
+                  onTap: () => _confirmDelete(it),
+                  child: const Padding(
+                    padding: EdgeInsets.all(4),
+                    child: Icon(
+                      Icons.delete_outline,
+                      color: Colors.grey,
+                      size: 20,
+                    ),
                   ),
                 ),
-              ),
+              ],
                       ],
                     ),
                     if (isShowingTranslated && hasTranslated && it.displayOriginalTitle.isNotEmpty) ...[
@@ -2088,55 +1930,30 @@ class _HistoryScreenState extends State<HistoryScreen>
             ],
           ),
           const SizedBox(height: 12),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(
-                children: [
-                  ElevatedButton.icon(
-                    onPressed: () => _openItem(it),
-                    icon: const Icon(
-                      Icons.play_arrow,
-                      size: 18,
-                      color: AppTheme.primaryEmerald,
-                    ),
-                    label: const Text(
-                      'Xem Video',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF252631),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
-                      ),
-                    ),
-                  ),
-                  if (widget.onOpenInTts != null) ...[
-                    const SizedBox(width: 8),
-                    OutlinedButton.icon(
-                      onPressed: () => _openInTts(it),
+          IgnorePointer(
+            ignoring: isMultiSelectMode,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed: () => _openItem(it),
                       icon: const Icon(
-                        Icons.record_voice_over,
-                        size: 16,
+                        Icons.play_arrow,
+                        size: 18,
                         color: AppTheme.primaryEmerald,
                       ),
-                      label: Text(
-                        hasVoice ? 'Đổi giọng' : 'Lồng tiếng',
-                        style: const TextStyle(
+                      label: const Text(
+                        'Xem Video',
+                        style: TextStyle(
                           color: Colors.white,
                           fontSize: 12,
+                          fontWeight: FontWeight.bold,
                         ),
                       ),
-                      style: OutlinedButton.styleFrom(
-                        side: const BorderSide(color: AppTheme.cardBorder),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF252631),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(8),
                         ),
@@ -2146,22 +1963,776 @@ class _HistoryScreenState extends State<HistoryScreen>
                         ),
                       ),
                     ),
+                    if (widget.onOpenInTts != null) ...[
+                      const SizedBox(width: 8),
+                      OutlinedButton.icon(
+                        onPressed: () => _openInTts(it),
+                        icon: const Icon(
+                          Icons.record_voice_over,
+                          size: 16,
+                          color: AppTheme.primaryEmerald,
+                        ),
+                        label: Text(
+                          hasVoice ? 'Đổi giọng' : 'Lồng tiếng',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                          ),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          side: const BorderSide(color: AppTheme.cardBorder),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                        ),
+                      ),
+                    ],
                   ],
-                ],
-              ),
-              IconButton(
-                icon: const Icon(
-                  Icons.file_download_outlined,
-                  color: Colors.white70,
-                  size: 22,
                 ),
-                tooltip: 'Xuất file SRT',
-                onPressed: () => _exportSrt(it),
-              ),
-            ],
+                IconButton(
+                  icon: const Icon(
+                    Icons.file_download_outlined,
+                    color: Colors.white70,
+                    size: 22,
+                  ),
+                  tooltip: 'Xuất file SRT',
+                  onPressed: () => _exportSrt(it),
+                ),
+              ],
+            ),
           ),
         ],
       ),
+    ),
+  );
+}
+}
+
+/// Widget hiển thị Bottom Sheet danh sách tập của phim bộ, hỗ trợ xem và chọn nhiều tập để xóa
+class _DramaEpisodesSheetWidget extends StatefulWidget {
+  final DramaHistoryGroup group;
+  final HongguoResolver hongguoResolver;
+  final void Function(HistoryItem ep, DramaHistoryGroup group) onOpenEpisode;
+  final void Function(int epIndex, DramaHistoryGroup group, HongguoDramaDetail detail) onOpenUnwatchedEpisode;
+  final void Function(HistoryItem ep) onOpenTts;
+  final void Function(HistoryItem ep) onExportSrt;
+  final void Function(HistoryItem ep) onConfirmDeleteSingle;
+  final Map<String, String>? Function(String? url) imageHeaders;
+  final String Function(int ms) formatMs;
+
+  const _DramaEpisodesSheetWidget({
+    required this.group,
+    required this.hongguoResolver,
+    required this.onOpenEpisode,
+    required this.onOpenUnwatchedEpisode,
+    required this.onOpenTts,
+    required this.onExportSrt,
+    required this.onConfirmDeleteSingle,
+    required this.imageHeaders,
+    required this.formatMs,
+  });
+
+  @override
+  State<_DramaEpisodesSheetWidget> createState() => _DramaEpisodesSheetWidgetState();
+}
+
+class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
+  bool _isEpMultiSelect = false;
+  final Set<String> _selectedEpIds = {};
+
+  void _enterEpMultiSelect([String? initialId]) {
+    HapticFeedback.mediumImpact();
+    setState(() {
+      _isEpMultiSelect = true;
+      _selectedEpIds.clear();
+      if (initialId != null) {
+        _selectedEpIds.add(initialId);
+      }
+    });
+  }
+
+  void _exitEpMultiSelect() {
+    setState(() {
+      _isEpMultiSelect = false;
+      _selectedEpIds.clear();
+    });
+  }
+
+  void _toggleEpSelection(String id) {
+    HapticFeedback.selectionClick();
+    setState(() {
+      if (_selectedEpIds.contains(id)) {
+        _selectedEpIds.remove(id);
+      } else {
+        _selectedEpIds.add(id);
+        _isEpMultiSelect = true;
+      }
+    });
+  }
+
+  void _toggleEpSelectAll(List<HistoryItem> episodes) {
+    HapticFeedback.selectionClick();
+    setState(() {
+      final allIds = episodes.map((e) => e.id).toSet();
+      if (allIds.isNotEmpty && _selectedEpIds.containsAll(allIds)) {
+        _selectedEpIds.clear();
+      } else {
+        _selectedEpIds.addAll(allIds);
+      }
+    });
+  }
+
+  Future<void> _confirmDeleteSelectedEpisodes(List<HistoryItem> episodes) async {
+    if (_selectedEpIds.isEmpty) return;
+    final count = _selectedEpIds.length;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.darkCard,
+        title: const Text('Xóa tập đã chọn', style: TextStyle(color: Colors.white)),
+        content: Text(
+          'Bạn có chắc chắn muốn xóa $count tập đã chọn của phim "${widget.group.seriesTitle}" không?\n\nFile video offline và phụ đề tương ứng sẽ được dọn dẹp khỏi máy.',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Hủy', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text('Xóa ($count)', style: const TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && mounted) {
+      final idsToDelete = List<String>.from(_selectedEpIds);
+      _exitEpMultiSelect();
+      final repo = await HistoryRepository.getInstance();
+      await repo.deleteItems(idsToDelete);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Đã xóa $count tập khỏi lịch sử')),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<List<HistoryItem>>(
+      valueListenable: HistoryRepository.historyNotifier,
+      builder: (context, allItems, _) {
+        // Lấy danh sách các tập hiện tại thuộc nhóm phim này
+        final currentEpisodes = allItems
+            .where((it) =>
+                (widget.group.seriesId != null &&
+                    widget.group.seriesId!.isNotEmpty &&
+                    it.seriesId == widget.group.seriesId) ||
+                it.extractedSeriesTitle == widget.group.seriesTitle)
+            .toList()
+          ..sort((a, b) => a.extractedEpisodeIndex.compareTo(b.extractedEpisodeIndex));
+
+        // Nếu tất cả các tập đã bị xóa hết, tự động đóng sheet
+        if (currentEpisodes.isEmpty) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              Navigator.of(context).maybePop();
+            }
+          });
+          return const SizedBox.shrink();
+        }
+
+        final currentGroup = DramaHistoryGroup(
+          seriesKey: widget.group.seriesKey,
+          seriesTitle: widget.group.seriesTitle,
+          seriesId: widget.group.seriesId,
+          seriesCover: widget.group.seriesCover,
+          totalEpisodes: widget.group.totalEpisodes,
+          episodes: currentEpisodes,
+        );
+
+        return DefaultTabController(
+          length: 2,
+          child: Container(
+            height: MediaQuery.of(context).size.height * 0.85,
+            decoration: const BoxDecoration(
+              color: Color(0xFF161822),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            child: Column(
+              children: [
+                // Drag handle
+                Center(
+                  child: Container(
+                    margin: const EdgeInsets.only(top: 10, bottom: 8),
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.white24,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+
+                // Header phim
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
+                  child: Row(
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: (currentGroup.seriesCover != null &&
+                                currentGroup.seriesCover!.isNotEmpty)
+                            ? Image.network(
+                                currentGroup.seriesCover!,
+                                headers: widget.imageHeaders(currentGroup.seriesCover),
+                                width: 56,
+                                height: 74,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, _, _) => Container(
+                                  width: 56,
+                                  height: 74,
+                                  color: AppTheme.darkCard,
+                                  child: const Icon(
+                                    Icons.movie,
+                                    color: Colors.white30,
+                                  ),
+                                ),
+                              )
+                            : Container(
+                                width: 56,
+                                height: 74,
+                                color: AppTheme.darkCard,
+                                child: const Icon(
+                                  Icons.movie,
+                                  color: AppTheme.primaryEmerald,
+                                ),
+                              ),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              currentGroup.seriesTitle,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 6),
+                            Wrap(
+                              spacing: 8,
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 3,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: AppTheme.primaryEmerald
+                                        .withValues(alpha: 0.15),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Text(
+                                    'Đã lưu ${currentEpisodes.length} tập',
+                                    style: const TextStyle(
+                                      color: AppTheme.primaryEmerald,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                                if (currentGroup.totalEpisodes > 0)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 3,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF252631),
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: Text(
+                                      'Tổng ${currentGroup.totalEpisodes} tập',
+                                      style: const TextStyle(
+                                        color: Colors.white70,
+                                        fontSize: 11,
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                // Tab Bar
+                TabBar(
+                  indicatorColor: AppTheme.primaryEmerald,
+                  labelColor: AppTheme.primaryEmerald,
+                  unselectedLabelColor: Colors.white60,
+                  labelStyle: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                  ),
+                  tabs: [
+                    Tab(text: 'TẬP ĐÃ LƯU (${currentEpisodes.length})'),
+                    Tab(
+                      text: currentGroup.totalEpisodes > 0
+                          ? 'TẤT CẢ TẬP (${currentGroup.totalEpisodes})'
+                          : 'TẤT CẢ TẬP',
+                    ),
+                  ],
+                ),
+                const Divider(color: Colors.white12, height: 1),
+
+                // Nội dung 2 tab
+                Expanded(
+                  child: TabBarView(
+                    children: [
+                      // TAB 1: Danh sách các tập đã lưu trong máy
+                      _buildSavedEpisodesTab(currentEpisodes, currentGroup),
+
+                      // TAB 2: Lướt tất cả các tập của phim từ server Hồng Quả
+                      _buildAllDramaEpisodesView(currentGroup),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildSavedEpisodesTab(List<HistoryItem> currentEpisodes, DramaHistoryGroup currentGroup) {
+    final isAllSelected = currentEpisodes.isNotEmpty &&
+        _selectedEpIds.length == currentEpisodes.length;
+
+    return Column(
+      children: [
+        // Sub-toolbar cho Tab 1
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          color: _isEpMultiSelect ? const Color(0xFF1E212A) : Colors.transparent,
+          child: Row(
+            children: [
+              if (_isEpMultiSelect) ...[
+                IconButton(
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                  icon: const Icon(Icons.close_rounded, color: Colors.white70, size: 20),
+                  onPressed: _exitEpMultiSelect,
+                  tooltip: 'Hủy chọn',
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Đã chọn ${_selectedEpIds.length} tập',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => _toggleEpSelectAll(currentEpisodes),
+                  child: Text(
+                    isAllSelected ? 'Bỏ chọn' : 'Tất cả',
+                    style: const TextStyle(
+                      color: AppTheme.primaryEmerald,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 4),
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.redAccent,
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    minimumSize: Size.zero,
+                  ),
+                  onPressed: _selectedEpIds.isEmpty
+                      ? null
+                      : () => _confirmDeleteSelectedEpisodes(currentEpisodes),
+                  icon: const Icon(Icons.delete_outline, size: 15, color: Colors.white),
+                  label: Text(
+                    'Xóa (${_selectedEpIds.length})',
+                    style: const TextStyle(color: Colors.white, fontSize: 12),
+                  ),
+                ),
+              ] else ...[
+                Expanded(
+                  child: Text(
+                    'Danh sách tập có trong lịch sử (${currentEpisodes.length})',
+                    style: const TextStyle(color: Colors.grey, fontSize: 12),
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: () => _enterEpMultiSelect(),
+                  icon: const Icon(Icons.checklist_rounded, size: 16, color: AppTheme.primaryEmerald),
+                  label: const Text(
+                    'Chọn nhiều tập',
+                    style: TextStyle(
+                      color: AppTheme.primaryEmerald,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    minimumSize: Size.zero,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        const Divider(color: Colors.white10, height: 1),
+
+        // Episode List
+        Expanded(
+          child: ListView.separated(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            itemCount: currentEpisodes.length,
+            separatorBuilder: (_, _) => const SizedBox(height: 10),
+            itemBuilder: (ctx, i) {
+              final ep = currentEpisodes[i];
+              final epNum = ep.extractedEpisodeIndex;
+              final durStr = widget.formatMs(ep.durationMs);
+              final posStr = widget.formatMs(ep.lastPositionMs);
+              final hasVoice = ep.ttsVoice != null && ep.ttsVoice!.isNotEmpty;
+              final isSelected = _selectedEpIds.contains(ep.id);
+
+              return InkWell(
+                onTap: () {
+                  if (_isEpMultiSelect) {
+                    _toggleEpSelection(ep.id);
+                  } else {
+                    widget.onOpenEpisode(ep, currentGroup);
+                  }
+                },
+                onLongPress: () {
+                  if (!_isEpMultiSelect) {
+                    _enterEpMultiSelect(ep.id);
+                  }
+                },
+                borderRadius: BorderRadius.circular(12),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: isSelected
+                        ? AppTheme.primaryEmerald.withValues(alpha: 0.12)
+                        : AppTheme.darkCard,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: isSelected
+                          ? AppTheme.primaryEmerald
+                          : (_isEpMultiSelect ? Colors.white24 : AppTheme.cardBorder),
+                      width: isSelected ? 1.6 : 1,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      if (_isEpMultiSelect) ...[
+                        AnimatedContainer(
+                          duration: const Duration(milliseconds: 150),
+                          width: 22,
+                          height: 22,
+                          margin: const EdgeInsets.only(right: 12),
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: isSelected ? AppTheme.primaryEmerald : Colors.transparent,
+                            border: Border.all(
+                              color: isSelected ? AppTheme.primaryEmerald : Colors.white54,
+                              width: 2,
+                            ),
+                          ),
+                          child: isSelected
+                              ? const Icon(Icons.check, size: 14, color: Colors.black)
+                              : null,
+                        ),
+                      ],
+                      Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: AppTheme.primaryEmerald.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          '$epNum',
+                          style: const TextStyle(
+                            color: AppTheme.primaryEmerald,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Tập $epNum',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              'Đã xem: $posStr / $durStr  •  ${ep.sentenceCount} câu',
+                              style: const TextStyle(
+                                color: Colors.grey,
+                                fontSize: 11,
+                              ),
+                            ),
+                            if (hasVoice)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 2),
+                                child: Text(
+                                  '🎤 ${ep.ttsVoice}',
+                                  style: const TextStyle(
+                                    color: AppTheme.primaryEmerald,
+                                    fontSize: 10,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                      if (!_isEpMultiSelect) ...[
+                        IconButton(
+                          icon: const Icon(
+                            Icons.play_circle_fill_rounded,
+                            color: AppTheme.primaryEmerald,
+                            size: 30,
+                          ),
+                          tooltip: 'Xem tập $epNum',
+                          onPressed: () => widget.onOpenEpisode(ep, currentGroup),
+                        ),
+                        PopupMenuButton<String>(
+                          icon: const Icon(
+                            Icons.more_vert,
+                            color: Colors.white70,
+                            size: 20,
+                          ),
+                          color: const Color(0xFF252631),
+                          onSelected: (val) {
+                            if (val == 'tts') {
+                              widget.onOpenTts(ep);
+                            } else if (val == 'srt') {
+                              widget.onExportSrt(ep);
+                            } else if (val == 'delete') {
+                              widget.onConfirmDeleteSingle(ep);
+                            }
+                          },
+                          itemBuilder: (ctx) => [
+                            const PopupMenuItem(
+                              value: 'tts',
+                              child: Text(
+                                'Lồng tiếng AI',
+                                style: TextStyle(color: Colors.white),
+                              ),
+                            ),
+                            const PopupMenuItem(
+                              value: 'srt',
+                              child: Text(
+                                'Xuất file SRT',
+                                style: TextStyle(color: Colors.white),
+                              ),
+                            ),
+                            const PopupMenuItem(
+                              value: 'delete',
+                              child: Text(
+                                'Xóa tập này',
+                                style: TextStyle(
+                                  color: Colors.redAccent,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAllDramaEpisodesView(DramaHistoryGroup group) {
+    if (group.seriesId == null || group.seriesId!.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.search, size: 48, color: Colors.white30),
+              const SizedBox(height: 12),
+              const Text(
+                'Phim này chưa liên kết mã Hồng Quả',
+                style: TextStyle(color: Colors.white70, fontSize: 14),
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.explore_outlined,
+                    color: AppTheme.primaryEmerald),
+                label: const Text('Đóng',
+                    style: TextStyle(color: Colors.white)),
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: AppTheme.cardBorder),
+                ),
+                onPressed: () {
+                  Navigator.pop(context);
+                },
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return FutureBuilder<HongguoDramaDetail>(
+      future: widget.hongguoResolver.getDramaDetail(group.seriesId!),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(
+            child: CircularProgressIndicator(color: AppTheme.primaryEmerald),
+          );
+        }
+
+        if (snapshot.hasError || !snapshot.hasData) {
+          return Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.cloud_off_rounded,
+                    size: 44, color: Colors.white30),
+                const SizedBox(height: 10),
+                const Text(
+                  'Không thể tải danh sách tập từ máy chủ',
+                  style: TextStyle(color: Colors.white70),
+                ),
+                const SizedBox(height: 12),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF252631),
+                  ),
+                  onPressed: () => setState(() {}),
+                  child: const Text('Thử lại',
+                      style: TextStyle(color: Colors.white)),
+                ),
+              ],
+            ),
+          );
+        }
+
+        final detail = snapshot.data!;
+        final total = detail.episodes.isNotEmpty
+            ? detail.episodes.length
+            : (detail.totalEpisodes > 0 ? detail.totalEpisodes : 1);
+
+        final savedIndices = group.episodes
+            .map((e) => e.extractedEpisodeIndex)
+            .toSet();
+
+        return GridView.builder(
+          padding: const EdgeInsets.all(16),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 5,
+            crossAxisSpacing: 8,
+            mainAxisSpacing: 8,
+            childAspectRatio: 1.25,
+          ),
+          itemCount: total,
+          itemBuilder: (ctx, i) {
+            final epIndex = i + 1;
+            final isSaved = savedIndices.contains(epIndex);
+
+            return InkWell(
+              onTap: () {
+                if (isSaved) {
+                  final existingItem = group.episodes.firstWhere(
+                    (e) => e.extractedEpisodeIndex == epIndex,
+                  );
+                  widget.onOpenEpisode(existingItem, group);
+                } else {
+                  widget.onOpenUnwatchedEpisode(epIndex, group, detail);
+                }
+              },
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: isSaved
+                      ? const Color(0xFF132F24)
+                      : const Color(0xFF252631),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: isSaved
+                        ? AppTheme.primaryEmerald
+                        : Colors.white12,
+                    width: isSaved ? 1.5 : 1,
+                  ),
+                ),
+                alignment: Alignment.center,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      '$epIndex',
+                      style: TextStyle(
+                        color: isSaved ? AppTheme.primaryEmerald : Colors.white,
+                        fontWeight:
+                            isSaved ? FontWeight.bold : FontWeight.normal,
+                        fontSize: 13,
+                      ),
+                    ),
+                    if (isSaved)
+                      const Text(
+                        'Đã sub',
+                        style: TextStyle(
+                          color: AppTheme.primaryEmerald,
+                          fontSize: 8,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 }

@@ -37,7 +37,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: CapSub-Android-Arm64-Release-APK
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: build/app/outputs/flutter-apk/CapSub-APK-Release.apk
 
   build-ios:
     name: Build iOS IPA

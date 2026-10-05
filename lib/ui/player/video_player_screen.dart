@@ -1040,6 +1040,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     if (_isSwitchingEpisode) return;
     setState(() => _isSwitchingEpisode = true);
 
+    final previousIndex = _currentEpisodeIndex;
+
     try {
       final playUrl = await _prefetchManager?.getOrResolveUrl(targetIndex);
       if (playUrl == null) {
@@ -1068,6 +1070,22 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         newDocument: doc ?? SubtitleDocument(),
         newTitle: epTitle,
       );
+
+      // Tự động xóa tập cũ cách 3 tập nếu người dùng xem tuần tự (+1)
+      // Ví dụ: Xem đến tập 4 xóa tập 1, tập 5 xóa tập 2... Nếu nhảy cóc thì không xóa
+      if (_settings.hongguoAutoDeleteWatched && widget.dramaDetail != null) {
+        if (targetIndex == previousIndex + 1) {
+          final epToDelete = targetIndex - 3;
+          if (epToDelete >= 1) {
+            unawaited(
+              VideoCacheManager.deleteHongguoEpisodeCache(
+                seriesId: widget.dramaDetail!.seriesId,
+                episodeIndex: epToDelete,
+              ),
+            );
+          }
+        }
+      }
 
       // Kích hoạt dịch gối đầu tập tiếp theo
       _prefetchManager?.onEpisodePlaying(

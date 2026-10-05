@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'bilibili_resolver.dart';
@@ -213,6 +214,57 @@ class VideoCacheManager {
         }
       }
     } catch (_) {}
+  }
+
+  /// Xoá file video cache của một tập phim Hồng Quả cụ thể (ví dụ: tập đã xem trước đó)
+  static Future<bool> deleteHongguoEpisodeCache({
+    required String seriesId,
+    required int episodeIndex,
+  }) async {
+    try {
+      final dir = await getCacheDirectory();
+      final cleanSid = seriesId.replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '');
+      final targetPrefix = 'hg_${cleanSid}_ep$episodeIndex';
+      var deleted = false;
+
+      // 1. Xoá file mp4 chính xác
+      final exactFile = File('${dir.path}${Platform.pathSeparator}$targetPrefix.mp4');
+      if (await exactFile.exists()) {
+        await exactFile.delete();
+        deleted = true;
+        debugPrint('[CacheManager] ✅ Đã xoá cache tập cũ: $targetPrefix.mp4');
+      }
+
+      // 2. Xoá file tạm .part nếu có
+      final partFile = File('${dir.path}${Platform.pathSeparator}$targetPrefix.mp4.part');
+      if (await partFile.exists()) {
+        await partFile.delete();
+        deleted = true;
+      }
+
+      // 3. Quét kiểm tra phòng trường hợp có đuôi mở rộng hoặc case sensitivity
+      try {
+        final entities = dir.listSync();
+        for (final e in entities) {
+          if (e is File) {
+            final filename = e.path.split(RegExp(r'[/\\]')).last;
+            if (filename.toLowerCase().startsWith('${targetPrefix.toLowerCase()}.') ||
+                filename.toLowerCase() == '$targetPrefix.mp4'.toLowerCase()) {
+              if (await e.exists()) {
+                await e.delete();
+                deleted = true;
+                debugPrint('[CacheManager] ✅ Đã dọn file cache tập cũ liên quan: $filename');
+              }
+            }
+          }
+        }
+      } catch (_) {}
+
+      return deleted;
+    } catch (e) {
+      debugPrint('[CacheManager] ⚠️ Lỗi khi xoá cache tập $episodeIndex: $e');
+      return false;
+    }
   }
 
   /// Xoá toàn bộ video đã cache để giải phóng bộ nhớ

@@ -258,6 +258,12 @@ class SettingsRepository {
   set hongguoSelectedTtsVoice(String v) =>
       prefs.setString('hongguo_selected_tts_voice', v);
 
+  /// Tự động xóa các tập đã xem trước (giữ lại 3 tập gần nhất) của phim Hồng Quả
+  bool get hongguoAutoDeleteWatched =>
+      prefs.getBool('hongguo_auto_delete_watched') ?? true;
+  set hongguoAutoDeleteWatched(bool v) =>
+      prefs.setBool('hongguo_auto_delete_watched', v);
+
   /// Chế độ dịch riêng của Bilibili: 'capcut' (CapCut Free) hoặc 'api_online' (AI Online)
   String get bilibiliTranslationMode =>
       prefs.getString('bilibili_translation_mode') ?? 'capcut';

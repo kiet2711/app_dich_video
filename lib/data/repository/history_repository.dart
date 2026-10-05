@@ -443,6 +443,20 @@ class HistoryRepository {
     }
   }
 
+  /// Xóa hàng loạt các mục lịch sử cùng lúc (tối ưu hóa lưu trữ và cập nhật UI một lần)
+  Future<void> deleteItems(Iterable<String> ids) async {
+    final idSet = ids.toSet();
+    if (idSet.isEmpty) return;
+    final items = getHistory();
+    final removed = items.where((it) => idSet.contains(it.id)).toList();
+    if (removed.isEmpty) return;
+    items.removeWhere((it) => idSet.contains(it.id));
+    await _save(items);
+    for (final item in removed) {
+      await _deleteItemFiles(item);
+    }
+  }
+
   Future<void> clearAll() async {
     final items = getHistory();
     await prefs.remove(_key);
@@ -502,6 +516,16 @@ class HistoryRepository {
         }
       }
     } catch (_) {}
+
+    // 5. Xóa file video tải về trong cache của Hồng Quả nếu có
+    if (item.seriesId != null && item.seriesId!.isNotEmpty) {
+      try {
+        await VideoCacheManager.deleteHongguoEpisodeCache(
+          seriesId: item.seriesId!,
+          episodeIndex: item.extractedEpisodeIndex,
+        );
+      } catch (_) {}
+    }
   }
 
   Future<void> _deleteIfExists(String path) async {

@@ -30,6 +30,7 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
   VoiceItem _selectedVoice = VoicePresets.defaultVoice;
   bool _autoPlay = true;
   int _prefetchCount = 1;
+  bool _autoDeleteWatched = true;
   bool _isLoading = true;
 
   @override
@@ -51,6 +52,7 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
       );
       _autoPlay = s.autoPlayNextEpisode;
       _prefetchCount = s.prefetchEpisodeCount;
+      _autoDeleteWatched = s.hongguoAutoDeleteWatched;
       _promptController.text = s.hongguoCustomPrompt;
       _isLoading = false;
     });
@@ -85,6 +87,7 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
       _settings!.hongguoSelectedTtsVoice = _selectedVoice.voiceType;
       _settings!.autoPlayNextEpisode = _autoPlay;
       _settings!.prefetchEpisodeCount = _prefetchCount;
+      _settings!.hongguoAutoDeleteWatched = _autoDeleteWatched;
       _settings!.hongguoCustomPrompt = _promptController.text.trim();
     }
     Navigator.pop(context);
@@ -516,6 +519,45 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
                           },
                         ),
                       ],
+                    ),
+                    const SizedBox(height: 16),
+
+                    // ===== 5. TỰ ĐỘNG XÓA TẬP ĐÃ XEM (TIẾT KIỆM BỘ NHỚ) =====
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppColors.darkSurfaceVariant,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: AppColors.cardBorder),
+                      ),
+                      child: SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        activeThumbColor: AppColors.primaryEmerald,
+                        title: const Text(
+                          'Tự động xóa tập đã xem (giữ 3 tập gần nhất)',
+                          style: TextStyle(
+                            color: AppColors.textPrimary,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                          ),
+                        ),
+                        subtitle: const Padding(
+                          padding: EdgeInsets.only(top: 4),
+                          child: Text(
+                            'Khi bạn xem liên tục, hệ thống sẽ tự động dọn các tập cũ cách 3 tập (ví dụ xem tập 4 xóa tập 1, xem tập 5 xóa tập 2) để máy không bị đầy bộ nhớ mà vẫn thoải mái tua lại tập trước.',
+                            style: TextStyle(
+                              color: AppColors.textMuted,
+                              fontSize: 11,
+                              height: 1.35,
+                            ),
+                          ),
+                        ),
+                        value: _autoDeleteWatched,
+                        onChanged: (val) {
+                          setState(() => _autoDeleteWatched = val);
+                        },
+                      ),
                     ),
                     const SizedBox(height: 20),
                   ],
