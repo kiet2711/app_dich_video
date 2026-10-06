@@ -47,6 +47,19 @@ void main() {
       expect(settings.subtitleMode, equals('bilingual'));
     });
 
+    test(
+      'Hongguo video resolver switches exclusively between local and HF',
+      () {
+        expect(settings.hongguoVideoResolverEngine, equals('local'));
+
+        settings.hongguoVideoResolverEngine = 'hf';
+        expect(settings.hongguoVideoResolverEngine, equals('hf'));
+
+        settings.hongguoVideoResolverEngine = 'invalid';
+        expect(settings.hongguoVideoResolverEngine, equals('local'));
+      },
+    );
+
     test('Custom font family settings work properly', () {
       expect(settings.customFonts, contains('SVN-Futura'));
       expect(settings.customFonts, contains('Montserrat'));
@@ -54,7 +67,8 @@ void main() {
       settings.selectedFontFamily = 'SVN-Futura';
       expect(settings.selectedFontFamily, equals('SVN-Futura'));
 
-      final list = List<String>.from(settings.customFonts)..add('Roboto-Custom');
+      final list = List<String>.from(settings.customFonts)
+        ..add('Roboto-Custom');
       settings.customFonts = list;
       expect(settings.customFonts, contains('Roboto-Custom'));
     });
@@ -119,21 +133,24 @@ void main() {
       expect(settings.groqThreadCount, equals(1));
     });
 
-    test('SubtitleItem getDisplayText handles bilingual, translated, and original', () {
-      final item = SubtitleItem(
-        id: 1,
-        startMs: 1000,
-        endMs: 3000,
-        originalText: '你好世界',
-        translatedText: 'Xin chào thế giới',
-      );
+    test(
+      'SubtitleItem getDisplayText handles bilingual, translated, and original',
+      () {
+        final item = SubtitleItem(
+          id: 1,
+          startMs: 1000,
+          endMs: 3000,
+          originalText: '你好世界',
+          translatedText: 'Xin chào thế giới',
+        );
 
-      expect(item.getDisplayText('original'), equals('你好世界'));
-      expect(item.getDisplayText('translated'), equals('Xin chào thế giới'));
-      expect(
-        item.getDisplayText('bilingual'),
-        equals('你好世界\nXin chào thế giới'),
-      );
-    });
+        expect(item.getDisplayText('original'), equals('你好世界'));
+        expect(item.getDisplayText('translated'), equals('Xin chào thế giới'));
+        expect(
+          item.getDisplayText('bilingual'),
+          equals('你好世界\nXin chào thế giới'),
+        );
+      },
+    );
   });
 }

@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'bilibili_resolver.dart';
+import 'hongguo_cenc_decryptor.dart';
 
 
 class VideoCacheManager {
@@ -93,7 +94,14 @@ class VideoCacheManager {
         bvid: bvid,
         bilibiliPage: bilibiliPage,
       );
-      return await file.exists() && await file.length() > 1024 * 100;
+      if (await file.exists() && await file.length() > 1024 * 100) {
+        if (await HongguoCencDecryptor.isCorruptedMp4File(file)) {
+          try { await file.delete(); } catch (_) {}
+          return false;
+        }
+        return true;
+      }
+      return false;
     } catch (_) {
       return false;
     }
@@ -110,6 +118,19 @@ class VideoCacheManager {
     try {
       final dir = await getCacheDirectory();
 
+      Future<File?> validateFile(File? f) async {
+        if (f == null || !await f.exists()) return null;
+        if (await f.length() <= 1024 * 50) return null;
+        if (await HongguoCencDecryptor.isCorruptedMp4File(f)) {
+          debugPrint('[VideoCacheManager] ⚠️ Xóa file cache MP4 lỗi atom: ${f.path}');
+          try {
+            await f.delete();
+          } catch (_) {}
+          return null;
+        }
+        return f;
+      }
+
       // 1. Kiểm tra trực tiếp theo cache key tiêu chuẩn
       final file = await getCachedVideoFile(
         url: url,
@@ -118,8 +139,9 @@ class VideoCacheManager {
         bvid: bvid,
         bilibiliPage: bilibiliPage,
       );
-      if (await file.exists() && await file.length() > 1024 * 50) {
-        return file;
+      final validStandard = await validateFile(file);
+      if (validStandard != null) {
+        return validStandard;
       }
 
       // 2. Nếu là phim bộ Hồng Quả (có seriesId & episodeIndex):
@@ -128,8 +150,9 @@ class VideoCacheManager {
         final cleanSid = seriesId.replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '');
         final targetName = 'hg_${cleanSid}_ep$episodeIndex.mp4';
         final exactFile = File('${dir.path}${Platform.pathSeparator}$targetName');
-        if (await exactFile.exists() && await exactFile.length() > 1024 * 50) {
-          return exactFile;
+        final validExact = await validateFile(exactFile);
+        if (validExact != null) {
+          return validExact;
         }
 
         // Quét danh sách file trong cache đề phòng case-sensitivity hoặc suffix
@@ -142,8 +165,9 @@ class VideoCacheManager {
               if (filename.toLowerCase().startsWith(prefix.toLowerCase()) &&
                   filename.endsWith('.mp4') &&
                   !filename.endsWith('.part')) {
-                if (await e.length() > 1024 * 50) {
-                  return e;
+                final validEntity = await validateFile(e);
+                if (validEntity != null) {
+                  return validEntity;
                 }
               }
             }
@@ -156,14 +180,16 @@ class VideoCacheManager {
         final cleanUrl = url.split('?').first.trim();
         final hash1 = md5.convert(utf8.encode(cleanUrl.isNotEmpty ? cleanUrl : url)).toString();
         final fileHash1 = File('${dir.path}${Platform.pathSeparator}video_$hash1.mp4');
-        if (await fileHash1.exists() && await fileHash1.length() > 1024 * 50) {
-          return fileHash1;
+        final validHash1 = await validateFile(fileHash1);
+        if (validHash1 != null) {
+          return validHash1;
         }
 
         final hash2 = md5.convert(utf8.encode(url)).toString();
         final fileHash2 = File('${dir.path}${Platform.pathSeparator}video_$hash2.mp4');
-        if (await fileHash2.exists() && await fileHash2.length() > 1024 * 50) {
-          return fileHash2;
+        final validHash2 = await validateFile(fileHash2);
+        if (validHash2 != null) {
+          return validHash2;
         }
       }
 

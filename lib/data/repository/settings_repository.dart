@@ -164,8 +164,7 @@ class SettingsRepository {
 
   int get groqBatchSize =>
       (prefs.getInt('groq_batch_size') ?? 45).clamp(10, 200);
-  set groqBatchSize(int v) =>
-      prefs.setInt('groq_batch_size', v.clamp(10, 200));
+  set groqBatchSize(int v) => prefs.setInt('groq_batch_size', v.clamp(10, 200));
 
   bool get enableSmartModelFallback =>
       prefs.getBool('enable_smart_model_fallback') ?? true;
@@ -222,7 +221,8 @@ class SettingsRepository {
   }
 
   String get bilibiliBiliJct => prefs.getString('bilibili_bili_jct') ?? '';
-  set bilibiliBiliJct(String v) => prefs.setString('bilibili_bili_jct', v.trim());
+  set bilibiliBiliJct(String v) =>
+      prefs.setString('bilibili_bili_jct', v.trim());
 
   Set<int> get bilibiliFollowedMids {
     final list = prefs.getStringList('bilibili_followed_mids') ?? const [];
@@ -233,14 +233,20 @@ class SettingsRepository {
     if (mid <= 0) return;
     final set = bilibiliFollowedMids;
     set.add(mid);
-    prefs.setStringList('bilibili_followed_mids', set.map((e) => e.toString()).toList());
+    prefs.setStringList(
+      'bilibili_followed_mids',
+      set.map((e) => e.toString()).toList(),
+    );
   }
 
   void removeBilibiliFollowedMid(int mid) {
     if (mid <= 0) return;
     final set = bilibiliFollowedMids;
     set.remove(mid);
-    prefs.setStringList('bilibili_followed_mids', set.map((e) => e.toString()).toList());
+    prefs.setStringList(
+      'bilibili_followed_mids',
+      set.map((e) => e.toString()).toList(),
+    );
   }
 
   bool isBilibiliMidFollowed(int mid) {
@@ -260,8 +266,7 @@ class SettingsRepository {
 
   bool get autoPlayNextEpisode =>
       prefs.getBool('auto_play_next_episode') ?? true;
-  set autoPlayNextEpisode(bool v) =>
-      prefs.setBool('auto_play_next_episode', v);
+  set autoPlayNextEpisode(bool v) => prefs.setBool('auto_play_next_episode', v);
 
   // ===== CẤU HÌNH DỊCH ĐỘC LẬP CHO PHIM NGẮN HỒNG QUẢ (ZH -> VI) =====
   static const String defaultHongguoPrompt =
@@ -278,6 +283,15 @@ class SettingsRepository {
       prefs.getString('hongguo_translation_mode') ?? 'capcut';
   set hongguoTranslationMode(String v) =>
       prefs.setString('hongguo_translation_mode', v);
+
+  /// Engine lấy và giải mã video Hồng Quả: 'local' hoặc 'hf'.
+  /// Hai chế độ chạy độc lập; resolver không tự chuyển sang engine còn lại.
+  String get hongguoVideoResolverEngine =>
+      prefs.getString('hongguo_video_resolver_engine') ?? 'local';
+  set hongguoVideoResolverEngine(String v) => prefs.setString(
+    'hongguo_video_resolver_engine',
+    v == 'hf' ? 'hf' : 'local',
+  );
 
   /// Giọng đọc lồng tiếng AI riêng cho phim ngắn Hồng Quả
   String get hongguoSelectedTtsVoice =>
@@ -328,10 +342,8 @@ class SettingsRepository {
       prefs.setBool('background_play_enabled', v);
 
   /// Bật chế độ thu nhỏ kiểu YouTube (Mini-player)
-  bool get miniPlayerEnabled =>
-      prefs.getBool('mini_player_enabled') ?? true;
-  set miniPlayerEnabled(bool v) =>
-      prefs.setBool('mini_player_enabled', v);
+  bool get miniPlayerEnabled => prefs.getBool('mini_player_enabled') ?? true;
+  set miniPlayerEnabled(bool v) => prefs.setBool('mini_player_enabled', v);
 
   /// Công cụ dịch bình luận Bilibili: 'local' (Google ML Kit on-device, 0 token API) hoặc 'api' (AI Gemini/Groq)
   String get commentTranslationEngine =>

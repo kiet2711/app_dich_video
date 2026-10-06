@@ -213,22 +213,46 @@ class HongguoPrefetchManager {
       ).toList();
 
       if (unlinked.isNotEmpty) {
-        if (episodeIndex != null && !_isDisposed) {
+        final ttsMgr = TtsGenerationManager();
+        void onTtsProgress() {
+          if (_isDisposed || episodeIndex == null) return;
+          final state = ttsMgr.progress.value;
+          final total = state.totalCount;
+          final done = state.completedCount;
+          final ttsPct = total > 0 ? (done / total).clamp(0.0, 1.0) : 0.0;
+          final mappedProgress = 0.85 + (ttsPct * 0.15);
           prefetchStateNotifier.value = PrefetchState(
             episodeIndex: episodeIndex,
             status: 'translating',
-            progress: 0.92,
-            message:
-                'Đang tạo lồng tiếng AI Tập $episodeIndex (${voice.displayName})...',
+            progress: mappedProgress.clamp(0.0, 1.0),
+            message: total > 0
+                ? 'Đang lồng tiếng Tập $episodeIndex: $done/$total câu (${(ttsPct * 100).toInt()}%)...'
+                : 'Đang tạo lồng tiếng AI Tập $episodeIndex (${voice.displayName})...',
             document: doc,
           );
         }
 
-        await TtsGenerationManager().generateAll(
-          document: doc,
-          voice: voice,
-          threadCount: settings.ttsThreadCount,
-        );
+        ttsMgr.progress.addListener(onTtsProgress);
+        try {
+          if (episodeIndex != null && !_isDisposed) {
+            prefetchStateNotifier.value = PrefetchState(
+              episodeIndex: episodeIndex,
+              status: 'translating',
+              progress: 0.85,
+              message:
+                  'Đang tạo lồng tiếng AI Tập $episodeIndex (${voice.displayName})...',
+              document: doc,
+            );
+          }
+
+          await ttsMgr.generateAll(
+            document: doc,
+            voice: voice,
+            threadCount: settings.ttsThreadCount,
+          );
+        } finally {
+          ttsMgr.progress.removeListener(onTtsProgress);
+        }
       }
       return voice;
     } catch (e) {

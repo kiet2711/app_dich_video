@@ -76,7 +76,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   static const _playbackSpeeds = <double>[0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
   static const _stallThreshold = Duration(milliseconds: 1200);
   static const _positionSaveInterval = Duration(seconds: 3);
-  static const _videoInitializeTimeout = Duration(seconds: 20);
+  static const _videoInitializeTimeout = Duration(seconds: 45);
 
   bool _isSwitchingQuality = false;
   String _currentQualityKey = '64';
@@ -798,19 +798,21 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           if (!mounted || _currentEpisodeIndex != (widget.currentEpisodeIndex ?? 1)) {
             return;
           }
-          final wasWaiting = _currentDocument.isEmpty && !_userChosePlayRaw;
+          final isPlaying = _controller?.value.isPlaying ?? false;
           setState(() {
             _currentDocument = newDoc;
             _ttsScheduler.dispose();
             _ttsScheduler = TtsAudioScheduler(newDoc);
           });
           await _applyAudioVolumes();
-          if (wasWaiting) {
+          if (isPlaying) {
+            if (_settings.isTtsPlaybackEnabled) {
+              final pos = _controller?.value.position.inMilliseconds ?? 0;
+              await _ttsScheduler.onSeek(pos);
+              _syncTtsWithVideo();
+            }
+          } else {
             await _controller?.play();
-          } else if (_settings.isTtsPlaybackEnabled) {
-            final pos = _controller?.value.position.inMilliseconds ?? 0;
-            await _ttsScheduler.onSeek(pos);
-            _syncTtsWithVideo();
           }
         },
       );
@@ -898,6 +900,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           targetPath = cached.path;
           playableUrls = [cached.path];
         } else if (refreshHongguoUrl &&
+            !targetPath.contains('hf.space') &&
             (targetPath.startsWith('http://') || targetPath.startsWith('https://'))) {
           // Nếu không có trong cache và URL là online:
           // Đề phòng URL online bị hết hạn từ hôm qua, tự động lấy link mới còn hạn
@@ -1160,19 +1163,21 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         translateCurrentIfEmpty: doc == null,
         onCurrentSubtitleReady: (newDoc) async {
           if (!mounted || _currentEpisodeIndex != targetIndex) return;
-          final wasWaiting = _currentDocument.isEmpty && !_userChosePlayRaw;
+          final isPlaying = _controller?.value.isPlaying ?? false;
           setState(() {
             _currentDocument = newDoc;
             _ttsScheduler.dispose();
             _ttsScheduler = TtsAudioScheduler(newDoc);
           });
           await _applyAudioVolumes();
-          if (wasWaiting) {
+          if (isPlaying) {
+            if (_settings.isTtsPlaybackEnabled) {
+              final pos = _controller?.value.position.inMilliseconds ?? 0;
+              await _ttsScheduler.onSeek(pos);
+              _syncTtsWithVideo();
+            }
+          } else {
             await _controller?.play();
-          } else if (_settings.isTtsPlaybackEnabled) {
-            final pos = _controller?.value.position.inMilliseconds ?? 0;
-            await _ttsScheduler.onSeek(pos);
-            _syncTtsWithVideo();
           }
         },
       );
@@ -5163,8 +5168,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                   ),
                 ),
 
-              // Banner tiến trình dịch cho tập hiện tại (khi đang xem bản gốc và dịch chạy ngầm)
-              if (_prefetchManager != null && _currentDocument.isEmpty && _userChosePlayRaw)
+              // Banner tiến trình dịch cho tập hiện tại (Hồng Quả: khi đang phát video và dịch/lồng tiếng chạy ngầm)
+              if (_prefetchManager != null &&
+                  _currentDocument.isEmpty &&
+                  (widget.dramaDetail != null || _userChosePlayRaw))
                 Positioned(
                   top: 56,
                   left: 20,
@@ -5174,7 +5181,53 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                     builder: (context, state, _) {
                       if (state == null ||
                           state.episodeIndex != _currentEpisodeIndex) {
-                        return const SizedBox.shrink();
+                        return Center(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 8,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.85),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: AppTheme.primaryEmerald.withValues(alpha: 0.6),
+                                width: 1.2,
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.5),
+                                  blurRadius: 10,
+                                  offset: const Offset(0, 4),
+                                ),
+                              ],
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: AppTheme.primaryEmerald,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  _settings.isTtsPlaybackEnabled
+                                      ? 'Đang chuẩn bị sub & lồng tiếng Tập $_currentEpisodeIndex...'
+                                      : 'Đang chuẩn bị dịch phụ đề Tập $_currentEpisodeIndex...',
+                                  style: const TextStyle(
+                                    fontSize: 11.5,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
                       }
                       final isTranslating = state.isTranslating;
                       final isFailed = state.status == 'failed';
@@ -5189,13 +5242,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                             vertical: 8,
                           ),
                           decoration: BoxDecoration(
-                            color: Colors.black.withValues(alpha: 0.82),
+                            color: Colors.black.withValues(alpha: 0.85),
                             borderRadius: BorderRadius.circular(20),
                             border: Border.all(
                               color: isFailed
                                   ? Colors.redAccent.withValues(alpha: 0.6)
                                   : AppTheme.primaryEmerald.withValues(alpha: 0.6),
-                              width: 1,
+                              width: 1.2,
                             ),
                             boxShadow: [
                               BoxShadow(
@@ -5233,9 +5286,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                           ? 'Chưa tạo được phụ đề: ${state.message}'
                                           : (state.message.isNotEmpty
                                               ? state.message
-                                              : 'Đang bóc tách & dịch phụ đề (${(state.progress * 100).toInt()}%)...'),
+                                              : (_settings.isTtsPlaybackEnabled
+                                                  ? 'Đang dịch & tạo lồng tiếng Tập $_currentEpisodeIndex (${(state.progress * 100).toInt()}%)...'
+                                                  : 'Đang bóc tách & dịch phụ đề Tập $_currentEpisodeIndex (${(state.progress * 100).toInt()}%)...')),
                                       style: TextStyle(
-                                        fontSize: 11,
+                                        fontSize: 11.5,
                                         fontWeight: FontWeight.w600,
                                         color: isFailed
                                             ? Colors.redAccent
@@ -5260,6 +5315,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                               _ttsScheduler = TtsAudioScheduler(newDoc);
                                             });
                                             _applyAudioVolumes();
+                                            if (_controller?.value.isPlaying ?? false) {
+                                              if (_settings.isTtsPlaybackEnabled) {
+                                                final pos = _controller?.value.position.inMilliseconds ?? 0;
+                                                _ttsScheduler.onSeek(pos);
+                                                _syncTtsWithVideo();
+                                              }
+                                            }
                                           },
                                         );
                                       },
@@ -5285,15 +5347,17 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                   ],
                                 ],
                               ),
-                              if (isTranslating && state.progress > 0) ...[
+                              if (isTranslating) ...[
                                 const SizedBox(height: 6),
                                 ClipRRect(
                                   borderRadius: BorderRadius.circular(2),
                                   child: SizedBox(
-                                    width: 160,
-                                    height: 3,
+                                    width: 170,
+                                    height: 3.5,
                                     child: LinearProgressIndicator(
-                                      value: state.progress.clamp(0.0, 1.0),
+                                      value: state.progress > 0
+                                          ? state.progress.clamp(0.0, 1.0)
+                                          : null,
                                       backgroundColor: Colors.white12,
                                       color: AppTheme.primaryEmerald,
                                     ),
@@ -5382,11 +5446,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                   ),
                 ),
 
-              // Gợi ý tạo Vietsub / Lồng tiếng cho video chưa có phụ đề khi mở controls
+              // Gợi ý tạo Vietsub / Lồng tiếng cho video chưa có phụ đề khi mở controls (Chỉ áp dụng Bilibili / Video ngoài, Hồng Quả đã chọn từ đầu)
               if (_showControls &&
+                  widget.dramaDetail == null &&
                   _currentDocument.isEmpty &&
-                  !_isTranslatingOnDemand &&
-                  !isHongguoWaitingTranslation)
+                  !_isTranslatingOnDemand)
                 Positioned(
                   top: 56,
                   left: 20,

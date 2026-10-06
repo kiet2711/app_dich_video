@@ -4,7 +4,9 @@ import 'dart:math';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
+import '../../data/repository/settings_repository.dart';
 import 'network_header_helper.dart';
+import 'hongguo/hongguo_local_engine.dart';
 
 class HongguoDramaItem {
   final String seriesId;
@@ -98,21 +100,21 @@ class HongguoResolver {
   final Dio dio;
 
   HongguoResolver({Dio? dio})
-      : dio = dio ??
-            Dio(
-              BaseOptions(
-                connectTimeout: const Duration(seconds: 15),
-                receiveTimeout: const Duration(seconds: 30),
-                followRedirects: true,
-                headers: {
-                  'User-Agent': defaultUserAgent,
-                  'Accept':
-                      'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-                  'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-                  'Referer': '$siteOrigin/',
-                },
-              ),
-            );
+    : dio =
+          dio ??
+          Dio(
+            BaseOptions(
+              connectTimeout: const Duration(seconds: 15),
+              receiveTimeout: const Duration(seconds: 30),
+              followRedirects: true,
+              headers: {
+                'User-Agent': defaultUserAgent,
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                'Referer': '$siteOrigin/',
+              },
+            ),
+          );
 
   static const List<HongguoCategory> categories = [
     HongguoCategory(slug: 'discover', label: '✨ Đề Xuất'),
@@ -292,10 +294,27 @@ class HongguoResolver {
     // 2. Nếu ở chế độ Tất cả nhưng có chọn thể loại:
     if (genre != null && genre.isNotEmpty) {
       final candidateCats = <String>['category/real-drama'];
-      if (['fantasy', 'sci-fi', 'creative', 'apocalypse', 'wealthy-family', 'wonder', 'adventure', 'drama'].contains(genre)) {
+      if ([
+        'fantasy',
+        'sci-fi',
+        'creative',
+        'apocalypse',
+        'wealthy-family',
+        'wonder',
+        'adventure',
+        'drama',
+      ].contains(genre)) {
         candidateCats.add('category/comic-drama');
       }
-      if (['fantasy', 'sci-fi', 'wealthy-family', 'apocalypse', 'creative', 'wonder', 'adventure'].contains(genre)) {
+      if ([
+        'fantasy',
+        'sci-fi',
+        'wealthy-family',
+        'apocalypse',
+        'creative',
+        'wonder',
+        'adventure',
+      ].contains(genre)) {
         candidateCats.add('category/ai-drama');
       }
       final pickedCat = candidateCats[rng.nextInt(candidateCats.length)];
@@ -307,11 +326,7 @@ class HongguoResolver {
           page: randomPage,
         );
         if (res.items.isEmpty && randomPage > 1) {
-          res = await browseList(
-            category: pickedCat,
-            genre: genre,
-            page: 1,
-          );
+          res = await browseList(category: pickedCat, genre: genre, page: 1);
         }
         if (res.items.isNotEmpty) {
           final shuffled = List<HongguoDramaItem>.from(res.items)..shuffle(rng);
@@ -382,7 +397,9 @@ class HongguoResolver {
     final html = res.data ?? '';
 
     // Tên phim
-    var title = _cleanJsonString(_extractMatch(html, r'"series_name"\s*:\s*"([^"]+)"'));
+    var title = _cleanJsonString(
+      _extractMatch(html, r'"series_name"\s*:\s*"([^"]+)"'),
+    );
     if (title.isEmpty) {
       title = _cleanJsonString(_extractMatch(html, r'"name"\s*:\s*"([^"]+)"'))
           .replaceAll(RegExp(r'\s*第\d+集.*$'), '');
@@ -392,25 +409,35 @@ class HongguoResolver {
     }
 
     // Ảnh bìa
-    var cover = _normalizeImageUrl(_extractMatch(html, r'"series_cover"\s*:\s*"([^"]+)"'));
+    var cover = _normalizeImageUrl(
+      _extractMatch(html, r'"series_cover"\s*:\s*"([^"]+)"'),
+    );
     if (cover.isEmpty) {
-      cover = _normalizeImageUrl(_extractMatch(html, r'"image"\s*:\s*"([^"]+)"'));
+      cover = _normalizeImageUrl(
+        _extractMatch(html, r'"image"\s*:\s*"([^"]+)"'),
+      );
     }
     if (cover.isEmpty) {
-      cover = _normalizeImageUrl(_extractMatch(html, r'"thumbnailUrl"\s*:\s*\[\s*"([^"]+)"'));
+      cover = _normalizeImageUrl(
+        _extractMatch(html, r'"thumbnailUrl"\s*:\s*\[\s*"([^"]+)"'),
+      );
     }
 
     // Tóm tắt nội dung
-    final intro = _cleanJsonString(_extractMatch(html, r'"description"\s*:\s*"([^"]+)"'));
+    final intro = _cleanJsonString(
+      _extractMatch(html, r'"description"\s*:\s*"([^"]+)"'),
+    );
 
     // Số tập xem được trên nền tảng Web Hồng Quả (mặc định các phim web chỉ mở xem trước 3 tập)
-    final accMatch = RegExp(r'"accessible_episode_cnt"\s*:\s*(\d+)').firstMatch(html);
+    final accMatch = RegExp(r'"accessible_episode_cnt"\s*:\s*(\d+)')
+        .firstMatch(html);
     final accessibleEpisodes = accMatch != null
         ? int.tryParse(accMatch.group(1)!) ?? 3
         : 3;
 
     // Danh sách tập (vid_list)
-    final vidListMatch = RegExp(r'"vid_list"\s*:\s*\[([^\]]*)\]').firstMatch(html);
+    final vidListMatch = RegExp(r'"vid_list"\s*:\s*\[([^\]]*)\]')
+        .firstMatch(html);
     final episodes = <HongguoEpisodeItem>[];
 
     if (vidListMatch != null) {
@@ -477,7 +504,9 @@ class HongguoResolver {
       intro: intro,
       totalEpisodes: episodes.isNotEmpty ? episodes.length : accessibleEpisodes,
       episodes: episodes,
-      accessibleEpisodes: episodes.isNotEmpty ? episodes.length : accessibleEpisodes,
+      accessibleEpisodes: episodes.isNotEmpty
+          ? episodes.length
+          : accessibleEpisodes,
     );
   }
 
@@ -487,25 +516,29 @@ class HongguoResolver {
   /// Giải mã video qua Hugging Face Cloud Resolver
   Future<String?> _resolveFromHfApi(String vid) async {
     try {
+      debugPrint('[HongguoResolver] 🌐 Đang gọi Hugging Face Space giải mã video: $vid...');
       final res = await dio.post(
         '$hfApiBase/gradio_api/call/get_play_url',
         data: {
           'data': [vid],
         },
         options: Options(
-          receiveTimeout: const Duration(seconds: 15),
-          sendTimeout: const Duration(seconds: 10),
+          receiveTimeout: const Duration(seconds: 30),
+          sendTimeout: const Duration(seconds: 15),
         ),
       );
 
       final eventId = res.data is Map ? res.data['event_id'] : null;
-      if (eventId == null) return null;
+      if (eventId == null) {
+        debugPrint('[HongguoResolver] HF không trả về event_id');
+        return null;
+      }
 
       final eventRes = await dio.get<String>(
         '$hfApiBase/gradio_api/call/get_play_url/$eventId',
         options: Options(
           responseType: ResponseType.plain,
-          receiveTimeout: const Duration(seconds: 40),
+          receiveTimeout: const Duration(seconds: 80),
         ),
       );
 
@@ -514,17 +547,26 @@ class HongguoResolver {
         if (line.startsWith('data:')) {
           final jsonStr = line.substring(5).trim();
           final parsed = jsonDecode(jsonStr);
-          if (parsed is List && parsed.isNotEmpty && parsed[0] is Map) {
-            final fileData = parsed[0] as Map;
-            final url = fileData['url']?.toString();
-            if (url != null && url.startsWith('http')) {
-              return url;
+          if (parsed is List && parsed.isNotEmpty) {
+            if (parsed[0] is Map) {
+              final fileData = parsed[0] as Map;
+              final url = fileData['url']?.toString();
+              if (url != null && url.startsWith('http')) {
+                debugPrint('[HongguoResolver] ✅ HF trả về stream URL: $url');
+                return url;
+              }
+            } else if (parsed[0] == null && parsed.length > 1 && parsed[1] is Map) {
+              final err = parsed[1] as Map;
+              final errMsg = err['error'] ?? 'Server HF báo lỗi xử lý';
+              debugPrint('[HongguoResolver] ❌ Server HF báo lỗi xử lý: $errMsg');
+              throw StateError('Server HF báo lỗi: $errMsg');
             }
           }
         }
       }
     } catch (e) {
-      debugPrint('[HongguoResolver] HF Cloud resolve error: $e');
+      debugPrint('[HongguoResolver] ❌ Lỗi kết nối HF Cloud: $e');
+      rethrow;
     }
     return null;
   }
@@ -535,19 +577,46 @@ class HongguoResolver {
     String vid, {
     int episodeIndex = 1,
   }) async {
-    // Chỉ thử URL không có vid ($siteOrigin/player/$seriesId) khi đang tìm tập 1
-    // hoặc vid trùng seriesId. TUYỆT ĐỐI KHÔNG dùng làm fallback cho tập 2 trở đi
-    // vì $siteOrigin/player/$seriesId luôn trả về video của Tập 1!
+    final actualVid = (vid.isNotEmpty && vid != seriesId) ? vid : '';
+
+    // Khi có Video ID: Chạy duy nhất engine đã chọn để kiểm tra độc lập tốc độ & lỗi (Fallback: TẮT)
+    if (actualVid.isNotEmpty) {
+      final settings = await SettingsRepository.getInstance();
+      final engine = settings.hongguoVideoResolverEngine;
+      debugPrint(
+        '[HongguoResolver] ⚡ Đang chạy duy nhất engine: '
+        '${engine == 'hf' ? 'Hugging Face Space' : 'LOCAL ON-DEVICE'} '
+        'cho tập $episodeIndex (Fallback: ĐÃ TẮT)',
+      );
+
+      if (engine == 'local') {
+        // Chạy Local Engine thuần túy trên thiết bị (không fallback sang HF)
+        return await HongguoLocalEngine.resolveAndGetPlayableUrl(
+          seriesId,
+          actualVid,
+          episodeIndex: episodeIndex,
+        );
+      } else {
+        // Chạy Hugging Face Space thuần túy (không fallback sang Local)
+        final hfPlayUrl = await _resolveFromHfApi(actualVid);
+        if (hfPlayUrl != null && hfPlayUrl.isNotEmpty) {
+          return hfPlayUrl;
+        }
+        throw StateError(
+          'Hugging Face không trả về link phát cho tập $episodeIndex.',
+        );
+      }
+    }
+
+    // Chỉ dùng web public khi không có Video ID cụ thể
     final candidates = <String>[
       if (vid.isNotEmpty && vid != seriesId)
         '$siteOrigin/player/$seriesId/$vid',
       if (episodeIndex == 1 || vid.isEmpty || vid == seriesId)
         '$siteOrigin/player/$seriesId',
-      if (vid.isNotEmpty && vid != seriesId)
-        '$siteOrigin/player/_/$vid',
+      if (vid.isNotEmpty && vid != seriesId) '$siteOrigin/player/_/$vid',
     ];
 
-    // 1. Thử lấy từ web public trước (tập 1-3 hoặc web mở)
     for (final url in candidates) {
       try {
         final res = await dio.get<String>(
@@ -558,15 +627,14 @@ class HongguoResolver {
         );
         final html = res.data ?? '';
 
-        // Thử lấy contentUrl từ VideoObject JSON-LD
         final contentUrl = _cleanJsonString(
           _extractMatch(html, r'"contentUrl"\s*:\s*"([^"]+)"'),
         );
-        if (contentUrl.startsWith('http://') || contentUrl.startsWith('https://')) {
+        if (contentUrl.startsWith('http://') ||
+            contentUrl.startsWith('https://')) {
           return contentUrl;
         }
 
-        // Thử lấy main_url từ video_model
         final mainUrl = _cleanJsonString(
           _extractMatch(html, r'"main_url"\s*:\s*"([^"]+)"'),
         );
@@ -576,18 +644,9 @@ class HongguoResolver {
       } catch (_) {}
     }
 
-    // 2. Fallback: Giải mã qua Cloud Resolver Hugging Face (hỗ trợ tập 4+ và video mã hóa)
-    final actualVid = (vid.isNotEmpty && vid != seriesId) ? vid : '';
-    if (actualVid.isNotEmpty) {
-      final hfPlayUrl = await _resolveFromHfApi(actualVid);
-      if (hfPlayUrl != null && hfPlayUrl.isNotEmpty) {
-        return hfPlayUrl;
-      }
-    }
-
     if (episodeIndex > 1) {
       throw StateError(
-        'Tập $episodeIndex không thể giải mã qua Server Cloud hoặc web Hồng Quả.',
+        'Không thể lấy liên kết MP4 cho tập $episodeIndex (Fallback đang tắt).',
       );
     }
     throw StateError('Không thể lấy liên kết MP4 cho tập phim này.');
@@ -600,21 +659,32 @@ class HongguoResolver {
     final seen = <String>{};
 
     // Cách 1: Parse từ SSR JSON nhúng trong HTML (chứa series_name, cover, vid_list, tags...)
-    final jsonBlocks = RegExp(r'\{[^{}]*"series_id"\s*:\s*"(\d+)"[^{}]*\}').allMatches(html);
+    final jsonBlocks = RegExp(r'\{[^{}]*"series_id"\s*:\s*"(\d+)"[^{}]*\}')
+        .allMatches(html);
     for (final b in jsonBlocks) {
       final block = b.group(0)!;
       final sid = _extractMatch(block, r'"series_id"\s*:\s*"(\d+)"');
       if (sid.isEmpty || !seen.add(sid)) continue;
 
-      final title = _cleanDramaTitle(_extractMatch(block, r'"series_name"\s*:\s*"([^"]+)"'));
+      final title = _cleanDramaTitle(
+        _extractMatch(block, r'"series_name"\s*:\s*"([^"]+)"'),
+      );
       if (title.isEmpty) continue;
 
-      final cover = _normalizeImageUrl(_extractMatch(block, r'"series_cover"\s*:\s*"([^"]+)"'));
-      final epRightText = _cleanJsonString(_extractMatch(block, r'"episode_right_text"\s*:\s*"([^"]+)"'));
+      final cover = _normalizeImageUrl(
+        _extractMatch(block, r'"series_cover"\s*:\s*"([^"]+)"'),
+      );
+      final epRightText = _cleanJsonString(
+        _extractMatch(block, r'"episode_right_text"\s*:\s*"([^"]+)"'),
+      );
       final epCntMatch = RegExp(r'(\d+)').firstMatch(epRightText);
-      final epCount = epCntMatch != null ? int.tryParse(epCntMatch.group(1)!) ?? 0 : 0;
+      final epCount = epCntMatch != null
+          ? int.tryParse(epCntMatch.group(1)!) ?? 0
+          : 0;
 
-      final intro = _cleanJsonString(_extractMatch(block, r'"series_intro"\s*:\s*"([^"]+)"'));
+      final intro = _cleanJsonString(
+        _extractMatch(block, r'"series_intro"\s*:\s*"([^"]+)"'),
+      );
 
       // Tags
       final tagsMatch = RegExp(r'"tags"\s*:\s*\[([^\]]*)\]').firstMatch(block);
@@ -657,7 +727,9 @@ class HongguoResolver {
             : _stripHtml(content);
         title = _cleanDramaTitle(title);
 
-        final cover = _normalizeImageUrl(_extractMatch(content, r'src="([^"]+)"'));
+        final cover = _normalizeImageUrl(
+          _extractMatch(content, r'src="([^"]+)"'),
+        );
         final epText = _extractMatch(content, r'全(\d+)集');
         final epCount = int.tryParse(epText) ?? 0;
 
@@ -735,9 +807,7 @@ class HongguoResolver {
   }
 
   static String _cleanDramaTitle(String raw) {
-    return _cleanJsonString(raw)
-        .replaceAll(RegExp(r'封面$'), '')
-        .trim();
+    return _cleanJsonString(raw).replaceAll(RegExp(r'封面$'), '').trim();
   }
 
   static String _stripHtml(String html) {
