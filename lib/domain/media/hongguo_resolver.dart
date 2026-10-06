@@ -124,17 +124,45 @@ class HongguoResolver {
 
   static const List<HongguoGenre> realDramaGenres = [
     HongguoGenre(slug: '', label: 'Tất cả'),
-    HongguoGenre(slug: 'urban', label: 'Đô thị (都市)'),
+    HongguoGenre(slug: 'fantasy', label: 'Tu tiên / Huyền huyễn (修仙)'),
+    HongguoGenre(slug: 'youth', label: 'Học đường / Thanh xuân (校园)'),
     HongguoGenre(slug: 'romance', label: 'Tình cảm (爱情)'),
+    HongguoGenre(slug: 'clan', label: 'Hào môn / Tổng tài (豪门)'),
     HongguoGenre(slug: 'comeback', label: 'Nghịch tập (逆袭)'),
+    HongguoGenre(slug: 'urban', label: 'Đô thị (都市)'),
+    HongguoGenre(slug: 'costume', label: 'Cổ trang (古装)'),
+    HongguoGenre(slug: 'sci-fi', label: 'Khoa huyễn (科幻)'),
+    HongguoGenre(slug: 'action-adventure', label: 'Hành động (动作)'),
+    HongguoGenre(slug: 'supernatural', label: 'Linh dị (灵异)'),
     HongguoGenre(slug: 'cute-kids', label: 'Manh bảo (萌宝)'),
     HongguoGenre(slug: 'growth', label: 'Trưởng thành (成长)'),
     HongguoGenre(slug: 'family', label: 'Gia đình (家庭)'),
-    HongguoGenre(slug: 'costume', label: 'Cổ trang (古装)'),
-    HongguoGenre(slug: 'fantasy', label: 'Huyền huyễn (玄幻)'),
     HongguoGenre(slug: 'period', label: 'Niên đại (年代)'),
     HongguoGenre(slug: 'suspense', label: 'Hồi hộp (悬疑)'),
     HongguoGenre(slug: 'comedy', label: 'Hài hước (喜剧)'),
+  ];
+
+  static const List<HongguoGenre> comicDramaGenres = [
+    HongguoGenre(slug: '', label: 'Tất cả Hoạt Hình'),
+    HongguoGenre(slug: 'fantasy', label: 'Tu tiên / Huyền huyễn (修仙)'),
+    HongguoGenre(slug: 'creative', label: 'Hệ thống / Xuyên không (系统)'),
+    HongguoGenre(slug: 'drama', label: 'Tình cảm / Học đường (剧情)'),
+    HongguoGenre(slug: 'adventure', label: 'Nhiệt huyết / Phiêu lưu (热血)'),
+    HongguoGenre(slug: 'wonder', label: 'Kỳ ảo / Dị giới (奇幻)'),
+    HongguoGenre(slug: 'wealthy-family', label: 'Hào môn / Đô thị (豪门)'),
+    HongguoGenre(slug: 'apocalypse', label: 'Mạt thế / Sinh tồn (末世)'),
+    HongguoGenre(slug: 'sci-fi', label: 'Khoa huyễn (科幻)'),
+  ];
+
+  static const List<HongguoGenre> aiDramaGenres = [
+    HongguoGenre(slug: '', label: 'Tất cả AI'),
+    HongguoGenre(slug: 'fantasy', label: 'Tu tiên / Huyền huyễn (玄幻)'),
+    HongguoGenre(slug: 'sci-fi', label: 'Khoa huyễn (科幻)'),
+    HongguoGenre(slug: 'wealthy-family', label: 'Hào môn / Tổng tài (豪门)'),
+    HongguoGenre(slug: 'apocalypse', label: 'Mạt thế / Sinh tồn (末世)'),
+    HongguoGenre(slug: 'creative', label: 'Ý tưởng sáng tạo (脑洞)'),
+    HongguoGenre(slug: 'wonder', label: 'Kỳ ảo (奇幻)'),
+    HongguoGenre(slug: 'adventure', label: 'Phiêu lưu (冒险)'),
   ];
 
   static bool isHongguoUrl(String input) {
@@ -229,23 +257,31 @@ class HongguoResolver {
   }) async {
     final rng = Random();
 
-    // 1. Nếu có chỉ định danh mục cụ thể (vd: Người Thật, Hoạt Hình, Phim AI)
+    // 1. Nếu có chỉ định danh mục cụ thể (vd: Người Thật, Phim AI, Hoạt Hình)
     if (preferredCategory != null &&
         preferredCategory.isNotEmpty &&
         preferredCategory != 'rank/hot-drama' &&
         preferredCategory != 'discover') {
-      final randomPage = rng.nextInt(25) + 1;
+      final maxRand = (genre != null && genre.isNotEmpty) ? 6 : 25;
+      final randomPage = rng.nextInt(maxRand) + 1;
       try {
-        final res = await browseList(
+        var res = await browseList(
           category: preferredCategory,
           genre: genre ?? '',
           page: randomPage,
         );
+        if (res.items.isEmpty && randomPage > 1) {
+          res = await browseList(
+            category: preferredCategory,
+            genre: genre ?? '',
+            page: 1,
+          );
+        }
         if (res.items.isNotEmpty) {
           final shuffled = List<HongguoDramaItem>.from(res.items)..shuffle(rng);
           return HongguoBrowseResult(
             items: shuffled,
-            currentPage: randomPage,
+            currentPage: res.currentPage,
             totalPages: res.totalPages,
             totalItems: res.totalItems,
           );
@@ -253,9 +289,43 @@ class HongguoResolver {
       } catch (_) {}
     }
 
-    // 2. Nếu không chỉ định hoặc đang ở tab BXH / Đề xuất:
-    // Đa dạng hóa nguồn phim từ các kho phong phú của Hồng Quả:
-    // Người Thật (34 trang), Hoạt hình (34 trang), Phim AI (34 trang), các bảng xếp hạng hot
+    // 2. Nếu ở chế độ Tất cả nhưng có chọn thể loại:
+    if (genre != null && genre.isNotEmpty) {
+      final candidateCats = <String>['category/real-drama'];
+      if (['fantasy', 'sci-fi', 'creative', 'apocalypse', 'wealthy-family', 'wonder', 'adventure', 'drama'].contains(genre)) {
+        candidateCats.add('category/comic-drama');
+      }
+      if (['fantasy', 'sci-fi', 'wealthy-family', 'apocalypse', 'creative', 'wonder', 'adventure'].contains(genre)) {
+        candidateCats.add('category/ai-drama');
+      }
+      final pickedCat = candidateCats[rng.nextInt(candidateCats.length)];
+      final randomPage = rng.nextInt(6) + 1;
+      try {
+        var res = await browseList(
+          category: pickedCat,
+          genre: genre,
+          page: randomPage,
+        );
+        if (res.items.isEmpty && randomPage > 1) {
+          res = await browseList(
+            category: pickedCat,
+            genre: genre,
+            page: 1,
+          );
+        }
+        if (res.items.isNotEmpty) {
+          final shuffled = List<HongguoDramaItem>.from(res.items)..shuffle(rng);
+          return HongguoBrowseResult(
+            items: shuffled,
+            currentPage: res.currentPage,
+            totalPages: res.totalPages,
+            totalItems: res.totalItems,
+          );
+        }
+      } catch (_) {}
+    }
+
+    // 3. Nếu không chỉ định thể loại (Đề xuất ngẫu nhiên hoàn toàn):
     final pool = <String>[
       'category/real-drama',
       'category/real-drama',
@@ -271,7 +341,7 @@ class HongguoResolver {
     try {
       final res = await browseList(
         category: selectedCat,
-        genre: genre ?? '',
+        genre: '',
         page: randomPage,
       );
       if (res.items.isNotEmpty) {

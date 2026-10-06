@@ -27,9 +27,17 @@ class _HongguoScreenState extends State<HongguoScreen> {
   final ScrollController _scrollController = ScrollController();
 
   String _currentCategorySlug = 'discover';
+  String _discoverSource = 'all';
   String _currentGenreSlug = '';
   int _currentPage = 1;
   int _totalPages = 1;
+
+  static const List<({String slug, String label})> _discoverSources = [
+    (slug: 'all', label: 'Tất cả nguồn'),
+    (slug: 'category/real-drama', label: 'Chỉ Người Thật'),
+    (slug: 'category/ai-drama', label: 'Chỉ Phim AI'),
+    (slug: 'category/comic-drama', label: 'Chỉ Hoạt Hình'),
+  ];
 
   bool _isLoading = false;
   String? _errorMessage;
@@ -113,7 +121,11 @@ class _HongguoScreenState extends State<HongguoScreen> {
 
     try {
       final res = _currentCategorySlug == 'discover'
-          ? await _resolver.getRandomRecommendations(genre: _currentGenreSlug)
+          ? await _resolver.getRandomRecommendations(
+              preferredCategory:
+                  _discoverSource == 'all' ? null : _discoverSource,
+              genre: _currentGenreSlug,
+            )
           : await _resolver.browseList(
               category: _currentCategorySlug,
               genre: _currentGenreSlug,
@@ -150,11 +162,14 @@ class _HongguoScreenState extends State<HongguoScreen> {
     });
 
     try {
+      final preferredCat = _currentCategorySlug == 'discover'
+          ? (_discoverSource == 'all' ? null : _discoverSource)
+          : ((_currentCategorySlug.startsWith('rank/'))
+              ? null
+              : _currentCategorySlug);
+
       final res = await _resolver.getRandomRecommendations(
-        preferredCategory: (_currentCategorySlug == 'discover' ||
-                _currentCategorySlug.startsWith('rank/'))
-            ? null
-            : _currentCategorySlug,
+        preferredCategory: preferredCat,
         genre: _currentGenreSlug,
       );
 
@@ -175,6 +190,9 @@ class _HongguoScreenState extends State<HongguoScreen> {
       }
 
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      final genreText = _currentGenreSlug.isNotEmpty
+          ? ' (${_getGenreLabel(_currentGenreSlug)})'
+          : '';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Row(
@@ -187,7 +205,7 @@ class _HongguoScreenState extends State<HongguoScreen> {
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  'Đã nạp ${res.items.length} phim mới ngẫu nhiên!',
+                  'Đã nạp ${res.items.length} phim mới ngẫu nhiên$genreText!',
                   style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.w600,
@@ -354,6 +372,61 @@ class _HongguoScreenState extends State<HongguoScreen> {
     _loadDramas();
   }
 
+  void _onSelectDiscoverSource(String source) {
+    if (_discoverSource == source && !_isSearchMode) return;
+    HapticFeedback.selectionClick();
+    setState(() {
+      _discoverSource = source;
+      _currentGenreSlug = '';
+      _currentPage = 1;
+      _searchController.clear();
+    });
+    _loadDramas();
+  }
+
+  List<HongguoGenre> _getAvailableGenres() {
+    if (_currentCategorySlug == 'discover') {
+      if (_discoverSource == 'category/ai-drama') {
+        return HongguoResolver.aiDramaGenres;
+      } else if (_discoverSource == 'category/comic-drama') {
+        return HongguoResolver.comicDramaGenres;
+      } else {
+        return HongguoResolver.realDramaGenres;
+      }
+    } else if (_currentCategorySlug == 'category/real-drama') {
+      return HongguoResolver.realDramaGenres;
+    } else if (_currentCategorySlug == 'category/ai-drama') {
+      return HongguoResolver.aiDramaGenres;
+    } else if (_currentCategorySlug == 'category/comic-drama') {
+      return HongguoResolver.comicDramaGenres;
+    }
+    return const [];
+  }
+
+  String _getCategoryLabel(String slug) {
+    if (slug == 'all') return 'Tất cả';
+    final match = HongguoResolver.categories
+        .cast<HongguoCategory?>()
+        .firstWhere((c) => c?.slug == slug, orElse: () => null);
+    return match?.label.replaceAll(RegExp(r'^[^\w\s]+\s*'), '') ?? slug;
+  }
+
+  String _getGenreLabel(String slug) {
+    if (slug.isEmpty) return 'Tất cả';
+    final match = HongguoResolver.realDramaGenres
+        .cast<HongguoGenre?>()
+        .firstWhere((g) => g?.slug == slug, orElse: () => null);
+    if (match != null) return match.label.split('(').first.trim();
+    final matchComic = HongguoResolver.comicDramaGenres
+        .cast<HongguoGenre?>()
+        .firstWhere((g) => g?.slug == slug, orElse: () => null);
+    if (matchComic != null) return matchComic.label.split('(').first.trim();
+    final matchAi = HongguoResolver.aiDramaGenres
+        .cast<HongguoGenre?>()
+        .firstWhere((g) => g?.slug == slug, orElse: () => null);
+    return matchAi?.label.split('(').first.trim() ?? slug;
+  }
+
   void _goToPage(int page) {
     if (page < 1 || page > _totalPages || page == _currentPage || _isLoading) {
       return;
@@ -410,9 +483,7 @@ class _HongguoScreenState extends State<HongguoScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isCategoryWithGenre =
-        _currentCategorySlug.contains('real-drama') ||
-        _currentCategorySlug.contains('comic-drama');
+    final availableGenres = _getAvailableGenres();
 
     return Scaffold(
       backgroundColor: AppColors.darkBackground,
@@ -571,45 +642,287 @@ class _HongguoScreenState extends State<HongguoScreen> {
               ),
             ),
 
-            // 3. THỂ LOẠI CON (HIỂN THỊ KHI Ở DANH MỤC NGƯỜI THẬT HOẶC HOẠT HÌNH)
-            if (isCategoryWithGenre && !_isSearchMode)
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: SizedBox(
-                  height: 36,
-                  child: ListView.separated(
-                    physics: const BouncingScrollPhysics(),
-                    padding: const EdgeInsets.symmetric(horizontal: 14),
-                    scrollDirection: Axis.horizontal,
-                    itemCount: HongguoResolver.realDramaGenres.length,
-                    separatorBuilder: (ctx, i) => const SizedBox(width: 6),
-                    itemBuilder: (ctx, i) {
-                      final g = HongguoResolver.realDramaGenres[i];
-                      final isSelected = _currentGenreSlug == g.slug;
-                      return ActionChip(
-                        label: Text(
-                          g.label,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: isSelected
-                                ? AppColors.accentGold
-                                : AppColors.textMuted,
-                            fontWeight: isSelected
-                                ? FontWeight.bold
-                                : FontWeight.normal,
+            // 2.5 HỘP BỘ LỌC CON DÀNH CHO TAB ĐỀ XUẤT (PHÂN CẤP RÕ RÀNG VỚI DANH MỤC CHÍNH)
+            if (_currentCategorySlug == 'discover' && !_isSearchMode)
+              Container(
+                margin: const EdgeInsets.fromLTRB(14, 6, 14, 2),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                decoration: BoxDecoration(
+                  color: AppColors.darkSurfaceVariant.withValues(alpha: 0.4),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: AppColors.cardBorder.withValues(alpha: 0.6),
+                  ),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Hàng Nguồn Đề Xuất
+                    SizedBox(
+                      height: 30,
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 7,
+                              vertical: 3,
+                            ),
+                            decoration: BoxDecoration(
+                              color: AppColors.primaryEmerald
+                                  .withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.tune_rounded,
+                                  size: 11,
+                                  color: AppColors.primaryEmerald,
+                                ),
+                                SizedBox(width: 4),
+                                Text(
+                                  'Nguồn',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                    color: AppColors.primaryEmerald,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: ListView.separated(
+                              physics: const BouncingScrollPhysics(),
+                              scrollDirection: Axis.horizontal,
+                              itemCount: _discoverSources.length,
+                              separatorBuilder: (ctx, i) =>
+                                  const SizedBox(width: 6),
+                              itemBuilder: (ctx, i) {
+                                final src = _discoverSources[i];
+                                final isSelected = _discoverSource == src.slug;
+                                return ChoiceChip(
+                                  visualDensity: VisualDensity.compact,
+                                  materialTapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 0,
+                                  ),
+                                  label: Text(
+                                    src.label,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: isSelected
+                                          ? FontWeight.bold
+                                          : FontWeight.normal,
+                                      color: isSelected
+                                          ? Colors.white
+                                          : AppColors.textSecondary,
+                                    ),
+                                  ),
+                                  selected: isSelected,
+                                  selectedColor: AppColors.primaryEmerald
+                                      .withValues(alpha: 0.35),
+                                  backgroundColor: Colors.transparent,
+                                  side: BorderSide(
+                                    color: isSelected
+                                        ? AppColors.primaryEmerald
+                                        : AppColors.cardBorder
+                                            .withValues(alpha: 0.6),
+                                  ),
+                                  onSelected: (_) =>
+                                      _onSelectDiscoverSource(src.slug),
+                                );
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    // Hàng Thể Loại (nếu nguồn có hỗ trợ thể loại)
+                    if (availableGenres.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      SizedBox(
+                        height: 30,
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 7,
+                                vertical: 3,
+                              ),
+                              decoration: BoxDecoration(
+                                color: AppColors.accentGold
+                                    .withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.local_offer_rounded,
+                                  size: 11,
+                                  color: AppColors.accentGold,
+                                ),
+                                SizedBox(width: 4),
+                                Text(
+                                  'Thể loại',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                    color: AppColors.accentGold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: ListView.separated(
+                              physics: const BouncingScrollPhysics(),
+                              scrollDirection: Axis.horizontal,
+                              itemCount: availableGenres.length,
+                              separatorBuilder: (ctx, i) =>
+                                  const SizedBox(width: 6),
+                              itemBuilder: (ctx, i) {
+                                final g = availableGenres[i];
+                                final isSelected =
+                                    _currentGenreSlug == g.slug;
+                                return ActionChip(
+                                  visualDensity: VisualDensity.compact,
+                                  materialTapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 0,
+                                  ),
+                                  label: Text(
+                                    g.label,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: isSelected
+                                          ? AppColors.accentGold
+                                          : AppColors.textMuted,
+                                      fontWeight: isSelected
+                                          ? FontWeight.bold
+                                          : FontWeight.normal,
+                                    ),
+                                  ),
+                                  backgroundColor: isSelected
+                                      ? AppColors.accentGold
+                                          .withValues(alpha: 0.14)
+                                      : Colors.transparent,
+                                  side: BorderSide(
+                                    color: isSelected
+                                        ? AppColors.accentGold
+                                            .withValues(alpha: 0.7)
+                                        : AppColors.cardBorder
+                                            .withValues(alpha: 0.4),
+                                  ),
+                                  onPressed: () => _onSelectGenre(g.slug),
+                                );
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                  ],
+                ),
+              ),
+
+            // 3. THỂ LOẠI CON (KHI Ở KHO NGƯỜI THẬT HOẶC PHIM AI)
+            if (_currentCategorySlug != 'discover' &&
+                availableGenres.isNotEmpty &&
+                !_isSearchMode)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 4, 14, 0),
+                child: SizedBox(
+                  height: 32,
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 7,
+                          vertical: 3,
                         ),
-                        backgroundColor: isSelected
-                            ? AppColors.accentGold.withValues(alpha: 0.12)
-                            : Colors.transparent,
-                        side: BorderSide(
-                          color: isSelected
-                              ? AppColors.accentGold.withValues(alpha: 0.6)
-                              : AppColors.cardBorder.withValues(alpha: 0.5),
+                        decoration: BoxDecoration(
+                          color: AppColors.accentGold.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(6),
                         ),
-                        onPressed: () => _onSelectGenre(g.slug),
-                      );
-                    },
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.local_offer_rounded,
+                              size: 11,
+                              color: AppColors.accentGold,
+                            ),
+                            SizedBox(width: 4),
+                            Text(
+                              'Thể loại',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                color: AppColors.accentGold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: ListView.separated(
+                          physics: const BouncingScrollPhysics(),
+                          scrollDirection: Axis.horizontal,
+                          itemCount: availableGenres.length,
+                          separatorBuilder: (ctx, i) =>
+                              const SizedBox(width: 6),
+                          itemBuilder: (ctx, i) {
+                            final g = availableGenres[i];
+                            final isSelected = _currentGenreSlug == g.slug;
+                            return ActionChip(
+                              visualDensity: VisualDensity.compact,
+                              materialTapTargetSize:
+                                  MaterialTapTargetSize.shrinkWrap,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 0,
+                              ),
+                              label: Text(
+                                g.label,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: isSelected
+                                      ? AppColors.accentGold
+                                      : AppColors.textMuted,
+                                  fontWeight: isSelected
+                                      ? FontWeight.bold
+                                      : FontWeight.normal,
+                                ),
+                              ),
+                              backgroundColor: isSelected
+                                  ? AppColors.accentGold
+                                      .withValues(alpha: 0.14)
+                                  : Colors.transparent,
+                              side: BorderSide(
+                                color: isSelected
+                                    ? AppColors.accentGold
+                                        .withValues(alpha: 0.7)
+                                    : AppColors.cardBorder
+                                        .withValues(alpha: 0.5),
+                              ),
+                              onPressed: () => _onSelectGenre(g.slug),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -646,10 +959,14 @@ class _HongguoScreenState extends State<HongguoScreen> {
                             _isSearchMode
                                 ? 'Kết quả tìm kiếm (${_dramas.length})'
                                 : (_currentCategorySlug == 'discover'
-                                    ? 'Phim đề xuất ngẫu nhiên (${_dramas.length})'
+                                    ? (_currentGenreSlug.isNotEmpty
+                                        ? 'Đề xuất ${_getGenreLabel(_currentGenreSlug)} (${_dramas.length})'
+                                        : (_discoverSource == 'all'
+                                            ? 'Phim đề xuất ngẫu nhiên (${_dramas.length})'
+                                            : 'Đề xuất ${_getCategoryLabel(_discoverSource)} (${_dramas.length})'))
                                     : (_currentCategorySlug.contains('rank')
                                         ? 'Bảng Xếp Hạng Hot (Trang $_currentPage/$_totalPages)'
-                                        : 'Kho phim Hồng Quả (Trang $_currentPage/$_totalPages)')),
+                                        : 'Kho ${_getCategoryLabel(_currentCategorySlug)} (Trang $_currentPage/$_totalPages)')),
                             style: const TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w600,
@@ -755,9 +1072,11 @@ class _HongguoScreenState extends State<HongguoScreen> {
                   child: ElevatedButton.icon(
                     onPressed: _isLoading ? null : _loadRandomNewDramas,
                     icon: const Icon(Icons.casino_rounded, size: 18),
-                    label: const Text(
-                      'Đổi danh sách phim mới khác',
-                      style: TextStyle(
+                    label: Text(
+                      _currentGenreSlug.isNotEmpty
+                          ? 'Đổi loạt phim ${_getGenreLabel(_currentGenreSlug)} khác'
+                          : 'Đổi danh sách phim mới khác',
+                      style: const TextStyle(
                         fontWeight: FontWeight.bold,
                         fontSize: 13,
                       ),
