@@ -759,6 +759,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       setState(() {
         _autoPlayNextEpisode = _settings.autoPlayNextEpisode;
         _commentTranslationEngine = _settings.commentTranslationEngine;
+        if (widget.dramaDetail != null) {
+          _playbackSpeed = _settings.hongguoPlaybackSpeed;
+        }
       });
     }
 
@@ -813,6 +816,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             }
           } else {
             await _controller?.play();
+            if (_playbackSpeed != 1.0) {
+              try {
+                await _controller?.setPlaybackSpeed(_playbackSpeed);
+              } catch (_) {}
+            }
+            _syncTtsWithVideo();
           }
         },
       );
@@ -1009,10 +1018,26 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           !_userChosePlayRaw &&
           !isLocalVideo;
 
+      // Thiết lập tốc độ phát đã chọn cho controller mới (kể cả khi chuyển tập)
+      if (_playbackSpeed != 1.0) {
+        try {
+          await _controller!.setPlaybackSpeed(_playbackSpeed);
+        } catch (e) {
+          debugPrint('Không thể thiết lập tốc độ phát $_playbackSpeed cho controller mới: $e');
+        }
+      }
+
       if (!shouldWaitHongguoTranslation) {
         await _controller!.play();
       } else {
         await _controller!.pause();
+      }
+
+      // Củng cố lại tốc độ phát sau khi phát video
+      if (_playbackSpeed != 1.0) {
+        try {
+          await _controller!.setPlaybackSpeed(_playbackSpeed);
+        } catch (_) {}
       }
 
       // Khởi động các tác vụ phụ chạy ngầm bất đồng bộ song song
@@ -1034,6 +1059,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           _isScrubbing = false;
           _syncTtsWithVideo();
         }
+      } else {
+        _syncTtsWithVideo();
       }
     } catch (e) {
       if (!mounted) return;
@@ -1178,6 +1205,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             }
           } else {
             await _controller?.play();
+            if (_playbackSpeed != 1.0) {
+              try {
+                await _controller?.setPlaybackSpeed(_playbackSpeed);
+              } catch (_) {}
+            }
+            _syncTtsWithVideo();
           }
         },
       );
@@ -1902,6 +1935,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       await newController.seekTo(Duration(milliseconds: currentPositionMs));
       if (wasPlaying) {
         await newController.play();
+      }
+      if (_playbackSpeed != 1.0) {
+        try {
+          await newController.setPlaybackSpeed(_playbackSpeed);
+        } catch (_) {}
       }
       _settings.preferredVideoQuality = newQuality;
       setState(() {
@@ -4748,15 +4786,21 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   }
 
   Future<void> _setPlaybackSpeed(double speed) async {
+    setState(() => _playbackSpeed = speed);
+    if (widget.dramaDetail != null) {
+      _settings.hongguoPlaybackSpeed = speed;
+    }
     final controller = _controller;
     if (controller == null || !controller.value.isInitialized) return;
     try {
       await controller.setPlaybackSpeed(speed);
-      setState(() => _playbackSpeed = speed);
       _syncTtsWithVideo();
     } catch (_) {
       if (!mounted) return;
       setState(() => _playbackSpeed = 1);
+      if (widget.dramaDetail != null) {
+        _settings.hongguoPlaybackSpeed = 1.0;
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Nguồn video này không hỗ trợ tốc độ đã chọn.'),

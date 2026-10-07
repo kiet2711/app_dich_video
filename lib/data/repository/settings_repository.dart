@@ -305,6 +305,12 @@ class SettingsRepository {
   set hongguoAutoDeleteWatched(bool v) =>
       prefs.setBool('hongguo_auto_delete_watched', v);
 
+  /// Tốc độ phát video mặc định / ghi nhớ cho phim ngắn Hồng Quả (0.5x -> 2.0x)
+  double get hongguoPlaybackSpeed =>
+      (prefs.getDouble('hongguo_playback_speed') ?? 1.0).clamp(0.5, 2.0);
+  set hongguoPlaybackSpeed(double v) =>
+      prefs.setDouble('hongguo_playback_speed', v.clamp(0.5, 2.0));
+
   /// Chế độ dịch riêng của Bilibili: 'capcut' (CapCut Free) hoặc 'api_online' (AI Online)
   String get bilibiliTranslationMode =>
       prefs.getString('bilibili_translation_mode') ?? 'capcut';

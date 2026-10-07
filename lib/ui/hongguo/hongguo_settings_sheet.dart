@@ -284,37 +284,46 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
                     ),
                     const SizedBox(height: 10),
 
-                    // Lựa chọn 1: CapCut Free
-                    _buildModeOption(
-                      mode: 'capcut',
-                      title: 'CapCut Free',
-                      badge: 'MIỄN PHÍ',
-                      badgeColor: Colors.amber,
-                      icon: Icons.bolt_rounded,
-                      iconColor: Colors.amber,
-                      description: 'Nhận diện âm thanh & dịch trực tiếp miễn phí qua CapCut. Không cần API Key, xử lý nhanh chóng.',
-                      isSelected: _translationMode == 'capcut',
-                      onTap: () {
-                        HapticFeedback.selectionClick();
-                        setState(() => _translationMode = 'capcut');
-                      },
-                    ),
-                    const SizedBox(height: 10),
-
-                    // Lựa chọn 2: API Online
-                    _buildModeOption(
-                      mode: 'api_online',
-                      title: 'API Online',
-                      badge: 'XOAY KEY TỰ ĐỘNG',
-                      badgeColor: AppColors.primaryEmerald,
-                      icon: Icons.auto_awesome_rounded,
-                      iconColor: AppColors.primaryEmerald,
-                      description: 'Dịch AI ngữ cảnh thông minh, tự động xoay Model & Key, câu từ mượt mà chuẩn văn phong phim.',
-                      isSelected: _translationMode == 'api_online',
-                      onTap: () {
-                        HapticFeedback.selectionClick();
-                        setState(() => _translationMode = 'api_online');
-                      },
+                    // Lựa chọn chế độ dịch: 1 hàng 2 ô
+                    IntrinsicHeight(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Expanded(
+                            child: _buildModeOption(
+                              mode: 'capcut',
+                              title: 'CapCut Free',
+                              badge: 'MIỄN PHÍ',
+                              badgeColor: Colors.amber,
+                              icon: Icons.bolt_rounded,
+                              iconColor: Colors.amber,
+                              description: 'Không cần API Key\nBóc tách âm & dịch nhanh',
+                              isSelected: _translationMode == 'capcut',
+                              onTap: () {
+                                HapticFeedback.selectionClick();
+                                setState(() => _translationMode = 'capcut');
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: _buildModeOption(
+                              mode: 'api_online',
+                              title: 'API Online',
+                              badge: 'XOAY KEY',
+                              badgeColor: AppColors.primaryEmerald,
+                              icon: Icons.auto_awesome_rounded,
+                              iconColor: AppColors.primaryEmerald,
+                              description: 'Dịch AI ngữ cảnh\nChuẩn văn phong phim',
+                              isSelected: _translationMode == 'api_online',
+                              onTap: () {
+                                HapticFeedback.selectionClick();
+                                setState(() => _translationMode = 'api_online');
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                     const SizedBox(height: 16),
 
@@ -545,44 +554,9 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
                     ),
                     const SizedBox(height: 16),
 
-                    // ===== 4. TỰ ĐỘNG CHUYỂN TẬP & DỊCH NGẦM =====
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: AppColors.darkSurfaceVariant,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: AppColors.cardBorder),
-                      ),
-                      child: SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        dense: true,
-                        activeThumbColor: AppColors.primaryEmerald,
-                        title: const Text(
-                          'Tự động chuyển tập & dịch ngầm',
-                          style: TextStyle(
-                            color: AppColors.textPrimary,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 13,
-                          ),
-                        ),
-                        subtitle: const Text(
-                          'Tự chuyển tập kế tiếp khi hết video và gối đầu dịch ngầm trước',
-                          style: TextStyle(
-                            color: AppColors.textMuted,
-                            fontSize: 11,
-                          ),
-                        ),
-                        value: _autoPlay,
-                        onChanged: (val) {
-                          setState(() => _autoPlay = val);
-                        },
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-
-                    // ===== 4. SỐ TẬP DỊCH NGẦM TRƯỚC (GỐI ĐẦU) =====
+                    // ===== 4. CÀI ĐẶT PHÁT, CHUYỂN TẬP & BỘ NHỚ =====
                     const Text(
-                      'SỐ TẬP DỊCH NGẦM TRƯỚC (GỐI ĐẦU):',
+                      'PHÁT PHIM & BỘ NHỚ:',
                       style: TextStyle(
                         color: AppColors.textSecondary,
                         fontSize: 12,
@@ -590,86 +564,141 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
                         letterSpacing: 0.5,
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    const Text(
-                      'Số tập tiếp theo sẽ được tự động dịch & tạo lồng tiếng sẵn trong nền.',
-                      style: TextStyle(
-                        color: AppColors.textMuted,
-                        fontSize: 11,
-                      ),
-                    ),
                     const SizedBox(height: 8),
 
-                    Row(
-                      children: [
-                        _buildBufferOption(
-                          count: 1,
-                          label: '1 tập',
-                          desc: 'Tiết kiệm pin',
-                          isSelected: _prefetchCount == 1,
-                          onTap: () {
-                            setState(() => _prefetchCount = 1);
-                          },
-                        ),
-                        const SizedBox(width: 8),
-                        _buildBufferOption(
-                          count: 2,
-                          label: '2 tập',
-                          desc: 'Khuyên dùng',
-                          isSelected: _prefetchCount == 2,
-                          onTap: () {
-                            setState(() => _prefetchCount = 2);
-                          },
-                        ),
-                        const SizedBox(width: 8),
-                        _buildBufferOption(
-                          count: 3,
-                          label: '3 tập',
-                          desc: 'Xem liên tục',
-                          isSelected: _prefetchCount == 3,
-                          onTap: () {
-                            setState(() => _prefetchCount = 3);
-                          },
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-
-                    // ===== 5. TỰ ĐỘNG XÓA TẬP ĐÃ XEM (TIẾT KIỆM BỘ NHỚ) =====
                     Container(
-                      padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
                         color: AppColors.darkSurfaceVariant,
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(14),
                         border: Border.all(color: AppColors.cardBorder),
                       ),
-                      child: SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        dense: true,
-                        activeThumbColor: AppColors.primaryEmerald,
-                        title: const Text(
-                          'Tự động xóa tập đã xem (giữ 3 tập gần nhất)',
-                          style: TextStyle(
-                            color: AppColors.textPrimary,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 13,
-                          ),
-                        ),
-                        subtitle: const Padding(
-                          padding: EdgeInsets.only(top: 4),
-                          child: Text(
-                            'Khi bạn xem liên tục, hệ thống sẽ tự động dọn các tập cũ cách 3 tập (ví dụ xem tập 4 xóa tập 1, xem tập 5 xóa tập 2) để máy không bị đầy bộ nhớ mà vẫn thoải mái tua lại tập trước.',
-                            style: TextStyle(
-                              color: AppColors.textMuted,
-                              fontSize: 11,
-                              height: 1.35,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // 1. Tự động chuyển tập & dịch ngầm
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+                            child: Row(
+                              children: [
+                                const Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Tự động chuyển tập & dịch trước',
+                                        style: TextStyle(
+                                          color: AppColors.textPrimary,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 13,
+                                        ),
+                                      ),
+                                      SizedBox(height: 2),
+                                      Text(
+                                        'Tự phát tiếp và dịch ngầm các tập kế tiếp',
+                                        style: TextStyle(
+                                          color: AppColors.textMuted,
+                                          fontSize: 11,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Switch(
+                                  value: _autoPlay,
+                                  activeThumbColor: AppColors.primaryEmerald,
+                                  onChanged: (val) {
+                                    setState(() => _autoPlay = val);
+                                  },
+                                ),
+                              ],
                             ),
                           ),
-                        ),
-                        value: _autoDeleteWatched,
-                        onChanged: (val) {
-                          setState(() => _autoDeleteWatched = val);
-                        },
+
+                          // Tùy chọn số tập gối đầu (chỉ mở khi _autoPlay = true)
+                          if (_autoPlay) ...[
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Row(
+                                    children: [
+                                      Icon(
+                                        Icons.auto_mode_rounded,
+                                        size: 13,
+                                        color: AppColors.primaryEmerald,
+                                      ),
+                                      SizedBox(width: 4),
+                                      Text(
+                                        'Số tập dịch sẵn trong nền:',
+                                        style: TextStyle(
+                                          color: AppColors.textSecondary,
+                                          fontSize: 11.5,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Row(
+                                    children: [
+                                      _buildCompactBufferOption(1, '1 tập'),
+                                      const SizedBox(width: 6),
+                                      _buildCompactBufferOption(2, '2 tập'),
+                                      const SizedBox(width: 6),
+                                      _buildCompactBufferOption(3, '3 tập'),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+
+                          Divider(
+                            height: 1,
+                            thickness: 0.8,
+                            color: AppColors.cardBorder.withValues(alpha: 0.6),
+                          ),
+
+                          // 2. Tự dọn dẹp tập cũ
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                            child: Row(
+                              children: [
+                                const Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Tự xóa tập đã xem',
+                                        style: TextStyle(
+                                          color: AppColors.textPrimary,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 13,
+                                        ),
+                                      ),
+                                      SizedBox(height: 2),
+                                      Text(
+                                        'Dọn video cách 3 tập để tránh đầy bộ nhớ máy',
+                                        style: TextStyle(
+                                          color: AppColors.textMuted,
+                                          fontSize: 11,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Switch(
+                                  value: _autoDeleteWatched,
+                                  activeThumbColor: AppColors.primaryEmerald,
+                                  onChanged: (val) {
+                                    setState(() => _autoDeleteWatched = val);
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                     const SizedBox(height: 20),
@@ -719,8 +748,9 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.all(12),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
         decoration: BoxDecoration(
           color: isSelected
               ? AppColors.primaryEmerald.withValues(alpha: 0.12)
@@ -731,80 +761,83 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
             width: isSelected ? 1.5 : 1,
           ),
         ),
-        child: Row(
+        child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              margin: const EdgeInsets.only(top: 2),
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: iconColor.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Icon(icon, color: iconColor, size: 20),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Text(
-                        title,
-                        style: TextStyle(
-                          color: isSelected
-                              ? AppColors.primaryEmerald
-                              : AppColors.textPrimary,
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: badgeColor.withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(4),
-                          border: Border.all(
-                            color: badgeColor.withValues(alpha: 0.4),
-                            width: 0.8,
-                          ),
-                        ),
-                        child: Text(
-                          badge,
-                          style: TextStyle(
-                            color: badgeColor,
-                            fontSize: 9,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                      const Spacer(),
-                      Icon(
-                        isSelected
-                            ? Icons.radio_button_checked_rounded
-                            : Icons.radio_button_off_rounded,
-                        size: 20,
-                        color: isSelected
-                            ? AppColors.primaryEmerald
-                            : AppColors.textMuted,
-                      ),
-                    ],
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: iconColor.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    description,
-                    style: const TextStyle(
-                      color: AppColors.textSecondary,
-                      fontSize: 11,
-                      height: 1.35,
+                  child: Icon(icon, color: iconColor, size: 18),
+                ),
+                Icon(
+                  isSelected
+                      ? Icons.radio_button_checked_rounded
+                      : Icons.radio_button_off_rounded,
+                  size: 18,
+                  color: isSelected
+                      ? AppColors.primaryEmerald
+                      : AppColors.textMuted,
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Flexible(
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: isSelected
+                          ? AppColors.primaryEmerald
+                          : AppColors.textPrimary,
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
-                ],
+                ),
+                const SizedBox(width: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 1,
+                  ),
+                  decoration: BoxDecoration(
+                    color: badgeColor.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(
+                      color: badgeColor.withValues(alpha: 0.4),
+                      width: 0.8,
+                    ),
+                  ),
+                  child: Text(
+                    badge,
+                    style: TextStyle(
+                      color: badgeColor,
+                      fontSize: 8.5,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              description,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: AppColors.textSecondary,
+                fontSize: 10.5,
+                height: 1.25,
               ),
             ),
           ],
@@ -813,57 +846,41 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
     );
   }
 
-  Widget _buildBufferOption({
-    required int count,
-    required String label,
-    required String desc,
-    required bool isSelected,
-    required VoidCallback onTap,
-  }) {
+  Widget _buildCompactBufferOption(int count, String label) {
+    final isSelected = _prefetchCount == count;
     return Expanded(
       child: InkWell(
         onTap: () {
           HapticFeedback.selectionClick();
-          onTap();
+          setState(() => _prefetchCount = count);
         },
-        borderRadius: BorderRadius.circular(10),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+        borderRadius: BorderRadius.circular(8),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 4),
+          alignment: Alignment.center,
           decoration: BoxDecoration(
             color: isSelected
                 ? AppColors.primaryEmerald.withValues(alpha: 0.15)
-                : AppColors.darkSurfaceVariant,
-            borderRadius: BorderRadius.circular(10),
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
             border: Border.all(
               color: isSelected
                   ? AppColors.primaryEmerald
                   : AppColors.cardBorder,
-              width: isSelected ? 1.5 : 1,
+              width: isSelected ? 1.4 : 1,
             ),
           ),
-          child: Column(
-            children: [
-              Text(
-                label,
-                style: TextStyle(
-                  color: isSelected
-                      ? AppColors.primaryEmerald
-                      : AppColors.textPrimary,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 13,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                desc,
-                style: TextStyle(
-                  color: isSelected
-                      ? AppColors.primaryEmerald
-                      : AppColors.textMuted,
-                  fontSize: 10,
-                ),
-              ),
-            ],
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: isSelected
+                  ? AppColors.primaryEmerald
+                  : AppColors.textPrimary,
+              fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+              fontSize: 12,
+            ),
           ),
         ),
       ),

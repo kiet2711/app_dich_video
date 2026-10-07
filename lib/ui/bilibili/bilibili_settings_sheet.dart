@@ -244,39 +244,46 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                     ),
                     const SizedBox(height: 10),
 
-                    // Option 1: CapCut Free
-                    _buildModeOption(
-                      mode: 'capcut',
-                      title: 'CapCut Free',
-                      badge: 'MIỄN PHÍ',
-                      badgeColor: Colors.amber,
-                      icon: Icons.bolt_rounded,
-                      iconColor: Colors.amber,
-                      description:
-                          'Tự động bóc tách âm thanh & dịch miễn phí qua CapCut. Nhanh chóng, không tốn API key.',
-                      isSelected: _translationMode == 'capcut',
-                      onTap: () {
-                        HapticFeedback.selectionClick();
-                        setState(() => _translationMode = 'capcut');
-                      },
-                    ),
-                    const SizedBox(height: 10),
-
-                    // Option 2: AI Online
-                    _buildModeOption(
-                      mode: 'api_online',
-                      title: 'Dịch Bằng AI Online',
-                      badge: 'GEMINI / GROQ',
-                      badgeColor: const Color(0xFF00AEEC),
-                      icon: Icons.auto_awesome_rounded,
-                      iconColor: const Color(0xFF00AEEC),
-                      description:
-                          'Dịch AI ngữ cảnh thông minh, chuẩn xác từng câu thoại, câu từ tự nhiên và mượt mà.',
-                      isSelected: _translationMode == 'api_online',
-                      onTap: () {
-                        HapticFeedback.selectionClick();
-                        setState(() => _translationMode = 'api_online');
-                      },
+                    // Lựa chọn chế độ dịch: 1 hàng 2 ô
+                    IntrinsicHeight(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Expanded(
+                            child: _buildModeOption(
+                              mode: 'capcut',
+                              title: 'CapCut Free',
+                              badge: 'MIỄN PHÍ',
+                              badgeColor: Colors.amber,
+                              icon: Icons.bolt_rounded,
+                              iconColor: Colors.amber,
+                              description: 'Không cần API Key\nBóc tách âm & dịch nhanh',
+                              isSelected: _translationMode == 'capcut',
+                              onTap: () {
+                                HapticFeedback.selectionClick();
+                                setState(() => _translationMode = 'capcut');
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: _buildModeOption(
+                              mode: 'api_online',
+                              title: 'AI Online',
+                              badge: 'GEMINI/GROQ',
+                              badgeColor: const Color(0xFF00AEEC),
+                              icon: Icons.auto_awesome_rounded,
+                              iconColor: const Color(0xFF00AEEC),
+                              description: 'Dịch AI ngữ cảnh\nChuẩn xác & mượt mà',
+                              isSelected: _translationMode == 'api_online',
+                              onTap: () {
+                                HapticFeedback.selectionClick();
+                                setState(() => _translationMode = 'api_online');
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
 
                     const SizedBox(height: 18),
@@ -532,91 +539,98 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
     required bool isSelected,
     required VoidCallback onTap,
   }) {
+    const activeColor = Color(0xFF00AEEC);
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.all(12),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
         decoration: BoxDecoration(
           color: isSelected
-              ? const Color(0xFF00AEEC).withValues(alpha: 0.12)
+              ? activeColor.withValues(alpha: 0.12)
               : AppTheme.darkSurfaceVariant,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: isSelected ? const Color(0xFF00AEEC) : AppTheme.cardBorder,
+            color: isSelected ? activeColor : AppTheme.cardBorder,
             width: isSelected ? 1.5 : 1,
           ),
         ),
-        child: Row(
+        child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              margin: const EdgeInsets.only(top: 2),
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: iconColor.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Icon(icon, color: iconColor, size: 20),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Text(
-                        title,
-                        style: TextStyle(
-                          color: isSelected ? const Color(0xFF00AEEC) : AppTheme.textPrimary,
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: badgeColor.withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(4),
-                          border: Border.all(
-                            color: badgeColor.withValues(alpha: 0.5),
-                            width: 0.8,
-                          ),
-                        ),
-                        child: Text(
-                          badge,
-                          style: TextStyle(
-                            color: badgeColor,
-                            fontSize: 9,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ],
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: iconColor.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    description,
-                    style: const TextStyle(
-                      color: AppTheme.textMuted,
-                      fontSize: 11.5,
-                      height: 1.35,
+                  child: Icon(icon, color: iconColor, size: 18),
+                ),
+                Icon(
+                  isSelected
+                      ? Icons.radio_button_checked_rounded
+                      : Icons.radio_button_off_rounded,
+                  size: 18,
+                  color: isSelected ? activeColor : AppTheme.textMuted,
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Flexible(
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: isSelected ? activeColor : AppTheme.textPrimary,
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
-                ],
+                ),
+                const SizedBox(width: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 1,
+                  ),
+                  decoration: BoxDecoration(
+                    color: badgeColor.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(
+                      color: badgeColor.withValues(alpha: 0.4),
+                      width: 0.8,
+                    ),
+                  ),
+                  child: Text(
+                    badge,
+                    style: TextStyle(
+                      color: badgeColor,
+                      fontSize: 8.5,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              description,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: AppTheme.textSecondary,
+                fontSize: 10.5,
+                height: 1.25,
               ),
             ),
-            if (isSelected)
-              const Padding(
-                padding: EdgeInsets.only(top: 2, left: 4),
-                child: Icon(
-                  Icons.check_circle_rounded,
-                  color: Color(0xFF00AEEC),
-                  size: 20,
-                ),
-              ),
           ],
         ),
       ),
