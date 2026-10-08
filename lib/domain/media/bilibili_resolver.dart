@@ -130,6 +130,20 @@ class BilibiliSubtitleInfo {
   });
 }
 
+class BilibiliDashStream {
+  final String videoUrl;
+  final String audioUrl;
+  final Map<String, String> headers;
+  final int quality;
+
+  const BilibiliDashStream({
+    required this.videoUrl,
+    required this.audioUrl,
+    required this.headers,
+    this.quality = 64,
+  });
+}
+
 class BilibiliSubtitleLoginRequiredException implements Exception {
   const BilibiliSubtitleLoginRequiredException();
 
@@ -762,6 +776,69 @@ class BilibiliResolver {
         best['baseUrl']?.toString() ?? best['base_url']?.toString() ?? '';
     if (url.isEmpty) throw StateError('Track audio Bilibili không có URL.');
     return url;
+  }
+
+  /// Lấy luồng phát DASH phân đoạn (video và audio riêng biệt) cho media_kit
+  Future<BilibiliDashStream> getDashStream(
+    BilibiliVideoDetails details, [
+    String cookie = '',
+    String quality = '64',
+  ]) async {
+    final data = await _getPlayData(details, cookie, fnval: '4048', quality: quality);
+    final dash = data['dash'] as Map<String, dynamic>?;
+    if (dash == null) {
+      throw StateError('Bilibili không trả luồng DASH.');
+    }
+    final videoList = (dash['video'] as List<dynamic>? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .toList();
+    final audioList = (dash['audio'] as List<dynamic>? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .toList();
+
+    if (videoList.isEmpty || audioList.isEmpty) {
+      throw StateError('DASH stream không có đủ video hoặc audio.');
+    }
+
+    final targetQn = int.tryParse(quality) ?? 64;
+
+    videoList.sort((a, b) {
+      final qnA = (a['id'] as num?)?.toInt() ?? 0;
+      final qnB = (b['id'] as num?)?.toInt() ?? 0;
+      final diffA = (qnA - targetQn).abs();
+      final diffB = (qnB - targetQn).abs();
+      if (diffA != diffB) return diffA.compareTo(diffB);
+      final codecA = a['codecs']?.toString().toLowerCase() ?? '';
+      final codecB = b['codecs']?.toString().toLowerCase() ?? '';
+      final isAvcA = codecA.contains('avc');
+      final isAvcB = codecB.contains('avc');
+      if (isAvcA && !isAvcB) return -1;
+      if (!isAvcA && isAvcB) return 1;
+      return 0;
+    });
+
+    audioList.sort((a, b) {
+      final bwA = (a['bandwidth'] as num?)?.toInt() ?? 0;
+      final bwB = (b['bandwidth'] as num?)?.toInt() ?? 0;
+      return bwB.compareTo(bwA);
+    });
+
+    final bestVideo = videoList.first;
+    final bestAudio = audioList.first;
+
+    final videoUrl = bestVideo['baseUrl']?.toString() ?? bestVideo['base_url']?.toString() ?? '';
+    final audioUrl = bestAudio['baseUrl']?.toString() ?? bestAudio['base_url']?.toString() ?? '';
+
+    if (videoUrl.isEmpty || audioUrl.isEmpty) {
+      throw StateError('Không tìm thấy link video hoặc audio DASH hợp lệ.');
+    }
+
+    return BilibiliDashStream(
+      videoUrl: videoUrl,
+      audioUrl: audioUrl,
+      headers: streamHeaders(cookie),
+      quality: (bestVideo['id'] as num?)?.toInt() ?? targetQn,
+    );
   }
 
   Future<String> getMuxedVideoUrl(

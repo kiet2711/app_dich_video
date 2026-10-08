@@ -3,7 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:video_player/video_player.dart';
+import '../../player/app_player_controller.dart';
 
 import '../../data/model/subtitle_document.dart';
 import '../../data/repository/history_repository.dart';
@@ -76,7 +76,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   static const _playbackSpeeds = <double>[0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
   static const _stallThreshold = Duration(milliseconds: 1200);
   static const _positionSaveInterval = Duration(seconds: 3);
-  static const _videoInitializeTimeout = Duration(seconds: 45);
 
   bool _isSwitchingQuality = false;
   String _currentQualityKey = '64';
@@ -111,7 +110,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     }
   }
 
-  VideoPlayerController? _controller;
+  AppPlayerController? _controller;
   late TtsAudioScheduler _ttsScheduler;
   late SettingsRepository _settings;
   bool _isInitialized = false;
@@ -878,24 +877,52 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         if (cached != null && await cached.exists() && await cached.length() > 1024 * 100) {
           targetPath = cached.path;
           playableUrls = [cached.path];
-          _loadRelatedVideos(details.bvid);
-          _loadBilibiliUploaderInfo(details);
-          _loadBilibiliComments(details.aid, reset: true);
+          final c = AppPlayerController();
+          await c.openFile(cached);
+          await c.initialize();
+          _controller = c;
         } else {
-          playableUrls = await resolver.getMuxedVideoUrls(
-            details,
-            _settings.bilibiliSessData,
-            _settings.preferredVideoQuality,
-          );
-          targetPath = playableUrls.first;
-          httpHeaders = BilibiliResolver.streamHeaders(
-            _settings.bilibiliSessData,
-          );
           _currentQualityKey = _settings.preferredVideoQuality;
-          _loadRelatedVideos(details.bvid);
-          _loadBilibiliUploaderInfo(details);
-          _loadBilibiliComments(details.aid, reset: true);
+          bool dashSuccess = false;
+          try {
+            final dash = await resolver.getDashStream(
+              details,
+              _settings.bilibiliSessData,
+              _settings.preferredVideoQuality,
+            );
+            final c = AppPlayerController();
+            await c.openBilibiliDash(
+              videoUrl: dash.videoUrl,
+              audioUrl: dash.audioUrl,
+              headers: dash.headers,
+            );
+            await c.initialize();
+            _controller = c;
+            dashSuccess = true;
+          } catch (e) {
+            debugPrint('[Player] Lỗi nạp luồng DASH Bilibili, dùng fallback Muxed: $e');
+          }
+
+          if (!dashSuccess) {
+            playableUrls = await resolver.getMuxedVideoUrls(
+              details,
+              _settings.bilibiliSessData,
+              _settings.preferredVideoQuality,
+            );
+            targetPath = playableUrls.first;
+            httpHeaders = BilibiliResolver.streamHeaders(
+              _settings.bilibiliSessData,
+            );
+            _controller = await _initializeNetworkController(
+              playableUrls,
+              httpHeaders,
+            );
+          }
         }
+        // Trì hoãn nạp dữ liệu phụ trong nền sau khi video đã sẵn sàng phát (tránh nghẽn mạng)
+        unawaited(_loadRelatedVideos(details.bvid));
+        unawaited(_loadBilibiliUploaderInfo(details));
+        unawaited(_loadBilibiliComments(details.aid, reset: true));
       } else if (widget.dramaDetail != null) {
         _bilibiliDetails = null;
         // Ưu tiên nạp video từ cache nếu đã tải về máy trước đó
@@ -937,6 +964,28 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             debugPrint('[Player] Không thể re-resolve URL mới cho tập $_currentEpisodeIndex: $e');
           }
         }
+
+        final isRemote =
+            targetPath.startsWith('http://') || targetPath.startsWith('https://');
+        if (isRemote) {
+          if (httpHeaders.isEmpty) {
+            httpHeaders = NetworkHeaderHelper.getHeadersForUri(targetPath);
+          }
+          _controller = await _initializeNetworkController(
+            playableUrls,
+            httpHeaders,
+          );
+        } else if (MediaStorage.isContentUri(targetPath)) {
+          final c = AppPlayerController();
+          await c.openContentUri(Uri.parse(targetPath));
+          await c.initialize();
+          _controller = c;
+        } else {
+          final c = AppPlayerController();
+          await c.openFile(File(targetPath));
+          await c.initialize();
+          _controller = c;
+        }
       } else {
         _bilibiliDetails = null;
         if (targetPath.startsWith('http://') || targetPath.startsWith('https://')) {
@@ -946,41 +995,33 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             playableUrls = [cached.path];
           }
         }
+        final isRemote =
+            targetPath.startsWith('http://') || targetPath.startsWith('https://');
+        if (isRemote) {
+          if (httpHeaders.isEmpty) {
+            httpHeaders = NetworkHeaderHelper.getHeadersForUri(targetPath);
+          }
+          _controller = await _initializeNetworkController(
+            playableUrls,
+            httpHeaders,
+          );
+        } else if (MediaStorage.isContentUri(targetPath)) {
+          final c = AppPlayerController();
+          await c.openContentUri(Uri.parse(targetPath));
+          await c.initialize();
+          _controller = c;
+        } else {
+          final c = AppPlayerController();
+          await c.openFile(File(targetPath));
+          await c.initialize();
+          _controller = c;
+        }
       }
 
       _currentVideoPath = targetPath;
 
-      final isRemote =
-          targetPath.startsWith('http://') || targetPath.startsWith('https://');
-      final videoOptions = VideoPlayerOptions(
-        mixWithOthers: true,
-        allowBackgroundPlayback: true,
-      );
-      if (isRemote) {
-        if (httpHeaders.isEmpty) {
-          httpHeaders = NetworkHeaderHelper.getHeadersForUri(targetPath);
-        }
-        _controller = await _initializeNetworkController(
-          playableUrls,
-          httpHeaders,
-          videoOptions,
-        );
-      } else if (MediaStorage.isContentUri(targetPath)) {
-        _controller = VideoPlayerController.contentUri(
-          Uri.parse(targetPath),
-          videoPlayerOptions: videoOptions,
-        );
-        await _controller!.initialize().timeout(_videoInitializeTimeout);
-      } else {
-        _controller = VideoPlayerController.file(
-          File(targetPath),
-          videoPlayerOptions: videoOptions,
-        );
-        await _controller!.initialize().timeout(_videoInitializeTimeout);
-      }
-
       if (!mounted) {
-        await _controller!.dispose();
+        _controller!.dispose();
         return;
       }
       final durationMs = _controller!.value.duration.inMilliseconds;
@@ -1068,17 +1109,16 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       _controller = null;
       if (failedController != null) {
         try {
-          await failedController.dispose();
+          failedController.dispose();
         } catch (_) {}
       }
       setState(() => _playerError = 'Không mở được video: $e');
     }
   }
 
-  Future<VideoPlayerController> _initializeNetworkController(
+  Future<AppPlayerController> _initializeNetworkController(
     List<String> urls,
     Map<String, String> headers,
-    VideoPlayerOptions options,
   ) async {
     Object? lastError;
     final candidates = urls
@@ -1090,17 +1130,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     }
     for (var i = 0; i < candidates.length; i++) {
       final candidateUrl = candidates[i];
-      final controller = VideoPlayerController.networkUrl(
-        Uri.parse(candidateUrl),
-        httpHeaders: headers,
-        videoPlayerOptions: options,
-      );
+      final controller = AppPlayerController();
       try {
-        await controller.initialize().timeout(_videoInitializeTimeout);
+        await controller.openNetwork(candidateUrl, headers: headers);
+        await controller.initialize(timeout: const Duration(seconds: 15));
         return controller;
       } catch (error) {
         lastError = error;
-        await controller.dispose();
+        controller.dispose();
       }
     }
     throw lastError ??
@@ -1905,30 +1942,44 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
     try {
       final resolver = BilibiliResolver();
-      final urls = await resolver.getMuxedVideoUrls(
-        details,
-        _settings.bilibiliSessData,
-        newQuality,
-      );
-      if (urls.isEmpty) throw Exception('Không lấy được luồng video cho chất lượng này');
-      final newUrl = urls.first;
-      final headers = BilibiliResolver.requestHeaders(_settings.bilibiliSessData);
+      AppPlayerController newController;
+      String newUrl = _currentVideoPath;
+
+      try {
+        final dash = await resolver.getDashStream(
+          details,
+          _settings.bilibiliSessData,
+          newQuality,
+        );
+        newController = AppPlayerController();
+        await newController.openBilibiliDash(
+          videoUrl: dash.videoUrl,
+          audioUrl: dash.audioUrl,
+          headers: dash.headers,
+        );
+        await newController.initialize();
+        newUrl = dash.videoUrl;
+      } catch (_) {
+        final urls = await resolver.getMuxedVideoUrls(
+          details,
+          _settings.bilibiliSessData,
+          newQuality,
+        );
+        if (urls.isEmpty) throw Exception('Không lấy được luồng video cho chất lượng này');
+        newUrl = urls.first;
+        final headers = BilibiliResolver.requestHeaders(_settings.bilibiliSessData);
+        newController = await _initializeNetworkController(
+          [newUrl],
+          headers,
+        );
+      }
 
       _controller?.removeListener(_onPlayerUpdate);
       await _controller?.pause();
-      await _controller?.dispose();
-
-      final newController = await _initializeNetworkController(
-        [newUrl],
-        headers,
-        VideoPlayerOptions(
-          mixWithOthers: true,
-          allowBackgroundPlayback: true,
-        ),
-      );
+      _controller?.dispose();
 
       if (!mounted) {
-        await newController.dispose();
+        newController.dispose();
         return;
       }
 
@@ -3909,7 +3960,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   }) async {
     await _controller?.pause();
     _controller?.removeListener(_onPlayerUpdate);
-    await _controller?.dispose();
+    _controller?.dispose();
     _controller = null;
 
     _playbackMonitor?.cancel();
@@ -5110,7 +5161,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   }
 
   Widget _buildVideoPlayerArea(
-    VideoPlayerController controller,
+    AppPlayerController controller,
     bool isLandscape,
     bool isHongguoWaitingTranslation,
     String displayTitle, {
@@ -5130,7 +5181,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           Center(
             child: AspectRatio(
               aspectRatio: controller.value.aspectRatio,
-              child: VideoPlayer(controller),
+              child: AppVideoPlayer(controller),
             ),
           ),
 
@@ -6908,7 +6959,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                   scale: _pipZoomScale,
                   child: AspectRatio(
                     aspectRatio: controller.value.aspectRatio,
-                    child: VideoPlayer(controller),
+                    child: AppVideoPlayer(controller),
                   ),
                 ),
               ),
@@ -7286,7 +7337,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                 child: SizedBox(
                                   width: controller.value.size.width,
                                   height: controller.value.size.height,
-                                  child: VideoPlayer(controller),
+                                  child: AppVideoPlayer(controller),
                                 ),
                               )
                             else if (_coverUrl != null && _coverUrl!.isNotEmpty)

@@ -136,4 +136,18 @@ void main() {
     expect(d2.cid, 41882880663);
     expect(d2.title, contains('P2'));
   });
+
+  test('getDashStream extracts valid video and audio stream URLs', () async {
+    final resolver = BilibiliResolver();
+    final target = await resolver.resolveUrl('https://www.bilibili.com/video/BV1wQYk65EYw');
+    final details = await resolver.getVideoDetails(target);
+    final dash = await resolver.getDashStream(details);
+
+    expect(dash.videoUrl, isNotEmpty);
+    expect(dash.videoUrl, startsWith('http'));
+    expect(dash.audioUrl, isNotEmpty);
+    expect(dash.audioUrl, startsWith('http'));
+    expect(dash.headers, containsPair('Referer', 'https://www.bilibili.com/'));
+  });
 }
+

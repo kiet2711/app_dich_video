@@ -12,10 +12,12 @@ import 'data/repository/settings_repository.dart';
 import 'domain/font/custom_font_manager.dart';
 import 'player/global_player_manager.dart';
 import 'player/pip_manager.dart';
+import 'package:media_kit/media_kit.dart';
 import 'ui/player/global_player_overlay.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  MediaKit.ensureInitialized();
   PipManager.initialize();
   final settings = await SettingsRepository.getInstance();
   await CustomFontManager.loadAllSavedFonts(settings);
