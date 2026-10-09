@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../data/repository/history_repository.dart';
 import '../../data/repository/settings_repository.dart';
 import '../../domain/ai/offline_mlkit_translator.dart';
 import '../../domain/media/bilibili_resolver.dart';
@@ -393,7 +394,7 @@ class _BilibiliScreenState extends State<BilibiliScreen>
   }
 
   // =================== PLAY VIDEO ===================
-  void _playVideo(BilibiliAnimeItem item) {
+  Future<void> _playVideo(BilibiliAnimeItem item) async {
     final playUrl = item.targetPlayUrl;
     if (playUrl.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -401,6 +402,24 @@ class _BilibiliScreenState extends State<BilibiliScreen>
       );
       return;
     }
+
+    int initialPositionMs = 0;
+    try {
+      final repo = await HistoryRepository.getInstance();
+      final historyItem = repo.getHistory().where((h) {
+        if (h.videoPath == playUrl) return true;
+        final bvid = item.bvid;
+        if (bvid != null && bvid.isNotEmpty && (h.videoPath.contains(bvid) || h.id.contains(bvid))) {
+          return true;
+        }
+        return false;
+      }).firstOrNull;
+      if (historyItem != null && historyItem.lastPositionMs > 0) {
+        if (historyItem.durationMs <= 0 || historyItem.lastPositionMs < historyItem.durationMs * 0.95) {
+          initialPositionMs = historyItem.lastPositionMs;
+        }
+      }
+    } catch (_) {}
 
     if (widget.onOpenVideo != null) {
       widget.onOpenVideo!(playUrl, item.title);
@@ -411,6 +430,7 @@ class _BilibiliScreenState extends State<BilibiliScreen>
         coverUrl: item.cover,
         author: item.author,
         bilibiliItem: item,
+        initialPositionMs: initialPositionMs,
       );
     }
   }

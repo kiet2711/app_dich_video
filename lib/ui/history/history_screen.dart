@@ -384,6 +384,14 @@ class _HistoryScreenState extends State<HistoryScreen>
   }
 
   bool _isHongguoItem(HistoryItem it) {
+    // Nếu có dấu hiệu là video Bilibili thì không bao giờ gom vào Hồng Quả
+    if (BilibiliResolver.isBilibiliUrl(it.videoPath) ||
+        it.videoPath.toLowerCase().contains('bilibili') ||
+        it.id.toLowerCase().contains('bili_') ||
+        RegExp(r'BV1[0-9a-zA-Z]{9}', caseSensitive: false).hasMatch(it.videoPath) ||
+        RegExp(r'BV1[0-9a-zA-Z]{9}', caseSensitive: false).hasMatch(it.id)) {
+      return false;
+    }
     if (it.isSeriesEpisode || (it.seriesId != null && it.seriesId!.isNotEmpty)) return true;
     final vp = it.videoPath.toLowerCase();
     final id = it.id.toLowerCase();
@@ -598,29 +606,41 @@ class _HistoryScreenState extends State<HistoryScreen>
     return displayList;
   }
 
-  /// Mở video đơn lẻ thông thường
+  /// Mở video đơn lẻ thông thường (Bilibili hoặc video ngoài)
   Future<void> _openItem(HistoryItem item) async {
     final repo = _historyRepo ?? await HistoryRepository.getInstance();
     final doc = await repo.loadSubtitleDocument(item);
-    if (doc == null || doc.items.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Không tìm thấy tệp phụ đề SRT cũ')),
-        );
+    final effectiveDoc = doc ?? SubtitleDocument();
+
+    var resolvedVideo = await HistoryRepository.resolveItemVideoPath(item);
+
+    // Nếu là video Bilibili trực tuyến và không phải file đã tải về máy:
+    // Đảm bảo đưa về URL chuẩn dạng https://www.bilibili.com/video/BV...
+    // để VideoPlayerScreen nạp stream mới nhất (tránh URL CDN bilivideo cũ bị hết hạn 403)
+    final isBilibili = _isBilibiliItem(item);
+    final isLocal = !resolvedVideo.startsWith('http://') && !resolvedVideo.startsWith('https://');
+    if (isBilibili && !isLocal) {
+      final bvMatch = RegExp(r'BV1[0-9a-zA-Z]{9}', caseSensitive: false).firstMatch(item.videoPath) ??
+          RegExp(r'BV1[0-9a-zA-Z]{9}', caseSensitive: false).firstMatch(item.id) ??
+          RegExp(r'BV1[0-9a-zA-Z]{9}', caseSensitive: false).firstMatch(item.title);
+      if (bvMatch != null) {
+        resolvedVideo = 'https://www.bilibili.com/video/${bvMatch.group(0)}';
       }
-      return;
     }
 
-    final resolvedVideo = await HistoryRepository.resolveItemVideoPath(item);
     await repo.markWatched(item.id);
+
+    // Nếu đã xem hết video (>95%) thì xem lại từ đầu, ngược lại xem tiếp đoạn dở
+    final isFinished = item.durationMs > 0 && item.lastPositionMs >= item.durationMs * 0.95;
+    final resumePosition = isFinished ? 0 : item.lastPositionMs;
 
     if (mounted) {
       GlobalPlayerManager.instance.openPlayer(
         videoPath: resolvedVideo,
-        document: doc,
+        document: effectiveDoc,
         title: item.title,
         coverUrl: item.coverUrl,
-        initialPositionMs: item.lastPositionMs,
+        initialPositionMs: resumePosition,
         onPlaybackPositionChanged: (positionMs) =>
             repo.updatePlaybackPosition(item.id, positionMs),
       );
@@ -1661,6 +1681,8 @@ class _HistoryScreenState extends State<HistoryScreen>
       DateTime.fromMillisecondsSinceEpoch(it.timestamp),
     );
     final hasVoice = it.ttsVoice != null && it.ttsVoice!.isNotEmpty;
+    final isFinished = it.durationMs > 0 && it.lastPositionMs >= it.durationMs * 0.95;
+    final isWatching = it.lastPositionMs > 0 && !isFinished;
 
     final isShowingTranslated = _showTranslatedItemIds.contains(it.id);
     final hasTranslated = it.displayTranslatedTitle != null && it.displayTranslatedTitle!.isNotEmpty;
@@ -1676,7 +1698,7 @@ class _HistoryScreenState extends State<HistoryScreen>
     final showCoverSlot = hasCover || isBilibiliVideo;
 
     return InkWell(
-      onTap: isMultiSelectMode ? onToggleSelect : null,
+      onTap: isMultiSelectMode ? onToggleSelect : () => _openItem(it),
       onLongPress: !isMultiSelectMode ? onEnterMultiSelect : null,
       borderRadius: BorderRadius.circular(14),
       child: AnimatedContainer(
@@ -1724,32 +1746,52 @@ class _HistoryScreenState extends State<HistoryScreen>
               if (showCoverSlot) ...[
                 ClipRRect(
                   borderRadius: BorderRadius.circular(8),
-                  child: hasCover
-                      ? Image.network(
-                          it.seriesCover!,
-                          headers: _imageHeaders(it.seriesCover),
-                          width: 52,
-                          height: 70,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, _, _) => Container(
-                            width: 52,
-                            height: 70,
-                            color: const Color(0xFF252631),
-                            child: const Icon(Icons.movie, color: Colors.white30),
-                          ),
-                        )
-                      : Container(
-                          width: 52,
-                          height: 70,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF132F24),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: const Icon(
-                            Icons.movie_filter_rounded,
-                            color: AppTheme.primaryEmerald,
+                  child: Stack(
+                    children: [
+                      hasCover
+                          ? Image.network(
+                              it.seriesCover!,
+                              headers: _imageHeaders(it.seriesCover),
+                              width: 52,
+                              height: 70,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, _, _) => Container(
+                                width: 52,
+                                height: 70,
+                                color: const Color(0xFF252631),
+                                child: const Icon(Icons.movie, color: Colors.white30),
+                              ),
+                            )
+                          : Container(
+                              width: 52,
+                              height: 70,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF132F24),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Icon(
+                                Icons.movie_filter_rounded,
+                                color: AppTheme.primaryEmerald,
+                              ),
+                            ),
+                      if (it.lastPositionMs > 0 && it.durationMs > 0)
+                        Positioned(
+                          bottom: 0,
+                          left: 0,
+                          right: 0,
+                          child: LinearProgressIndicator(
+                            value: (it.lastPositionMs / it.durationMs).clamp(0.0, 1.0),
+                            minHeight: 3.5,
+                            backgroundColor: Colors.black54,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              it.lastPositionMs >= it.durationMs * 0.95
+                                  ? AppTheme.primaryEmerald
+                                  : AppTheme.accentGold,
+                            ),
                           ),
                         ),
+                    ],
+                  ),
                 ),
                 const SizedBox(width: 12),
               ],
@@ -1920,6 +1962,66 @@ class _HistoryScreenState extends State<HistoryScreen>
             runSpacing: 4,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
+              if (isWatching) ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppTheme.accentGold.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color: AppTheme.accentGold.withValues(alpha: 0.3),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.history_rounded, size: 12, color: AppTheme.accentGold),
+                      const SizedBox(width: 4),
+                      Text(
+                        it.durationMs > 0
+                            ? 'Đang xem dở: ${_formatMs(it.lastPositionMs)} / ${_formatMs(it.durationMs)}'
+                            : 'Đang xem dở: ${_formatMs(it.lastPositionMs)}',
+                        style: const TextStyle(
+                          color: AppTheme.accentGold,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ] else if (isFinished) ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppTheme.primaryEmerald.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.check_circle_outline_rounded, size: 12, color: AppTheme.primaryEmerald),
+                      const SizedBox(width: 4),
+                      Text(
+                        it.durationMs > 0
+                            ? 'Đã xem xong (${_formatMs(it.durationMs)})'
+                            : 'Đã xem xong',
+                        style: const TextStyle(
+                          color: AppTheme.primaryEmerald,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
               Container(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 8,
@@ -1969,21 +2071,28 @@ class _HistoryScreenState extends State<HistoryScreen>
                   children: [
                     ElevatedButton.icon(
                       onPressed: () => _openItem(it),
-                      icon: const Icon(
-                        Icons.play_arrow,
+                      icon: Icon(
+                        Icons.play_arrow_rounded,
                         size: 18,
-                        color: AppTheme.primaryEmerald,
+                        color: isWatching
+                            ? Colors.black
+                            : (isFinished ? Colors.white70 : AppTheme.primaryEmerald),
                       ),
-                      label: const Text(
-                        'Xem Video',
+                      label: Text(
+                        isWatching
+                            ? 'Xem tiếp (${_formatMs(it.lastPositionMs)})'
+                            : (isFinished ? 'Xem lại từ đầu' : 'Xem Video'),
                         style: TextStyle(
-                          color: Colors.white,
+                          color: isWatching ? Colors.black : Colors.white,
                           fontSize: 12,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF252631),
+                        backgroundColor: isWatching
+                            ? AppTheme.accentGold
+                            : const Color(0xFF252631),
+                        elevation: isWatching ? 2 : 0,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(8),
                         ),

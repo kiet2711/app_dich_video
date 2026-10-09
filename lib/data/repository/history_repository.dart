@@ -171,7 +171,19 @@ class HistoryRepository {
       }
     } catch (_) {}
 
-    // 3. Fallback resolvePath thông thường
+    // 3. Nếu là video Bilibili trực tuyến: Ưu tiên trả về link web video BV...
+    // để tránh các URL stream CDN của Bilibili bị hết hạn token (403 Forbidden) sau vài giờ
+    final bvMatch = RegExp(r'BV1[0-9a-zA-Z]{9}', caseSensitive: false).firstMatch(item.videoPath) ??
+        RegExp(r'BV1[0-9a-zA-Z]{9}', caseSensitive: false).firstMatch(item.id) ??
+        RegExp(r'BV1[0-9a-zA-Z]{9}', caseSensitive: false).firstMatch(item.title);
+    if (bvMatch != null &&
+        (item.videoPath.startsWith('http://') ||
+            item.videoPath.startsWith('https://') ||
+            item.videoPath.isEmpty)) {
+      return 'https://www.bilibili.com/video/${bvMatch.group(0)}';
+    }
+
+    // 4. Fallback resolvePath thông thường
     return await resolvePath(item.videoPath);
   }
 
@@ -182,6 +194,7 @@ class HistoryRepository {
     required String title,
     required SubtitleDocument document,
     int durationMs = 0,
+    int? lastPositionMs,
     String? ttsVoice,
     String? seriesId,
     String? seriesCover,
@@ -264,7 +277,7 @@ class HistoryRepository {
       sentenceCount: document.items.length,
       ttsVoice: ttsVoice ?? existing?.ttsVoice,
       docKey: docKey,
-      lastPositionMs: existing?.lastPositionMs ?? 0,
+      lastPositionMs: lastPositionMs ?? existing?.lastPositionMs ?? 0,
       lastWatchedAt: lastWatchedAt,
       seriesId: seriesId ?? existing?.seriesId,
       seriesCover: coverUrl ?? seriesCover ?? existing?.seriesCover,
@@ -342,22 +355,108 @@ class HistoryRepository {
     await _save(items);
   }
 
-  Future<void> updatePlaybackPosition(String id, int positionMs) async {
+  Future<void> updatePlaybackPosition(
+    String id,
+    int positionMs, {
+    int? durationMs,
+  }) async {
     final items = getHistory();
     final index = items.indexWhere((item) => item.id == id);
     if (index == -1) return;
+    final current = items[index];
+    final effectiveDuration = (durationMs != null && durationMs > 0)
+        ? durationMs
+        : current.durationMs;
     final nonNegativePosition = positionMs < 0 ? 0 : positionMs;
-    final safePosition = items[index].durationMs > 0
-        ? nonNegativePosition.clamp(0, items[index].durationMs)
+    final safePosition = effectiveDuration > 0
+        ? nonNegativePosition.clamp(0, effectiveDuration)
         : nonNegativePosition;
     final now = DateTime.now().millisecondsSinceEpoch;
-    if (items[index].lastPositionMs == safePosition && items[index].lastWatchedAt != null) return;
-    items[index] = items[index].copyWith(
+    if (current.lastPositionMs == safePosition &&
+        current.lastWatchedAt != null &&
+        (current.durationMs == effectiveDuration || effectiveDuration <= 0)) {
+      return;
+    }
+    items[index] = current.copyWith(
       lastPositionMs: safePosition,
+      durationMs: effectiveDuration,
       lastWatchedAt: now,
       timestamp: now,
     );
     await _save(items);
+  }
+
+  /// Cập nhật tiến độ xem cho video dựa trên videoPath / BVID / ID lịch sử
+  /// Dành cho Bilibili và các video đơn lẻ khi phát trực tiếp hoặc từ lịch sử
+  Future<bool> updatePlaybackPositionForVideo({
+    required String videoPath,
+    required int positionMs,
+    int? durationMs,
+    String? title,
+    String? coverUrl,
+    bool createIfMissing = false,
+  }) async {
+    final items = getHistory();
+    final bvid = RegExp(r'BV1[0-9a-zA-Z]{9}', caseSensitive: false).firstMatch(videoPath)?.group(0);
+
+    final index = items.indexWhere((item) {
+      if (item.videoPath == videoPath || item.id == videoPath) return true;
+      if (bvid != null) {
+        if (item.videoPath.contains(bvid) || item.id.contains(bvid)) return true;
+        final itemBv = RegExp(r'BV1[0-9a-zA-Z]{9}', caseSensitive: false).firstMatch(item.title)?.group(0);
+        if (itemBv != null && itemBv.toLowerCase() == bvid.toLowerCase()) return true;
+      }
+      return false;
+    });
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final nonNegativePosition = positionMs < 0 ? 0 : positionMs;
+
+    if (index != -1) {
+      final current = items[index];
+      final effectiveDuration = (durationMs != null && durationMs > 0)
+          ? durationMs
+          : current.durationMs;
+      final safePosition = effectiveDuration > 0
+          ? nonNegativePosition.clamp(0, effectiveDuration)
+          : nonNegativePosition;
+
+      if (current.lastPositionMs == safePosition &&
+          current.lastWatchedAt != null &&
+          (current.durationMs == effectiveDuration || effectiveDuration <= 0)) {
+        return true;
+      }
+
+      items[index] = current.copyWith(
+        lastPositionMs: safePosition,
+        durationMs: effectiveDuration,
+        lastWatchedAt: now,
+        timestamp: now,
+        seriesCover: (current.seriesCover == null || current.seriesCover!.isEmpty)
+            ? coverUrl
+            : current.seriesCover,
+      );
+      await _save(items);
+      return true;
+    }
+
+    if (createIfMissing && nonNegativePosition > 2000) {
+      final effectiveDuration = (durationMs != null && durationMs > 0) ? durationMs : 0;
+      final safePosition = effectiveDuration > 0
+          ? nonNegativePosition.clamp(0, effectiveDuration)
+          : nonNegativePosition;
+      await saveHistory(
+        videoPath: videoPath,
+        title: (title != null && title.trim().isNotEmpty) ? title.trim() : 'Bilibili Video',
+        document: SubtitleDocument(),
+        coverUrl: coverUrl,
+        durationMs: effectiveDuration,
+        lastPositionMs: safePosition,
+      );
+      return true;
+    }
+
+    return false;
   }
 
   /// Cập nhật đúng tập đang phát trong một bộ Hồng Quả. URL video có thể đổi

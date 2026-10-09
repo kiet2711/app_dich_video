@@ -129,6 +129,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   DateTime _lastPositionSaveAt = DateTime.fromMillisecondsSinceEpoch(0);
   int _lastSavedPositionMs = -1;
   bool _isInBackground = false;
+  bool _hasRestoredInitialPosition = false;
 
   // Trạng thái điều khiển PiP (Picture-in-Picture)
   bool _pipShowControls = true;
@@ -362,6 +363,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           videoPath: _sourceVideoUrl,
           document: doc,
           title: _originalTitle ?? _currentTitle,
+          lastPositionMs: _currentPosMs,
+          durationMs: _controller?.value.duration.inMilliseconds ?? 0,
+          coverUrl: _coverUrl,
         );
         if (_translatedTitle != null && _translatedTitle!.isNotEmpty) {
           await history.updateTranslatedTitle(saved.id, _translatedTitle!);
@@ -485,6 +489,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           document: _currentDocument,
           title: _originalTitle ?? _currentTitle,
           ttsVoice: voice.displayName,
+          lastPositionMs: _currentPosMs,
+          durationMs: _controller?.value.duration.inMilliseconds ?? 0,
+          coverUrl: _coverUrl,
         );
       } catch (_) {}
 
@@ -1025,9 +1032,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         return;
       }
       final durationMs = _controller!.value.duration.inMilliseconds;
-      final resumePositionMs = startPosMs.clamp(0, durationMs);
+      final resumePositionMs = durationMs > 0
+          ? startPosMs.clamp(0, durationMs)
+          : (startPosMs > 0 ? startPosMs : 0);
       final shouldRestorePosition =
-          resumePositionMs > 0 && resumePositionMs < durationMs;
+          resumePositionMs > 0 && (durationMs <= 0 || resumePositionMs < durationMs);
       _isScrubbing = shouldRestorePosition;
       _currentPosMs = 0;
       _lastObservedPositionMs = 0;
@@ -1068,6 +1077,24 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         }
       }
 
+      // Khôi phục vị trí xem dở trước khi cho video chạy (tránh bị nhảy tiếng từ giây 0)
+      if (shouldRestorePosition) {
+        _hasRestoredInitialPosition = true;
+        try {
+          await Future.wait([
+            _controller!.seekTo(Duration(milliseconds: resumePositionMs)),
+            _ttsScheduler.onSeek(resumePositionMs),
+          ]);
+        } catch (error) {
+          debugPrint('Không thể khôi phục vị trí video online: $error');
+          await _ttsScheduler.onSeek(
+            _controller!.value.position.inMilliseconds,
+          );
+        } finally {
+          _isScrubbing = false;
+        }
+      }
+
       if (!shouldWaitHongguoTranslation) {
         await _controller!.play();
       } else {
@@ -1085,24 +1112,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       unawaited(_calibratePlaybackSpeeds());
       unawaited(_applyAudioVolumes());
       unawaited(_ttsScheduler.warmUp(resumePositionMs));
-      if (shouldRestorePosition) {
-        try {
-          await Future.wait([
-            _controller!.seekTo(Duration(milliseconds: resumePositionMs)),
-            _ttsScheduler.onSeek(resumePositionMs),
-          ]);
-        } catch (error) {
-          debugPrint('Không thể khôi phục vị trí video online: $error');
-          await _ttsScheduler.onSeek(
-            _controller!.value.position.inMilliseconds,
-          );
-        } finally {
-          _isScrubbing = false;
-          _syncTtsWithVideo();
-        }
-      } else {
-        _syncTtsWithVideo();
-      }
+      _syncTtsWithVideo();
     } catch (e) {
       if (!mounted) return;
       final failedController = _controller;
@@ -4705,6 +4715,18 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         _isPlaybackStalled = false;
       }
     }
+
+    // Dự phòng khôi phục vị trí ban đầu nếu lúc nạp controller duration chưa kịp sẵn sàng
+    if (widget.initialPositionMs > 0 && !_hasRestoredInitialPosition) {
+      if (durationMs > 0) {
+        _hasRestoredInitialPosition = true;
+        final targetPos = widget.initialPositionMs.clamp(0, durationMs);
+        if (targetPos > 0 && positionMs < targetPos - 2000) {
+          controller.seekTo(Duration(milliseconds: targetPos));
+          _ttsScheduler.onSeek(targetPos);
+        }
+      }
+    }
     final stallChanged = _refreshPlaybackStall(now);
     if (!_isScrubbing && now.difference(_lastUiUpdate).inMilliseconds >= 50) {
       _lastUiUpdate = now;
@@ -4793,6 +4815,38 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         }
       } else {
         await widget.onPlaybackPositionChanged?.call(positionMs);
+
+        final isBilibili = _bilibiliDetails != null ||
+            widget.bilibiliItem != null ||
+            BilibiliResolver.isBilibiliUrl(_sourceVideoUrl);
+
+        final history = await HistoryRepository.getInstance();
+        final bvid = _bilibiliDetails?.bvid ??
+            widget.bilibiliItem?.bvid ??
+            RegExp(r'BV1[0-9a-zA-Z]{9}', caseSensitive: false).firstMatch(_sourceVideoUrl)?.group(0);
+
+        final effectiveUrl = (bvid != null && bvid.isNotEmpty)
+            ? 'https://www.bilibili.com/video/$bvid'
+            : _sourceVideoUrl;
+
+        final effectiveTitle = _currentTitle.isNotEmpty
+            ? _currentTitle
+            : (_originalTitle ?? widget.title ?? (isBilibili ? 'Bilibili Video' : 'Video'));
+
+        final effectiveCover = _coverUrl ??
+            widget.coverUrl ??
+            _bilibiliDetails?.coverUrl ??
+            widget.bilibiliItem?.cover;
+        final duration = controller?.value.duration.inMilliseconds;
+
+        await history.updatePlaybackPositionForVideo(
+          videoPath: effectiveUrl,
+          positionMs: positionMs,
+          durationMs: duration,
+          title: effectiveTitle,
+          coverUrl: effectiveCover,
+          createIfMissing: isBilibili && positionMs > 2000,
+        );
       }
     } catch (_) {}
 
