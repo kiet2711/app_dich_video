@@ -63,6 +63,7 @@ class AppPlayerController extends ChangeNotifier {
 
   final List<StreamSubscription> _subscriptions = [];
   bool _isDisposed = false;
+  bool get isDisposed => _isDisposed;
   final Completer<void> _initCompleter = Completer<void>();
 
   AppPlayerController() {
@@ -200,15 +201,72 @@ class AppPlayerController extends ChangeNotifier {
     }
   }
 
+  /// Chuyển đổi nguồn phát media mà không cần hủy controller hay tái tạo texture
+  Future<void> switchMedia({
+    String? networkUrl,
+    File? file,
+    Uri? contentUri,
+    String? dashVideoUrl,
+    String? dashAudioUrl,
+    Map<String, String> headers = const {},
+    bool play = false,
+  }) async {
+    if (_isDisposed) return;
+    try {
+      await player.pause();
+    } catch (_) {}
+
+    _value = _value.copyWith(
+      position: Duration.zero,
+      isPlaying: false,
+      hasError: false,
+      errorDescription: null,
+    );
+    notifyListeners();
+
+    if (dashVideoUrl != null && dashVideoUrl.isNotEmpty) {
+      await openBilibiliDash(
+        videoUrl: dashVideoUrl,
+        audioUrl: dashAudioUrl ?? '',
+        headers: headers,
+      );
+    } else if (file != null) {
+      await openFile(file);
+    } else if (contentUri != null) {
+      await openContentUri(contentUri);
+    } else if (networkUrl != null && networkUrl.isNotEmpty) {
+      await openNetwork(networkUrl, headers: headers);
+    }
+
+    if (player.state.duration > Duration.zero) {
+      _value = _value.copyWith(duration: player.state.duration);
+    } else {
+      try {
+        final dur = await player.stream.duration
+            .firstWhere((d) => d > Duration.zero)
+            .timeout(const Duration(seconds: 4));
+        _value = _value.copyWith(duration: dur);
+      } catch (_) {}
+    }
+
+    if (play && !_isDisposed) {
+      await player.play();
+    }
+  }
+
   /// Phát video qua link mạng thông thường (MP4, HLS/M3U8)
   Future<void> openNetwork(
     String url, {
     Map<String, String> headers = const {},
   }) async {
-    if (headers.isNotEmpty && player.platform is NativePlayer) {
-      final headerStr = headers.entries.map((e) => '${e.key}: ${e.value}').join('\r\n');
+    if (player.platform is NativePlayer) {
       final nativePlayer = player.platform as NativePlayer;
-      await nativePlayer.setProperty('http-header-fields', headerStr);
+      if (headers.isNotEmpty) {
+        final headerStr = headers.entries.map((e) => '${e.key}: ${e.value}').join('\r\n');
+        await nativePlayer.setProperty('http-header-fields', headerStr);
+      } else {
+        await nativePlayer.setProperty('http-header-fields', '');
+      }
     }
     await player.open(
       Media(url, httpHeaders: headers),

@@ -151,11 +151,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   HongguoPrefetchManager? _prefetchManager;
   bool _autoPlayNextEpisode = true;
   bool _isSwitchingEpisode = false;
+  bool _showEpisodeSwitchOverlay = false;
+  int _switchingTargetEpisode = 0;
   bool _isDownloadingVideo = false;
   double _downloadProgress = 0.0;
   String _downloadMessage = '';
   bool _showDownloadBanner = true;
   bool _userChosePlayRaw = false;
+  DateTime? _playbackStartedAt;
 
   String? _originalTitle;
   String? _translatedTitle;
@@ -839,6 +842,70 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     );
   }
 
+  Future<void> _prepareControllerForMedia({
+    File? file,
+    Uri? contentUri,
+    List<String> networkUrls = const [],
+    Map<String, String> httpHeaders = const {},
+    String? dashVideoUrl,
+    String? dashAudioUrl,
+  }) async {
+    final existing = _controller;
+    if (existing != null && !existing.isDisposed) {
+      try {
+        if (dashVideoUrl != null && dashVideoUrl.isNotEmpty) {
+          await existing.switchMedia(
+            dashVideoUrl: dashVideoUrl,
+            dashAudioUrl: dashAudioUrl ?? '',
+            headers: httpHeaders,
+          );
+        } else if (file != null) {
+          await existing.switchMedia(file: file);
+        } else if (contentUri != null) {
+          await existing.switchMedia(contentUri: contentUri);
+        } else if (networkUrls.isNotEmpty) {
+          await existing.switchMedia(
+            networkUrl: networkUrls.first,
+            headers: httpHeaders,
+          );
+        }
+        return;
+      } catch (e) {
+        debugPrint('[Player] Lỗi tái sử dụng controller (switchMedia): $e. Fallback tạo mới.');
+        try {
+          existing.dispose();
+        } catch (_) {}
+        _controller = null;
+      }
+    }
+
+    if (dashVideoUrl != null && dashVideoUrl.isNotEmpty) {
+      final c = AppPlayerController();
+      await c.openBilibiliDash(
+        videoUrl: dashVideoUrl,
+        audioUrl: dashAudioUrl ?? '',
+        headers: httpHeaders,
+      );
+      await c.initialize();
+      _controller = c;
+    } else if (file != null) {
+      final c = AppPlayerController();
+      await c.openFile(file);
+      await c.initialize();
+      _controller = c;
+    } else if (contentUri != null) {
+      final c = AppPlayerController();
+      await c.openContentUri(contentUri);
+      await c.initialize();
+      _controller = c;
+    } else if (networkUrls.isNotEmpty) {
+      _controller = await _initializeNetworkController(
+        networkUrls,
+        httpHeaders,
+      );
+    }
+  }
+
   Future<void> _initPlayerForPath(
     String playablePath, {
     int startPosMs = 0,
@@ -884,10 +951,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         if (cached != null && await cached.exists() && await cached.length() > 1024 * 100) {
           targetPath = cached.path;
           playableUrls = [cached.path];
-          final c = AppPlayerController();
-          await c.openFile(cached);
-          await c.initialize();
-          _controller = c;
+          await _prepareControllerForMedia(file: cached);
         } else {
           _currentQualityKey = _settings.preferredVideoQuality;
           bool dashSuccess = false;
@@ -897,14 +961,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
               _settings.bilibiliSessData,
               _settings.preferredVideoQuality,
             );
-            final c = AppPlayerController();
-            await c.openBilibiliDash(
-              videoUrl: dash.videoUrl,
-              audioUrl: dash.audioUrl,
-              headers: dash.headers,
+            await _prepareControllerForMedia(
+              dashVideoUrl: dash.videoUrl,
+              dashAudioUrl: dash.audioUrl,
+              httpHeaders: dash.headers,
             );
-            await c.initialize();
-            _controller = c;
             dashSuccess = true;
           } catch (e) {
             debugPrint('[Player] Lỗi nạp luồng DASH Bilibili, dùng fallback Muxed: $e');
@@ -920,9 +981,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             httpHeaders = BilibiliResolver.streamHeaders(
               _settings.bilibiliSessData,
             );
-            _controller = await _initializeNetworkController(
-              playableUrls,
-              httpHeaders,
+            await _prepareControllerForMedia(
+              networkUrls: playableUrls,
+              httpHeaders: httpHeaders,
             );
           }
         }
@@ -951,7 +1012,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             final resolver = HongguoResolver();
             final detail = widget.dramaDetail!;
             var vid = '';
-            if (detail.episodes.isNotEmpty && _currentEpisodeIndex <= detail.episodes.length) {
+            final matchedEp = detail.episodes
+                .where((e) => e.index == _currentEpisodeIndex)
+                .firstOrNull;
+            if (matchedEp != null && matchedEp.vid.isNotEmpty) {
+              vid = matchedEp.vid;
+            } else if (detail.episodes.isNotEmpty &&
+                _currentEpisodeIndex > 0 &&
+                _currentEpisodeIndex <= detail.episodes.length) {
               vid = detail.episodes[_currentEpisodeIndex - 1].vid;
             }
             final freshUrl = await resolver.getEpisodePlayUrl(
@@ -978,20 +1046,18 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           if (httpHeaders.isEmpty) {
             httpHeaders = NetworkHeaderHelper.getHeadersForUri(targetPath);
           }
-          _controller = await _initializeNetworkController(
-            playableUrls,
-            httpHeaders,
+          await _prepareControllerForMedia(
+            networkUrls: playableUrls,
+            httpHeaders: httpHeaders,
           );
         } else if (MediaStorage.isContentUri(targetPath)) {
-          final c = AppPlayerController();
-          await c.openContentUri(Uri.parse(targetPath));
-          await c.initialize();
-          _controller = c;
+          await _prepareControllerForMedia(
+            contentUri: Uri.parse(targetPath),
+          );
         } else {
-          final c = AppPlayerController();
-          await c.openFile(File(targetPath));
-          await c.initialize();
-          _controller = c;
+          await _prepareControllerForMedia(
+            file: File(targetPath),
+          );
         }
       } else {
         _bilibiliDetails = null;
@@ -1008,30 +1074,28 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           if (httpHeaders.isEmpty) {
             httpHeaders = NetworkHeaderHelper.getHeadersForUri(targetPath);
           }
-          _controller = await _initializeNetworkController(
-            playableUrls,
-            httpHeaders,
+          await _prepareControllerForMedia(
+            networkUrls: playableUrls,
+            httpHeaders: httpHeaders,
           );
         } else if (MediaStorage.isContentUri(targetPath)) {
-          final c = AppPlayerController();
-          await c.openContentUri(Uri.parse(targetPath));
-          await c.initialize();
-          _controller = c;
+          await _prepareControllerForMedia(
+            contentUri: Uri.parse(targetPath),
+          );
         } else {
-          final c = AppPlayerController();
-          await c.openFile(File(targetPath));
-          await c.initialize();
-          _controller = c;
+          await _prepareControllerForMedia(
+            file: File(targetPath),
+          );
         }
       }
 
       _currentVideoPath = targetPath;
 
       if (!mounted) {
-        _controller!.dispose();
+        _controller?.dispose();
         return;
       }
-      final durationMs = _controller!.value.duration.inMilliseconds;
+      final durationMs = _controller?.value.duration.inMilliseconds ?? 0;
       final resumePositionMs = durationMs > 0
           ? startPosMs.clamp(0, durationMs)
           : (startPosMs > 0 ? startPosMs : 0);
@@ -1041,11 +1105,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       _currentPosMs = 0;
       _lastObservedPositionMs = 0;
       _lastPositionAdvanceAt = DateTime.now();
-      _controller!.addListener(_onPlayerUpdate);
+      _controller?.removeListener(_onPlayerUpdate);
+      _controller?.addListener(_onPlayerUpdate);
+      _playbackMonitor?.cancel();
       _playbackMonitor = Timer.periodic(
         const Duration(milliseconds: 250),
         (_) => _monitorPlaybackStall(),
       );
+      _playbackStartedAt = DateTime.now();
       setState(() {
         _isInitialized = true;
       });
@@ -1178,16 +1245,43 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
   Future<void> _goToEpisode(int targetIndex) async {
     if (_isSwitchingEpisode) return;
-    setState(() => _isSwitchingEpisode = true);
+    _isSwitchingEpisode = true;
+    _switchingTargetEpisode = targetIndex;
 
     final previousIndex = _currentEpisodeIndex;
+    Timer? overlayTimer;
 
     try {
       await _persistPlaybackPosition(force: true);
+
+      // Kiểm tra xem tập phim mục tiêu đã có sẵn trong bộ nhớ đệm hay chưa
+      final cachedUrl = _prefetchManager?.getCachedUrl(targetIndex);
+      final isAlreadyCachedUrl = cachedUrl != null && cachedUrl.isNotEmpty;
+      final cachedDiskFile = await VideoCacheManager.findCachedFile(
+        url: cachedUrl ?? '',
+        seriesId: widget.dramaDetail?.seriesId,
+        episodeIndex: targetIndex,
+      );
+      final isInstantReady = isAlreadyCachedUrl ||
+          (cachedDiskFile != null && await cachedDiskFile.exists() && await cachedDiskFile.length() > 1024 * 50);
+
+      if (!isInstantReady) {
+        // Chỉ hiển thị overlay xoay tròn nếu cần tải qua mạng và mất hơn 180ms
+        overlayTimer = Timer(const Duration(milliseconds: 180), () {
+          if (mounted && _isSwitchingEpisode) {
+            setState(() => _showEpisodeSwitchOverlay = true);
+          }
+        });
+      }
+
       final playUrl = await _prefetchManager?.getOrResolveUrl(targetIndex);
       if (playUrl == null) {
+        overlayTimer?.cancel();
         if (mounted) {
-          setState(() => _isSwitchingEpisode = false);
+          setState(() {
+            _isSwitchingEpisode = false;
+            _showEpisodeSwitchOverlay = false;
+          });
           final maxAcc = widget.dramaDetail?.accessibleEpisodes ?? 3;
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -1262,8 +1356,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         },
       );
     } finally {
+      overlayTimer?.cancel();
+      _isSwitchingEpisode = false;
       if (mounted) {
-        setState(() => _isSwitchingEpisode = false);
+        setState(() {
+          _showEpisodeSwitchOverlay = false;
+        });
       }
     }
   }
@@ -3968,17 +4066,26 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     String? newAuthor,
     BilibiliAnimeItem? newBilibiliItem,
   }) async {
-    await _controller?.pause();
-    _controller?.removeListener(_onPlayerUpdate);
-    _controller?.dispose();
-    _controller = null;
+    final canReuseController = _controller != null && !_controller!.isDisposed;
+    if (canReuseController) {
+      try {
+        await _controller?.pause();
+      } catch (_) {}
+      _controller?.removeListener(_onPlayerUpdate);
+    } else {
+      _controller?.removeListener(_onPlayerUpdate);
+      _controller?.dispose();
+      _controller = null;
+    }
 
     _playbackMonitor?.cancel();
     _ttsScheduler.dispose();
 
     final item = newBilibiliItem;
     setState(() {
-      _isInitialized = false;
+      if (!canReuseController) {
+        _isInitialized = false;
+      }
       _playerError = null;
       _sourceVideoUrl = newVideoPath;
       _currentVideoPath = newVideoPath;
@@ -4688,11 +4795,18 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     final durationMs = controller.value.duration.inMilliseconds;
     final now = DateTime.now();
 
+    // Chỉ tự động chuyển tập nếu video đã nạp và phát ổn định ít nhất 2.5 giây
+    // Tránh tình trạng video vừa mở lên ở vị trí cũ bị trigger chuyển tập ngay lập tức
+    final hasPlayedLongEnough = _playbackStartedAt != null &&
+        now.difference(_playbackStartedAt!) > const Duration(milliseconds: 2500);
+
     // Tự động chuyển sang tập tiếp theo khi xem xong (video kết thúc và còn < 1s) - Chỉ dành cho phim bộ Hồng Quả
     if (_autoPlayNextEpisode &&
         _hasNextEpisode &&
         widget.dramaDetail != null &&
         !_isSwitchingEpisode &&
+        !_isScrubbing &&
+        hasPlayedLongEnough &&
         durationMs > 5000 &&
         (positionMs >= durationMs - 500 ||
             (!controller.value.isPlaying && positionMs >= durationMs - 1200))) {
@@ -5292,8 +5406,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                 },
               ),
 
-              // 3. Lớp chuyển đổi tập phim (Khi đang tải tập kế tiếp)
-              if (_isSwitchingEpisode)
+              // 3. Lớp chuyển đổi tập phim (Khi đang nạp tập qua mạng)
+              if (_showEpisodeSwitchOverlay)
                 Container(
                   color: Colors.black54,
                   child: Center(
@@ -5305,7 +5419,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                         ),
                         const SizedBox(height: 14),
                         Text(
-                          'Đang mở Tập $_currentEpisodeIndex...',
+                          'Đang mở Tập ${_switchingTargetEpisode > 0 ? _switchingTargetEpisode : _currentEpisodeIndex}...',
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 14,

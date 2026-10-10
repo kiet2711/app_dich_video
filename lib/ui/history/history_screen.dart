@@ -723,14 +723,19 @@ class _HistoryScreenState extends State<HistoryScreen>
       );
     }
 
-    if (!mounted) return;
+    // Xử lý vị trí phát tiếp tục:
+    // Nếu tập đã xem xong (>95% thời lượng hoặc còn dưới 1.5 giây), phát lại từ đầu (0ms)
+    // Tránh tình trạng nạp ở cuối video rồi lập tức tự động chuyển sang tập khác!
+    final isFinished = (item.durationMs > 0 && item.lastPositionMs >= item.durationMs * 0.95) ||
+        (item.durationMs > 2000 && item.lastPositionMs >= item.durationMs - 1500);
+    final resumePosition = isFinished ? 0 : item.lastPositionMs;
 
     GlobalPlayerManager.instance.openPlayer(
       videoPath: resolvedVideo,
       title: '${group.seriesTitle} - Tập $epIndex',
       document: doc ?? SubtitleDocument(),
       coverUrl: group.seriesCover ?? item.coverUrl,
-      initialPositionMs: item.lastPositionMs,
+      initialPositionMs: resumePosition,
       dramaDetail: dramaDetail,
       currentEpisodeIndex: epIndex,
       onPlaybackPositionChanged: (positionMs) =>
@@ -754,7 +759,10 @@ class _HistoryScreenState extends State<HistoryScreen>
 
     try {
       var vid = '';
-      if (detail.episodes.isNotEmpty && epIndex <= detail.episodes.length) {
+      final matchedEp = detail.episodes.where((e) => e.index == epIndex).firstOrNull;
+      if (matchedEp != null && matchedEp.vid.isNotEmpty) {
+        vid = matchedEp.vid;
+      } else if (detail.episodes.isNotEmpty && epIndex > 0 && epIndex <= detail.episodes.length) {
         vid = detail.episodes[epIndex - 1].vid;
       }
       final playUrl = await _hongguoResolver.getEpisodePlayUrl(
@@ -923,9 +931,13 @@ class _HistoryScreenState extends State<HistoryScreen>
       builder: (ctx) => _DramaEpisodesSheetWidget(
         group: group,
         hongguoResolver: _hongguoResolver,
-        onOpenEpisode: (ep, g) {
+        onOpenEpisode: (ep, g, {customEpisodeIndex}) {
           Navigator.pop(ctx);
-          _openSeriesEpisode(ep, g);
+          _openSeriesEpisode(
+            ep,
+            g,
+            customEpisodeIndex: customEpisodeIndex ?? ep.extractedEpisodeIndex,
+          );
         },
         onOpenUnwatchedEpisode: (epIndex, g, detail) {
           Navigator.pop(ctx);
@@ -2155,7 +2167,11 @@ class _HistoryScreenState extends State<HistoryScreen>
 class _DramaEpisodesSheetWidget extends StatefulWidget {
   final DramaHistoryGroup group;
   final HongguoResolver hongguoResolver;
-  final void Function(HistoryItem ep, DramaHistoryGroup group) onOpenEpisode;
+  final void Function(
+    HistoryItem ep,
+    DramaHistoryGroup group, {
+    int? customEpisodeIndex,
+  }) onOpenEpisode;
   final void Function(int epIndex, DramaHistoryGroup group, HongguoDramaDetail detail) onOpenUnwatchedEpisode;
   final void Function(HistoryItem ep) onOpenTts;
   final void Function(HistoryItem ep) onExportSrt;
@@ -2567,7 +2583,7 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
                   if (_isEpMultiSelect) {
                     _toggleEpSelection(ep.id);
                   } else {
-                    widget.onOpenEpisode(ep, currentGroup);
+                    widget.onOpenEpisode(ep, currentGroup, customEpisodeIndex: epNum);
                   }
                 },
                 onLongPress: () {
@@ -2672,7 +2688,7 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
                             size: 30,
                           ),
                           tooltip: 'Xem tập $epNum',
-                          onPressed: () => widget.onOpenEpisode(ep, currentGroup),
+                          onPressed: () => widget.onOpenEpisode(ep, currentGroup, customEpisodeIndex: epNum),
                         ),
                         PopupMenuButton<String>(
                           icon: const Icon(
@@ -2821,10 +2837,18 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
             return InkWell(
               onTap: () {
                 if (isSaved) {
-                  final existingItem = group.episodes.firstWhere(
-                    (e) => e.extractedEpisodeIndex == epIndex,
-                  );
-                  widget.onOpenEpisode(existingItem, group);
+                  final existingItem = group.episodes.where(
+                    (e) => e.extractedEpisodeIndex == epIndex || e.episodeIndex == epIndex,
+                  ).firstOrNull;
+                  if (existingItem != null) {
+                    widget.onOpenEpisode(
+                      existingItem,
+                      group,
+                      customEpisodeIndex: epIndex,
+                    );
+                  } else {
+                    widget.onOpenUnwatchedEpisode(epIndex, group, detail);
+                  }
                 } else {
                   widget.onOpenUnwatchedEpisode(epIndex, group, detail);
                 }
