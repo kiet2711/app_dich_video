@@ -8,6 +8,8 @@ import '../../player/app_player_controller.dart';
 import '../../data/model/subtitle_document.dart';
 import '../../data/repository/history_repository.dart';
 import '../../data/repository/settings_repository.dart';
+import '../../data/model/watch_later_item.dart';
+import '../../data/repository/watch_later_repository.dart';
 import '../../domain/ai/offline_mlkit_translator.dart';
 import '../../domain/ai/title_translator.dart';
 import '../../domain/media/bilibili_resolver.dart';
@@ -164,6 +166,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   String? _translatedTitle;
   bool _showTranslatedTitle = false;
   bool _isTranslatingTitle = false;
+  bool _isBilibiliTitleExpanded = false;
 
   // Bilibili Tab & Interactive State (Giới thiệu / Bình luận)
   int _bilibiliTabIndex = 0; // 0: Giới thiệu, 1: Bình luận
@@ -1535,6 +1538,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   void _copyTitleToClipboard(String title) {
     if (title.trim().isEmpty) return;
     Clipboard.setData(ClipboardData(text: title.trim()));
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Row(
@@ -1548,6 +1552,92 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             Expanded(
               child: Text(
                 'Đã sao chép: "${title.trim()}"',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  Future<void> _toggleWatchLater() async {
+    final repo = await WatchLaterRepository.getInstance();
+    final bool isHongguo = widget.dramaDetail != null;
+
+    final String id;
+    final String title;
+    final String? coverUrl;
+    final String source;
+    final String targetUrl;
+    final String? seriesId;
+    final String? author;
+    final int? totalEpisodes;
+
+    if (isHongguo) {
+      final d = widget.dramaDetail!;
+      id = 'hg_${d.seriesId}';
+      title = d.title;
+      coverUrl = d.cover;
+      source = 'hongguo';
+      targetUrl = d.seriesId;
+      seriesId = d.seriesId;
+      author = null;
+      totalEpisodes = d.totalEpisodes > 0 ? d.totalEpisodes : null;
+    } else {
+      final b = _bilibiliDetails;
+      final bvid = b?.bvid ??
+          RegExp(r'BV1[0-9a-zA-Z]{9}', caseSensitive: false)
+              .firstMatch(_sourceVideoUrl)
+              ?.group(0) ??
+          '';
+      id = bvid.isNotEmpty ? 'bili_$bvid' : 'bili_${_currentTitle.hashCode}';
+      title = (b?.title != null && b!.title.isNotEmpty) ? b.title : _currentTitle;
+      coverUrl = b?.coverUrl ?? widget.bilibiliItem?.cover;
+      source = 'bilibili';
+      targetUrl = bvid.isNotEmpty ? 'https://www.bilibili.com/video/$bvid' : _sourceVideoUrl;
+      seriesId = null;
+      author = b?.author ?? _authorName;
+      totalEpisodes = null;
+    }
+
+    final item = WatchLaterItem(
+      id: id,
+      title: title,
+      originalTitle: _originalTitle,
+      translatedTitle: _translatedTitle,
+      coverUrl: coverUrl,
+      source: source,
+      targetUrl: targetUrl,
+      seriesId: seriesId,
+      author: author,
+      totalEpisodes: totalEpisodes,
+      addedAt: DateTime.now().millisecondsSinceEpoch,
+    );
+
+    final added = await repo.toggleWatchLater(item);
+    if (!mounted) return;
+    setState(() {});
+
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            Icon(
+              added ? Icons.bookmark_added_rounded : Icons.bookmark_remove_rounded,
+              color: added ? AppTheme.primaryEmerald : Colors.orangeAccent,
+              size: 18,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                added
+                    ? '🔖 Đã thêm "$title" vào danh sách Xem sau!'
+                    : '🗑️ Đã xóa "$title" khỏi danh sách Xem sau',
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -2789,19 +2879,62 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
-              child: Text(
-                displayTitle,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 15,
-                  fontWeight: FontWeight.bold,
-                  height: 1.3,
+              child: Tooltip(
+                message: 'Chạm để sao chép & mở rộng: $displayTitle',
+                child: InkWell(
+                  onTap: () {
+                    _copyTitleToClipboard(displayTitle);
+                    setState(() {
+                      _isBilibiliTitleExpanded = !_isBilibiliTitleExpanded;
+                    });
+                  },
+                  borderRadius: BorderRadius.circular(6),
+                  child: AnimatedSize(
+                    duration: const Duration(milliseconds: 200),
+                    alignment: Alignment.topLeft,
+                    child: Text(
+                      displayTitle,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                        height: 1.35,
+                      ),
+                      maxLines: _isBilibiliTitleExpanded ? null : 2,
+                      overflow: _isBilibiliTitleExpanded
+                          ? TextOverflow.visible
+                          : TextOverflow.ellipsis,
+                    ),
+                  ),
                 ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 6),
+            // Nút mở rộng / thu gọn tiêu đề để đọc hết chữ
+            InkWell(
+              onTap: () {
+                setState(() {
+                  _isBilibiliTitleExpanded = !_isBilibiliTitleExpanded;
+                });
+              },
+              borderRadius: BorderRadius.circular(6),
+              child: Container(
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  color: Colors.white12,
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: Colors.white24),
+                ),
+                child: Icon(
+                  _isBilibiliTitleExpanded
+                      ? Icons.keyboard_arrow_up_rounded
+                      : Icons.keyboard_arrow_down_rounded,
+                  size: 16,
+                  color: Colors.white70,
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
             InkWell(
               onTap: _isTranslatingTitle ? null : _togglePlayerTitleTranslation,
               borderRadius: BorderRadius.circular(6),
@@ -2875,7 +3008,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         ),
         const SizedBox(height: 12),
 
-        // 3. Thanh nút thao tác nhanh
+        // 3. Thanh nút thao tác nhanh (Responsive, chống overflow)
         Row(
           children: [
             // Nút Vietsub AI
@@ -2884,31 +3017,34 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                 onTap: () => _startOnDemandPipeline(enableTts: false),
                 borderRadius: BorderRadius.circular(8),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
                   decoration: BoxDecoration(
                     color: const Color(0xFF00AEEC).withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(8),
                     border: Border.all(color: const Color(0xFF00AEEC).withValues(alpha: 0.4)),
                   ),
-                  child: const Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.subtitles_rounded, color: Color(0xFF00AEEC), size: 16),
-                      SizedBox(width: 6),
-                      Text(
-                        'Vietsub AI',
-                        style: TextStyle(
-                          color: Color(0xFF00AEEC),
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
+                  child: const FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.subtitles_rounded, color: Color(0xFF00AEEC), size: 15),
+                        SizedBox(width: 4),
+                        Text(
+                          'Vietsub AI',
+                          style: TextStyle(
+                            color: Color(0xFF00AEEC),
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 6),
 
             // Nút Lồng tiếng AI
             Expanded(
@@ -2916,38 +3052,41 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                 onTap: () => _startOnDemandPipeline(enableTts: true),
                 borderRadius: BorderRadius.circular(8),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
                   decoration: BoxDecoration(
                     color: AppTheme.primaryEmerald.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(8),
                     border: Border.all(color: AppTheme.primaryEmerald.withValues(alpha: 0.4)),
                   ),
-                  child: const Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.record_voice_over_rounded, color: AppTheme.primaryEmerald, size: 16),
-                      SizedBox(width: 6),
-                      Text(
-                        'Lồng tiếng AI',
-                        style: TextStyle(
-                          color: AppTheme.primaryEmerald,
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
+                  child: const FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.record_voice_over_rounded, color: AppTheme.primaryEmerald, size: 15),
+                        SizedBox(width: 4),
+                        Text(
+                          'Lồng tiếng AI',
+                          style: TextStyle(
+                            color: AppTheme.primaryEmerald,
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 6),
 
             // Nút Chọn chất lượng
             InkWell(
               onTap: _showQualitySelectionSheet,
               borderRadius: BorderRadius.circular(8),
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7.5),
                 decoration: BoxDecoration(
                   color: Colors.white10,
                   borderRadius: BorderRadius.circular(8),
@@ -2956,13 +3095,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.high_quality_rounded, color: Colors.white70, size: 16),
-                    const SizedBox(width: 4),
+                    const Icon(Icons.high_quality_rounded, color: Colors.white70, size: 15),
+                    const SizedBox(width: 3),
                     Text(
                       _currentQualityLabel,
                       style: const TextStyle(
                         color: Colors.white,
-                        fontSize: 12,
+                        fontSize: 11.5,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
@@ -2970,13 +3109,60 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                 ),
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 6),
 
             // Nút Tải về
-            IconButton(
-              icon: const Icon(Icons.download_for_offline_rounded, color: Colors.white70, size: 20),
-              tooltip: 'Tải video về máy',
-              onPressed: _showDownloadSelectionSheet,
+            InkWell(
+              onTap: _showDownloadSelectionSheet,
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                width: 35,
+                height: 33,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: Colors.white10,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.white12),
+                ),
+                child: const Icon(Icons.download_for_offline_rounded, color: Colors.white70, size: 18),
+              ),
+            ),
+            const SizedBox(width: 6),
+
+            // Nút Xem sau
+            InkWell(
+              onTap: _toggleWatchLater,
+              borderRadius: BorderRadius.circular(8),
+              child: ValueListenableBuilder<List<WatchLaterItem>>(
+                valueListenable: WatchLaterRepository.watchLaterNotifier,
+                builder: (context, items, _) {
+                  final bvid = details?.bvid ??
+                      RegExp(r'BV1[0-9a-zA-Z]{9}', caseSensitive: false)
+                          .firstMatch(_sourceVideoUrl)
+                          ?.group(0) ??
+                      '';
+                  final isWl = items.any((it) =>
+                      it.targetUrl.contains(bvid.isNotEmpty ? bvid : _sourceVideoUrl) ||
+                      it.id == 'bili_$bvid');
+                  return Container(
+                    width: 35,
+                    height: 33,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: isWl ? const Color(0xFF00AEEC).withValues(alpha: 0.18) : Colors.white10,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: isWl ? const Color(0xFF00AEEC).withValues(alpha: 0.6) : Colors.white12,
+                      ),
+                    ),
+                    child: Icon(
+                      isWl ? Icons.bookmark_added_rounded : Icons.bookmark_add_outlined,
+                      color: isWl ? const Color(0xFF00AEEC) : Colors.white70,
+                      size: 18,
+                    ),
+                  );
+                },
+              ),
             ),
           ],
         ),
@@ -5309,14 +5495,26 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                 ),
                 if (displayTitle.isNotEmpty)
                   Expanded(
-                    child: Text(
-                      displayTitle,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 13,
-                        fontWeight: FontWeight.bold,
+                    child: Tooltip(
+                      message: 'Chạm để sao chép: $displayTitle',
+                      child: InkWell(
+                        onTap: () => _copyTitleToClipboard(displayTitle),
+                        borderRadius: BorderRadius.circular(4),
+                        child: SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          physics: const BouncingScrollPhysics(),
+                          child: Text(
+                            displayTitle,
+                            maxLines: 1,
+                            softWrap: false,
+                            overflow: TextOverflow.visible,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
                       ),
                     ),
                   ),
@@ -6114,6 +6312,22 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                     ),
                                     tooltip: 'Cài đặt dịch & xem Hồng Quả',
                                     onPressed: () => HongguoSettingsSheet.show(context),
+                                  ),
+                                  IconButton(
+                                    icon: ValueListenableBuilder<List<WatchLaterItem>>(
+                                      valueListenable: WatchLaterRepository.watchLaterNotifier,
+                                      builder: (context, items, _) {
+                                        final sId = widget.dramaDetail?.seriesId ?? '';
+                                        final isWl = items.any((it) => it.seriesId == sId || it.id == 'hg_$sId');
+                                        return Icon(
+                                          isWl ? Icons.bookmark_added_rounded : Icons.bookmark_add_outlined,
+                                          color: isWl ? AppTheme.primaryEmerald : Colors.white70,
+                                          size: 20,
+                                        );
+                                      },
+                                    ),
+                                    tooltip: 'Lưu vào danh sách Xem sau',
+                                    onPressed: _toggleWatchLater,
                                   ),
                                 ],
 

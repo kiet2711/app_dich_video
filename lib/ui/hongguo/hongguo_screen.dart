@@ -8,6 +8,8 @@ import '../../domain/media/hongguo_resolver.dart';
 import '../../domain/media/network_header_helper.dart';
 import '../../domain/media/video_cache_manager.dart';
 import '../../player/global_player_manager.dart';
+import '../../data/model/watch_later_item.dart';
+import '../../data/repository/watch_later_repository.dart';
 import '../theme/app_theme.dart';
 import 'hongguo_settings_sheet.dart';
 
@@ -479,6 +481,113 @@ class _HongguoScreenState extends State<HongguoScreen> {
   void _showHongguoSettingsSheet() {
     HapticFeedback.lightImpact();
     HongguoSettingsSheet.show(context);
+  }
+
+  void _showDramaQuickMenu(HongguoDramaItem drama) {
+    HapticFeedback.mediumImpact();
+    final isWl = WatchLaterRepository.watchLaterNotifier.value.any(
+      (w) => w.seriesId == drama.seriesId || w.id.contains(drama.seriesId),
+    );
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1E222D),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              margin: const EdgeInsets.symmetric(vertical: 8),
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.white24,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Text(
+                drama.title,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 15,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const Divider(color: Colors.white12),
+            ListTile(
+              leading: Icon(
+                isWl ? Icons.bookmark_added_rounded : Icons.bookmark_add_outlined,
+                color: AppColors.primaryEmerald,
+              ),
+              title: Text(
+                isWl ? 'Xóa khỏi danh sách xem sau' : 'Thêm vào danh sách xem sau',
+                style: const TextStyle(color: Colors.white, fontSize: 14),
+              ),
+              onTap: () async {
+                Navigator.pop(ctx);
+                final repo = await WatchLaterRepository.getInstance();
+                final added = await repo.toggleWatchLater(WatchLaterItem(
+                  id: 'hg_${drama.seriesId}',
+                  title: drama.title,
+                  coverUrl: drama.cover,
+                  source: 'hongguo',
+                  targetUrl: drama.seriesId,
+                  seriesId: drama.seriesId,
+                  totalEpisodes: drama.episodeCount > 0 ? drama.episodeCount : null,
+                  addedAt: DateTime.now().millisecondsSinceEpoch,
+                ));
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Row(
+                      children: [
+                        Icon(
+                          added ? Icons.bookmark_added_rounded : Icons.bookmark_remove_rounded,
+                          color: added ? AppColors.primaryEmerald : Colors.orangeAccent,
+                          size: 18,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            added
+                                ? '🔖 Đã thêm "${drama.title}" vào danh sách Xem sau'
+                                : '🗑️ Đã xóa "${drama.title}" khỏi danh sách Xem sau',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                    duration: const Duration(seconds: 2),
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.copy_rounded, color: Colors.white70),
+              title: const Text('Sao chép tên phim', style: TextStyle(color: Colors.white, fontSize: 14)),
+              onTap: () {
+                Navigator.pop(ctx);
+                Clipboard.setData(ClipboardData(text: drama.title));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Đã sao chép tên phim!'), duration: Duration(seconds: 1)),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -1212,6 +1321,7 @@ class _HongguoScreenState extends State<HongguoScreen> {
               isRankCategory: _currentCategorySlug.contains('rank'),
               isTranslationEnabled: _isTranslationEnabled,
               onTap: () => _openDramaDetail(drama),
+              onLongPress: () => _showDramaQuickMenu(drama),
             );
           },
         );
@@ -1293,6 +1403,7 @@ class _DramaCard extends StatelessWidget {
   final bool isRankCategory;
   final bool isTranslationEnabled;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
 
   const _DramaCard({
     required this.drama,
@@ -1300,12 +1411,14 @@ class _DramaCard extends StatelessWidget {
     required this.isRankCategory,
     this.isTranslationEnabled = true,
     required this.onTap,
+    this.onLongPress,
   });
 
   @override
   Widget build(BuildContext context) {
     return InkWell(
       onTap: onTap,
+      onLongPress: onLongPress,
       borderRadius: BorderRadius.circular(12),
       splashColor: AppColors.primaryEmerald.withValues(alpha: 0.1),
       child: Container(
@@ -1696,24 +1809,118 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                                 },
                               ),
                               const SizedBox(height: 6),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 3,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: AppColors.primaryEmerald
-                                      .withValues(alpha: 0.15),
-                                  borderRadius: BorderRadius.circular(6),
-                                ),
-                                child: Text(
-                                  'Tổng $total Tập',
-                                  style: const TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.bold,
-                                    color: AppColors.primaryEmerald,
+                              Row(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 3,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: AppColors.primaryEmerald
+                                          .withValues(alpha: 0.15),
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: Text(
+                                      'Tổng $total Tập',
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.bold,
+                                        color: AppColors.primaryEmerald,
+                                      ),
+                                    ),
                                   ),
-                                ),
+                                  const SizedBox(width: 8),
+                                  ValueListenableBuilder<List<WatchLaterItem>>(
+                                    valueListenable: WatchLaterRepository.watchLaterNotifier,
+                                    builder: (context, items, _) {
+                                      final isWl = items.any((w) =>
+                                          w.seriesId == detail.seriesId ||
+                                          w.id == 'hg_${detail.seriesId}');
+                                      return InkWell(
+                                        onTap: () async {
+                                          final repo = await WatchLaterRepository.getInstance();
+                                          final added = await repo.toggleWatchLater(WatchLaterItem(
+                                            id: 'hg_${detail.seriesId}',
+                                            title: detail.title,
+                                            coverUrl: detail.cover,
+                                            source: 'hongguo',
+                                            targetUrl: detail.seriesId,
+                                            seriesId: detail.seriesId,
+                                            totalEpisodes: total,
+                                            addedAt: DateTime.now().millisecondsSinceEpoch,
+                                          ));
+                                          if (!mounted) return;
+                                          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                                          ScaffoldMessenger.of(context).showSnackBar(
+                                            SnackBar(
+                                              content: Row(
+                                                children: [
+                                                  Icon(
+                                                    added
+                                                        ? Icons.bookmark_added_rounded
+                                                        : Icons.bookmark_remove_rounded,
+                                                    color: added
+                                                        ? AppColors.primaryEmerald
+                                                        : Colors.orangeAccent,
+                                                    size: 18,
+                                                  ),
+                                                  const SizedBox(width: 8),
+                                                  Expanded(
+                                                    child: Text(
+                                                      added
+                                                          ? '🔖 Đã thêm "${detail.title}" vào danh sách Xem sau!'
+                                                          : '🗑️ Đã xóa "${detail.title}" khỏi danh sách Xem sau',
+                                                      maxLines: 2,
+                                                      overflow: TextOverflow.ellipsis,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                              duration: const Duration(seconds: 2),
+                                              behavior: SnackBarBehavior.floating,
+                                            ),
+                                          );
+                                        },
+                                        borderRadius: BorderRadius.circular(6),
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                          decoration: BoxDecoration(
+                                            color: isWl
+                                                ? AppColors.primaryEmerald.withValues(alpha: 0.25)
+                                                : Colors.white12,
+                                            borderRadius: BorderRadius.circular(6),
+                                            border: Border.all(
+                                              color: isWl
+                                                  ? AppColors.primaryEmerald
+                                                  : Colors.white24,
+                                              width: 0.8,
+                                            ),
+                                          ),
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Icon(
+                                                isWl ? Icons.bookmark_added_rounded : Icons.bookmark_add_outlined,
+                                                size: 13,
+                                                color: isWl ? AppColors.primaryEmerald : Colors.white70,
+                                              ),
+                                              const SizedBox(width: 4),
+                                              Text(
+                                                isWl ? 'Đã lưu' : 'Xem sau',
+                                                style: TextStyle(
+                                                  fontSize: 11,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: isWl ? AppColors.primaryEmerald : Colors.white70,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ],
                               ),
                               if (detail.intro.isNotEmpty) ...[
                                 const SizedBox(height: 6),

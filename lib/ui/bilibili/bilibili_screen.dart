@@ -7,6 +7,8 @@ import '../../data/repository/settings_repository.dart';
 import '../../domain/ai/offline_mlkit_translator.dart';
 import '../../domain/media/bilibili_resolver.dart';
 import '../../player/global_player_manager.dart';
+import '../../data/model/watch_later_item.dart';
+import '../../data/repository/watch_later_repository.dart';
 import '../theme/app_theme.dart';
 import 'bilibili_settings_sheet.dart';
 
@@ -443,6 +445,10 @@ class _BilibiliScreenState extends State<BilibiliScreen>
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
       builder: (ctx) {
+        final bvid = item.bvid ?? '';
+        final isWl = bvid.isNotEmpty &&
+            WatchLaterRepository.watchLaterNotifier.value.any(
+                (w) => w.targetUrl.contains(bvid) || w.id.contains(bvid));
         return SafeArea(
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 16),
@@ -496,6 +502,56 @@ class _BilibiliScreenState extends State<BilibiliScreen>
                   onTap: () {
                     Navigator.pop(ctx);
                     _toggleSingleItemTranslation(item.title);
+                  },
+                ),
+                ListTile(
+                  leading: Icon(
+                    isWl ? Icons.bookmark_added_rounded : Icons.bookmark_add_outlined,
+                    color: const Color(0xFF00AEEC),
+                  ),
+                  title: Text(
+                    isWl ? 'Xóa khỏi danh sách xem sau' : 'Thêm vào danh sách xem sau',
+                    style: const TextStyle(color: Colors.white, fontSize: 14),
+                  ),
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    final repo = await WatchLaterRepository.getInstance();
+                    final added = await repo.toggleWatchLater(WatchLaterItem(
+                      id: 'bili_${bvid.isNotEmpty ? bvid : item.title.hashCode}',
+                      title: item.title,
+                      coverUrl: item.cover,
+                      source: 'bilibili',
+                      targetUrl: item.targetPlayUrl,
+                      author: item.author,
+                      addedAt: DateTime.now().millisecondsSinceEpoch,
+                    ));
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Row(
+                          children: [
+                            Icon(
+                              added ? Icons.bookmark_added_rounded : Icons.bookmark_remove_rounded,
+                              color: added ? const Color(0xFF00AEEC) : Colors.orangeAccent,
+                              size: 18,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                added
+                                    ? '🔖 Đã thêm "${item.title}" vào danh sách Xem sau'
+                                    : '🗑️ Đã xóa "${item.title}" khỏi danh sách Xem sau',
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                        duration: const Duration(seconds: 2),
+                        behavior: SnackBarBehavior.floating,
+                      ),
+                    );
                   },
                 ),
                 ListTile(

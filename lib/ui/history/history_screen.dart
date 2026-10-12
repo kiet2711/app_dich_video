@@ -7,7 +7,9 @@ import 'package:share_plus/share_plus.dart';
 
 import '../../data/model/history_item.dart';
 import '../../data/model/subtitle_document.dart';
+import '../../data/model/watch_later_item.dart';
 import '../../data/repository/history_repository.dart';
+import '../../data/repository/watch_later_repository.dart';
 import '../../domain/ai/title_translator.dart';
 import '../../domain/media/bilibili_resolver.dart';
 import '../../domain/media/hongguo_resolver.dart';
@@ -134,6 +136,7 @@ class _HistoryScreenState extends State<HistoryScreen>
   HistoryRepository? _historyRepo;
   final HongguoResolver _hongguoResolver = HongguoResolver();
   late TabController _historyTabController;
+  String _watchLaterFilter = 'all';
 
   // Quản lý trạng thái hiển thị tiêu đề đã dịch tiếng Việt
   final Set<String> _showTranslatedItemIds = {};
@@ -366,7 +369,7 @@ class _HistoryScreenState extends State<HistoryScreen>
   @override
   void initState() {
     super.initState();
-    _historyTabController = TabController(length: 3, vsync: this);
+    _historyTabController = TabController(length: 4, vsync: this);
     _historyTabController.addListener(() {
       if (_isMultiSelectMode) {
         _exitMultiSelectMode();
@@ -418,12 +421,18 @@ class _HistoryScreenState extends State<HistoryScreen>
       return allItems.where(_isHongguoItem).toList();
     } else if (tabIndex == 1) {
       return allItems.where(_isBilibiliItem).toList();
+    } else if (tabIndex == 2) {
+      return const [];
     } else {
       return allItems.where((it) => !_isHongguoItem(it) && !_isBilibiliItem(it)).toList();
     }
   }
 
   Future<void> _confirmClearTab(int tabIndex, List<HistoryItem> itemsInTab) async {
+    if (tabIndex == 2) {
+      await _confirmClearWatchLater();
+      return;
+    }
     final tabName = tabIndex == 0
         ? 'Phim Hồng Quả'
         : (tabIndex == 1 ? 'Bilibili' : 'Video máy & Link ngoài');
@@ -962,21 +971,27 @@ class _HistoryScreenState extends State<HistoryScreen>
     return ValueListenableBuilder<List<HistoryItem>>(
       valueListenable: HistoryRepository.historyNotifier,
       builder: (context, allItems, _) {
-        final hgRaw = _filterItemsForTab(allItems, 0);
-        final biliRaw = _filterItemsForTab(allItems, 1);
-        final otherRaw = _filterItemsForTab(allItems, 2);
+        return ValueListenableBuilder<List<WatchLaterItem>>(
+          valueListenable: WatchLaterRepository.watchLaterNotifier,
+          builder: (context, watchLaterItems, _) {
+            final hgRaw = _filterItemsForTab(allItems, 0);
+            final biliRaw = _filterItemsForTab(allItems, 1);
+            final otherRaw = _filterItemsForTab(allItems, 3);
 
-        final currentTabIndex = _historyTabController.index;
-        final currentRawItems = currentTabIndex == 0
-            ? hgRaw
-            : (currentTabIndex == 1 ? biliRaw : otherRaw);
-        final currentDisplayItems = _groupHistoryItems(currentRawItems);
+            final currentTabIndex = _historyTabController.index;
+            final currentRawItems = currentTabIndex == 0
+                ? hgRaw
+                : (currentTabIndex == 1
+                    ? biliRaw
+                    : (currentTabIndex == 2 ? const <HistoryItem>[] : otherRaw));
+            final currentDisplayItems = _groupHistoryItems(currentRawItems);
 
-        final tabTitles = [
-          'Phim Hồng Quả',
-          'Bilibili',
-          'Video máy & Link ngoài',
-        ];
+            final tabTitles = [
+              'Phim Hồng Quả',
+              'Bilibili',
+              'Xem sau',
+              'Video máy & Link ngoài',
+            ];
 
         final isAllSelected = currentDisplayItems.isNotEmpty &&
             _selectedItemKeys.length >= currentDisplayItems.length &&
@@ -1096,25 +1111,37 @@ class _HistoryScreenState extends State<HistoryScreen>
                     child: TabBar(
                       controller: _historyTabController,
                       indicatorSize: TabBarIndicatorSize.tab,
+                      isScrollable: true,
+                      tabAlignment: TabAlignment.start,
+                      padding: EdgeInsets.zero,
+                      labelPadding: const EdgeInsets.symmetric(horizontal: 10),
                       indicator: BoxDecoration(
                         color: currentTabIndex == 0
                             ? AppTheme.primaryEmerald.withValues(alpha: 0.25)
                             : (currentTabIndex == 1
                                 ? const Color(0xFF00AEEC).withValues(alpha: 0.25)
-                                : Colors.white24),
+                                : (currentTabIndex == 2
+                                    ? Colors.amber.withValues(alpha: 0.25)
+                                    : Colors.white24)),
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(
                           color: currentTabIndex == 0
                               ? AppTheme.primaryEmerald
                               : (currentTabIndex == 1
                                   ? const Color(0xFF00AEEC)
-                                  : Colors.white60),
+                                  : (currentTabIndex == 2
+                                      ? Colors.amber
+                                      : Colors.white60)),
                           width: 1.2,
                         ),
                       ),
                       labelColor: currentTabIndex == 0
                           ? AppTheme.primaryEmerald
-                          : (currentTabIndex == 1 ? const Color(0xFF00AEEC) : Colors.white),
+                          : (currentTabIndex == 1
+                              ? const Color(0xFF00AEEC)
+                              : (currentTabIndex == 2
+                                  ? Colors.amber
+                                  : Colors.white)),
                       unselectedLabelColor: AppTheme.textSecondary,
                       labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
                       tabs: [
@@ -1127,6 +1154,10 @@ class _HistoryScreenState extends State<HistoryScreen>
                           text: 'Bilibili (${biliRaw.length})',
                         ),
                         Tab(
+                          icon: const Icon(Icons.bookmark_rounded, size: 16),
+                          text: 'Xem sau (${watchLaterItems.length})',
+                        ),
+                        Tab(
                           icon: const Icon(Icons.folder_open_rounded, size: 16),
                           text: 'Video & Khác (${otherRaw.length})',
                         ),
@@ -1134,8 +1165,12 @@ class _HistoryScreenState extends State<HistoryScreen>
                     ),
                   ),
 
-                  // Banner "Nhập Video & Phụ Đề Có Sẵn" (Hiển thị khi ở Tab Video & Khác)
-                  if (currentTabIndex == 2) ...[
+                  // 1. Tab 2: Xem sau
+                  if (currentTabIndex == 2)
+                    _buildWatchLaterTab(context, watchLaterItems, allItems)
+                  else ...[
+                    // Banner "Nhập Video & Phụ Đề Có Sẵn" (Hiển thị khi ở Tab Video & Khác)
+                    if (currentTabIndex == 3) ...[
                     InkWell(
                       onTap: _isMultiSelectMode ? null : _showImportSubtitleDialog,
                       borderRadius: BorderRadius.circular(16),
@@ -1294,6 +1329,7 @@ class _HistoryScreenState extends State<HistoryScreen>
                         }
                       },
                     ),
+                  ],
                 ],
               ),
             ),
@@ -1301,7 +1337,9 @@ class _HistoryScreenState extends State<HistoryScreen>
         );
       },
     );
-  }
+  },
+);
+}
 
   /// Card gom nhóm cho Phim Bộ (Hồng Quả / Short Drama)
   Widget _buildDramaGroupCard(
@@ -2161,6 +2199,696 @@ class _HistoryScreenState extends State<HistoryScreen>
     ),
   );
 }
+
+  Future<void> _confirmClearWatchLater() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.darkCard,
+        title: const Text('Xóa danh sách xem sau', style: TextStyle(color: Colors.white)),
+        content: const Text(
+          'Bạn có chắc chắn muốn xóa toàn bộ các mục trong danh sách Xem sau không?',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Hủy', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Xóa tất cả', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && mounted) {
+      final repo = await WatchLaterRepository.getInstance();
+      await repo.clearAll();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Đã xóa toàn bộ danh sách Xem sau')),
+        );
+      }
+    }
+  }
+
+  Future<void> _openWatchLaterItem(WatchLaterItem it, [List<HistoryItem>? historyItems]) async {
+    if (historyItems != null) {
+      final link = _resolveWatchLaterHistoryLink(it, historyItems);
+      link.onPlay();
+      return;
+    }
+    if (it.isHongguo) {
+      await _openWatchLaterHongguo(it);
+    } else {
+      await _openWatchLaterBilibili(it);
+    }
+  }
+
+  Future<void> _openWatchLaterHongguo(WatchLaterItem item, {int targetEpisodeIndex = 1}) async {
+    final dramaId = item.seriesId ?? item.targetUrl;
+    HongguoDramaDetail? dramaDetail;
+    try {
+      dramaDetail = await _hongguoResolver.getDramaDetail(dramaId);
+    } catch (_) {
+      dramaDetail = HongguoDramaDetail(
+        seriesId: dramaId,
+        title: item.title,
+        cover: item.coverUrl ?? '',
+        intro: '',
+        totalEpisodes: item.totalEpisodes ?? 100,
+        episodes: [],
+      );
+    }
+
+    if (!mounted) return;
+    GlobalPlayerManager.instance.openPlayer(
+      videoPath: 'https://pull-hls.hongguodrama.com/drama/$dramaId/$targetEpisodeIndex.m3u8',
+      title: '${item.title} - Tập $targetEpisodeIndex',
+      coverUrl: item.coverUrl,
+      document: SubtitleDocument(),
+      dramaDetail: dramaDetail,
+      currentEpisodeIndex: targetEpisodeIndex,
+    );
+  }
+
+  Future<void> _openWatchLaterBilibili(WatchLaterItem item) async {
+    final url = item.targetUrl.startsWith('http')
+        ? item.targetUrl
+        : 'https://www.bilibili.com/video/${item.targetUrl}';
+    GlobalPlayerManager.instance.openPlayer(
+      videoPath: url,
+      title: item.title,
+      coverUrl: item.coverUrl,
+      document: SubtitleDocument(),
+    );
+  }
+
+  Widget _buildFilterChip({
+    required String label,
+    required bool isSelected,
+    required VoidCallback onTap,
+    required Color color,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: isSelected ? color.withValues(alpha: 0.25) : AppTheme.darkSurfaceVariant,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: isSelected ? color : AppTheme.cardBorder,
+            width: isSelected ? 1.2 : 0.8,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: isSelected ? color : Colors.white70,
+            fontSize: 11.5,
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWatchLaterTab(
+    BuildContext context,
+    List<WatchLaterItem> allItems,
+    List<HistoryItem> historyItems,
+  ) {
+    final hgItems = allItems.where((it) => it.isHongguo).toList();
+    final biliItems = allItems.where((it) => it.isBilibili).toList();
+
+    final List<WatchLaterItem> filtered;
+    if (_watchLaterFilter == 'hongguo') {
+      filtered = hgItems;
+    } else if (_watchLaterFilter == 'bilibili') {
+      filtered = biliItems;
+    } else {
+      filtered = allItems;
+    }
+
+    final dateFormatter = DateFormat('dd/MM/yyyy HH:mm');
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // Thanh bộ lọc & nút xóa tất cả
+        Row(
+          children: [
+            _buildFilterChip(
+              label: 'Tất cả (${allItems.length})',
+              isSelected: _watchLaterFilter == 'all',
+              onTap: () => setState(() => _watchLaterFilter = 'all'),
+              color: Colors.amber,
+            ),
+            const SizedBox(width: 8),
+            _buildFilterChip(
+              label: 'Hồng Quả (${hgItems.length})',
+              isSelected: _watchLaterFilter == 'hongguo',
+              onTap: () => setState(() => _watchLaterFilter = 'hongguo'),
+              color: AppTheme.primaryEmerald,
+            ),
+            const SizedBox(width: 8),
+            _buildFilterChip(
+              label: 'Bilibili (${biliItems.length})',
+              isSelected: _watchLaterFilter == 'bilibili',
+              onTap: () => setState(() => _watchLaterFilter = 'bilibili'),
+              color: const Color(0xFF00AEEC),
+            ),
+            const Spacer(),
+            if (allItems.isNotEmpty)
+              TextButton.icon(
+                onPressed: _confirmClearWatchLater,
+                icon: const Icon(Icons.delete_sweep_outlined, size: 16, color: Colors.grey),
+                label: const Text('Xóa tất cả', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2)),
+              ),
+          ],
+        ),
+        const SizedBox(height: 12),
+
+        if (filtered.isEmpty)
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 20),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: AppTheme.darkCard,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppTheme.cardBorder),
+            ),
+            child: Column(
+              children: [
+                const Icon(
+                  Icons.bookmark_border_rounded,
+                  color: Colors.white24,
+                  size: 56,
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  allItems.isEmpty
+                      ? 'Chưa có phim hoặc video nào trong Xem sau'
+                      : 'Không có mục nào trong danh mục này',
+                  style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Khi lướt phim ở Hồng Quả, video Bilibili hoặc trong trình phát, hãy chạm vào nút 🔖 Xem sau để lưu lại xem bất cứ lúc nào!',
+                  style: TextStyle(color: Colors.grey, fontSize: 12, height: 1.4),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          )
+        else
+          ListView.separated(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: filtered.length,
+            separatorBuilder: (_, _) => const SizedBox(height: 10),
+            itemBuilder: (ctx, i) {
+              final it = filtered[i];
+              return _buildWatchLaterCard(ctx, it, dateFormatter, historyItems);
+            },
+          ),
+      ],
+    );
+  }
+
+  _WatchLaterHistoryLink _resolveWatchLaterHistoryLink(
+    WatchLaterItem it,
+    List<HistoryItem> historyItems,
+  ) {
+    if (it.isHongguo) {
+      final dramaId = it.seriesId ?? it.targetUrl;
+      final matchingEpisodes = historyItems.where((h) {
+        final hasDramaId = dramaId.isNotEmpty &&
+            ((h.seriesId != null && h.seriesId == dramaId) ||
+                h.videoPath.contains('/drama/$dramaId/') ||
+                h.id.contains(dramaId));
+        if (hasDramaId) return true;
+        if (it.title.isNotEmpty &&
+            (h.extractedSeriesTitle == it.title || h.title.startsWith(it.title))) {
+          return true;
+        }
+        return false;
+      }).toList();
+
+      if (matchingEpisodes.isNotEmpty) {
+        final dramaGroup = DramaHistoryGroup(
+          seriesKey: dramaId.isNotEmpty ? dramaId : it.title,
+          seriesTitle: it.title,
+          seriesId: dramaId.isNotEmpty ? dramaId : null,
+          seriesCover: it.coverUrl,
+          totalEpisodes: (it.totalEpisodes != null && it.totalEpisodes! > 0)
+              ? it.totalEpisodes!
+              : matchingEpisodes.length,
+          episodes: matchingEpisodes,
+        );
+
+        final latest = dramaGroup.latestWatchedEpisode;
+        final latestEpNum = latest.extractedEpisodeIndex;
+        final isFinished = latest.durationMs > 0 &&
+            latest.lastPositionMs >= latest.durationMs * 0.95;
+        final isWatching = latest.lastPositionMs > 0 && !isFinished;
+        final progress = (latest.durationMs > 0 && isWatching)
+            ? (latest.lastPositionMs / latest.durationMs).clamp(0.0, 1.0)
+            : null;
+
+        final String statusText;
+        final String buttonText;
+        final IconData buttonIcon;
+        final VoidCallback onPlayAction;
+
+        if (isWatching) {
+          statusText = 'Đang xem dở: Tập $latestEpNum (${_formatMs(latest.lastPositionMs)})';
+          buttonText = 'Xem tiếp Tập $latestEpNum (${_formatMs(latest.lastPositionMs)})';
+          buttonIcon = Icons.play_arrow_rounded;
+          onPlayAction = () => _openSeriesEpisode(latest, dramaGroup);
+        } else if (isFinished) {
+          final nextEpNum = latestEpNum + 1;
+          final nextEp = matchingEpisodes
+              .where((e) => e.extractedEpisodeIndex == nextEpNum)
+              .firstOrNull;
+          statusText = 'Đã xem xong Tập $latestEpNum';
+          buttonText = 'Xem tiếp Tập $nextEpNum';
+          buttonIcon = Icons.skip_next_rounded;
+          if (nextEp != null) {
+            onPlayAction = () => _openSeriesEpisode(nextEp, dramaGroup);
+          } else {
+            onPlayAction = () => _openWatchLaterHongguo(it, targetEpisodeIndex: nextEpNum);
+          }
+        } else {
+          statusText = 'Đã lưu ${matchingEpisodes.length} tập trong máy';
+          buttonText = 'Xem tiếp Tập $latestEpNum';
+          buttonIcon = Icons.play_arrow_rounded;
+          onPlayAction = () => _openSeriesEpisode(latest, dramaGroup);
+        }
+
+        return _WatchLaterHistoryLink(
+          hasHistory: true,
+          isWatching: isWatching,
+          isFinished: isFinished,
+          statusText: statusText,
+          buttonText: buttonText,
+          buttonIcon: buttonIcon,
+          dramaGroup: dramaGroup,
+          progressPercent: progress,
+          onPlay: onPlayAction,
+        );
+      } else {
+        // Chưa có lịch sử tập nào của phim này
+        final epCountText = (it.totalEpisodes != null && it.totalEpisodes! > 0)
+            ? 'Phim bộ · Tổng ${it.totalEpisodes} tập'
+            : 'Phim bộ Hồng Quả';
+        return _WatchLaterHistoryLink(
+          hasHistory: false,
+          isWatching: false,
+          isFinished: false,
+          statusText: epCountText,
+          buttonText: 'Xem ngay (Tập 1)',
+          buttonIcon: Icons.play_arrow_rounded,
+          onPlay: () => _openWatchLaterHongguo(it),
+        );
+      }
+    } else {
+      // Bilibili
+      final bvidMatch = RegExp(r'BV1[0-9a-zA-Z]{9}', caseSensitive: false)
+          .firstMatch('${it.targetUrl} ${it.id} ${it.title}');
+      final bvid = bvidMatch?.group(0);
+
+      HistoryItem? matchedHistory;
+      if (bvid != null && bvid.isNotEmpty) {
+        matchedHistory = historyItems.where((h) =>
+            h.videoPath.contains(bvid) ||
+            h.id.contains(bvid) ||
+            h.title.contains(bvid)).firstOrNull;
+      }
+      matchedHistory ??= historyItems.where((h) =>
+          h.videoPath == it.targetUrl ||
+          (it.title.isNotEmpty && h.title == it.title)).firstOrNull;
+
+      if (matchedHistory != null) {
+        final isFinished = matchedHistory.durationMs > 0 &&
+            matchedHistory.lastPositionMs >= matchedHistory.durationMs * 0.95;
+        final isWatching = matchedHistory.lastPositionMs > 0 && !isFinished;
+        final progress = (matchedHistory.durationMs > 0 && isWatching)
+            ? (matchedHistory.lastPositionMs / matchedHistory.durationMs).clamp(0.0, 1.0)
+            : null;
+
+        final String statusText;
+        final String buttonText;
+        final IconData buttonIcon;
+
+        if (isWatching) {
+          statusText = matchedHistory.durationMs > 0
+              ? 'Đang xem dở: ${_formatMs(matchedHistory.lastPositionMs)} / ${_formatMs(matchedHistory.durationMs)}'
+              : 'Đang xem dở: ${_formatMs(matchedHistory.lastPositionMs)}';
+          buttonText = 'Xem tiếp (${_formatMs(matchedHistory.lastPositionMs)})';
+          buttonIcon = Icons.play_arrow_rounded;
+        } else if (isFinished) {
+          statusText = matchedHistory.durationMs > 0
+              ? 'Đã xem xong (${_formatMs(matchedHistory.durationMs)})'
+              : 'Đã xem xong';
+          buttonText = 'Xem lại từ đầu';
+          buttonIcon = Icons.replay_rounded;
+        } else {
+          statusText = (it.author != null && it.author!.isNotEmpty)
+              ? 'Kênh: ${it.author}'
+              : 'Bilibili Video';
+          buttonText = 'Xem video';
+          buttonIcon = Icons.play_arrow_rounded;
+        }
+
+        final targetItem = matchedHistory;
+        return _WatchLaterHistoryLink(
+          hasHistory: true,
+          isWatching: isWatching,
+          isFinished: isFinished,
+          statusText: statusText,
+          buttonText: buttonText,
+          buttonIcon: buttonIcon,
+          progressPercent: progress,
+          onPlay: () => _openItem(targetItem),
+        );
+      } else {
+        final authorText = (it.author != null && it.author!.isNotEmpty)
+            ? 'Kênh: ${it.author}'
+            : 'Video Bilibili';
+        return _WatchLaterHistoryLink(
+          hasHistory: false,
+          isWatching: false,
+          isFinished: false,
+          statusText: authorText,
+          buttonText: 'Xem ngay',
+          buttonIcon: Icons.play_arrow_rounded,
+          onPlay: () => _openWatchLaterBilibili(it),
+        );
+      }
+    }
+  }
+
+  Widget _buildWatchLaterCard(
+    BuildContext context,
+    WatchLaterItem it,
+    DateFormat dateFormatter,
+    List<HistoryItem> historyItems,
+  ) {
+    final isHongguo = it.isHongguo;
+    final sourceColor = isHongguo ? AppTheme.primaryEmerald : const Color(0xFF00AEEC);
+    final sourceLabel = isHongguo ? 'Hồng Quả' : 'Bilibili';
+    final link = _resolveWatchLaterHistoryLink(it, historyItems);
+
+    return Container(
+      decoration: BoxDecoration(
+        color: AppTheme.darkCard,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: link.isWatching
+              ? AppTheme.accentGold.withValues(alpha: 0.4)
+              : AppTheme.cardBorder,
+          width: link.isWatching ? 1.2 : 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.25),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => _openWatchLaterItem(it, historyItems),
+        borderRadius: BorderRadius.circular(14),
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Ảnh bìa
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: Stack(
+                  children: [
+                    SizedBox(
+                      width: 82,
+                      height: 108,
+                      child: (it.coverUrl != null && it.coverUrl!.isNotEmpty)
+                          ? Image.network(
+                              it.coverUrl!,
+                              headers: _imageHeaders(it.coverUrl),
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, _, _) => Container(
+                                color: AppTheme.darkSurfaceVariant,
+                                child: Icon(
+                                  isHongguo ? Icons.movie_rounded : Icons.tv_rounded,
+                                  color: Colors.white24,
+                                ),
+                              ),
+                            )
+                          : Container(
+                              color: AppTheme.darkSurfaceVariant,
+                              child: Icon(
+                                isHongguo ? Icons.movie_rounded : Icons.tv_rounded,
+                                color: Colors.white24,
+                              ),
+                            ),
+                    ),
+                    Positioned(
+                      top: 4,
+                      left: 4,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: sourceColor.withValues(alpha: 0.9),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          sourceLabel,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                    if (link.progressPercent != null)
+                      Positioned(
+                        bottom: 0,
+                        left: 0,
+                        right: 0,
+                        child: LinearProgressIndicator(
+                          value: link.progressPercent!,
+                          minHeight: 3.5,
+                          backgroundColor: Colors.black54,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            link.isFinished
+                                ? AppTheme.primaryEmerald
+                                : AppTheme.accentGold,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+
+              // Thông tin
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      it.displayTitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        height: 1.3,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+
+                    // Trạng thái liên kết lịch sử
+                    if (link.isWatching)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
+                        decoration: BoxDecoration(
+                          color: AppTheme.accentGold.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: AppTheme.accentGold.withValues(alpha: 0.35),
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.history_rounded, size: 12, color: AppTheme.accentGold),
+                            const SizedBox(width: 4),
+                            Flexible(
+                              child: Text(
+                                link.statusText,
+                                style: const TextStyle(
+                                  color: AppTheme.accentGold,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    else if (link.isFinished)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
+                        decoration: BoxDecoration(
+                          color: AppTheme.primaryEmerald.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: AppTheme.primaryEmerald.withValues(alpha: 0.35),
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.check_circle_outline_rounded, size: 12, color: AppTheme.primaryEmerald),
+                            const SizedBox(width: 4),
+                            Flexible(
+                              child: Text(
+                                link.statusText,
+                                style: const TextStyle(
+                                  color: AppTheme.primaryEmerald,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    else
+                      Text(
+                        link.statusText,
+                        style: const TextStyle(color: Colors.white60, fontSize: 11.5),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    const SizedBox(height: 4),
+
+                    Text(
+                      'Đã lưu: ${dateFormatter.format(DateTime.fromMillisecondsSinceEpoch(it.addedAt))}',
+                      style: const TextStyle(color: Colors.white38, fontSize: 10.5),
+                    ),
+                    const SizedBox(height: 10),
+
+                    // Nút thao tác
+                    Row(
+                      children: [
+                        ElevatedButton.icon(
+                          onPressed: () => _openWatchLaterItem(it, historyItems),
+                          icon: Icon(link.buttonIcon, size: 16),
+                          label: Text(
+                            link.buttonText,
+                            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: link.isWatching ? AppTheme.accentGold : sourceColor,
+                            foregroundColor: link.isWatching ? Colors.black : Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            minimumSize: const Size(0, 32),
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                        ),
+                        if (link.dramaGroup != null) ...[
+                          const SizedBox(width: 8),
+                          OutlinedButton.icon(
+                            onPressed: () => _showDramaEpisodesSheet(link.dramaGroup!),
+                            icon: const Icon(Icons.list_alt_rounded, size: 14, color: Colors.white70),
+                            label: Text(
+                              'Tập (${link.dramaGroup!.episodes.length})',
+                              style: const TextStyle(fontSize: 11, color: Colors.white70),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: AppTheme.cardBorder),
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                              minimumSize: const Size(0, 32),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                            ),
+                          ),
+                        ],
+                        const Spacer(),
+                        IconButton(
+                          icon: const Icon(Icons.delete_outline_rounded, color: Colors.white54, size: 20),
+                          tooltip: 'Xóa khỏi xem sau',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                          onPressed: () async {
+                            final repo = await WatchLaterRepository.getInstance();
+                            await repo.removeItem(it.id);
+                            if (!context.mounted) return;
+                            ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Đã xóa "${it.title}" khỏi Xem sau'),
+                                duration: const Duration(seconds: 2),
+                              ),
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Thông tin liên kết giữa một mục Xem sau và Lịch sử xem
+class _WatchLaterHistoryLink {
+  final bool hasHistory;
+  final bool isWatching;
+  final bool isFinished;
+  final String statusText;
+  final String buttonText;
+  final IconData buttonIcon;
+  final VoidCallback onPlay;
+  final DramaHistoryGroup? dramaGroup;
+  final double? progressPercent;
+
+  _WatchLaterHistoryLink({
+    required this.hasHistory,
+    required this.isWatching,
+    required this.isFinished,
+    required this.statusText,
+    required this.buttonText,
+    required this.buttonIcon,
+    required this.onPlay,
+    this.dramaGroup,
+    this.progressPercent,
+  });
 }
 
 /// Widget hiển thị Bottom Sheet danh sách tập của phim bộ, hỗ trợ xem và chọn nhiều tập để xóa
