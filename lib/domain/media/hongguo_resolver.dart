@@ -657,58 +657,135 @@ class HongguoResolver {
   HongguoBrowseResult _parseDramaList(String html, int requestedPage) {
     final items = <HongguoDramaItem>[];
     final seen = <String>{};
+    var pageNum = requestedPage;
+    var totalPages = 1;
+    var totalItems = 0;
 
-    // Cách 1: Parse từ SSR JSON nhúng trong HTML (chứa series_name, cover, vid_list, tags...)
-    final jsonBlocks = RegExp(r'\{[^{}]*"series_id"\s*:\s*"(\d+)"[^{}]*\}')
-        .allMatches(html);
-    for (final b in jsonBlocks) {
-      final block = b.group(0)!;
-      final sid = _extractMatch(block, r'"series_id"\s*:\s*"(\d+)"');
-      if (sid.isEmpty || !seen.add(sid)) continue;
+    // Cách 1: Parse từ _ROUTER_DATA JSON nhúng trong SSR HTML (chứa series_name, cover HD, vid_list, tags...)
+    final routerIdx = html.indexOf('_ROUTER_DATA');
+    if (routerIdx != -1) {
+      try {
+        final eqIdx = html.indexOf('=', routerIdx);
+        final braceStart = html.indexOf('{', eqIdx);
+        if (braceStart != -1) {
+          var depth = 0;
+          var inString = false;
+          var escape = false;
+          var braceEnd = -1;
+          for (var i = braceStart; i < html.length; i++) {
+            final c = html[i];
+            if (escape) {
+              escape = false;
+              continue;
+            }
+            if (c == '\\') {
+              escape = true;
+              continue;
+            }
+            if (c == '"') {
+              inString = !inString;
+              continue;
+            }
+            if (!inString) {
+              if (c == '{') depth++;
+              if (c == '}') {
+                depth--;
+                if (depth == 0) {
+                  braceEnd = i;
+                  break;
+                }
+              }
+            }
+          }
 
-      final title = _cleanDramaTitle(
-        _extractMatch(block, r'"series_name"\s*:\s*"([^"]+)"'),
-      );
-      if (title.isEmpty) continue;
+          if (braceEnd != -1) {
+            final jsonStr = html.substring(braceStart, braceEnd + 1);
+            final map = jsonDecode(jsonStr) as Map<String, dynamic>;
+            final loaderData = map['loaderData'] as Map<String, dynamic>?;
 
-      final cover = _normalizeImageUrl(
-        _extractMatch(block, r'"series_cover"\s*:\s*"([^"]+)"'),
-      );
-      final epRightText = _cleanJsonString(
-        _extractMatch(block, r'"episode_right_text"\s*:\s*"([^"]+)"'),
-      );
-      final epCntMatch = RegExp(r'(\d+)').firstMatch(epRightText);
-      final epCount = epCntMatch != null
-          ? int.tryParse(epCntMatch.group(1)!) ?? 0
-          : 0;
+            void processList(dynamic list) {
+              if (list is! List) return;
+              for (final raw in list) {
+                if (raw is! Map<String, dynamic>) continue;
+                final sid = (raw['series_id'] ?? '').toString().trim();
+                if (sid.isEmpty || !seen.add(sid)) continue;
 
-      final intro = _cleanJsonString(
-        _extractMatch(block, r'"series_intro"\s*:\s*"([^"]+)"'),
-      );
+                var title = _cleanDramaTitle(
+                  (raw['series_name'] ?? raw['title'] ?? '').toString(),
+                );
+                if (title.isEmpty) continue;
 
-      // Tags
-      final tagsMatch = RegExp(r'"tags"\s*:\s*\[([^\]]*)\]').firstMatch(block);
-      final tags = <String>[];
-      if (tagsMatch != null) {
-        tags.addAll(
-          tagsMatch
-              .group(1)!
-              .split(',')
-              .map((s) => _cleanJsonString(s.replaceAll('"', '').trim()))
-              .where((s) => s.isNotEmpty),
-        );
-      }
+                var cover = _normalizeImageUrl(
+                  (raw['series_cover'] ?? raw['cover'] ?? raw['image'] ?? '').toString(),
+                );
 
-      items.add(
-        HongguoDramaItem(
-          seriesId: sid,
-          title: title,
-          cover: cover,
-          episodeCount: epCount,
-          tags: tags,
-          intro: intro,
-        ),
-      );
+                final epCount = int.tryParse(
+                      (raw['episode_cnt'] ?? raw['episodeCount'] ?? 0).toString(),
+                    ) ??
+                    0;
+                final intro = _cleanJsonString(
+                  (raw['series_intro'] ?? raw['intro'] ?? '').toString(),
+                );
+
+                final tags = <String>[];
+                final rawTags = raw['tags'];
+                if (rawTags is List) {
+                  tags.addAll(
+                    rawTags
+                        .map((e) => _cleanJsonString(e.toString()))
+                        .where((s) => s.isNotEmpty),
+                  );
+                }
+
+                final vidList = <String>[];
+                final rawVids = raw['vid_list'];
+                if (rawVids is List) {
+                  vidList.addAll(
+                    rawVids
+                        .map((e) => e.toString().trim())
+                        .where((s) => s.isNotEmpty && RegExp(r'^\d+$').hasMatch(s)),
+                  );
+                }
+
+                items.add(
+                  HongguoDramaItem(
+                    seriesId: sid,
+                    title: title,
+                    cover: cover,
+                    episodeCount: epCount,
+                    tags: tags,
+                    intro: intro,
+                    vidList: vidList,
+                  ),
+                );
+              }
+            }
+
+            loaderData?.forEach((_, routeData) {
+              if (routeData is Map<String, dynamic>) {
+                processList(routeData['recommendList']);
+                processList(routeData['dramaList']);
+                processList(routeData['searchList']);
+                processList(routeData['rankList']);
+
+                final pagination = routeData['pagination'];
+                if (pagination is Map<String, dynamic>) {
+                  totalPages = int.tryParse((pagination['totalPages'] ?? 1).toString()) ?? totalPages;
+                  totalItems = int.tryParse((pagination['total'] ?? 0).toString()) ?? totalItems;
+                  pageNum = int.tryParse((pagination['pageNum'] ?? pageNum).toString()) ?? pageNum;
+                }
+
+                final content = routeData['content'];
+                if (content is Map<String, dynamic>) {
+                  processList(content['recommendList']);
+                  processList(content['dramaList']);
+                  processList(content['rankList']);
+                }
+              }
+            });
+          }
+        }
+      } catch (_) {}
     }
 
     // Cách 2: Parse từ HTML DOM links nếu SSR JSON chưa bắt hết
@@ -727,9 +804,19 @@ class HongguoResolver {
             : _stripHtml(content);
         title = _cleanDramaTitle(title);
 
-        final cover = _normalizeImageUrl(
-          _extractMatch(content, r'src="([^"]+)"'),
-        );
+        var cover = '';
+        final imgMatches = RegExp(r'(?:src|srcSet|srcset)="([^"]+)"').allMatches(content);
+        for (final im in imgMatches) {
+          var u = im.group(1)!.trim();
+          if (u.contains('empty_play') || u.endsWith('.svg')) continue;
+          if (u.contains(' ')) u = u.split(' ').first;
+          u = _normalizeImageUrl(u);
+          if (u.isNotEmpty) {
+            cover = u;
+            break;
+          }
+        }
+
         final epText = _extractMatch(content, r'全(\d+)集');
         final epCount = int.tryParse(epText) ?? 0;
 
@@ -747,36 +834,35 @@ class HongguoResolver {
     }
 
     // Pagination
-    var pageNum = requestedPage;
-    var totalPages = 1;
-    var totalItems = items.length;
+    if (totalItems == 0) totalItems = items.length;
+    if (totalPages <= 1) {
+      final paginationMatch = RegExp(
+        r'"pagination"\s*:\s*\{[^}]*"total"\s*:\s*(\d+)[^}]*"pageNum"\s*:\s*(\d+)[^}]*"totalPages"\s*:\s*(\d+)',
+      ).firstMatch(html);
 
-    final paginationMatch = RegExp(
-      r'"pagination"\s*:\s*\{[^}]*"total"\s*:\s*(\d+)[^}]*"pageNum"\s*:\s*(\d+)[^}]*"totalPages"\s*:\s*(\d+)',
-    ).firstMatch(html);
-
-    if (paginationMatch != null) {
-      totalItems = int.tryParse(paginationMatch.group(1)!) ?? totalItems;
-      pageNum = int.tryParse(paginationMatch.group(2)!) ?? pageNum;
-      totalPages = int.tryParse(paginationMatch.group(3)!) ?? totalPages;
-    } else {
-      // Bóc tách số trang nếu SSR không trả JSON pagination (như trang bảng xếp hạng rank/hot-drama)
-      final pageLinks = RegExp(r'[?&]page=(\d+)').allMatches(html);
-      if (pageLinks.isNotEmpty) {
-        var maxP = 1;
-        for (final m in pageLinks) {
-          final p = int.tryParse(m.group(1)!) ?? 1;
-          if (p > maxP) maxP = p;
+      if (paginationMatch != null) {
+        totalItems = int.tryParse(paginationMatch.group(1)!) ?? totalItems;
+        pageNum = int.tryParse(paginationMatch.group(2)!) ?? pageNum;
+        totalPages = int.tryParse(paginationMatch.group(3)!) ?? totalPages;
+      } else {
+        // Bóc tách số trang nếu SSR không trả JSON pagination (như trang bảng xếp hạng rank/hot-drama)
+        final pageLinks = RegExp(r'[?&]page=(\d+)').allMatches(html);
+        if (pageLinks.isNotEmpty) {
+          var maxP = 1;
+          for (final m in pageLinks) {
+            final p = int.tryParse(m.group(1)!) ?? 1;
+            if (p > maxP) maxP = p;
+          }
+          totalPages = max(maxP, requestedPage);
+          totalItems = maxP * items.length;
         }
-        totalPages = maxP;
-        totalItems = maxP * items.length;
       }
     }
 
     return HongguoBrowseResult(
       items: items,
       currentPage: pageNum,
-      totalPages: totalPages,
+      totalPages: totalPages > 0 ? totalPages : 1,
       totalItems: totalItems,
     );
   }
@@ -797,7 +883,7 @@ class HongguoResolver {
 
   static String _normalizeImageUrl(String raw) {
     var clean = _cleanJsonString(raw);
-    if (clean.isEmpty) return '';
+    if (clean.isEmpty || clean.contains('empty_play')) return '';
     if (clean.startsWith('//')) {
       clean = 'https:$clean';
     } else if (clean.startsWith('http://')) {

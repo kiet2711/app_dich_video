@@ -1443,7 +1443,7 @@ class _DramaCard extends StatelessWidget {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  drama.cover.isNotEmpty
+                  (drama.cover.isNotEmpty && !drama.cover.contains('empty_play'))
                       ? Image.network(
                           drama.cover,
                           headers: NetworkHeaderHelper.getHeadersForUrl(drama.cover),
@@ -1833,12 +1833,13 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                                   const SizedBox(width: 8),
                                   ValueListenableBuilder<List<WatchLaterItem>>(
                                     valueListenable: WatchLaterRepository.watchLaterNotifier,
-                                    builder: (context, items, _) {
+                                    builder: (wlContext, items, _) {
                                       final isWl = items.any((w) =>
                                           w.seriesId == detail.seriesId ||
                                           w.id == 'hg_${detail.seriesId}');
                                       return InkWell(
                                         onTap: () async {
+                                          final messenger = ScaffoldMessenger.of(context);
                                           final repo = await WatchLaterRepository.getInstance();
                                           final added = await repo.toggleWatchLater(WatchLaterItem(
                                             id: 'hg_${detail.seriesId}',
@@ -1851,8 +1852,8 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                                             addedAt: DateTime.now().millisecondsSinceEpoch,
                                           ));
                                           if (!mounted) return;
-                                          ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                                          ScaffoldMessenger.of(context).showSnackBar(
+                                          messenger.hideCurrentSnackBar();
+                                          messenger.showSnackBar(
                                             SnackBar(
                                               content: Row(
                                                 children: [
