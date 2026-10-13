@@ -177,7 +177,9 @@ class VideoCacheManager {
 
       // 3. Kiểm tra theo URL MD5 hash (cho trường hợp video tải bằng URL online)
       if (url.isNotEmpty && (url.startsWith('http://') || url.startsWith('https://'))) {
-        final cleanUrl = url.split('?').first.trim();
+        final isBili = BilibiliResolver.isBilibiliPageUrl(url);
+        // Với Bilibili, bắt buộc giữ nguyên query để phân biệt các tập (?p=...)
+        final cleanUrl = isBili ? url.trim() : url.split('?').first.trim();
         final hash1 = md5.convert(utf8.encode(cleanUrl.isNotEmpty ? cleanUrl : url)).toString();
         final fileHash1 = File('${dir.path}${Platform.pathSeparator}video_$hash1.mp4');
         final validHash1 = await validateFile(fileHash1);

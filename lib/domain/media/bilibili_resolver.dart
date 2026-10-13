@@ -933,67 +933,90 @@ class BilibiliResolver {
   ]) async {
     var loginRequired = false;
 
-    // 1. Thử endpoint x/player/v2
-    try {
-      final response = await dio.get<Map<String, dynamic>>(
-        'https://api.bilibili.com/x/player/v2',
-        queryParameters: {
-          'aid': details.aid.toString(),
+    // 1. ƯU TIÊN SỐ 1: Endpoint chuẩn WBI v2 (Giống 100% bản PC tool - chính xác nhất theo từng bvid & cid)
+    if (details.cid > 0) {
+      try {
+        final params = <String, String>{
           'cid': details.cid.toString(),
-        },
-        options: Options(headers: requestHeaders(cookie)),
-      );
-      final json = response.data ?? const <String, dynamic>{};
-      if ((json['code'] as num?)?.toInt() == 0 &&
-          json['data'] is Map<String, dynamic>) {
-        final data = json['data'] as Map<String, dynamic>;
+        };
+        if (details.bvid.isNotEmpty) {
+          params['bvid'] = details.bvid;
+        }
+        if (details.aid > 0) {
+          params['aid'] = details.aid.toString();
+        }
+        final data = await _getWbiJson(
+          'https://api.bilibili.com/x/player/wbi/v2',
+          params,
+          cookie,
+        );
         if (data['need_login_subtitle'] == true) {
           loginRequired = true;
         }
         final list = parseSubtitles(data, throwOnLoginRequired: false);
         if (list.isNotEmpty) return list;
+      } catch (_) {
+        // Tiếp tục thử fallback
       }
-    } catch (_) {
-      // Tiếp tục thử fallback
     }
 
-    // 2. Thử endpoint Danmaku & Subtitle (x/v2/dm/view)
-    // Endpoint này được web/app Bilibili sử dụng công khai, trả về phụ đề CC/AI mà không yêu cầu login
-    try {
-      final response = await dio.get<Map<String, dynamic>>(
-        'https://api.bilibili.com/x/v2/dm/view',
-        queryParameters: {
+    // 2. DỰ PHÒNG 1: Thử endpoint Danmaku & Subtitle (x/v2/dm/view)
+    if (details.cid > 0) {
+      try {
+        final query = <String, String>{
           'type': '1',
           'oid': details.cid.toString(),
-          'pid': details.aid.toString(),
-        },
-        options: Options(headers: requestHeaders(cookie)),
-      );
-      final json = response.data ?? const <String, dynamic>{};
-      if ((json['code'] as num?)?.toInt() == 0 &&
-          json['data'] is Map<String, dynamic>) {
-        final data = json['data'] as Map<String, dynamic>;
-        final list = parseSubtitles(data, throwOnLoginRequired: false);
-        if (list.isNotEmpty) return list;
+        };
+        if (details.aid > 0) {
+          query['pid'] = details.aid.toString();
+        }
+        final response = await dio.get<Map<String, dynamic>>(
+          'https://api.bilibili.com/x/v2/dm/view',
+          queryParameters: query,
+          options: Options(headers: requestHeaders(cookie)),
+        );
+        final json = response.data ?? const <String, dynamic>{};
+        if ((json['code'] as num?)?.toInt() == 0 &&
+            json['data'] is Map<String, dynamic>) {
+          final data = json['data'] as Map<String, dynamic>;
+          final list = parseSubtitles(data, throwOnLoginRequired: false);
+          if (list.isNotEmpty) return list;
+        }
+      } catch (_) {
+        // Tiếp tục thử fallback
       }
-    } catch (_) {
-      // Tiếp tục thử fallback
     }
 
-    // 3. Thử endpoint WBI v2
-    try {
-      final data = await _getWbiJson('https://api.bilibili.com/x/player/wbi/v2', {
-        'aid': details.aid.toString(),
-        'bvid': details.bvid,
-        'cid': details.cid.toString(),
-      }, cookie);
-      if (data['need_login_subtitle'] == true) {
-        loginRequired = true;
+    // 3. DỰ PHÒNG 2: Thử endpoint x/player/v2
+    if (details.cid > 0) {
+      try {
+        final query = <String, String>{
+          'cid': details.cid.toString(),
+        };
+        if (details.bvid.isNotEmpty) {
+          query['bvid'] = details.bvid;
+        }
+        if (details.aid > 0) {
+          query['aid'] = details.aid.toString();
+        }
+        final response = await dio.get<Map<String, dynamic>>(
+          'https://api.bilibili.com/x/player/v2',
+          queryParameters: query,
+          options: Options(headers: requestHeaders(cookie)),
+        );
+        final json = response.data ?? const <String, dynamic>{};
+        if ((json['code'] as num?)?.toInt() == 0 &&
+            json['data'] is Map<String, dynamic>) {
+          final data = json['data'] as Map<String, dynamic>;
+          if (data['need_login_subtitle'] == true) {
+            loginRequired = true;
+          }
+          final list = parseSubtitles(data, throwOnLoginRequired: false);
+          if (list.isNotEmpty) return list;
+        }
+      } catch (_) {
+        // Bỏ qua
       }
-      final list = parseSubtitles(data, throwOnLoginRequired: false);
-      if (list.isNotEmpty) return list;
-    } catch (_) {
-      // Bỏ qua
     }
 
     if (loginRequired) {
@@ -1007,7 +1030,9 @@ class BilibiliResolver {
     bool throwOnLoginRequired = true,
   }) {
     final subtitle = data['subtitle'] as Map<String, dynamic>?;
-    final list = subtitle?['subtitles'] as List<dynamic>? ?? const [];
+    final list = (subtitle?['subtitles'] as List<dynamic>?) ??
+        (subtitle?['list'] as List<dynamic>?) ??
+        const [];
     if (list.isEmpty &&
         data['need_login_subtitle'] == true &&
         throwOnLoginRequired) {

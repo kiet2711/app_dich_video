@@ -103,12 +103,35 @@ class SubtitlingPipeline {
       final settings = await SettingsRepository.getInstance();
       var extractionPath = videoPath;
       SubtitleDocument? sourceDocument;
+      BilibiliVideoDetails? bilibiliDetails;
+
+      String canonicalIdentifier = videoPath;
+      if (BilibiliResolver.isBilibiliPageUrl(videoPath)) {
+        final resolver = BilibiliResolver();
+        _emit(
+          const ProcessProgress(
+            stage: ProcessStage.extractingAudio,
+            progress: 0.02,
+            message: 'Đang phân tích link Bilibili...',
+          ),
+        );
+        final target = await resolver.resolveUrl(videoPath);
+        bilibiliDetails = await resolver.getVideoDetails(
+          target,
+          settings.bilibiliSessData,
+        );
+        lastResolvedTitle = bilibiliDetails.title;
+        lastResolvedCover = bilibiliDetails.coverUrl;
+        // Đảm bảo mỗi tập/part và cid có không gian checkpoint độc lập hoàn toàn:
+        canonicalIdentifier =
+            'bilibili_${bilibiliDetails.bvid}_p${bilibiliDetails.selectedPageIndex}_cid${bilibiliDetails.cid}';
+      }
 
       // 0. KIỂM TRA BẢN NHÁP / CHECKPOINT DANG DỞ TỪ PHIÊN TRƯỚC
       final sessionKey = TranslationCheckpointManager.generateSessionKey(
         document: SubtitleDocument(),
         targetLanguage: targetLanguage,
-        identifier: videoPath,
+        identifier: canonicalIdentifier,
       );
       final existingDraft = await TranslationCheckpointManager.loadDraft(sessionKey);
       if (existingDraft != null && existingDraft.sourceDocument.isNotEmpty) {
@@ -122,22 +145,9 @@ class SubtitlingPipeline {
         );
       }
 
-      if (sourceDocument == null && BilibiliResolver.isBilibiliPageUrl(videoPath)) {
+      if (sourceDocument == null && bilibiliDetails != null) {
+        final details = bilibiliDetails;
         final resolver = BilibiliResolver();
-        _emit(
-          const ProcessProgress(
-            stage: ProcessStage.extractingAudio,
-            progress: 0.02,
-      message: 'Đang phân tích link Bilibili...',
-          ),
-        );
-        final target = await resolver.resolveUrl(videoPath);
-        final details = await resolver.getVideoDetails(
-          target,
-          settings.bilibiliSessData,
-        );
-        lastResolvedTitle = details.title;
-        lastResolvedCover = details.coverUrl;
 
         // Kiểm tra xem người dùng có chọn tải video Bilibili về xem offline không
         final shouldDownloadVideo = downloadBilibiliVideo ?? settings.downloadBilibiliVideo;
@@ -225,12 +235,10 @@ class SubtitlingPipeline {
               details,
               settings.bilibiliSessData,
             );
-            final manualSubtitles = subtitles
-                .where((item) => !item.isAi)
-                .toList();
-            final preferred = manualSubtitles.isNotEmpty
-                ? manualSubtitles.first
-                : (subtitles.isNotEmpty ? subtitles.first : null);
+            final preferred = selectBestBilibiliSubtitle(
+              subtitles,
+              sourceLanguage: sourceLanguage,
+            );
             if (preferred != null) {
               sourceDocument = await resolver.downloadSubtitle(preferred);
               if (sourceDocument != null) {
@@ -663,11 +671,7 @@ class SubtitlingPipeline {
           targetLanguage: targetLanguage,
           chunkSize: effectiveBatchSize,
           threadCount: effectiveThreadCount,
-          checkpointSessionId: TranslationCheckpointManager.generateSessionKey(
-            document: fullDoc,
-            targetLanguage: targetLanguage,
-            identifier: videoPath,
-          ),
+          checkpointSessionId: sessionKey,
           isCancelled: () => _isCancelled,
           progressCallback: (pct, msg) {
             final overall = 0.70 + (pct * 0.28);
@@ -718,6 +722,74 @@ class SubtitlingPipeline {
       } catch (_) {}
       unawaited(VideoCacheManager.pruneCacheIfNeeded());
     }
+  }
+
+  /// Thuật toán lọc và ưu tiên track phụ đề Bilibili chuẩn xác nhất theo ngôn ngữ gốc
+  static BilibiliSubtitleInfo? selectBestBilibiliSubtitle(
+    List<BilibiliSubtitleInfo> subtitles, {
+    String sourceLanguage = 'zh',
+  }) {
+    if (subtitles.isEmpty) return null;
+
+    int scoreTrack(BilibiliSubtitleInfo item) {
+      final lang = item.language.toLowerCase().trim();
+      final name = item.languageName.toLowerCase().trim();
+
+      final isChinese = lang.contains('zh') ||
+          name.contains('中文') ||
+          name.contains('汉语') ||
+          name.contains('华语') ||
+          lang == 'chi' ||
+          lang == 'zho';
+
+      final isSimplified = isChinese &&
+          (lang.contains('hans') ||
+              lang.contains('cn') ||
+              name.contains('简体') ||
+              lang == 'zh' ||
+              lang == 'ai-zh');
+
+      final isTraditional = isChinese &&
+          (lang.contains('hant') ||
+              lang.contains('tw') ||
+              lang.contains('hk') ||
+              name.contains('繁体'));
+
+      // Ưu tiên 1: Phụ đề tiếng Trung thủ công CC (chất lượng cao nhất do tác giả/người dịch làm)
+      if (isSimplified && !item.isAi) return 1000;
+      if (isChinese && !item.isAi) return 900;
+      if (isTraditional && !item.isAi) return 800;
+
+      // Ưu tiên 2: Phụ đề AI tiếng Trung do Bilibili bóc tách từ giọng nói gốc của video (ai-zh)
+      if (isSimplified && item.isAi) return 700;
+      if (isChinese && item.isAi) return 600;
+      if (isTraditional && item.isAi) return 500;
+
+      // Nếu video là nguồn ngôn ngữ khác (ví dụ user chọn English / Japanese):
+      if (sourceLanguage.isNotEmpty &&
+          sourceLanguage != 'zh' &&
+          (lang.contains(sourceLanguage) || name.contains(sourceLanguage))) {
+        return item.isAi ? 400 : 450;
+      }
+
+      // Track thủ công ngôn ngữ khác (ví dụ tiếng Anh CC):
+      if (!item.isAi && (lang.contains('en') || name.contains('english'))) {
+        return 300;
+      }
+
+      // Các track AI dịch tự động của Bilibili sang ngôn ngữ thứ 3 (ai-en, ai-ja, ai-id, ai-th...):
+      // Đặt điểm rất thấp để không bao giờ bị bốc nhầm trước track tiếng Trung gốc
+      if (item.isAi && (lang.contains('en') || name.contains('english'))) return 100;
+      if (item.isAi && (lang.contains('ja') || name.contains('japanese'))) return 80;
+
+      // Các ngôn ngữ dịch tự động khác (ai-id, ai-th, ai-es, ai-ar...):
+      return 10;
+    }
+
+    final sorted = List<BilibiliSubtitleInfo>.from(subtitles)
+      ..sort((a, b) => scoreTrack(b).compareTo(scoreTrack(a)));
+
+    return sorted.first;
   }
 
   void dispose() {

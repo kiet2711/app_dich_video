@@ -213,10 +213,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     if (_currentDocument.isEmpty) {
       try {
         final history = await HistoryRepository.getInstance();
-        final bvid = RegExp(r'BV[a-zA-Z0-9]+', caseSensitive: false).firstMatch(_sourceVideoUrl)?.group(0);
         final item = history.getHistory().where((h) {
           if (h.videoPath == _sourceVideoUrl || h.videoPath == _currentVideoPath) return true;
-          if (bvid != null && h.videoPath.contains(bvid)) return true;
+          if (HistoryRepository.matchesBilibiliUrl(h.videoPath, _sourceVideoUrl)) return true;
           return false;
         }).firstOrNull;
 

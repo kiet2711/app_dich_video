@@ -187,6 +187,25 @@ class HistoryRepository {
     return await resolvePath(item.videoPath);
   }
 
+  /// Kiểm tra 2 đường dẫn video Bilibili có cùng đại diện cho đúng 1 tập video hay không.
+  /// Bắt buộc cùng mã BVID VÀ cùng số tập (p).
+  static bool matchesBilibiliUrl(String path1, String path2) {
+    if (path1.trim().toLowerCase() == path2.trim().toLowerCase()) return true;
+    final bvid1 = RegExp(r'BV[0-9a-zA-Z]{10}', caseSensitive: false).firstMatch(path1)?.group(0);
+    final bvid2 = RegExp(r'BV[0-9a-zA-Z]{10}', caseSensitive: false).firstMatch(path2)?.group(0);
+    if (bvid1 == null || bvid2 == null) return false;
+    if (bvid1.toLowerCase() != bvid2.toLowerCase()) return false;
+
+    // Khi đã cùng BVID, bắt buộc phải cùng số phân đoạn/tập p (mặc định là 1 nếu không có tham số ?p=)
+    final p1 = RegExp(r'[?&]p=(\d+)', caseSensitive: false).firstMatch(path1)?.group(1) ??
+        RegExp(r'(?:index_|/p)(\d+)', caseSensitive: false).firstMatch(path1)?.group(1) ??
+        '1';
+    final p2 = RegExp(r'[?&]p=(\d+)', caseSensitive: false).firstMatch(path2)?.group(1) ??
+        RegExp(r'(?:index_|/p)(\d+)', caseSensitive: false).firstMatch(path2)?.group(1) ??
+        '1';
+    return p1 == p2;
+  }
+
   /// Lưu phụ đề và video vào lịch sử.
   /// Tự động sao chép file SRT và JSON vào thư mục tài liệu của ứng dụng để tránh bị mất.
   Future<HistoryItem> saveHistory({
@@ -210,7 +229,6 @@ class HistoryRepository {
     }
 
     final items = getHistory();
-    final bvidMatch = RegExp(r'BV[a-zA-Z0-9]+', caseSensitive: false).firstMatch(videoPath)?.group(0);
     final normalizedSeriesId = seriesId?.trim();
     final hasEpisodeIdentity = normalizedSeriesId != null &&
         normalizedSeriesId.isNotEmpty &&
@@ -223,7 +241,7 @@ class HistoryRepository {
         return true;
       }
       if (it.videoPath == videoPath) return true;
-      if (bvidMatch != null && it.videoPath.contains(bvidMatch)) return true;
+      if (matchesBilibiliUrl(it.videoPath, videoPath)) return true;
       return false;
     }).firstOrNull;
     final id = existing?.id ?? DateTime.now().millisecondsSinceEpoch.toString();
@@ -397,15 +415,10 @@ class HistoryRepository {
     bool createIfMissing = false,
   }) async {
     final items = getHistory();
-    final bvid = RegExp(r'BV1[0-9a-zA-Z]{9}', caseSensitive: false).firstMatch(videoPath)?.group(0);
 
     final index = items.indexWhere((item) {
       if (item.videoPath == videoPath || item.id == videoPath) return true;
-      if (bvid != null) {
-        if (item.videoPath.contains(bvid) || item.id.contains(bvid)) return true;
-        final itemBv = RegExp(r'BV1[0-9a-zA-Z]{9}', caseSensitive: false).firstMatch(item.title)?.group(0);
-        if (itemBv != null && itemBv.toLowerCase() == bvid.toLowerCase()) return true;
-      }
+      if (matchesBilibiliUrl(item.videoPath, videoPath)) return true;
       return false;
     });
 
@@ -532,11 +545,9 @@ class HistoryRepository {
 
   Future<void> updateVideoPath(String oldPath, String newPath) async {
     final items = getHistory();
-    final bvid = RegExp(r'BV[a-zA-Z0-9]+', caseSensitive: false).firstMatch(oldPath)?.group(0);
     var changed = false;
     for (var i = 0; i < items.length; i++) {
-      if (items[i].videoPath == oldPath ||
-          (bvid != null && items[i].videoPath.contains(bvid))) {
+      if (items[i].videoPath == oldPath || matchesBilibiliUrl(items[i].videoPath, oldPath)) {
         items[i] = items[i].copyWith(videoPath: newPath);
         changed = true;
       }
@@ -549,13 +560,12 @@ class HistoryRepository {
   Future<void> updateTitleForVideo(String videoPath, String newTitle) async {
     final clean = newTitle.replaceAll(RegExp(r'\.mp4$', caseSensitive: false), '').trim();
     if (clean.isEmpty) return;
-    final bvid = RegExp(r'BV[a-zA-Z0-9]+', caseSensitive: false).firstMatch(videoPath)?.group(0);
 
     final items = getHistory();
     var changed = false;
     for (var i = 0; i < items.length; i++) {
       final matchesPath = items[i].videoPath == videoPath ||
-          (bvid != null && items[i].videoPath.contains(bvid));
+          matchesBilibiliUrl(items[i].videoPath, videoPath);
       if (matchesPath) {
         if (items[i].title != clean || items[i].originalTitle != clean) {
           items[i] = items[i].copyWith(
@@ -574,14 +584,13 @@ class HistoryRepository {
   Future<void> updateCoverForVideo(String idOrVideoPath, String newCoverUrl) async {
     final clean = newCoverUrl.trim();
     if (clean.isEmpty) return;
-    final bvid = RegExp(r'BV[a-zA-Z0-9]+', caseSensitive: false).firstMatch(idOrVideoPath)?.group(0);
 
     final items = getHistory();
     var changed = false;
     for (var i = 0; i < items.length; i++) {
       final matches = items[i].id == idOrVideoPath ||
           items[i].videoPath == idOrVideoPath ||
-          (bvid != null && items[i].videoPath.contains(bvid));
+          matchesBilibiliUrl(items[i].videoPath, idOrVideoPath);
       if (matches) {
         if (items[i].seriesCover != clean) {
           items[i] = items[i].copyWith(seriesCover: clean);
@@ -597,7 +606,6 @@ class HistoryRepository {
   Future<void> updateTranslatedTitle(String idOrVideoPath, String translatedTitle) async {
     final clean = translatedTitle.replaceAll(RegExp(r'\.mp4$', caseSensitive: false), '').trim();
     if (clean.isEmpty) return;
-    final bvid = RegExp(r'BV[a-zA-Z0-9]+', caseSensitive: false).firstMatch(idOrVideoPath)?.group(0);
 
     final items = getHistory();
     var changed = false;
@@ -605,7 +613,7 @@ class HistoryRepository {
       final matches = items[i].id == idOrVideoPath ||
           items[i].videoPath == idOrVideoPath ||
           items[i].title == idOrVideoPath ||
-          (bvid != null && items[i].videoPath.contains(bvid));
+          matchesBilibiliUrl(items[i].videoPath, idOrVideoPath);
       if (matches) {
         items[i] = items[i].copyWith(
           translatedTitle: clean,
