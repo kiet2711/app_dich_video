@@ -204,7 +204,7 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
                     ),
                     const SizedBox(height: 4),
                     const Text(
-                      'Chạy duy nhất engine đã chọn để kiểm tra độc lập tốc độ & lỗi (Fallback: ĐÃ TẮT).',
+                      'Tự động kết hợp CDN trực tiếp, Device Register và Fallback thông minh giữa Local & Cloud.',
                       style: TextStyle(
                         color: AppColors.textMuted,
                         fontSize: 11,
@@ -245,7 +245,7 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
                         ),
                         subtitle: Text(
                           _videoResolverEngine == 'local'
-                              ? 'Tự ký request, tải và giải mã CENC ngay trên máy.'
+                              ? 'Tự đăng ký thiết bị ByteDance, tải và giải mã CENC ngay trên máy.'
                               : 'Gửi Video ID đến server Hugging Face để xử lý.',
                           style: const TextStyle(
                             color: AppColors.textMuted,

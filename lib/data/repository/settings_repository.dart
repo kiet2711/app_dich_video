@@ -285,7 +285,7 @@ class SettingsRepository {
       prefs.setString('hongguo_translation_mode', v);
 
   /// Engine lấy và giải mã video Hồng Quả: 'local' hoặc 'hf'.
-  /// Hai chế độ chạy độc lập; resolver không tự chuyển sang engine còn lại.
+  /// Hệ thống ưu tiên engine được chọn và tự động fallback sang engine còn lại nếu gặp lỗi.
   String get hongguoVideoResolverEngine =>
       prefs.getString('hongguo_video_resolver_engine') ?? 'local';
   set hongguoVideoResolverEngine(String v) => prefs.setString(

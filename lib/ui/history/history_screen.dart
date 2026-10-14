@@ -13,6 +13,7 @@ import '../../data/repository/watch_later_repository.dart';
 import '../../domain/ai/title_translator.dart';
 import '../../domain/media/bilibili_resolver.dart';
 import '../../domain/media/hongguo_resolver.dart';
+import '../../domain/media/video_cache_manager.dart';
 import '../../data/repository/settings_repository.dart';
 import '../../player/global_player_manager.dart';
 import '../settings/settings_screen.dart';
@@ -2251,6 +2252,30 @@ class _HistoryScreenState extends State<HistoryScreen>
   Future<void> _openWatchLaterHongguo(WatchLaterItem item, {int targetEpisodeIndex = 1}) async {
     final dramaId = item.seriesId ?? item.targetUrl;
     HongguoDramaDetail? dramaDetail;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Đang chuẩn bị ${item.title} - Tập $targetEpisodeIndex...',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+
     try {
       dramaDetail = await _hongguoResolver.getDramaDetail(dramaId);
     } catch (_) {
@@ -2264,9 +2289,37 @@ class _HistoryScreenState extends State<HistoryScreen>
       );
     }
 
+    var vid = '';
+    if (dramaDetail.episodes.isNotEmpty && targetEpisodeIndex <= dramaDetail.episodes.length) {
+      vid = dramaDetail.episodes[targetEpisodeIndex - 1].vid;
+    }
+
+    String effectiveVideoPath;
+    try {
+      effectiveVideoPath = await _hongguoResolver.getEpisodePlayUrl(
+        dramaId,
+        vid.isNotEmpty ? vid : dramaId,
+        episodeIndex: targetEpisodeIndex,
+      );
+    } catch (_) {
+      final publicFallback = vid.isNotEmpty
+          ? 'https://hongguoduanju.com/video/public/$vid/360p.mp4'
+          : 'https://hongguoduanju.com/player/$dramaId';
+      effectiveVideoPath = publicFallback;
+    }
+
+    final cached = await VideoCacheManager.findCachedFile(
+      url: effectiveVideoPath,
+      seriesId: dramaId,
+      episodeIndex: targetEpisodeIndex,
+    );
+    if (cached != null && cached.existsSync() && cached.lengthSync() > 1000) {
+      effectiveVideoPath = cached.path;
+    }
+
     if (!mounted) return;
     GlobalPlayerManager.instance.openPlayer(
-      videoPath: 'https://pull-hls.hongguodrama.com/drama/$dramaId/$targetEpisodeIndex.m3u8',
+      videoPath: effectiveVideoPath,
       title: '${item.title} - Tập $targetEpisodeIndex',
       coverUrl: item.coverUrl,
       document: SubtitleDocument(),

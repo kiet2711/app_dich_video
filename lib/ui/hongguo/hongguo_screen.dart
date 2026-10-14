@@ -2304,7 +2304,31 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
       _loadingTts = enableTts;
     });
     final playUrl = await _resolveCurrentEpisodeUrl();
-    if (playUrl == null || !mounted) return;
+    if (!mounted) return;
+    if (playUrl == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.error_outline_rounded, color: Colors.white, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _statusMessage.isNotEmpty
+                      ? _statusMessage
+                      : 'Không thể lấy liên kết video tập $_selectedEpisodeIndex',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: Colors.redAccent.shade700,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+      return;
+    }
 
     var effectivePath = playUrl;
     final cached = await VideoCacheManager.findCachedFile(

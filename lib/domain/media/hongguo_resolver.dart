@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import '../../data/repository/settings_repository.dart';
 import 'network_header_helper.dart';
 import 'hongguo/hongguo_local_engine.dart';
+import 'video_cache_manager.dart';
 
 class HongguoDramaItem {
   final String seriesId;
@@ -579,41 +580,47 @@ class HongguoResolver {
   }) async {
     final actualVid = (vid.isNotEmpty && vid != seriesId) ? vid : '';
 
-    // Khi có Video ID: Chạy duy nhất engine đã chọn để kiểm tra độc lập tốc độ & lỗi (Fallback: TẮT)
-    if (actualVid.isNotEmpty) {
-      final settings = await SettingsRepository.getInstance();
-      final engine = settings.hongguoVideoResolverEngine;
+    // 1. Kiểm tra cache trên máy trước (nếu đã tải về thì phát offline ngay lập tức)
+    final cached = await VideoCacheManager.findCachedFile(
+      url: actualVid.isNotEmpty
+          ? 'https://hongguoduanju.com/video/public/$actualVid/360p.mp4'
+          : '$siteOrigin/player/$seriesId',
+      seriesId: seriesId,
+      episodeIndex: episodeIndex,
+    );
+    if (cached != null && cached.existsSync() && cached.lengthSync() > 1000) {
       debugPrint(
-        '[HongguoResolver] ⚡ Đang chạy duy nhất engine: '
-        '${engine == 'hf' ? 'Hugging Face Space' : 'LOCAL ON-DEVICE'} '
-        'cho tập $episodeIndex (Fallback: ĐÃ TẮT)',
+        '[HongguoResolver] ⚡ Phát hiện file cache nội bộ của tập $episodeIndex: ${cached.path}',
       );
-
-      if (engine == 'local') {
-        // Chạy Local Engine thuần túy trên thiết bị (không fallback sang HF)
-        return await HongguoLocalEngine.resolveAndGetPlayableUrl(
-          seriesId,
-          actualVid,
-          episodeIndex: episodeIndex,
-        );
-      } else {
-        // Chạy Hugging Face Space thuần túy (không fallback sang Local)
-        final hfPlayUrl = await _resolveFromHfApi(actualVid);
-        if (hfPlayUrl != null && hfPlayUrl.isNotEmpty) {
-          return hfPlayUrl;
-        }
-        throw StateError(
-          'Hugging Face không trả về link phát cho tập $episodeIndex.',
-        );
-      }
+      return cached.path;
     }
 
-    // Chỉ dùng web public khi không có Video ID cụ thể
+    // 2. Kiểm tra trực tiếp link MP4 công khai trên CDN Hồng Quả (https://hongguoduanju.com/video/public/$vid/360p.mp4)
+    if (actualVid.isNotEmpty) {
+      final publicUrl = 'https://hongguoduanju.com/video/public/$actualVid/360p.mp4';
+      try {
+        final headRes = await dio.head(
+          publicUrl,
+          options: Options(
+            validateStatus: (status) => status != null && status < 400,
+            receiveTimeout: const Duration(seconds: 4),
+            sendTimeout: const Duration(seconds: 4),
+          ),
+        );
+        final contentType = headRes.headers.value('content-type') ?? '';
+        final contentLength = int.tryParse(headRes.headers.value('content-length') ?? '0') ?? 0;
+        if (headRes.statusCode == 200 &&
+            (contentType.contains('video') || contentType.contains('mp4') || contentLength > 100000)) {
+          debugPrint('[HongguoResolver] ⚡ Tìm thấy link MP4 công khai trực tiếp trên CDN: $publicUrl');
+          return publicUrl;
+        }
+      } catch (_) {}
+    }
+
+    // 3. Quét nhanh trang web player công khai của Hồng Quả
     final candidates = <String>[
-      if (vid.isNotEmpty && vid != seriesId)
-        '$siteOrigin/player/$seriesId/$vid',
-      if (episodeIndex == 1 || vid.isEmpty || vid == seriesId)
-        '$siteOrigin/player/$seriesId',
+      if (vid.isNotEmpty && vid != seriesId) '$siteOrigin/player/$seriesId/$vid',
+      if (episodeIndex == 1 || vid.isEmpty || vid == seriesId) '$siteOrigin/player/$seriesId',
       if (vid.isNotEmpty && vid != seriesId) '$siteOrigin/player/_/$vid',
     ];
 
@@ -623,6 +630,7 @@ class HongguoResolver {
           url,
           options: Options(
             validateStatus: (status) => status != null && status < 400,
+            receiveTimeout: const Duration(seconds: 5),
           ),
         );
         final html = res.data ?? '';
@@ -630,8 +638,8 @@ class HongguoResolver {
         final contentUrl = _cleanJsonString(
           _extractMatch(html, r'"contentUrl"\s*:\s*"([^"]+)"'),
         );
-        if (contentUrl.startsWith('http://') ||
-            contentUrl.startsWith('https://')) {
+        if (contentUrl.startsWith('http://') || contentUrl.startsWith('https://')) {
+          debugPrint('[HongguoResolver] ⚡ Bóc tách thành công contentUrl từ web: $contentUrl');
           return contentUrl;
         }
 
@@ -639,15 +647,60 @@ class HongguoResolver {
           _extractMatch(html, r'"main_url"\s*:\s*"([^"]+)"'),
         );
         if (mainUrl.startsWith('http://') || mainUrl.startsWith('https://')) {
+          debugPrint('[HongguoResolver] ⚡ Bóc tách thành công main_url từ web: $mainUrl');
           return mainUrl;
         }
       } catch (_) {}
     }
 
-    if (episodeIndex > 1) {
-      throw StateError(
-        'Không thể lấy liên kết MP4 cho tập $episodeIndex (Fallback đang tắt).',
+    // 4. Giải mã qua Engine (Local Engine hoặc Hugging Face Space với cơ chế tự động Fallback chéo)
+    if (actualVid.isNotEmpty) {
+      final settings = await SettingsRepository.getInstance();
+      final preferredEngine = settings.hongguoVideoResolverEngine;
+      debugPrint(
+        '[HongguoResolver] ⚡ Bắt đầu giải mã tập $episodeIndex (vid: $actualVid) với Engine: $preferredEngine',
       );
+
+      // Thử engine ưu tiên trước
+      if (preferredEngine == 'local') {
+        try {
+          return await HongguoLocalEngine.resolveAndGetPlayableUrl(
+            seriesId,
+            actualVid,
+            episodeIndex: episodeIndex,
+          );
+        } catch (localError) {
+          debugPrint('[HongguoResolver] ⚠️ Local Engine lỗi: $localError -> Chuyển sang fallback Hugging Face Space...');
+          try {
+            final hfUrl = await _resolveFromHfApi(actualVid);
+            if (hfUrl != null && hfUrl.isNotEmpty) return hfUrl;
+          } catch (hfErr) {
+            debugPrint('[HongguoResolver] ❌ Fallback Hugging Face cũng gặp lỗi: $hfErr');
+          }
+          throw StateError('Không thể giải mã video tập $episodeIndex qua Local Engine lẫn Hugging Face.');
+        }
+      } else {
+        try {
+          final hfUrl = await _resolveFromHfApi(actualVid);
+          if (hfUrl != null && hfUrl.isNotEmpty) return hfUrl;
+        } catch (hfError) {
+          debugPrint('[HongguoResolver] ⚠️ Hugging Face lỗi: $hfError -> Chuyển sang fallback Local Engine...');
+        }
+        try {
+          return await HongguoLocalEngine.resolveAndGetPlayableUrl(
+            seriesId,
+            actualVid,
+            episodeIndex: episodeIndex,
+          );
+        } catch (localErr) {
+          debugPrint('[HongguoResolver] ❌ Fallback Local Engine cũng gặp lỗi: $localErr');
+          throw StateError('Không thể giải mã video tập $episodeIndex qua Hugging Face lẫn Local Engine.');
+        }
+      }
+    }
+
+    if (episodeIndex > 1) {
+      throw StateError('Không thể lấy liên kết MP4 cho tập $episodeIndex.');
     }
     throw StateError('Không thể lấy liên kết MP4 cho tập phim này.');
   }

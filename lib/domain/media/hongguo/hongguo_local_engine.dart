@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 
 import '../hongguo_cenc_decryptor.dart';
 import '../video_cache_manager.dart';
+import 'hongguo_device_service.dart';
 import 'hongguo_sixgod_signer.dart';
 
 Future<void> _decryptDownloadedHongguoVideo(Map<String, String> args) async {
@@ -63,11 +64,29 @@ class HongguoLocalEngine {
       '&player_so_load=1&is_android_pad_screen=0';
 
   /// Lấy trực tiếp thông tin URL stream và Content Key từ API gốc của ByteDance
-  static Future<HongguoVideoInfo> resolveVideoInfo(String videoId) async {
+  static Future<HongguoVideoInfo> resolveVideoInfo(
+    String videoId, {
+    bool retryWithNewDevice = true,
+  }) async {
     final cleanVideoId = videoId.trim();
     if (!RegExp(r'^\d+$').hasMatch(cleanVideoId)) {
       throw ArgumentError.value(videoId, 'videoId', 'Video ID phải là dãy số');
     }
+
+    // Lấy danh tính thiết bị ByteDance (được cấp tự động qua Device Register API)
+    final devInfo = await HongguoDeviceService.instance.getOrRegisterDevice();
+
+    final targetUrl =
+        'https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/v1/'
+        '?iid=${devInfo.installId}&device_id=${devInfo.deviceId}&ac=wifi&channel=update_64&aid=8662'
+        '&app_name=novelread&version_code=${devInfo.versionCode}&version_name=${devInfo.versionName}'
+        '&device_platform=android&os=android&ssmix=a&device_type=23117RK66C'
+        '&device_brand=Redmi&language=zh&os_api=34&os_version=14'
+        '&manifest_version_code=${devInfo.versionCode}&resolution=1440*3200&dpi=560'
+        '&update_version_code=${devInfo.versionCode}&host_abi=arm64-v8a&dragon_device_type=phone'
+        '&pv_player=${devInfo.versionCode}&compliance_status=0&need_personal_recommend=1'
+        '&player_so_load=1&is_android_pad_screen=0';
+
     final payload = {
       'biz_param': {
         'detail_page_version': 0,
@@ -85,26 +104,44 @@ class HongguoLocalEngine {
     };
 
     final signed = HongguoSixgodSigner.signRequest(
-      url: videoModelUrlTemplate,
+      url: targetUrl,
       body: payload,
+      deviceId: devInfo.deviceId,
+      installId: devInfo.installId,
     );
+
+    final headers = Map<String, String>.from(signed.headers);
+    if (devInfo.deviceToken.isNotEmpty) {
+      headers['x-tt-token'] = devInfo.deviceToken;
+    }
+    if (devInfo.ttreq.isNotEmpty) {
+      headers['cookie'] = 'install_id=${devInfo.installId}; ttreq=${devInfo.ttreq}';
+    }
 
     final res = await _dio.post(
       signed.signedUrl,
       data: signed.bodyBytes,
       options: Options(
-        headers: signed.headers,
+        headers: headers,
         responseType: ResponseType.json,
+        validateStatus: (status) => status != null && status < 500,
       ),
     );
     debugPrint('[HongguoLocalEngine] API status: ${res.statusCode}');
 
     final data = res.data is Map ? res.data as Map : <String, dynamic>{};
-    final apiCode = int.tryParse(data['code']?.toString() ?? '0') ?? 0;
+    final apiCode = int.tryParse((data['Code'] ?? data['code'])?.toString() ?? '0') ?? 0;
     if (apiCode != 0) {
+      if (retryWithNewDevice && (apiCode == 110001 || apiCode == 100001)) {
+        debugPrint(
+          '[HongguoLocalEngine] ByteDance từ chối mã $apiCode, tự động cấp phát thiết bị mới...',
+        );
+        await HongguoDeviceService.instance.getOrRegisterDevice(forceRefresh: true);
+        return resolveVideoInfo(videoId, retryWithNewDevice: false);
+      }
       throw StateError(
         'ByteDance từ chối request (code $apiCode): '
-        '${data['message'] ?? data['Message'] ?? 'không rõ lỗi'}',
+        '${data['Message'] ?? data['message'] ?? 'không rõ lỗi'}',
       );
     }
     final dataMap = data['data'] is Map
