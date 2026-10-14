@@ -7,7 +7,6 @@ import 'package:flutter/foundation.dart';
 
 import '../hongguo_cenc_decryptor.dart';
 import '../video_cache_manager.dart';
-import 'hongguo_device_service.dart';
 import 'hongguo_sixgod_signer.dart';
 
 Future<void> _decryptDownloadedHongguoVideo(Map<String, String> args) async {
@@ -64,28 +63,11 @@ class HongguoLocalEngine {
       '&player_so_load=1&is_android_pad_screen=0';
 
   /// Lấy trực tiếp thông tin URL stream và Content Key từ API gốc của ByteDance
-  static Future<HongguoVideoInfo> resolveVideoInfo(
-    String videoId, {
-    bool retryWithNewDevice = true,
-  }) async {
+  static Future<HongguoVideoInfo> resolveVideoInfo(String videoId) async {
     final cleanVideoId = videoId.trim();
     if (!RegExp(r'^\d+$').hasMatch(cleanVideoId)) {
       throw ArgumentError.value(videoId, 'videoId', 'Video ID phải là dãy số');
     }
-
-    // Lấy danh tính thiết bị ByteDance (được cấp tự động qua Device Register API)
-    final devInfo = await HongguoDeviceService.instance.getOrRegisterDevice();
-
-    final targetUrl =
-        'https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/v1/'
-        '?iid=${devInfo.installId}&device_id=${devInfo.deviceId}&ac=wifi&channel=update_64&aid=8662'
-        '&app_name=novelread&version_code=${devInfo.versionCode}&version_name=${devInfo.versionName}'
-        '&device_platform=android&os=android&ssmix=a&device_type=23117RK66C'
-        '&device_brand=Redmi&language=zh&os_api=34&os_version=14'
-        '&manifest_version_code=${devInfo.versionCode}&resolution=1440*3200&dpi=560'
-        '&update_version_code=${devInfo.versionCode}&host_abi=arm64-v8a&dragon_device_type=phone'
-        '&pv_player=${devInfo.versionCode}&compliance_status=0&need_personal_recommend=1'
-        '&player_so_load=1&is_android_pad_screen=0';
 
     final payload = {
       'biz_param': {
@@ -104,25 +86,15 @@ class HongguoLocalEngine {
     };
 
     final signed = HongguoSixgodSigner.signRequest(
-      url: targetUrl,
+      url: videoModelUrlTemplate,
       body: payload,
-      deviceId: devInfo.deviceId,
-      installId: devInfo.installId,
     );
-
-    final headers = Map<String, String>.from(signed.headers);
-    if (devInfo.deviceToken.isNotEmpty) {
-      headers['x-tt-token'] = devInfo.deviceToken;
-    }
-    if (devInfo.ttreq.isNotEmpty) {
-      headers['cookie'] = 'install_id=${devInfo.installId}; ttreq=${devInfo.ttreq}';
-    }
 
     final res = await _dio.post(
       signed.signedUrl,
       data: signed.bodyBytes,
       options: Options(
-        headers: headers,
+        headers: signed.headers,
         responseType: ResponseType.json,
         validateStatus: (status) => status != null && status < 500,
       ),
@@ -130,15 +102,9 @@ class HongguoLocalEngine {
     debugPrint('[HongguoLocalEngine] API status: ${res.statusCode}');
 
     final data = res.data is Map ? res.data as Map : <String, dynamic>{};
-    final apiCode = int.tryParse((data['Code'] ?? data['code'])?.toString() ?? '0') ?? 0;
+    final apiCode =
+        int.tryParse((data['Code'] ?? data['code'])?.toString() ?? '0') ?? 0;
     if (apiCode != 0) {
-      if (retryWithNewDevice && (apiCode == 110001 || apiCode == 100001)) {
-        debugPrint(
-          '[HongguoLocalEngine] ByteDance từ chối mã $apiCode, tự động cấp phát thiết bị mới...',
-        );
-        await HongguoDeviceService.instance.getOrRegisterDevice(forceRefresh: true);
-        return resolveVideoInfo(videoId, retryWithNewDevice: false);
-      }
       throw StateError(
         'ByteDance từ chối request (code $apiCode): '
         '${data['Message'] ?? data['message'] ?? 'không rõ lỗi'}',
@@ -198,9 +164,22 @@ class HongguoLocalEngine {
     final videoInfo = fbData['video_info'] is Map
         ? fbData['video_info'] as Map
         : <String, dynamic>{};
+    for (final responsePart in [fbData, videoInfo]) {
+      final code =
+          int.tryParse(
+            (responsePart['Code'] ?? responsePart['code'] ?? 0).toString(),
+          ) ??
+          0;
+      if (code != 0) {
+        throw StateError('ByteDance fallback từ chối request (code $code)');
+      }
+    }
     final videoData = videoInfo['data'] is Map
         ? videoInfo['data'] as Map
         : <String, dynamic>{};
+    if (videoData.isEmpty) {
+      throw StateError('ByteDance fallback không trả về dữ liệu video');
+    }
 
     final keySeedB64 = videoData['key_seed']?.toString() ?? '';
     final keySeedRaw = keySeedB64.isNotEmpty
@@ -210,56 +189,108 @@ class HongguoLocalEngine {
     final videoList = videoData['video_list'] is Map
         ? videoData['video_list'] as Map
         : <String, dynamic>{};
-    Map bestItem = {};
+    int codecRank(Map item) {
+      final meta = item['video_meta'];
+      final codec =
+          (item['codec_type'] ??
+                  (meta is Map ? meta['codec_type'] : null) ??
+                  '')
+              .toString()
+              .toLowerCase();
+      if (const ['h264', 'avc', 'avc1'].contains(codec)) return 0;
+      if (const ['h265', 'hevc', 'hvc1', 'hev1', 'bytevc1'].contains(codec)) {
+        return 1;
+      }
+      return 2;
+    }
+
+    int streamHeight(Map item) {
+      final meta = item['video_meta'];
+      for (final value in [
+        item['vheight'],
+        item['height'],
+        if (meta is Map) meta['vheight'],
+        if (meta is Map) meta['height'],
+      ]) {
+        final parsed = int.tryParse(value?.toString() ?? '');
+        if (parsed != null && parsed > 0) return parsed;
+      }
+      final label =
+          (item['quality_desc'] ??
+                  item['definition'] ??
+                  (meta is Map ? meta['definition'] : null) ??
+                  '')
+              .toString();
+      return int.tryParse(RegExp(r'\d+').firstMatch(label)?.group(0) ?? '') ??
+          0;
+    }
+
+    final streams =
+        videoList.values
+            .whereType<Map>()
+            .where((item) => codecRank(item) < 2)
+            .toList()
+          ..sort((a, b) {
+            final codecCompare = codecRank(a).compareTo(codecRank(b));
+            if (codecCompare != 0) return codecCompare;
+            return streamHeight(b).compareTo(streamHeight(a));
+          });
+
+    String realMainUrl = '';
+    String contentKeyHex = '';
     var bestHeight = 0;
-
-    for (final item in videoList.values) {
-      if (item is Map) {
-        final h = int.tryParse(item['vheight']?.toString() ?? '0') ?? 0;
-        if (h > bestHeight) {
-          bestHeight = h;
-          bestItem = item;
+    for (final item in streams) {
+      final encryptInfo = item['encrypt_info'];
+      final spadeA =
+          (item['spade_a'] ??
+                  (encryptInfo is Map ? encryptInfo['spade_a'] : null) ??
+                  '')
+              .toString();
+      var candidateKey = '';
+      if (spadeA.isNotEmpty) {
+        try {
+          candidateKey = hex.encode(
+            HongguoCencDecryptor.deriveContentKey(spadeA),
+          );
+        } catch (e) {
+          debugPrint('[HongguoLocalEngine] Bỏ qua stream có spade_a lỗi: $e');
+          continue;
         }
       }
-    }
 
-    if (bestItem.isEmpty && videoList.isNotEmpty) {
-      bestItem = videoList.values.first as Map;
-    }
-
-    final spadeA = bestItem['spade_a']?.toString() ?? '';
-    var contentKeyHex = '';
-    if (spadeA.isNotEmpty) {
-      try {
-        final keyBytes = HongguoCencDecryptor.deriveContentKey(spadeA);
-        contentKeyHex = hex.encode(keyBytes);
-      } catch (e) {
-        debugPrint('[HongguoLocalEngine] Không thể derive key từ spade_a: $e');
-      }
-    }
-
-    final rawMainUrl =
-        bestItem['main_url']?.toString() ??
-        bestItem['play_addr']?.toString() ??
-        '';
-    var realMainUrl = rawMainUrl;
-    if (keySeedRaw.isNotEmpty && rawMainUrl.length > 10) {
-      try {
-        final dec = HongguoCencDecryptor.decryptSpadeUrl(
-          rawMainUrl,
-          keySeedRaw,
-        );
-        if (dec.isNotEmpty && dec.startsWith('http')) {
-          realMainUrl = dec;
+      final rawCandidates = <dynamic>[
+        item['main_url'],
+        item['backup_url'],
+        if (item['backup_url_list'] is List) ...item['backup_url_list'] as List,
+        item['play_addr'],
+      ];
+      for (final raw in rawCandidates) {
+        final encodedUrl = raw?.toString() ?? '';
+        if (encodedUrl.isEmpty) continue;
+        try {
+          final decodedUrl = keySeedRaw.isNotEmpty
+              ? HongguoCencDecryptor.decryptSpadeUrl(encodedUrl, keySeedRaw)
+              : encodedUrl
+                    .replaceAll(r'\/', '/')
+                    .replaceAll(r'\u0026', '&')
+                    .replaceAll('&amp;', '&');
+          if (decodedUrl.startsWith('https://') ||
+              decodedUrl.startsWith('http://')) {
+            realMainUrl = decodedUrl;
+            contentKeyHex = candidateKey;
+            bestHeight = streamHeight(item);
+            break;
+          }
+        } catch (e) {
+          debugPrint('[HongguoLocalEngine] URL stream không dùng được: $e');
         }
-      } catch (e) {
-        debugPrint('[HongguoLocalEngine] Không thể decrypt spade url: $e');
       }
+      if (realMainUrl.isNotEmpty) break;
     }
-    if (!realMainUrl.startsWith('http://') &&
-        !realMainUrl.startsWith('https://')) {
+
+    if (realMainUrl.isEmpty) {
       throw StateError(
-        'ByteDance không trả về URL phát hợp lệ cho video $cleanVideoId',
+        'ByteDance không trả về stream H.264/HEVC hợp lệ cho video $cleanVideoId',
       );
     }
 
@@ -351,7 +382,7 @@ class HongguoLocalEngine {
       options: Options(
         headers: {
           'user-agent': HongguoSixgodSigner.userAgent,
-          'referer': 'https://novel.snssdk.com/',
+          'referer': 'https://novelquickapp.com/',
         },
       ),
       onReceiveProgress: (received, total) {

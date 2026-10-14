@@ -2301,11 +2301,15 @@ class _HistoryScreenState extends State<HistoryScreen>
         vid.isNotEmpty ? vid : dramaId,
         episodeIndex: targetEpisodeIndex,
       );
-    } catch (_) {
-      final publicFallback = vid.isNotEmpty
-          ? 'https://hongguoduanju.com/video/public/$vid/360p.mp4'
-          : 'https://hongguoduanju.com/player/$dramaId';
-      effectiveVideoPath = publicFallback;
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Không thể lấy video tập $targetEpisodeIndex: $error'),
+          backgroundColor: Colors.redAccent.shade700,
+        ),
+      );
+      return;
     }
 
     final cached = await VideoCacheManager.findCachedFile(

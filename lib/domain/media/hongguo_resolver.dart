@@ -517,7 +517,9 @@ class HongguoResolver {
   /// Giải mã video qua Hugging Face Cloud Resolver
   Future<String?> _resolveFromHfApi(String vid) async {
     try {
-      debugPrint('[HongguoResolver] 🌐 Đang gọi Hugging Face Space giải mã video: $vid...');
+      debugPrint(
+        '[HongguoResolver] 🌐 Đang gọi Hugging Face Space giải mã video: $vid...',
+      );
       final res = await dio.post(
         '$hfApiBase/gradio_api/call/get_play_url',
         data: {
@@ -556,10 +558,14 @@ class HongguoResolver {
                 debugPrint('[HongguoResolver] ✅ HF trả về stream URL: $url');
                 return url;
               }
-            } else if (parsed[0] == null && parsed.length > 1 && parsed[1] is Map) {
+            } else if (parsed[0] == null &&
+                parsed.length > 1 &&
+                parsed[1] is Map) {
               final err = parsed[1] as Map;
               final errMsg = err['error'] ?? 'Server HF báo lỗi xử lý';
-              debugPrint('[HongguoResolver] ❌ Server HF báo lỗi xử lý: $errMsg');
+              debugPrint(
+                '[HongguoResolver] ❌ Server HF báo lỗi xử lý: $errMsg',
+              );
               throw StateError('Server HF báo lỗi: $errMsg');
             }
           }
@@ -583,7 +589,7 @@ class HongguoResolver {
     // 1. Kiểm tra cache trên máy trước (nếu đã tải về thì phát offline ngay lập tức)
     final cached = await VideoCacheManager.findCachedFile(
       url: actualVid.isNotEmpty
-          ? 'https://hongguoduanju.com/video/public/$actualVid/360p.mp4'
+          ? '$siteOrigin/player/$seriesId/$actualVid'
           : '$siteOrigin/player/$seriesId',
       seriesId: seriesId,
       episodeIndex: episodeIndex,
@@ -595,32 +601,12 @@ class HongguoResolver {
       return cached.path;
     }
 
-    // 2. Kiểm tra trực tiếp link MP4 công khai trên CDN Hồng Quả (https://hongguoduanju.com/video/public/$vid/360p.mp4)
-    if (actualVid.isNotEmpty) {
-      final publicUrl = 'https://hongguoduanju.com/video/public/$actualVid/360p.mp4';
-      try {
-        final headRes = await dio.head(
-          publicUrl,
-          options: Options(
-            validateStatus: (status) => status != null && status < 400,
-            receiveTimeout: const Duration(seconds: 4),
-            sendTimeout: const Duration(seconds: 4),
-          ),
-        );
-        final contentType = headRes.headers.value('content-type') ?? '';
-        final contentLength = int.tryParse(headRes.headers.value('content-length') ?? '0') ?? 0;
-        if (headRes.statusCode == 200 &&
-            (contentType.contains('video') || contentType.contains('mp4') || contentLength > 100000)) {
-          debugPrint('[HongguoResolver] ⚡ Tìm thấy link MP4 công khai trực tiếp trên CDN: $publicUrl');
-          return publicUrl;
-        }
-      } catch (_) {}
-    }
-
-    // 3. Quét nhanh trang web player công khai của Hồng Quả
+    // Chỉ nhận URL web được gắn đúng với series và tập hiện tại.
     final candidates = <String>[
-      if (vid.isNotEmpty && vid != seriesId) '$siteOrigin/player/$seriesId/$vid',
-      if (episodeIndex == 1 || vid.isEmpty || vid == seriesId) '$siteOrigin/player/$seriesId',
+      if (vid.isNotEmpty && vid != seriesId)
+        '$siteOrigin/player/$seriesId/$vid',
+      if (episodeIndex == 1 || vid.isEmpty || vid == seriesId)
+        '$siteOrigin/player/$seriesId',
       if (vid.isNotEmpty && vid != seriesId) '$siteOrigin/player/_/$vid',
     ];
 
@@ -635,20 +621,16 @@ class HongguoResolver {
         );
         final html = res.data ?? '';
 
-        final contentUrl = _cleanJsonString(
-          _extractMatch(html, r'"contentUrl"\s*:\s*"([^"]+)"'),
+        final webUrl = _extractBoundWebVideoUrl(
+          html,
+          seriesId: seriesId,
+          videoId: actualVid,
         );
-        if (contentUrl.startsWith('http://') || contentUrl.startsWith('https://')) {
-          debugPrint('[HongguoResolver] ⚡ Bóc tách thành công contentUrl từ web: $contentUrl');
-          return contentUrl;
-        }
-
-        final mainUrl = _cleanJsonString(
-          _extractMatch(html, r'"main_url"\s*:\s*"([^"]+)"'),
-        );
-        if (mainUrl.startsWith('http://') || mainUrl.startsWith('https://')) {
-          debugPrint('[HongguoResolver] ⚡ Bóc tách thành công main_url từ web: $mainUrl');
-          return mainUrl;
+        if (webUrl != null) {
+          debugPrint(
+            '[HongguoResolver] ⚡ Lấy đúng MP4 công khai của tập $episodeIndex',
+          );
+          return webUrl;
         }
       } catch (_) {}
     }
@@ -670,21 +652,29 @@ class HongguoResolver {
             episodeIndex: episodeIndex,
           );
         } catch (localError) {
-          debugPrint('[HongguoResolver] ⚠️ Local Engine lỗi: $localError -> Chuyển sang fallback Hugging Face Space...');
+          debugPrint(
+            '[HongguoResolver] ⚠️ Local Engine lỗi: $localError -> Chuyển sang fallback Hugging Face Space...',
+          );
           try {
             final hfUrl = await _resolveFromHfApi(actualVid);
             if (hfUrl != null && hfUrl.isNotEmpty) return hfUrl;
           } catch (hfErr) {
-            debugPrint('[HongguoResolver] ❌ Fallback Hugging Face cũng gặp lỗi: $hfErr');
+            debugPrint(
+              '[HongguoResolver] ❌ Fallback Hugging Face cũng gặp lỗi: $hfErr',
+            );
           }
-          throw StateError('Không thể giải mã video tập $episodeIndex qua Local Engine lẫn Hugging Face.');
+          throw StateError(
+            'Không thể giải mã video tập $episodeIndex qua Local Engine lẫn Hugging Face.',
+          );
         }
       } else {
         try {
           final hfUrl = await _resolveFromHfApi(actualVid);
           if (hfUrl != null && hfUrl.isNotEmpty) return hfUrl;
         } catch (hfError) {
-          debugPrint('[HongguoResolver] ⚠️ Hugging Face lỗi: $hfError -> Chuyển sang fallback Local Engine...');
+          debugPrint(
+            '[HongguoResolver] ⚠️ Hugging Face lỗi: $hfError -> Chuyển sang fallback Local Engine...',
+          );
         }
         try {
           return await HongguoLocalEngine.resolveAndGetPlayableUrl(
@@ -693,8 +683,12 @@ class HongguoResolver {
             episodeIndex: episodeIndex,
           );
         } catch (localErr) {
-          debugPrint('[HongguoResolver] ❌ Fallback Local Engine cũng gặp lỗi: $localErr');
-          throw StateError('Không thể giải mã video tập $episodeIndex qua Hugging Face lẫn Local Engine.');
+          debugPrint(
+            '[HongguoResolver] ❌ Fallback Local Engine cũng gặp lỗi: $localErr',
+          );
+          throw StateError(
+            'Không thể giải mã video tập $episodeIndex qua Hugging Face lẫn Local Engine.',
+          );
         }
       }
     }
@@ -706,6 +700,120 @@ class HongguoResolver {
   }
 
   // ===== CÁC HÀM HELPER PARSE HTML NỘI BỘ =====
+
+  Map<String, dynamic>? _readRouterData(String html) {
+    final routerIndex = html.indexOf('_ROUTER_DATA');
+    if (routerIndex < 0) return null;
+    final equalsIndex = html.indexOf('=', routerIndex);
+    final start = html.indexOf('{', equalsIndex);
+    if (equalsIndex < 0 || start < 0) return null;
+
+    var depth = 0;
+    var inString = false;
+    var escaped = false;
+    for (var i = start; i < html.length; i++) {
+      final char = html[i];
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char == r'\') {
+        escaped = true;
+        continue;
+      }
+      if (char == '"') {
+        inString = !inString;
+        continue;
+      }
+      if (inString) continue;
+      if (char == '{') depth++;
+      if (char == '}' && --depth == 0) {
+        final decoded = jsonDecode(html.substring(start, i + 1));
+        return decoded is Map<String, dynamic> ? decoded : null;
+      }
+    }
+    return null;
+  }
+
+  String? _extractBoundWebVideoUrl(
+    String html, {
+    required String seriesId,
+    required String videoId,
+  }) {
+    final router = _readRouterData(html);
+    final loaderData = router?['loaderData'];
+    if (loaderData is! Map) return null;
+    final route = loaderData['player_(series_id)/(vid)/page'];
+    if (route is! Map || route['isSuccess'] == false) return null;
+
+    final actualSeriesId = (route['series_id'] ?? '').toString();
+    final actualVideoId = (route['vid'] ?? '').toString();
+    final expectedVideoId = videoId.isNotEmpty ? videoId : actualVideoId;
+    final seriesDetail = route['seriesDetail'];
+    final publicSeo = route['publicVideoSeo'];
+    if (actualSeriesId != seriesId ||
+        actualVideoId != expectedVideoId ||
+        seriesDetail is! Map ||
+        (seriesDetail['series_id'] ?? '').toString() != actualSeriesId ||
+        publicSeo is! Map ||
+        publicSeo['available'] != true ||
+        (publicSeo['itemId'] ?? '').toString() != expectedVideoId ||
+        (publicSeo['seriesId'] ?? '').toString() != actualSeriesId) {
+      return null;
+    }
+
+    bool matchesCurrentPlayer(dynamic value) {
+      final uri = Uri.tryParse(value?.toString() ?? '');
+      if (uri == null ||
+          uri.userInfo.isNotEmpty ||
+          !(uri.host == 'hongguoduanju.com' ||
+              uri.host.endsWith('.hongguoduanju.com'))) {
+        return false;
+      }
+      return uri.path == '/player/$actualSeriesId/$expectedVideoId';
+    }
+
+    final scripts = RegExp(
+      r'<script\b([^>]*)>([\s\S]*?)<\/script\s*>',
+      caseSensitive: false,
+    ).allMatches(html);
+    for (final script in scripts) {
+      final attributes = script.group(1) ?? '';
+      if (!RegExp(
+        r'''\btype\s*=\s*["']application/ld\+json["']''',
+        caseSensitive: false,
+      ).hasMatch(attributes)) {
+        continue;
+      }
+      try {
+        final video = jsonDecode(script.group(2) ?? '');
+        if (video is! Map ||
+            video['@type'] != 'VideoObject' ||
+            !matchesCurrentPlayer(video['url']) ||
+            (video['@id'] != null && !matchesCurrentPlayer(video['@id']))) {
+          continue;
+        }
+        final normalized = (video['contentUrl'] ?? '')
+            .toString()
+            .replaceAll(r'\u002F', '/')
+            .replaceAll(r'\u0026', '&')
+            .replaceAll('&amp;', '&')
+            .replaceAll(
+              RegExp(r'([?&])Range=[^&]*', caseSensitive: false),
+              r'$1',
+            )
+            .replaceAll(RegExp(r'[?&]$'), '');
+        final mediaUri = Uri.tryParse(normalized);
+        if (mediaUri != null &&
+            const ['http', 'https'].contains(mediaUri.scheme) &&
+            mediaUri.host.isNotEmpty &&
+            mediaUri.userInfo.isEmpty) {
+          return mediaUri.toString();
+        }
+      } catch (_) {}
+    }
+    return null;
+  }
 
   HongguoBrowseResult _parseDramaList(String html, int requestedPage) {
     final items = <HongguoDramaItem>[];
@@ -769,11 +877,14 @@ class HongguoResolver {
                 if (title.isEmpty) continue;
 
                 var cover = _normalizeImageUrl(
-                  (raw['series_cover'] ?? raw['cover'] ?? raw['image'] ?? '').toString(),
+                  (raw['series_cover'] ?? raw['cover'] ?? raw['image'] ?? '')
+                      .toString(),
                 );
 
-                final epCount = int.tryParse(
-                      (raw['episode_cnt'] ?? raw['episodeCount'] ?? 0).toString(),
+                final epCount =
+                    int.tryParse(
+                      (raw['episode_cnt'] ?? raw['episodeCount'] ?? 0)
+                          .toString(),
                     ) ??
                     0;
                 final intro = _cleanJsonString(
@@ -796,7 +907,9 @@ class HongguoResolver {
                   vidList.addAll(
                     rawVids
                         .map((e) => e.toString().trim())
-                        .where((s) => s.isNotEmpty && RegExp(r'^\d+$').hasMatch(s)),
+                        .where(
+                          (s) => s.isNotEmpty && RegExp(r'^\d+$').hasMatch(s),
+                        ),
                   );
                 }
 
@@ -823,9 +936,19 @@ class HongguoResolver {
 
                 final pagination = routeData['pagination'];
                 if (pagination is Map<String, dynamic>) {
-                  totalPages = int.tryParse((pagination['totalPages'] ?? 1).toString()) ?? totalPages;
-                  totalItems = int.tryParse((pagination['total'] ?? 0).toString()) ?? totalItems;
-                  pageNum = int.tryParse((pagination['pageNum'] ?? pageNum).toString()) ?? pageNum;
+                  totalPages =
+                      int.tryParse(
+                        (pagination['totalPages'] ?? 1).toString(),
+                      ) ??
+                      totalPages;
+                  totalItems =
+                      int.tryParse((pagination['total'] ?? 0).toString()) ??
+                      totalItems;
+                  pageNum =
+                      int.tryParse(
+                        (pagination['pageNum'] ?? pageNum).toString(),
+                      ) ??
+                      pageNum;
                 }
 
                 final content = routeData['content'];
@@ -858,7 +981,8 @@ class HongguoResolver {
         title = _cleanDramaTitle(title);
 
         var cover = '';
-        final imgMatches = RegExp(r'(?:src|srcSet|srcset)="([^"]+)"').allMatches(content);
+        final imgMatches = RegExp(r'(?:src|srcSet|srcset)="([^"]+)"')
+            .allMatches(content);
         for (final im in imgMatches) {
           var u = im.group(1)!.trim();
           if (u.contains('empty_play') || u.endsWith('.svg')) continue;
