@@ -587,6 +587,7 @@ class HongguoResolver {
     String vid, {
     int episodeIndex = 1,
     void Function(double progress, String status)? onProgress,
+    bool hfOnly = false,
   }) async {
     final actualVid = (vid.isNotEmpty && vid != seriesId) ? vid : '';
 
@@ -642,7 +643,11 @@ class HongguoResolver {
     // 4. Giải mã qua Engine (Local Engine hoặc Hugging Face Space với cơ chế tự động Fallback chéo)
     if (actualVid.isNotEmpty) {
       final settings = await SettingsRepository.getInstance();
-      final preferredEngine = settings.hongguoVideoResolverEngine;
+      // hfOnly is used by prefetch warm-up. It must never start several
+      // Local Engine downloads in parallel when Hugging Face is unavailable.
+      final preferredEngine = hfOnly
+          ? 'hf'
+          : settings.hongguoVideoResolverEngine;
       debugPrint(
         '[HongguoResolver] ⚡ Bắt đầu giải mã tập $episodeIndex (vid: $actualVid) với Engine: $preferredEngine',
       );
@@ -682,6 +687,12 @@ class HongguoResolver {
         } catch (hfError) {
           debugPrint(
             '[HongguoResolver] ⚠️ Hugging Face lỗi: $hfError -> Chuyển sang fallback Local Engine...',
+          );
+          if (hfOnly) rethrow;
+        }
+        if (hfOnly) {
+          throw StateError(
+            'Hugging Face không trả về video tập $episodeIndex.',
           );
         }
         try {

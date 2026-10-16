@@ -267,20 +267,38 @@ class HongguoPrefetchManager {
     int bufferCount,
     int total,
   ) async {
-    for (var i = 1; i <= bufferCount; i++) {
+    final targetIndexes = <int>[
+      for (var i = 1; i <= bufferCount; i++)
+        if (playingIndex + i <= total) playingIndex + i,
+    ];
+
+    // Chỉ ở chế độ HF: khởi chạy ngay toàn bộ yêu cầu chuẩn bị video.
+    // Các Future chạy đồng thời, còn dịch/STT/TTS bên dưới vẫn tuần tự.
+    final initialSettings = await SettingsRepository.getInstance();
+    final hfWarmups = <int, Future<String?>>{};
+    if (initialSettings.hongguoVideoResolverEngine == 'hf') {
+      debugPrint(
+        '[Prefetch] Gửi trước ${targetIndexes.length} yêu cầu chuẩn bị video lên HF: $targetIndexes',
+      );
+      for (final episodeIndex in targetIndexes) {
+        hfWarmups[episodeIndex] = getOrResolveUrl(episodeIndex, hfOnly: true);
+      }
+    }
+
+    for (final nextIndex in targetIndexes) {
       if (_isDisposed || _currentPlayingIndex != playingIndex) break;
       final settings = await SettingsRepository.getInstance();
       if (!settings.autoPlayNextEpisode) break;
 
-      final nextIndex = playingIndex + i;
-      if (nextIndex <= total) {
-        await _prefetchNextEpisode(nextIndex);
-      }
+      await _prefetchNextEpisode(nextIndex, preparedUrl: hfWarmups[nextIndex]);
     }
   }
 
   /// Tiến trình dịch ngầm tập tiếp theo
-  Future<void> _prefetchNextEpisode(int nextIndex) async {
+  Future<void> _prefetchNextEpisode(
+    int nextIndex, {
+    Future<String?>? preparedUrl,
+  }) async {
     if (_isDisposed) return;
     final settings = await SettingsRepository.getInstance();
 
@@ -322,11 +340,14 @@ class HongguoPrefetchManager {
     }
 
     debugPrint('[Prefetch] Bắt đầu dịch ngầm gối đầu Tập $nextIndex...');
-    await _executeTranslation(nextIndex);
+    await _executeTranslation(nextIndex, preparedUrl: preparedUrl);
   }
 
   /// Thực thi toàn bộ pipeline tải -> STT -> Dịch AI cho một tập phim
-  Future<SubtitleDocument?> _executeTranslation(int episodeIndex) async {
+  Future<SubtitleDocument?> _executeTranslation(
+    int episodeIndex, {
+    Future<String?>? preparedUrl,
+  }) async {
     if (_isDisposed) return null;
 
     if (_cachedDocs.containsKey(episodeIndex)) {
@@ -357,7 +378,15 @@ class HongguoPrefetchManager {
       );
 
       // Bước 1: Lấy URL phát video
-      final playUrl = await getOrResolveUrl(episodeIndex);
+      var playUrl = await (preparedUrl ?? getOrResolveUrl(episodeIndex));
+      // Warm-up HF không fallback sang local để tránh nhiều lượt tải local
+      // chạy cùng lúc. Nếu HF lỗi, lượt tuần tự này mới dùng fallback chuẩn.
+      if (playUrl == null && preparedUrl != null && !_isDisposed) {
+        debugPrint(
+          '[Prefetch] HF chuẩn bị tập $episodeIndex thất bại, thử lại theo luồng tuần tự...',
+        );
+        playUrl = await getOrResolveUrl(episodeIndex);
+      }
       if (playUrl == null || _isDisposed) {
         throw StateError('Không thể lấy đường dẫn video tập $episodeIndex');
       }
@@ -527,7 +556,10 @@ class HongguoPrefetchManager {
   }
 
   /// Lấy hoặc phân giải URL của tập phim
-  Future<String?> getOrResolveUrl(int episodeIndex) async {
+  Future<String?> getOrResolveUrl(
+    int episodeIndex, {
+    bool hfOnly = false,
+  }) async {
     final cachedUrl = _cachedUrls[episodeIndex];
     if (cachedUrl != null && cachedUrl.isNotEmpty) {
       final isRemote = cachedUrl.startsWith('http://') ||
@@ -570,6 +602,7 @@ class HongguoPrefetchManager {
         detail.seriesId,
         vid.isNotEmpty ? vid : detail.seriesId,
         episodeIndex: episodeIndex,
+        hfOnly: hfOnly,
       );
 
       final cached = await VideoCacheManager.findCachedFile(
