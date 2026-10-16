@@ -6171,35 +6171,74 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                       return const SizedBox.shrink();
                                     }
                                     final isReady = state.isReady;
-                                    return Padding(
-                                      padding: const EdgeInsets.only(top: 2),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Icon(
-                                            isReady
-                                                ? Icons.bolt_rounded
-                                                : Icons.hourglass_top_rounded,
-                                            size: 12,
-                                            color: isReady
-                                                ? AppTheme.primaryEmerald
-                                                : AppTheme.accentGold,
-                                          ),
-                                          const SizedBox(width: 4),
-                                          Text(
-                                            isReady
-                                                ? 'Sẵn sàng Tập ${state.episodeIndex}'
-                                                : 'Đang dịch Tập ${state.episodeIndex} (${(state.progress * 100).toInt()}%)',
+                                    final isFailed = state.isFailed;
+                                    final isRetrying = state.isRetrying;
+
+                                    final Color stateColor = isReady
+                                        ? AppTheme.primaryEmerald
+                                        : (isFailed
+                                            ? const Color(0xFFEF5350)
+                                            : (isRetrying
+                                                ? const Color(0xFFFFB74D)
+                                                : AppTheme.accentGold));
+
+                                    final IconData stateIcon = isReady
+                                        ? Icons.bolt_rounded
+                                        : (isFailed
+                                            ? Icons.error_outline_rounded
+                                            : (isRetrying
+                                                ? Icons.refresh_rounded
+                                                : Icons.hourglass_top_rounded));
+
+                                    final String stateText = isReady
+                                        ? 'Sẵn sàng Tập ${state.episodeIndex}'
+                                        : (isFailed
+                                            ? 'Lỗi Tập ${state.episodeIndex} (Chạm thử lại)'
+                                            : (isRetrying
+                                                ? (state.message.isNotEmpty
+                                                    ? state.message
+                                                    : 'Đang thử lại Tập ${state.episodeIndex}...')
+                                                : (state.message.contains('tải video') || state.status == 'resolving'
+                                                    ? 'Đang tải Tập ${state.episodeIndex} (${(state.progress * 100).toInt()}%)'
+                                                    : 'Đang dịch Tập ${state.episodeIndex} (${(state.progress * 100).toInt()}%)')));
+
+                                    final content = Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(
+                                          stateIcon,
+                                          size: 12,
+                                          color: stateColor,
+                                        ),
+                                        const SizedBox(width: 4),
+                                        Flexible(
+                                          child: Text(
+                                            stateText,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
                                             style: TextStyle(
                                               fontSize: 10,
                                               fontWeight: FontWeight.w600,
-                                              color: isReady
-                                                  ? AppTheme.primaryEmerald
-                                                  : AppTheme.accentGold,
+                                              color: stateColor,
                                             ),
                                           ),
-                                        ],
-                                      ),
+                                        ),
+                                      ],
+                                    );
+
+                                    return Padding(
+                                      padding: const EdgeInsets.only(top: 2),
+                                      child: isFailed
+                                          ? InkWell(
+                                              borderRadius: BorderRadius.circular(4),
+                                              onTap: () {
+                                                _prefetchManager?.retryPrefetch(
+                                                  episodeIndex: state.episodeIndex,
+                                                );
+                                              },
+                                              child: content,
+                                            )
+                                          : content,
                                     );
                                   },
                                 ),

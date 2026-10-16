@@ -16,7 +16,7 @@ import 'video_cache_manager.dart';
 
 class PrefetchState {
   final int episodeIndex;
-  final String status; // 'idle', 'resolving', 'translating', 'ready', 'failed'
+  final String status; // 'idle', 'resolving', 'translating', 'ready', 'failed', 'retrying'
   final double progress; // 0.0 - 1.0
   final String message;
   final SubtitleDocument? document;
@@ -32,7 +32,10 @@ class PrefetchState {
   });
 
   bool get isReady => status == 'ready' && document != null;
-  bool get isTranslating => status == 'translating' || status == 'resolving';
+  bool get isTranslating =>
+      status == 'translating' || status == 'resolving' || status == 'retrying';
+  bool get isFailed => status == 'failed';
+  bool get isRetrying => status == 'retrying';
 }
 
 class HongguoPrefetchManager {
@@ -188,6 +191,33 @@ class HongguoPrefetchManager {
     unawaited(_runPrefetchQueue(episodeIndex, bufferCount, total));
   }
 
+  /// Thử lại dịch ngầm tập phim (hoặc hàng đợi prefetch hiện tại)
+  Future<void> retryPrefetch({int? episodeIndex}) async {
+    if (_isDisposed) return;
+    final settings = await SettingsRepository.getInstance();
+    final bufferCount = settings.prefetchEpisodeCount;
+    final total = detail.episodes.isNotEmpty
+        ? detail.episodes.length
+        : (detail.totalEpisodes > 0 ? detail.totalEpisodes : 100);
+
+    final targetEp = episodeIndex ?? (_currentPlayingIndex + 1);
+
+    // Xóa completer/cache lỗi nếu có để cho phép thử lại
+    _inFlightDocCompleters.remove(targetEp);
+    _inFlightUrlCompleters.remove(targetEp);
+    _cachedUrls.remove(targetEp);
+    _cachedDocs.remove(targetEp);
+
+    prefetchStateNotifier.value = PrefetchState(
+      episodeIndex: targetEp,
+      status: 'retrying',
+      progress: 0.05,
+      message: 'Đang bắt đầu thử lại Tập $targetEp...',
+    );
+
+    unawaited(_runPrefetchQueue(_currentPlayingIndex, bufferCount, total));
+  }
+
   /// Đảm bảo các câu phụ đề đã được tạo file âm thanh lồng tiếng AI (nếu đang bật TTS)
   Future<VoiceItem?> ensureTtsGenerated(
     SubtitleDocument doc, {
@@ -261,7 +291,83 @@ class HongguoPrefetchManager {
     }
   }
 
-  /// Chạy hàng đợi dịch ngầm tuần tự theo số tập đệm đã cài đặt
+  /// Chuẩn bị / Tải trước video trong nền có cơ chế retry độc lập không chặn các tập khác
+  Future<String?> _prepareEpisodeVideo(
+    int episodeIndex,
+    int queuePlayingIndex, {
+    bool hfOnly = false,
+  }) async {
+    if (_cachedUrls.containsKey(episodeIndex)) {
+      return _cachedUrls[episodeIndex];
+    }
+
+    int attempts = 0;
+    const maxRetries = 2;
+
+    while (!_isDisposed && _currentPlayingIndex == queuePlayingIndex) {
+      try {
+        void onDownloadProgress(double p, String status) {
+          if (_isDisposed || _currentPlayingIndex != queuePlayingIndex) return;
+          final currentState = prefetchStateNotifier.value;
+          final shouldNotify = currentState == null ||
+              currentState.episodeIndex == episodeIndex ||
+              currentState.isReady ||
+              currentState.isFailed;
+          if (shouldNotify) {
+            final mapped = (0.05 + p * 0.15).clamp(0.05, 0.20);
+            final pctInt = (p * 100).toInt();
+            prefetchStateNotifier.value = PrefetchState(
+              episodeIndex: episodeIndex,
+              status: 'resolving',
+              progress: mapped,
+              message: status.isNotEmpty
+                  ? status
+                  : 'Đang tải video Tập $episodeIndex: $pctInt%...',
+            );
+          }
+        }
+
+        final url = await getOrResolveUrl(
+          episodeIndex,
+          hfOnly: hfOnly,
+          onProgress: onDownloadProgress,
+        );
+        if (url != null && url.isNotEmpty) {
+          return url;
+        }
+      } catch (e) {
+        debugPrint(
+          '[Prefetch] Chuẩn bị video tập $episodeIndex lần ${attempts + 1} gặp lỗi: $e',
+        );
+      }
+
+      attempts++;
+      if (attempts > maxRetries ||
+          _isDisposed ||
+          _currentPlayingIndex != queuePlayingIndex) {
+        break;
+      }
+
+      // Thông báo đang thử lại
+      if (prefetchStateNotifier.value?.episodeIndex == episodeIndex ||
+          prefetchStateNotifier.value == null ||
+          prefetchStateNotifier.value!.isReady) {
+        prefetchStateNotifier.value = PrefetchState(
+          episodeIndex: episodeIndex,
+          status: 'retrying',
+          progress: 0.05,
+          message:
+              'Đang thử lại kết nối video Tập $episodeIndex (lần $attempts/$maxRetries)...',
+        );
+      }
+
+      final delaySec = attempts * 2;
+      await Future<void>.delayed(Duration(seconds: delaySec));
+    }
+    return _cachedUrls[episodeIndex];
+  }
+
+  /// Chạy hàng đợi dịch ngầm: Tải video song song không chặn luồng, dịch AI tuần tự
   Future<void> _runPrefetchQueue(
     int playingIndex,
     int bufferCount,
@@ -272,29 +378,37 @@ class HongguoPrefetchManager {
         if (playingIndex + i <= total) playingIndex + i,
     ];
 
-    // Chỉ ở chế độ HF: khởi chạy ngay toàn bộ yêu cầu chuẩn bị video.
-    // Các Future chạy đồng thời, còn dịch/STT/TTS bên dưới vẫn tuần tự.
     final initialSettings = await SettingsRepository.getInstance();
-    final hfWarmups = <int, Future<String?>>{};
-    if (initialSettings.hongguoVideoResolverEngine == 'hf') {
-      debugPrint(
-        '[Prefetch] Gửi trước ${targetIndexes.length} yêu cầu chuẩn bị video lên HF: $targetIndexes',
+    final isHf = initialSettings.hongguoVideoResolverEngine == 'hf';
+
+    // BƯỚC 1: Khởi chạy chuẩn bị video song song cho toàn bộ targetIndexes.
+    // Tải video chạy trên các luồng độc lập, nếu tập N bị lỗi & retry
+    // thì tập N+1 vẫn đang tải bình thường, không hề bị nghẽn!
+    final videoFutures = <int, Future<String?>>{};
+    for (final episodeIndex in targetIndexes) {
+      if (_cachedDocs.containsKey(episodeIndex)) continue;
+      videoFutures[episodeIndex] = _prepareEpisodeVideo(
+        episodeIndex,
+        playingIndex,
+        hfOnly: isHf,
       );
-      for (final episodeIndex in targetIndexes) {
-        hfWarmups[episodeIndex] = getOrResolveUrl(episodeIndex, hfOnly: true);
-      }
     }
 
+    // BƯỚC 2: Hàng đợi dịch AI (STT + Gemini/Groq + TTS) chạy tuần tự từng tập
+    // để chống Rate Limit 429 và quá tải CPU máy.
     for (final nextIndex in targetIndexes) {
       if (_isDisposed || _currentPlayingIndex != playingIndex) break;
       final settings = await SettingsRepository.getInstance();
       if (!settings.autoPlayNextEpisode) break;
 
-      await _prefetchNextEpisode(nextIndex, preparedUrl: hfWarmups[nextIndex]);
+      await _prefetchNextEpisode(
+        nextIndex,
+        preparedUrl: videoFutures[nextIndex],
+      );
     }
   }
 
-  /// Tiến trình dịch ngầm tập tiếp theo
+  /// Tiến trình dịch ngầm tập tiếp theo (có cơ chế Retry tự động)
   Future<void> _prefetchNextEpisode(
     int nextIndex, {
     Future<String?>? preparedUrl,
@@ -340,7 +454,27 @@ class HongguoPrefetchManager {
     }
 
     debugPrint('[Prefetch] Bắt đầu dịch ngầm gối đầu Tập $nextIndex...');
-    await _executeTranslation(nextIndex, preparedUrl: preparedUrl);
+    const maxRetries = 2;
+    var attempt = 0;
+    while (!_isDisposed && attempt <= maxRetries) {
+      final doc = await _executeTranslation(
+        nextIndex,
+        preparedUrl: attempt == 0 ? preparedUrl : null,
+      );
+      if (doc != null && doc.isNotEmpty) {
+        return;
+      }
+      attempt++;
+      if (attempt > maxRetries || _isDisposed) break;
+
+      prefetchStateNotifier.value = PrefetchState(
+        episodeIndex: nextIndex,
+        status: 'retrying',
+        progress: 0.05,
+        message: 'Đang thử lại dịch Tập $nextIndex (lần $attempt/$maxRetries)...',
+      );
+      await Future<void>.delayed(Duration(seconds: attempt * 2));
+    }
   }
 
   /// Thực thi toàn bộ pipeline tải -> STT -> Dịch AI cho một tập phim
@@ -377,15 +511,35 @@ class HongguoPrefetchManager {
         message: 'Đang kết nối video Tập $episodeIndex...',
       );
 
-      // Bước 1: Lấy URL phát video
-      var playUrl = await (preparedUrl ?? getOrResolveUrl(episodeIndex));
-      // Warm-up HF không fallback sang local để tránh nhiều lượt tải local
-      // chạy cùng lúc. Nếu HF lỗi, lượt tuần tự này mới dùng fallback chuẩn.
-      if (playUrl == null && preparedUrl != null && !_isDisposed) {
-        debugPrint(
-          '[Prefetch] HF chuẩn bị tập $episodeIndex thất bại, thử lại theo luồng tuần tự...',
+      void onVideoDownloadProgress(double p, String status) {
+        if (_isDisposed) return;
+        final mapped = (0.05 + p * 0.15).clamp(0.05, 0.20);
+        final pctInt = (p * 100).toInt();
+        prefetchStateNotifier.value = PrefetchState(
+          episodeIndex: episodeIndex,
+          status: 'resolving',
+          progress: mapped,
+          message: status.isNotEmpty
+              ? status
+              : 'Đang tải video Tập $episodeIndex: $pctInt%...',
         );
-        playUrl = await getOrResolveUrl(episodeIndex);
+      }
+
+      // Bước 1: Lấy URL phát video
+      var playUrl = await (preparedUrl ??
+          getOrResolveUrl(
+            episodeIndex,
+            onProgress: onVideoDownloadProgress,
+          ));
+      // Nếu URL chuẩn bị trước lỗi, thử lại trực tiếp theo luồng tuần tự
+      if (playUrl == null && !_isDisposed) {
+        debugPrint(
+          '[Prefetch] Chuẩn bị trước tập $episodeIndex thất bại, thử lại trực tiếp...',
+        );
+        playUrl = await getOrResolveUrl(
+          episodeIndex,
+          onProgress: onVideoDownloadProgress,
+        );
       }
       if (playUrl == null || _isDisposed) {
         throw StateError('Không thể lấy đường dẫn video tập $episodeIndex');
@@ -559,6 +713,7 @@ class HongguoPrefetchManager {
   Future<String?> getOrResolveUrl(
     int episodeIndex, {
     bool hfOnly = false,
+    void Function(double progress, String status)? onProgress,
   }) async {
     final cachedUrl = _cachedUrls[episodeIndex];
     if (cachedUrl != null && cachedUrl.isNotEmpty) {
@@ -603,6 +758,7 @@ class HongguoPrefetchManager {
         vid.isNotEmpty ? vid : detail.seriesId,
         episodeIndex: episodeIndex,
         hfOnly: hfOnly,
+        onProgress: onProgress,
       );
 
       final cached = await VideoCacheManager.findCachedFile(

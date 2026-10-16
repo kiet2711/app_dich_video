@@ -155,16 +155,21 @@ class VideoCacheManager {
           return validExact;
         }
 
-        // Quét danh sách file trong cache đề phòng case-sensitivity hoặc suffix
+        // Quét danh sách file trong cache đề phòng case-sensitivity hoặc suffix (ví dụ _hd.mp4)
         try {
           final entities = dir.listSync();
           final prefix = 'hg_${cleanSid}_ep$episodeIndex';
+          final lowerPrefix = prefix.toLowerCase();
           for (final e in entities) {
             if (e is File) {
               final filename = e.path.split(RegExp(r'[/\\]')).last;
-              if (filename.toLowerCase().startsWith(prefix.toLowerCase()) &&
-                  filename.endsWith('.mp4') &&
-                  !filename.endsWith('.part')) {
+              final lowerName = filename.toLowerCase();
+              final isExactEpisodeMatch = lowerName == '$lowerPrefix.mp4' ||
+                  lowerName.startsWith('${lowerPrefix}_') ||
+                  lowerName.startsWith('$lowerPrefix.');
+              if (isExactEpisodeMatch &&
+                  lowerName.endsWith('.mp4') &&
+                  !lowerName.endsWith('.part')) {
                 final validEntity = await validateFile(e);
                 if (validEntity != null) {
                   return validEntity;
