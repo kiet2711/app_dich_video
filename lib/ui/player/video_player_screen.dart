@@ -80,7 +80,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   static const _positionSaveInterval = Duration(seconds: 3);
 
   bool _isSwitchingQuality = false;
-  bool _isSwitchingVideo = false;
   String _currentQualityKey = '64';
   bool _isPlayerFullScreen = false;
   List<BilibiliAnimeItem> _rawDirectRelated = [];
@@ -991,13 +990,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             );
           }
         }
-        // Trì hoãn nạp dữ liệu phụ trong nền sau khi video đã bắt đầu phát (tránh nghẽn băng thông lúc nạp luồng)
-        unawaited(Future.delayed(const Duration(milliseconds: 1000), () {
-          if (!mounted) return;
-          _loadRelatedVideos(details.bvid);
-          _loadBilibiliUploaderInfo(details);
-          _loadBilibiliComments(details.aid, reset: true);
-        }));
+        // Trì hoãn nạp dữ liệu phụ trong nền sau khi video đã sẵn sàng phát (tránh nghẽn mạng)
+        unawaited(_loadRelatedVideos(details.bvid));
+        unawaited(_loadBilibiliUploaderInfo(details));
+        unawaited(_loadBilibiliComments(details.aid, reset: true));
       } else if (widget.dramaDetail != null) {
         _bilibiliDetails = null;
         // Ưu tiên nạp video từ cache nếu đã tải về máy trước đó
@@ -1184,12 +1180,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         } catch (_) {}
       }
 
-      if (_isSwitchingVideo && mounted) {
-        setState(() {
-          _isSwitchingVideo = false;
-        });
-      }
-
       // Khởi động các tác vụ phụ chạy ngầm bất đồng bộ song song
       unawaited(_calibratePlaybackSpeeds());
       unawaited(_applyAudioVolumes());
@@ -1204,10 +1194,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           failedController.dispose();
         } catch (_) {}
       }
-      setState(() {
-        _isSwitchingVideo = false;
-        _playerError = 'Không mở được video: $e';
-      });
+      setState(() => _playerError = 'Không mở được video: $e');
     }
   }
 
@@ -4284,7 +4271,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
     final item = newBilibiliItem;
     setState(() {
-      _isSwitchingVideo = true;
       if (!canReuseController) {
         _isInitialized = false;
       }
@@ -4323,19 +4309,17 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       _userChosePlayRaw = false;
     });
 
-    _ttsScheduler = TtsAudioScheduler(newDocument);
-    try {
-      await _initPlayerForPath(
-        newVideoPath,
-        refreshHongguoUrl: false,
-      );
-    } finally {
-      if (mounted && _isSwitchingVideo) {
-        setState(() {
-          _isSwitchingVideo = false;
-        });
-      }
+    final newBvid = item?.bvid ??
+        RegExp(r'BV[a-zA-Z0-9]+', caseSensitive: false).firstMatch(newVideoPath)?.group(0);
+    if (newBvid != null && newBvid.isNotEmpty) {
+      _loadRelatedVideos(newBvid);
     }
+
+    _ttsScheduler = TtsAudioScheduler(newDocument);
+    await _initPlayerForPath(
+      newVideoPath,
+      refreshHongguoUrl: false,
+    );
   }
 
   void _showDownloadSelectionSheet() {
@@ -5569,24 +5553,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             ),
           ),
 
-          // Vòng xoay chờ nạp chuyển video mới
-          if (_isSwitchingVideo && !controller.value.hasError)
-            Center(
-              child: Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.65),
-                  shape: BoxShape.circle,
-                ),
-                child: const CircularProgressIndicator(
-                  strokeWidth: 3.5,
-                  color: Color(0xFF00AEEC),
-                ),
-              ),
-            ),
-
           // Vòng xoay chờ tải mạng (Chỉ hiện khi video đang phát nhưng thực sự bị khựng lag không chạy được)
-          if (_isPlaybackStalled && !_isSwitchingVideo && !controller.value.hasError)
+          if (_isPlaybackStalled && !controller.value.hasError)
             Center(
               child: Container(
                 padding: const EdgeInsets.all(14),

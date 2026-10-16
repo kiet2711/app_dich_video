@@ -133,16 +133,12 @@ class BilibiliSubtitleInfo {
 class BilibiliDashStream {
   final String videoUrl;
   final String audioUrl;
-  final List<String> backupVideoUrls;
-  final List<String> backupAudioUrls;
   final Map<String, String> headers;
   final int quality;
 
   const BilibiliDashStream({
     required this.videoUrl,
     required this.audioUrl,
-    this.backupVideoUrls = const [],
-    this.backupAudioUrls = const [],
     required this.headers,
     this.quality = 64,
   });
@@ -830,15 +826,8 @@ class BilibiliResolver {
     final bestVideo = videoList.first;
     final bestAudio = audioList.first;
 
-    final videoCandidates = extractStreamCandidateUrls(bestVideo);
-    final audioCandidates = extractStreamCandidateUrls(bestAudio);
-
-    final videoUrl = videoCandidates.isNotEmpty
-        ? videoCandidates.first
-        : (bestVideo['baseUrl']?.toString() ?? bestVideo['base_url']?.toString() ?? '');
-    final audioUrl = audioCandidates.isNotEmpty
-        ? audioCandidates.first
-        : (bestAudio['baseUrl']?.toString() ?? bestAudio['base_url']?.toString() ?? '');
+    final videoUrl = bestVideo['baseUrl']?.toString() ?? bestVideo['base_url']?.toString() ?? '';
+    final audioUrl = bestAudio['baseUrl']?.toString() ?? bestAudio['base_url']?.toString() ?? '';
 
     if (videoUrl.isEmpty || audioUrl.isEmpty) {
       throw StateError('Không tìm thấy link video hoặc audio DASH hợp lệ.');
@@ -847,8 +836,6 @@ class BilibiliResolver {
     return BilibiliDashStream(
       videoUrl: videoUrl,
       audioUrl: audioUrl,
-      backupVideoUrls: videoCandidates.length > 1 ? videoCandidates.sublist(1) : const [],
-      backupAudioUrls: audioCandidates.length > 1 ? audioCandidates.sublist(1) : const [],
       headers: streamHeaders(cookie),
       quality: (bestVideo['id'] as num?)?.toInt() ?? targetQn,
     );
@@ -903,35 +890,6 @@ class BilibiliResolver {
     if (lower.contains('mirrorhw')) return 50;
     if (lower.contains('cn-')) return 10;
     return 40;
-  }
-
-  static List<String> extractStreamCandidateUrls(Map<String, dynamic> streamMap) {
-    final rawUrls = <String>[
-      streamMap['baseUrl']?.toString() ?? '',
-      streamMap['base_url']?.toString() ?? '',
-      ...(streamMap['backupUrl'] as List<dynamic>? ?? const []).map((e) => e.toString()),
-      ...(streamMap['backup_url'] as List<dynamic>? ?? const []).map((e) => e.toString()),
-    ];
-    final initialList = rawUrls
-        .map((url) => url.trim())
-        .where((url) => url.startsWith('http://') || url.startsWith('https://'))
-        .toSet()
-        .toList();
-
-    // Sinh thêm link mirror quốc tế tốc độ cao nếu URL chứa cấu trúc UPOS
-    final synthesized = <String>[];
-    for (final u in initialList) {
-      final uri = Uri.tryParse(u);
-      if (uri != null && uri.path.contains('/upos/')) {
-        synthesized.add(uri.replace(host: 'upos-sz-mirroraliov.bilivideo.com').toString());
-        synthesized.add(uri.replace(host: 'upos-sz-mirrorakamai.bilivideo.com').toString());
-        synthesized.add(uri.replace(host: 'upos-sz-upcdnbov.bilivideo.com').toString());
-      }
-    }
-
-    final allUrls = {...synthesized, ...initialList}.toList();
-    allUrls.sort((a, b) => _scoreCdnUrl(b).compareTo(_scoreCdnUrl(a)));
-    return allUrls;
   }
 
   static List<String> extractMuxedVideoUrls(Map<String, dynamic> data) {

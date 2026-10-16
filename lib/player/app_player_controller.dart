@@ -66,12 +66,6 @@ class AppPlayerController extends ChangeNotifier {
   bool get isDisposed => _isDisposed;
   final Completer<void> _initCompleter = Completer<void>();
 
-  String? _currentDashVideoUrl;
-  String? get currentDashVideoUrl => _currentDashVideoUrl;
-  String? _currentDashAudioUrl;
-  String? get currentDashAudioUrl => _currentDashAudioUrl;
-  Map<String, String> _currentDashHeaders = const {};
-
   AppPlayerController() {
     player = Player(
       configuration: const PlayerConfiguration(
@@ -163,48 +157,53 @@ class AppPlayerController extends ChangeNotifier {
         notifyListeners();
       }),
     );
-
-    _subscriptions.add(
-      player.stream.tracks.listen((tracks) {
-        if (_isDisposed) return;
-        // Tự động kiểm tra và kích hoạt lại track âm thanh nếu mpv vừa load xong video demuxer
-        if (_currentDashAudioUrl != null && _currentDashAudioUrl!.isNotEmpty) {
-          _ensureAudioTrackActive();
-        }
-      }),
-    );
   }
 
-  /// Đảm bảo luồng âm thanh rời (DASH) được gắn kết và chọn phát đúng cách
-  Future<void> _ensureAudioTrackActive() async {
-    if (_isDisposed || _currentDashAudioUrl == null || _currentDashAudioUrl!.isEmpty) return;
-    try {
-      final audioTracks = player.state.tracks.audio;
-      final currentAudioTrack = player.state.track.audio;
+  bool _hasRealVideoTrack(Tracks tracks) {
+    return tracks.video.any((track) => track.id != 'auto' && track.id != 'no');
+  }
 
-      // 1. Nếu mpv đã có track âm thanh nhưng chưa được chọn hoặc đang là 'no'
-      if (audioTracks.isNotEmpty) {
-        final activeTrack = audioTracks.firstWhere(
-          (t) => t.id != 'no' && t.id != 'auto',
-          orElse: () => audioTracks.first,
+  bool _hasRealAudioTrack(Tracks tracks) {
+    return tracks.audio.any((track) => track.id != 'auto' && track.id != 'no');
+  }
+
+  /// Chờ mpv nạp xong demuxer video trước khi gắn audio DASH rời.
+  /// Nếu gắn audio ngay sau `open`, lệnh có thể bị reset bởi quá trình load video.
+  Future<void> _waitForPrimaryVideoTrack() async {
+    if (_hasRealVideoTrack(player.state.tracks)) return;
+    await player.stream.tracks
+        .firstWhere(_hasRealVideoTrack)
+        .timeout(const Duration(seconds: 10));
+  }
+
+  Future<void> _attachBilibiliAudio(String audioUrl) async {
+    if (audioUrl.isEmpty || _isDisposed) return;
+
+    Object? lastError;
+    for (var attempt = 1; attempt <= 3; attempt++) {
+      try {
+        await player.setAudioTrack(
+          AudioTrack.uri(
+            audioUrl,
+            title: 'Bilibili DASH audio',
+          ),
         );
-        if (currentAudioTrack.id == 'no' || currentAudioTrack.id != activeTrack.id) {
-          await player.setAudioTrack(activeTrack);
+
+        if (!_hasRealAudioTrack(player.state.tracks)) {
+          await player.stream.tracks
+              .firstWhere(_hasRealAudioTrack)
+              .timeout(const Duration(seconds: 4));
         }
-      } else {
-        // 2. Nếu mpv chưa có audio track (bị reset do loadfile video chính), gửi lệnh add lại
-        if (player.platform is NativePlayer) {
-          final nativePlayer = player.platform as NativePlayer;
-          if (_currentDashHeaders.isNotEmpty) {
-            final headerStr = _currentDashHeaders.entries.map((e) => '${e.key}: ${e.value}').join('\r\n');
-            await nativePlayer.setProperty('http-header-fields', headerStr);
-          }
-          await nativePlayer.command(['audio-add', _currentDashAudioUrl!, 'select']);
+        return;
+      } catch (error) {
+        lastError = error;
+        if (attempt < 3) {
+          await Future<void>.delayed(Duration(milliseconds: 250 * attempt));
         }
       }
-    } catch (e) {
-      debugPrint('[AppPlayerController] Lỗi kiểm tra kích hoạt âm thanh DASH: $e');
     }
+
+    throw StateError('Không thể gắn audio DASH Bilibili: $lastError');
   }
 
   /// Chờ cho đến khi media được nạp xong và xác định được độ dài / kích thước
@@ -219,10 +218,6 @@ class AppPlayerController extends ChangeNotifier {
         notifyListeners();
       }
     }
-    // Demuxer video đã sẵn sàng: xác thực và gắn kết lại audio track nếu cần
-    if (_currentDashAudioUrl != null) {
-      await _ensureAudioTrackActive();
-    }
   }
 
   /// Phát luồng Bilibili DASH (Video và Audio phân đoạn song song)
@@ -231,10 +226,6 @@ class AppPlayerController extends ChangeNotifier {
     required String audioUrl,
     Map<String, String> headers = const {},
   }) async {
-    _currentDashVideoUrl = videoUrl;
-    _currentDashAudioUrl = audioUrl;
-    _currentDashHeaders = headers;
-
     if (headers.isNotEmpty && player.platform is NativePlayer) {
       final headerStr = headers.entries.map((e) => '${e.key}: ${e.value}').join('\r\n');
       final nativePlayer = player.platform as NativePlayer;
@@ -250,12 +241,10 @@ class AppPlayerController extends ChangeNotifier {
       play: false,
     );
 
-    // Ghép luồng âm thanh rời (tự động đồng bộ PTS)
+    // Chờ video load ổn định rồi mới ghép audio để tránh mpv reset mất track.
     if (audioUrl.isNotEmpty && player.platform is NativePlayer) {
-      final nativePlayer = player.platform as NativePlayer;
-      try {
-        await nativePlayer.command(['audio-add', audioUrl, 'select']);
-      } catch (_) {}
+      await _waitForPrimaryVideoTrack();
+      await _attachBilibiliAudio(audioUrl);
     }
   }
 
@@ -273,10 +262,6 @@ class AppPlayerController extends ChangeNotifier {
     try {
       await player.pause();
     } catch (_) {}
-
-    _currentDashVideoUrl = null;
-    _currentDashAudioUrl = null;
-    _currentDashHeaders = const {};
 
     _value = _value.copyWith(
       position: Duration.zero,
@@ -302,23 +287,17 @@ class AppPlayerController extends ChangeNotifier {
 
     if (player.state.duration > Duration.zero) {
       _value = _value.copyWith(duration: player.state.duration);
-      if (_currentDashAudioUrl != null) {
-        await _ensureAudioTrackActive();
-      }
     } else {
       try {
         final dur = await player.stream.duration
             .firstWhere((d) => d > Duration.zero)
             .timeout(const Duration(seconds: 4));
         _value = _value.copyWith(duration: dur);
-        if (_currentDashAudioUrl != null) {
-          await _ensureAudioTrackActive();
-        }
       } catch (_) {}
     }
 
     if (play && !_isDisposed) {
-      await this.play();
+      await player.play();
     }
   }
 
@@ -327,9 +306,6 @@ class AppPlayerController extends ChangeNotifier {
     String url, {
     Map<String, String> headers = const {},
   }) async {
-    _currentDashVideoUrl = null;
-    _currentDashAudioUrl = null;
-    _currentDashHeaders = const {};
     if (player.platform is NativePlayer) {
       final nativePlayer = player.platform as NativePlayer;
       if (headers.isNotEmpty) {
@@ -347,9 +323,6 @@ class AppPlayerController extends ChangeNotifier {
 
   /// Phát file video cục bộ trên máy
   Future<void> openFile(File file) async {
-    _currentDashVideoUrl = null;
-    _currentDashAudioUrl = null;
-    _currentDashHeaders = const {};
     final uri = Uri.file(file.path);
     await player.open(
       Media(uri.toString()),
@@ -359,9 +332,6 @@ class AppPlayerController extends ChangeNotifier {
 
   /// Phát Content URI (Android)
   Future<void> openContentUri(Uri uri) async {
-    _currentDashVideoUrl = null;
-    _currentDashAudioUrl = null;
-    _currentDashHeaders = const {};
     await player.open(
       Media(uri.toString()),
       play: false,
@@ -369,12 +339,7 @@ class AppPlayerController extends ChangeNotifier {
   }
 
   Future<void> play() async {
-    if (!_isDisposed) {
-      if (_currentDashAudioUrl != null) {
-        await _ensureAudioTrackActive();
-      }
-      await player.play();
-    }
+    if (!_isDisposed) await player.play();
   }
 
   Future<void> pause() async {
