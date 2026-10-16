@@ -160,7 +160,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   double _downloadProgress = 0.0;
   String _downloadMessage = '';
   bool _showDownloadBanner = true;
-  bool _userChosePlayRaw = false;
+  bool _userChosePlayRaw = true;
   DateTime? _playbackStartedAt;
 
   String? _originalTitle;
@@ -842,6 +842,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     await _initPlayerForPath(
       _currentVideoPath,
       startPosMs: widget.initialPositionMs,
+      refreshHongguoUrl: false,
     );
   }
 
@@ -1033,13 +1034,15 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
               vid.isNotEmpty ? vid : detail.seriesId,
               episodeIndex: _currentEpisodeIndex,
             );
-            if (freshUrl.isNotEmpty && freshUrl.startsWith('http')) {
+            if (freshUrl.isNotEmpty) {
               targetPath = freshUrl;
               playableUrls = [freshUrl];
-              try {
-                final history = await HistoryRepository.getInstance();
-                await history.updateVideoPath(_sourceVideoUrl, freshUrl);
-              } catch (_) {}
+              if (freshUrl.startsWith('http')) {
+                try {
+                  final history = await HistoryRepository.getInstance();
+                  await history.updateVideoPath(_sourceVideoUrl, freshUrl);
+                } catch (_) {}
+              }
             }
           } catch (e) {
             debugPrint('[Player] Không thể re-resolve URL mới cho tập $_currentEpisodeIndex: $e');
@@ -7040,6 +7043,18 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       if (_currentDocument.isNotEmpty) {
         _prefetchManager!.registerDocument(_currentEpisodeIndex, _currentDocument);
       }
+      _prefetchManager!.onEpisodePlaying(
+        _currentEpisodeIndex,
+        translateCurrentIfEmpty: _currentDocument.isEmpty,
+        onCurrentSubtitleReady: (newDoc) {
+          if (!mounted) return;
+          setState(() {
+            _currentDocument = newDoc;
+            _ttsScheduler.dispose();
+            _ttsScheduler = TtsAudioScheduler(newDoc);
+          });
+        },
+      );
     }
     return Container(
       color: const Color(0xFF0D1117),

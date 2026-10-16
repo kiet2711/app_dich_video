@@ -2010,25 +2010,24 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                             color: AppColors.textPrimary,
                           ),
                         ),
-                        if (detail.accessibleEpisodes < total)
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 3,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.amber.withValues(alpha: 0.15),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Text(
-                              'Web mở: 1 - ${detail.accessibleEpisodes}',
-                              style: const TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.amber,
-                              ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: AppColors.primaryEmerald.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            'Mở VIP trọn bộ $total tập',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.primaryEmerald,
                             ),
                           ),
+                        ),
                       ],
                     ),
                     const SizedBox(height: 10),
@@ -2097,11 +2096,15 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                         return InkWell(
                           onTap: () {
                             HapticFeedback.lightImpact();
+                            if (isSelected && !_isLoadingPlayUrl) {
+                              _playEpisode(context, enableTts: false);
+                              return;
+                            }
                             setState(() {
                               _selectedEpisodeIndex = epIndex;
                               if (!isAccessible) {
                                 _statusMessage =
-                                    'Lưu ý: Tập $epIndex có thể bị khóa trên web Hồng Quả (web chỉ mở xem trước ${detail.accessibleEpisodes} tập đầu).';
+                                    '⚡ Tập $epIndex là tập VIP: Tự động giải mã DRM trên máy khi phát.';
                               } else {
                                 _statusMessage = '';
                               }
@@ -2136,17 +2139,32 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                                         : FontWeight.normal,
                                     color: isSelected
                                         ? AppColors.primaryEmerald
-                                        : (isAccessible
-                                            ? AppColors.textPrimary
-                                            : AppColors.textMuted),
+                                        : AppColors.textPrimary,
                                   ),
                                 ),
                                 if (!isAccessible) ...[
-                                  const SizedBox(width: 2),
-                                  const Icon(
-                                    Icons.lock_outline_rounded,
-                                    size: 11,
-                                    color: Colors.white38,
+                                  const SizedBox(width: 3),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 3,
+                                      vertical: 1,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: isSelected
+                                          ? AppColors.primaryEmerald.withValues(alpha: 0.3)
+                                          : AppColors.accentGold.withValues(alpha: 0.2),
+                                      borderRadius: BorderRadius.circular(3),
+                                    ),
+                                    child: Text(
+                                      'VIP',
+                                      style: TextStyle(
+                                        fontSize: 8.5,
+                                        fontWeight: FontWeight.bold,
+                                        color: isSelected
+                                            ? AppColors.primaryEmerald
+                                            : AppColors.accentGold,
+                                      ),
+                                    ),
                                   ),
                                 ],
                               ],
@@ -2279,6 +2297,13 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
         detail.seriesId,
         vid.isNotEmpty ? vid : detail.seriesId,
         episodeIndex: _selectedEpisodeIndex,
+        onProgress: (p, msg) {
+          if (mounted) {
+            setState(() {
+              _statusMessage = msg;
+            });
+          }
+        },
       );
       if (mounted) {
         setState(() {

@@ -94,7 +94,7 @@ class HongguoGenre {
 }
 
 class HongguoResolver {
-  static const String siteOrigin = 'https://www.hongguoduanju.com';
+  static const String siteOrigin = 'https://hongguoduanju.com';
   static const String defaultUserAgent =
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
@@ -265,7 +265,7 @@ class HongguoResolver {
         preferredCategory.isNotEmpty &&
         preferredCategory != 'rank/hot-drama' &&
         preferredCategory != 'discover') {
-      final maxRand = (genre != null && genre.isNotEmpty) ? 6 : 25;
+      final maxRand = (genre != null && genre.isNotEmpty) ? 4 : 5;
       final randomPage = rng.nextInt(maxRand) + 1;
       try {
         var res = await browseList(
@@ -319,7 +319,7 @@ class HongguoResolver {
         candidateCats.add('category/ai-drama');
       }
       final pickedCat = candidateCats[rng.nextInt(candidateCats.length)];
-      final randomPage = rng.nextInt(6) + 1;
+      final randomPage = rng.nextInt(4) + 1;
       try {
         var res = await browseList(
           category: pickedCat,
@@ -351,15 +351,18 @@ class HongguoResolver {
       'rank/hot-real-drama',
     ];
     final selectedCat = pool[rng.nextInt(pool.length)];
-    final maxPage = selectedCat.startsWith('rank/') ? 5 : 25;
+    final maxPage = selectedCat.startsWith('rank/') ? 3 : 5;
     final randomPage = rng.nextInt(maxPage) + 1;
 
     try {
-      final res = await browseList(
+      var res = await browseList(
         category: selectedCat,
         genre: '',
         page: randomPage,
       );
+      if (res.items.isEmpty && randomPage > 1) {
+        res = await browseList(category: selectedCat, genre: '', page: 1);
+      }
       if (res.items.isNotEmpty) {
         final shuffled = List<HongguoDramaItem>.from(res.items)..shuffle(rng);
         return HongguoBrowseResult(
@@ -583,6 +586,7 @@ class HongguoResolver {
     String seriesId,
     String vid, {
     int episodeIndex = 1,
+    void Function(double progress, String status)? onProgress,
   }) async {
     final actualVid = (vid.isNotEmpty && vid != seriesId) ? vid : '';
 
@@ -650,6 +654,10 @@ class HongguoResolver {
             seriesId,
             actualVid,
             episodeIndex: episodeIndex,
+            onProgress: (p) => onProgress?.call(
+              p,
+              'Đang tải & giải mã VIP tập $episodeIndex: ${(p * 100).toInt()}%',
+            ),
           );
         } catch (localError) {
           debugPrint(
@@ -681,6 +689,10 @@ class HongguoResolver {
             seriesId,
             actualVid,
             episodeIndex: episodeIndex,
+            onProgress: (p) => onProgress?.call(
+              p,
+              'Đang tải & giải mã VIP tập $episodeIndex: ${(p * 100).toInt()}%',
+            ),
           );
         } catch (localErr) {
           debugPrint(
@@ -735,6 +747,13 @@ class HongguoResolver {
     return null;
   }
 
+  @visibleForTesting
+  String? extractBoundWebVideoUrlForTest(
+    String html, {
+    required String seriesId,
+    required String videoId,
+  }) => _extractBoundWebVideoUrl(html, seriesId: seriesId, videoId: videoId);
+
   String? _extractBoundWebVideoUrl(
     String html, {
     required String seriesId,
@@ -743,22 +762,44 @@ class HongguoResolver {
     final router = _readRouterData(html);
     final loaderData = router?['loaderData'];
     if (loaderData is! Map) return null;
-    final route = loaderData['player_(series_id)/(vid)/page'];
-    if (route is! Map || route['isSuccess'] == false) return null;
+    Map? route;
+    if (loaderData['player_(series_id)/(vid)/page'] is Map &&
+        loaderData['player_(series_id)/(vid)/page']['isSuccess'] != false) {
+      route = loaderData['player_(series_id)/(vid)/page'] as Map;
+    } else if (loaderData['player_(series_id)/page'] is Map &&
+        loaderData['player_(series_id)/page']['isSuccess'] != false) {
+      route = loaderData['player_(series_id)/page'] as Map;
+    } else {
+      for (final val in loaderData.values) {
+        if (val is Map &&
+            val['seriesDetail'] is Map &&
+            val['isSuccess'] != false) {
+          route = val;
+          break;
+        }
+      }
+    }
+    if (route == null) return null;
 
-    final actualSeriesId = (route['series_id'] ?? '').toString();
-    final actualVideoId = (route['vid'] ?? '').toString();
+    final actualSeriesId =
+        (route['series_id'] ?? route['seriesDetail']?['series_id'] ?? '')
+            .toString();
+    final actualVideoId =
+        (route['vid'] ?? route['publicVideoSeo']?['itemId'] ?? '').toString();
     final expectedVideoId = videoId.isNotEmpty ? videoId : actualVideoId;
     final seriesDetail = route['seriesDetail'];
     final publicSeo = route['publicVideoSeo'];
     if (actualSeriesId != seriesId ||
-        actualVideoId != expectedVideoId ||
         seriesDetail is! Map ||
         (seriesDetail['series_id'] ?? '').toString() != actualSeriesId ||
         publicSeo is! Map ||
         publicSeo['available'] != true ||
-        (publicSeo['itemId'] ?? '').toString() != expectedVideoId ||
         (publicSeo['seriesId'] ?? '').toString() != actualSeriesId) {
+      return null;
+    }
+    if (expectedVideoId.isNotEmpty &&
+        actualVideoId.isNotEmpty &&
+        actualVideoId != expectedVideoId) {
       return null;
     }
 
@@ -770,7 +811,9 @@ class HongguoResolver {
               uri.host.endsWith('.hongguoduanju.com'))) {
         return false;
       }
-      return uri.path == '/player/$actualSeriesId/$expectedVideoId';
+      return uri.path == '/player/$actualSeriesId/$expectedVideoId' ||
+          uri.path == '/player/$actualSeriesId' ||
+          uri.path == '/player/_/$expectedVideoId';
     }
 
     final scripts = RegExp(
