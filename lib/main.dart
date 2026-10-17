@@ -1,3 +1,5 @@
+import 'dart:io';
+import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 
 import 'ui/bilibili/bilibili_screen.dart';
@@ -100,14 +102,23 @@ class _MainNavigationState extends State<MainNavigation> {
       listenable: GlobalPlayerManager.instance,
       builder: (context, _) {
         final isFullScreen = GlobalPlayerManager.instance.isFullScreen;
-        return Scaffold(
-          body: Stack(
-            children: [
-              IndexedStack(index: _currentIndex, children: screens),
-              const GlobalPlayerOverlay(),
-            ],
+        return PopScope(
+          canPop: false,
+          onPopInvokedWithResult: (didPop, _) {
+            if (didPop) return;
+            if (Platform.isAndroid) {
+              const MethodChannel('com.capcut.capsub/media').invokeMethod('moveToBack');
+            }
+          },
+          child: Scaffold(
+            body: Stack(
+              children: [
+                IndexedStack(index: _currentIndex, children: screens),
+                const GlobalPlayerOverlay(),
+              ],
+            ),
+            bottomNavigationBar: isFullScreen ? null : _buildBottomBar(context),
           ),
-          bottomNavigationBar: isFullScreen ? null : _buildBottomBar(context),
         );
       },
     );

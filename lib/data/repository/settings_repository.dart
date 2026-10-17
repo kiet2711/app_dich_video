@@ -317,6 +317,12 @@ class SettingsRepository {
   set bilibiliTranslationMode(String v) =>
       prefs.setString('bilibili_translation_mode', v);
 
+  /// Dung lượng bộ nhớ đệm RAM cho trình phát MediaKit (MB): 32, 64 (mặc định), 128, 256
+  int get playerBufferSizeMb =>
+      (prefs.getInt('player_buffer_size_mb') ?? 64).clamp(32, 256);
+  set playerBufferSizeMb(int v) =>
+      prefs.setInt('player_buffer_size_mb', v.clamp(32, 256));
+
   /// Nguồn lấy phụ đề gốc cho video Bilibili:
   /// 'bilibili_first': Ưu tiên phụ đề gốc Bilibili (nếu có, nếu không mới qua CapCut) - mặc định
   /// 'capcut_always': Bỏ qua phụ đề Bilibili, luôn nhận diện âm thanh trực tiếp qua CapCut STT

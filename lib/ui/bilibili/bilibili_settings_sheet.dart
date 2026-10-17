@@ -41,6 +41,7 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
   String _streamMode = 'dash';
   VoiceItem _selectedVoice = VoicePresets.defaultVoice;
   bool _downloadOffline = false;
+  int _bufferSizeMb = 64;
 
   @override
   void initState() {
@@ -61,6 +62,7 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
         orElse: () => VoicePresets.defaultVoice,
       );
       _downloadOffline = settings.downloadBilibiliVideo;
+      _bufferSizeMb = settings.playerBufferSizeMb;
     });
 
     final sess = settings.bilibiliSessData;
@@ -152,6 +154,7 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
       _settings!.bilibiliStreamMode = _streamMode;
       _settings!.bilibiliSelectedTtsVoice = _selectedVoice.voiceType;
       _settings!.downloadBilibiliVideo = _downloadOffline;
+      _settings!.playerBufferSizeMb = _bufferSizeMb;
     }
     Navigator.of(context).pop();
     ScaffoldMessenger.of(context).showSnackBar(
@@ -651,6 +654,42 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                               ),
                             ),
                             const Divider(color: AppTheme.cardBorder, height: 1),
+                            const Divider(color: AppTheme.cardBorder, height: 1),
+                            // Buffer RAM Slider/Dropdown
+                            ListTile(
+                              leading: const Icon(Icons.memory_rounded, color: Color(0xFF00AEEC)),
+                              title: const Text(
+                                'Bộ nhớ đệm RAM phát video',
+                                style: TextStyle(color: AppTheme.textPrimary, fontSize: 13.5),
+                              ),
+                              subtitle: Text(
+                                _getBufferLabel(_bufferSizeMb),
+                                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11.5),
+                              ),
+                              trailing: DropdownButtonHideUnderline(
+                                child: DropdownButton<int>(
+                                  value: _bufferSizeMb,
+                                  dropdownColor: AppTheme.darkSurfaceVariant,
+                                  icon: const Icon(Icons.arrow_drop_down, color: Colors.white70),
+                                  items: const [
+                                    DropdownMenuItem(value: 32, child: Text('32 MB (Tiết kiệm)', style: TextStyle(color: Colors.white, fontSize: 12.5))),
+                                    DropdownMenuItem(value: 64, child: Text('64 MB (Cân bằng)', style: TextStyle(color: Colors.white, fontSize: 12.5))),
+                                    DropdownMenuItem(value: 128, child: Text('128 MB (Khuyên dùng)', style: TextStyle(color: Colors.white, fontSize: 12.5))),
+                                    DropdownMenuItem(value: 256, child: Text('256 MB (Cực đại)', style: TextStyle(color: Colors.white, fontSize: 12.5))),
+                                  ],
+                                  onChanged: (val) {
+                                    if (val != null) {
+                                      HapticFeedback.selectionClick();
+                                      setState(() {
+                                        _bufferSizeMb = val;
+                                        settings.playerBufferSizeMb = val;
+                                      });
+                                    }
+                                  },
+                                ),
+                              ),
+                            ),
+                            const Divider(color: AppTheme.cardBorder, height: 1),
                             // Download offline toggle
                             SwitchListTile(
                               dense: true,
@@ -815,6 +854,21 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
         ),
       ),
     );
+  }
+
+  String _getBufferLabel(int mb) {
+    switch (mb) {
+      case 32:
+        return '32 MB - Tiết kiệm RAM cho máy cấu hình yếu';
+      case 64:
+        return '64 MB - Cân bằng, mượt mà (Mặc định)';
+      case 128:
+        return '128 MB - Tối ưu phát video dài 1-5 tiếng';
+      case 256:
+        return '256 MB - Cực đại cho video 5-10 tiếng';
+      default:
+        return '$mb MB';
+    }
   }
 
   Widget _buildAccountBox() {

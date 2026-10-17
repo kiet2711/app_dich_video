@@ -855,6 +855,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     );
   }
 
+  AppPlayerController _createPlayerController() {
+    return AppPlayerController(bufferSizeMb: _settings.playerBufferSizeMb);
+  }
+
   Future<void> _prepareControllerForMedia({
     File? file,
     Uri? contentUri,
@@ -893,7 +897,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     }
 
     if (dashVideoUrl != null && dashVideoUrl.isNotEmpty) {
-      final c = AppPlayerController();
+      final c = _createPlayerController();
       await c.openBilibiliDash(
         videoUrl: dashVideoUrl,
         audioUrl: dashAudioUrl ?? '',
@@ -902,12 +906,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       await c.initialize();
       _controller = c;
     } else if (file != null) {
-      final c = AppPlayerController();
+      final c = _createPlayerController();
       await c.openFile(file);
       await c.initialize();
       _controller = c;
     } else if (contentUri != null) {
-      final c = AppPlayerController();
+      final c = _createPlayerController();
       await c.openContentUri(contentUri);
       await c.initialize();
       _controller = c;
@@ -985,7 +989,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                 networkUrls: playableUrls,
                 httpHeaders: httpHeaders,
               );
-              streamSuccess = true;
+              if (_controller != null && _controller!.value.duration > Duration.zero) {
+                streamSuccess = true;
+              } else {
+                debugPrint('[Player] Luồng Muxed Bilibili không lấy được duration, tự động fallback sang DASH');
+              }
             } catch (e) {
               debugPrint('[Player] Lỗi nạp luồng Muxed Bilibili, dùng fallback DASH: $e');
             }
@@ -1263,7 +1271,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     }
     for (var i = 0; i < candidates.length; i++) {
       final candidateUrl = candidates[i];
-      final controller = AppPlayerController();
+      final controller = _createPlayerController();
       try {
         await controller.openNetwork(candidateUrl, headers: headers);
         await controller.initialize(timeout: const Duration(seconds: 8));
@@ -2231,7 +2239,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             _settings.bilibiliSessData,
             newQuality,
           );
-          newController = AppPlayerController();
+          newController = _createPlayerController();
           await newController.openBilibiliDash(
             videoUrl: dash.videoUrl,
             audioUrl: dash.audioUrl,
@@ -2247,7 +2255,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             _settings.bilibiliSessData,
             newQuality,
           );
-          newController = AppPlayerController();
+          newController = _createPlayerController();
           await newController.openBilibiliDash(
             videoUrl: dash.videoUrl,
             audioUrl: dash.audioUrl,

@@ -66,11 +66,12 @@ class AppPlayerController extends ChangeNotifier {
   bool get isDisposed => _isDisposed;
   final Completer<void> _initCompleter = Completer<void>();
 
-  AppPlayerController() {
+  AppPlayerController({int? bufferSizeMb}) {
+    final mb = (bufferSizeMb ?? 64).clamp(32, 256);
     player = Player(
-      configuration: const PlayerConfiguration(
+      configuration: PlayerConfiguration(
         title: 'CapSub MediaKit Player',
-        bufferSize: 32 * 1024 * 1024, // 32MB cache đệm
+        bufferSize: mb * 1024 * 1024,
       ),
     );
     videoController = VideoController(player);
@@ -208,15 +209,22 @@ class AppPlayerController extends ChangeNotifier {
 
   /// Chờ cho đến khi media được nạp xong và xác định được độ dài / kích thước
   Future<void> initialize({Duration timeout = const Duration(seconds: 25)}) async {
-    if (_value.isInitialized) return;
+    if (_value.isInitialized && _value.duration > Duration.zero) return;
     try {
       await _initCompleter.future.timeout(timeout);
     } catch (_) {
-      // Nếu timeout mà video vẫn có thể play, đánh dấu initialized
-      if (!_isDisposed) {
-        _value = _value.copyWith(isInitialized: true);
+      // Nếu timeout mà player đã đọc được duration hợp lệ từ stream mpv thì chấp nhận
+      if (!_isDisposed && player.state.duration > Duration.zero) {
+        _value = _value.copyWith(
+          duration: player.state.duration,
+          isInitialized: true,
+        );
         notifyListeners();
+        return;
       }
+      // Ngược lại, nếu hết thời gian mà duration vẫn = 0 (do nghẽn tải metadata MP4 lớn hoặc link chết),
+      // ném TimeoutException để caller biết mà tự động chuyển sang luồng dự phòng (DASH)
+      throw TimeoutException('Không tải được thông tin video trong thời gian quy định (${timeout.inSeconds}s)');
     }
   }
 
