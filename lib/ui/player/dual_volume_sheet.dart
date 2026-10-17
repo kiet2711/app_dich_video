@@ -143,18 +143,20 @@ class DualVolumeSheet extends StatelessWidget {
                   onAiVolumeChanged(aiVolume > 0 ? 0.0 : 1.0);
                 },
               ),
+              Expanded(
+                child: SliderTheme(
+                  data: SliderTheme.of(context).copyWith(
+                    activeTrackColor: AppTheme.primaryEmerald,
+                    thumbColor: AppTheme.primaryEmerald,
+                    inactiveTrackColor: const Color(0xFF323444),
+                  ),
+                  child: Slider(
+                    value: aiVolume.clamp(0.0, 1.0),
+                    onChanged: onAiVolumeChanged,
+                  ),
+                ),
+              ),
             ],
-          ),
-          SliderTheme(
-            data: SliderTheme.of(context).copyWith(
-              activeTrackColor: AppTheme.primaryEmerald,
-              thumbColor: AppTheme.primaryEmerald,
-              inactiveTrackColor: const Color(0xFF323444),
-            ),
-            child: Slider(
-              value: aiVolume.clamp(0.0, 1.0),
-              onChanged: onAiVolumeChanged,
-            ),
           ),
         ],
       ),

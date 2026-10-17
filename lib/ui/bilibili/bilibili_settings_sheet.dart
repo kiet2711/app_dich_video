@@ -204,7 +204,7 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                     color: const Color(0xFF00AEEC).withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: const Icon(Icons.tune_rounded, color: Color(0xFF00AEEC), size: 20),
+                  child: const Icon(Icons.settings_rounded, color: Color(0xFF00AEEC), size: 20),
                 ),
                 const SizedBox(width: 12),
                 const Expanded(

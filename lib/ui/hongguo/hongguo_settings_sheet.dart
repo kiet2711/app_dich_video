@@ -158,7 +158,7 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
             Row(
               children: [
                 const Icon(
-                  Icons.tune_rounded,
+                  Icons.settings_rounded,
                   color: AppColors.primaryEmerald,
                   size: 22,
                 ),

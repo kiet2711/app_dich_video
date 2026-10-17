@@ -149,6 +149,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   late String _currentVideoPath;
   late String _currentTitle;
   late SubtitleDocument _currentDocument;
+  SubtitleDocument? _originalDocument;
   BilibiliVideoDetails? _bilibiliDetails;
   HongguoPrefetchManager? _prefetchManager;
   bool _autoPlayNextEpisode = true;
@@ -559,6 +560,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     _currentTitle = widget.title ?? widget.bilibiliItem?.title ?? '';
     _originalTitle = _currentTitle;
     _currentDocument = widget.document ?? SubtitleDocument();
+    if (_currentDocument.isNotEmpty) {
+      _originalDocument = _currentDocument.shiftedBy(0);
+    }
 
     _coverUrl = widget.coverUrl ?? widget.bilibiliItem?.cover;
     _authorName = widget.author ?? widget.bilibiliItem?.author;
@@ -2068,17 +2072,27 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     await showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
+      isScrollControlled: true,
       builder: (ctx) {
-        return Container(
-          decoration: const BoxDecoration(
-            color: Color(0xFF1E202A),
-            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-          ),
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
+        final height = MediaQuery.of(ctx).size.height;
+        return SafeArea(
+          top: false,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: height * 0.90,
+            ),
+            child: Container(
+              decoration: const BoxDecoration(
+                color: Color(0xFF1E202A),
+                borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+              ),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+              child: SingleChildScrollView(
+                physics: const BouncingScrollPhysics(),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
               Center(
                 child: Container(
                   width: 36,
@@ -2168,7 +2182,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                   },
                 );
               }),
-            ],
+                  ],
+                ),
+              ),
+            ),
           ),
         );
       },
@@ -4547,194 +4564,211 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       builder: (ctx) {
         return StatefulBuilder(
           builder: (context, setSheetState) {
-            return Container(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-              decoration: const BoxDecoration(
-                color: Color(0xFF1A1C24),
-                borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 40,
-                      height: 4,
-                      margin: const EdgeInsets.only(bottom: 14),
-                      decoration: BoxDecoration(
-                        color: Colors.white24,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                  ),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            final isLandscape =
+                MediaQuery.of(context).orientation == Orientation.landscape;
+            final bottomPadding = MediaQuery.of(context).viewInsets.bottom;
+            return SafeArea(
+              top: false,
+              child: Container(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(context).size.height * 0.90,
+                ),
+                padding: EdgeInsets.fromLTRB(20, 12, 20, 20 + bottomPadding),
+                decoration: const BoxDecoration(
+                  color: Color(0xFF1A1C24),
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                ),
+                child: SingleChildScrollView(
+                  physics: const BouncingScrollPhysics(),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: AppTheme.primaryEmerald.withValues(alpha: 0.15),
-                              shape: BoxShape.circle,
-                            ),
-                            child: const Icon(
-                              Icons.video_settings_rounded,
-                              color: AppTheme.primaryEmerald,
-                              size: 22,
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          const Text(
-                            'Chọn chất lượng tải về',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.close_rounded, color: Colors.white60, size: 20),
-                        onPressed: () => Navigator.pop(ctx),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  const Text(
-                    'Chọn độ phân giải mong muốn để lưu video offline:',
-                    style: TextStyle(color: Colors.white70, fontSize: 12),
-                  ),
-                  const SizedBox(height: 14),
-                  ...qualities.map((q) {
-                    final isSel = selectedQuality == q['key'];
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: InkWell(
-                        onTap: () {
-                          setSheetState(() {
-                            selectedQuality = q['key']!;
-                          });
-                        },
-                        borderRadius: BorderRadius.circular(12),
+                      Center(
                         child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+                          width: 40,
+                          height: 4,
+                          margin: const EdgeInsets.only(bottom: 14),
                           decoration: BoxDecoration(
-                            color: isSel
-                                ? AppTheme.primaryEmerald.withValues(alpha: 0.15)
-                                : const Color(0xFF14151B),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                              color: isSel
-                                  ? AppTheme.primaryEmerald
-                                  : Colors.white12,
-                              width: isSel ? 1.5 : 1,
-                            ),
+                            color: Colors.white24,
+                            borderRadius: BorderRadius.circular(2),
                           ),
-                          child: Row(
+                        ),
+                      ),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
                             children: [
-                              Icon(
-                                isSel
-                                    ? Icons.radio_button_checked_rounded
-                                    : Icons.radio_button_unchecked_rounded,
-                                color: isSel
-                                    ? AppTheme.primaryEmerald
-                                    : Colors.white38,
-                                size: 20,
+                              Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: AppTheme.primaryEmerald.withValues(alpha: 0.15),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(
+                                  Icons.video_settings_rounded,
+                                  color: AppTheme.primaryEmerald,
+                                  size: 22,
+                                ),
                               ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        Text(
-                                          q['title']!,
-                                          style: TextStyle(
-                                            color: isSel
-                                                ? AppTheme.primaryEmerald
-                                                : Colors.white,
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 13,
-                                          ),
-                                        ),
-                                        if (q['badge'] != null) ...[
-                                          const SizedBox(width: 8),
-                                          Container(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 6,
-                                              vertical: 1.5,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              color: (q['key'] == '80'
-                                                      ? Colors.amber
-                                                      : AppTheme.primaryEmerald)
-                                                  .withValues(alpha: 0.2),
-                                              borderRadius: BorderRadius.circular(6),
-                                            ),
-                                            child: Text(
-                                              q['badge']!,
-                                              style: TextStyle(
-                                                color: q['key'] == '80'
-                                                    ? Colors.amber
-                                                    : AppTheme.primaryEmerald,
-                                                fontSize: 9.5,
-                                                fontWeight: FontWeight.bold,
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ],
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      q['subtitle']!,
-                                      style: TextStyle(
-                                        color: Colors.white.withValues(alpha: 0.55),
-                                        fontSize: 11,
-                                      ),
-                                    ),
-                                  ],
+                              const SizedBox(width: 10),
+                              const Text(
+                                'Chọn chất lượng tải về',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
                                 ),
                               ),
                             ],
                           ),
+                          IconButton(
+                            icon: const Icon(Icons.close_rounded, color: Colors.white60, size: 20),
+                            onPressed: () => Navigator.pop(ctx),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Chọn độ phân giải mong muốn để lưu video offline:',
+                        style: TextStyle(color: Colors.white70, fontSize: 12),
+                      ),
+                      const SizedBox(height: 14),
+                      ...qualities.map((q) {
+                        final isSel = selectedQuality == q['key'];
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: InkWell(
+                            onTap: () {
+                              setSheetState(() {
+                                selectedQuality = q['key']!;
+                              });
+                            },
+                            borderRadius: BorderRadius.circular(12),
+                            child: Container(
+                              padding: EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: isLandscape ? 8.5 : 11,
+                              ),
+                              decoration: BoxDecoration(
+                                color: isSel
+                                    ? AppTheme.primaryEmerald.withValues(alpha: 0.15)
+                                    : const Color(0xFF14151B),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: isSel
+                                      ? AppTheme.primaryEmerald
+                                      : Colors.white12,
+                                  width: isSel ? 1.5 : 1,
+                                ),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    isSel
+                                        ? Icons.radio_button_checked_rounded
+                                        : Icons.radio_button_unchecked_rounded,
+                                    color: isSel
+                                        ? AppTheme.primaryEmerald
+                                        : Colors.white38,
+                                    size: 20,
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Row(
+                                          children: [
+                                            Text(
+                                              q['title']!,
+                                              style: TextStyle(
+                                                color: isSel
+                                                    ? AppTheme.primaryEmerald
+                                                    : Colors.white,
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 13,
+                                              ),
+                                            ),
+                                            if (q['badge'] != null) ...[
+                                              const SizedBox(width: 8),
+                                              Container(
+                                                padding: const EdgeInsets.symmetric(
+                                                  horizontal: 6,
+                                                  vertical: 1.5,
+                                                ),
+                                                decoration: BoxDecoration(
+                                                  color: (q['key'] == '80'
+                                                          ? Colors.amber
+                                                          : AppTheme.primaryEmerald)
+                                                      .withValues(alpha: 0.2),
+                                                  borderRadius: BorderRadius.circular(6),
+                                                ),
+                                                child: Text(
+                                                  q['badge']!,
+                                                  style: TextStyle(
+                                                    color: q['key'] == '80'
+                                                        ? Colors.amber
+                                                        : AppTheme.primaryEmerald,
+                                                    fontSize: 9.5,
+                                                    fontWeight: FontWeight.bold,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ],
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          q['subtitle']!,
+                                          style: TextStyle(
+                                            color: Colors.white.withValues(alpha: 0.55),
+                                            fontSize: 11,
+                                          ),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        );
+                      }),
+                      const SizedBox(height: 10),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 46,
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppTheme.primaryEmerald,
+                            foregroundColor: const Color(0xFF0D1117),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            elevation: 0,
+                          ),
+                          icon: const Icon(Icons.download_rounded, size: 20),
+                          label: Text(
+                            'Tải ngay (${qualities.firstWhere((e) => e['key'] == selectedQuality)['title']?.split(' ').first})',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
+                          ),
+                          onPressed: () {
+                            _settings.preferredVideoQuality = selectedQuality;
+                            Navigator.pop(ctx);
+                            _downloadCurrentVideo(quality: selectedQuality);
+                          },
                         ),
                       ),
-                    );
-                  }),
-                  const SizedBox(height: 10),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 46,
-                    child: ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppTheme.primaryEmerald,
-                        foregroundColor: const Color(0xFF0D1117),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        elevation: 0,
-                      ),
-                      icon: const Icon(Icons.download_rounded, size: 20),
-                      label: Text(
-                        'Tải ngay (${qualities.firstWhere((e) => e['key'] == selectedQuality)['title']?.split(' ').first})',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14,
-                        ),
-                      ),
-                      onPressed: () {
-                        _settings.preferredVideoQuality = selectedQuality;
-                        Navigator.pop(ctx);
-                        _downloadCurrentVideo(quality: selectedQuality);
-                      },
-                    ),
+                    ],
                   ),
-                ],
+                ),
               ),
             );
           },
@@ -5271,6 +5305,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       throw StateError('Video chưa có phụ đề để điều chỉnh.');
     }
 
+    _originalDocument ??= _currentDocument.shiftedBy(0);
+
     final shiftedDocument = _currentDocument.shiftedBy(offsetMs);
     final history = await HistoryRepository.getInstance();
     final updatedExisting = await history.updateSubtitleDocumentForVideo(
@@ -5308,6 +5344,57 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       _prefetchManager!.registerDocument(
         _currentEpisodeIndex,
         shiftedDocument,
+      );
+    }
+
+    if (_settings.isTtsPlaybackEnabled) {
+      await _ttsScheduler.onSeek(_currentPosMs);
+      _syncTtsWithVideo();
+      await _applyAudioVolumes();
+    }
+  }
+
+  /// Khôi phục toàn bộ mốc thời gian phụ đề về file gốc ban đầu
+  Future<void> _resetSubtitleTimelineToOriginal() async {
+    if (_currentDocument.isEmpty) {
+      throw StateError('Video chưa có phụ đề để điều chỉnh.');
+    }
+
+    final history = await HistoryRepository.getInstance();
+    SubtitleDocument? restoredDoc =
+        await history.restoreOriginalSubtitleDocumentForVideo(
+      videoPath: _sourceVideoUrl,
+      seriesId: widget.dramaDetail?.seriesId,
+      episodeIndex: widget.dramaDetail != null ? _currentEpisodeIndex : null,
+    );
+
+    if (restoredDoc == null && _originalDocument != null && _originalDocument!.isNotEmpty) {
+      restoredDoc = _originalDocument!.shiftedBy(0);
+      await history.updateSubtitleDocumentForVideo(
+        videoPath: _sourceVideoUrl,
+        document: restoredDoc,
+        seriesId: widget.dramaDetail?.seriesId,
+        episodeIndex: widget.dramaDetail != null ? _currentEpisodeIndex : null,
+      );
+    }
+
+    if (restoredDoc == null) {
+      throw StateError('Không tìm thấy bản lưu mốc gốc hoặc phụ đề đã ở mốc ban đầu.');
+    }
+
+    final oldScheduler = _ttsScheduler;
+    await oldScheduler.stop();
+    if (!mounted) return;
+    setState(() {
+      _currentDocument = restoredDoc!;
+      _ttsScheduler = TtsAudioScheduler(restoredDoc);
+    });
+    await oldScheduler.dispose();
+
+    if (_prefetchManager != null) {
+      _prefetchManager!.registerDocument(
+        _currentEpisodeIndex,
+        restoredDoc,
       );
     }
 
@@ -5657,6 +5744,54 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildTopBarIconButton({
+    required IconData icon,
+    required VoidCallback onPressed,
+    required String tooltip,
+    Color iconColor = Colors.white,
+    bool isActive = false,
+    double size = 19,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 3),
+      child: Tooltip(
+        message: tooltip,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onPressed,
+            borderRadius: BorderRadius.circular(20),
+            child: Container(
+              width: 36,
+              height: 36,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: isActive
+                    ? iconColor.withValues(alpha: 0.22)
+                    : Colors.black.withValues(alpha: 0.52),
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: isActive
+                      ? iconColor.withValues(alpha: 0.7)
+                      : Colors.white.withValues(alpha: 0.2),
+                  width: 1.0,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.3),
+                    blurRadius: 4,
+                    offset: const Offset(0, 1),
+                  ),
+                ],
+              ),
+              child: Icon(icon, size: size, color: iconColor),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -6143,8 +6278,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                   right: 8,
                   child: Row(
                     children: [
-                      IconButton(
-                        icon: const Icon(Icons.arrow_back, color: Colors.white),
+                      _buildTopBarIconButton(
+                        icon: Icons.arrow_back_rounded,
+                        tooltip: 'Quay lại',
                         onPressed: () {
                           if (_isPlayerFullScreen) {
                             setState(() {
@@ -6168,7 +6304,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                         ConstrainedBox(
                           constraints: BoxConstraints(
                             maxWidth: isLandscape
-                                ? 420
+                                ? (MediaQuery.of(context).size.width * 0.32).clamp(140.0, 280.0)
                                 : (MediaQuery.of(context).size.width * 0.45)
                                     .clamp(130.0, 220.0),
                           ),
@@ -6471,59 +6607,47 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                     ),
                                   ),
                                   const SizedBox(width: 4),
-                                  IconButton(
-                                    icon: const Icon(
-                                      Icons.format_list_numbered_rounded,
-                                      color: Colors.white,
-                                    ),
+                                  _buildTopBarIconButton(
+                                    icon: Icons.format_list_numbered_rounded,
                                     tooltip: 'Danh sách tập phim',
                                     onPressed: _showEpisodeListSheet,
                                   ),
-                                  IconButton(
-                                    icon: const Icon(
-                                      Icons.tune_rounded,
-                                      color: Colors.white70,
-                                    ),
+                                  _buildTopBarIconButton(
+                                    icon: Icons.settings_rounded,
+                                    iconColor: Colors.white70,
                                     tooltip: 'Cài đặt dịch & xem Hồng Quả',
                                     onPressed: () => HongguoSettingsSheet.show(context),
                                   ),
-                                  IconButton(
-                                    icon: ValueListenableBuilder<List<WatchLaterItem>>(
-                                      valueListenable: WatchLaterRepository.watchLaterNotifier,
-                                      builder: (context, items, _) {
-                                        final sId = widget.dramaDetail?.seriesId ?? '';
-                                        final isWl = items.any((it) => it.seriesId == sId || it.id == 'hg_$sId');
-                                        return Icon(
-                                          isWl ? Icons.bookmark_added_rounded : Icons.bookmark_add_outlined,
-                                          color: isWl ? AppTheme.primaryEmerald : Colors.white70,
-                                          size: 20,
-                                        );
-                                      },
-                                    ),
-                                    tooltip: 'Lưu vào danh sách Xem sau',
-                                    onPressed: _toggleWatchLater,
+                                  ValueListenableBuilder<List<WatchLaterItem>>(
+                                    valueListenable: WatchLaterRepository.watchLaterNotifier,
+                                    builder: (context, items, _) {
+                                      final sId = widget.dramaDetail?.seriesId ?? '';
+                                      final isWl = items.any((it) => it.seriesId == sId || it.id == 'hg_$sId');
+                                      return _buildTopBarIconButton(
+                                        icon: isWl ? Icons.bookmark_added_rounded : Icons.bookmark_add_outlined,
+                                        iconColor: isWl ? AppTheme.primaryEmerald : Colors.white70,
+                                        isActive: isWl,
+                                        tooltip: isWl ? 'Đã lưu trong Xem sau' : 'Lưu vào danh sách Xem sau',
+                                        onPressed: _toggleWatchLater,
+                                      );
+                                    },
                                   ),
                                 ],
 
                                 // 2. Nút PiP ngoài màn hình (Picture-in-Picture)
-                                IconButton(
-                                  icon: const Icon(
-                                    Icons.picture_in_picture_alt_rounded,
-                                    color: Colors.white,
-                                  ),
+                                _buildTopBarIconButton(
+                                  icon: Icons.picture_in_picture_alt_rounded,
                                   tooltip: Platform.isIOS
                                       ? 'Thu nhỏ video (Mini-Player)'
                                       : 'Hình thu nhỏ ngoài màn hình (PiP)',
                                   onPressed: _enterPipMode,
                                 ),
 
-                                // 3. Cài đặt Bilibili
+                                // 3. Cài đặt Bilibili (Bánh răng màu cyan)
                                 if (_bilibiliDetails != null || BilibiliResolver.isBilibiliUrl(_sourceVideoUrl)) ...[
-                                  IconButton(
-                                    icon: const Icon(
-                                      Icons.tune_rounded,
-                                      color: Color(0xFF00AEEC),
-                                    ),
+                                  _buildTopBarIconButton(
+                                    icon: Icons.settings_rounded,
+                                    iconColor: const Color(0xFF00AEEC),
                                     tooltip: 'Cài đặt Bilibili',
                                     onPressed: () async {
                                       final oldStreamMode = _settings.bilibiliStreamMode;
@@ -6548,16 +6672,17 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                 ],
 
                                 // 4. Nút Bật/Tắt Lồng tiếng AI
-                                IconButton(
-                                  icon: Icon(
-                                    _settings.isTtsPlaybackEnabled
-                                        ? Icons.record_voice_over
-                                        : Icons.voice_over_off,
-                                    color: _settings.isTtsPlaybackEnabled
-                                        ? Colors.lightGreenAccent
-                                        : Colors.white70,
-                                  ),
-                                  tooltip: 'Bật/Tắt lồng tiếng AI',
+                                _buildTopBarIconButton(
+                                  icon: _settings.isTtsPlaybackEnabled
+                                      ? Icons.record_voice_over_rounded
+                                      : Icons.voice_over_off_rounded,
+                                  iconColor: _settings.isTtsPlaybackEnabled
+                                      ? Colors.lightGreenAccent
+                                      : Colors.white70,
+                                  isActive: _settings.isTtsPlaybackEnabled,
+                                  tooltip: _settings.isTtsPlaybackEnabled
+                                      ? 'Đang bật lồng tiếng AI (Chạm để tắt)'
+                                      : 'Đang tắt lồng tiếng AI (Chạm để bật)',
                                   onPressed: () async {
                                     setState(() {
                                       _settings.isTtsPlaybackEnabled =
@@ -6577,9 +6702,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                 ),
 
                                 // 5. Chỉnh âm lượng độc lập (Âm lượng kép)
-                                IconButton(
-                                  icon: const Icon(Icons.graphic_eq, color: Colors.white),
-                                  tooltip: 'Chỉnh âm lượng độc lập',
+                                _buildTopBarIconButton(
+                                  icon: Icons.graphic_eq_rounded,
+                                  tooltip: 'Chỉnh âm lượng độc lập (Video & Giọng đọc)',
                                   onPressed: () {
                                     showModalBottomSheet(
                                       context: context,
@@ -6611,10 +6736,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                   },
                                 ),
 
-                                // 6. Tùy chỉnh phụ đề & vị trí
-                                IconButton(
-                                  icon: const Icon(Icons.tune, color: Colors.white),
-                                  tooltip: 'Tùy chỉnh phụ đề & vị trí',
+                                // 6. Tùy chỉnh phụ đề & vị trí (Hình CC)
+                                _buildTopBarIconButton(
+                                  icon: Icons.closed_caption_rounded,
+                                  iconColor: _settings.subtitleMode == 'none'
+                                      ? Colors.white54
+                                      : AppTheme.primaryEmerald,
+                                  isActive: _settings.subtitleMode != 'none',
+                                  tooltip: 'Tùy chỉnh phụ đề & vị trí (CC)',
                                   onPressed: () {
                                     showModalBottomSheet(
                                       context: context,
@@ -6629,6 +6758,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                             _currentDocument.isEmpty
                                                 ? null
                                                 : _shiftSubtitleTimeline,
+                                        onResetTimelineToOriginal:
+                                            _currentDocument.isEmpty
+                                                ? null
+                                                : _resetSubtitleTimelineToOriginal,
                                       ),
                                     );
                                   },
@@ -6701,11 +6834,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                       ),
                                     )
                                   else
-                                    IconButton(
-                                      icon: const Icon(
-                                        Icons.download_for_offline_rounded,
-                                        color: Colors.white,
-                                      ),
+                                    _buildTopBarIconButton(
+                                      icon: Icons.download_rounded,
                                       tooltip: 'Tải video về máy để xem offline (không lag)',
                                       onPressed: _showDownloadSelectionSheet,
                                     ),

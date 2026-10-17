@@ -376,6 +376,22 @@ class HistoryRepository {
     final documentFile = File(documentPath);
     await documentFile.parent.create(recursive: true);
 
+    final originalSrtPath = resolvedSrtPath.replaceFirst(RegExp(r'\.srt$', caseSensitive: false), '.original.srt');
+    final originalDocPath = documentPath.replaceFirst(RegExp(r'\.capsub\.json$', caseSensitive: false), '.original.capsub.json');
+    final originalSrtFile = File(originalSrtPath);
+    final originalDocFile = File(originalDocPath);
+
+    if (!originalSrtFile.existsSync() && srtFile.existsSync()) {
+      try {
+        await srtFile.copy(originalSrtPath);
+      } catch (_) {}
+    }
+    if (!originalDocFile.existsSync() && documentFile.existsSync()) {
+      try {
+        await documentFile.copy(originalDocPath);
+      } catch (_) {}
+    }
+
     await srtFile.writeAsString(document.toSrtString(), flush: true);
     await documentFile.writeAsString(
       jsonEncode(document.toJson()),
@@ -389,6 +405,85 @@ class HistoryRepository {
     );
     await _save(items);
     return true;
+  }
+
+  /// Khôi phục phụ đề về file gốc ban đầu trước khi người dùng điều chỉnh lệch thời gian.
+  Future<SubtitleDocument?> restoreOriginalSubtitleDocumentForVideo({
+    required String videoPath,
+    String? seriesId,
+    int? episodeIndex,
+  }) async {
+    final items = getHistory();
+    final normalizedSeriesId = seriesId?.trim();
+    final index = items.indexWhere((item) {
+      final sameSeriesEpisode = normalizedSeriesId != null &&
+          normalizedSeriesId.isNotEmpty &&
+          episodeIndex != null &&
+          episodeIndex > 0 &&
+          item.seriesId == normalizedSeriesId &&
+          item.extractedEpisodeIndex == episodeIndex;
+      return sameSeriesEpisode ||
+          item.videoPath == videoPath ||
+          matchesBilibiliUrl(item.videoPath, videoPath);
+    });
+    if (index == -1) return null;
+
+    final current = items[index];
+    final resolvedSrtPath = await resolvePath(current.srtPath);
+    final srtFile = File(resolvedSrtPath);
+
+    String documentPath;
+    if (current.documentPath != null && current.documentPath!.isNotEmpty) {
+      documentPath = await resolvePath(current.documentPath!);
+    } else if (RegExp(r'\.[^./\\]+$').hasMatch(resolvedSrtPath)) {
+      documentPath = resolvedSrtPath.replaceFirst(
+        RegExp(r'\.[^./\\]+$'),
+        '.capsub.json',
+      );
+    } else {
+      documentPath = '$resolvedSrtPath.capsub.json';
+    }
+    final documentFile = File(documentPath);
+
+    final originalSrtPath = resolvedSrtPath.replaceFirst(RegExp(r'\.srt$', caseSensitive: false), '.original.srt');
+    final originalDocPath = documentPath.replaceFirst(RegExp(r'\.capsub\.json$', caseSensitive: false), '.original.capsub.json');
+    final originalSrtFile = File(originalSrtPath);
+    final originalDocFile = File(originalDocPath);
+
+    SubtitleDocument? restoredDoc;
+
+    if (originalDocFile.existsSync()) {
+      try {
+        final content = await originalDocFile.readAsString();
+        final json = jsonDecode(content) as Map<String, dynamic>;
+        restoredDoc = SubtitleDocument.fromJson(json);
+      } catch (_) {}
+    }
+
+    if (restoredDoc == null && originalSrtFile.existsSync()) {
+      try {
+        final content = await originalSrtFile.readAsString();
+        restoredDoc = SubtitleDocument.parseSrt(content);
+      } catch (_) {}
+    }
+
+    if (restoredDoc == null) return null;
+
+    await srtFile.parent.create(recursive: true);
+    await documentFile.parent.create(recursive: true);
+    await srtFile.writeAsString(restoredDoc.toSrtString(), flush: true);
+    await documentFile.writeAsString(
+      jsonEncode(restoredDoc.toJson()),
+      flush: true,
+    );
+
+    items[index] = current.copyWith(
+      srtPath: srtFile.path,
+      documentPath: documentFile.path,
+      sentenceCount: restoredDoc.items.length,
+    );
+    await _save(items);
+    return restoredDoc;
   }
 
   Future<void> addItem(HistoryItem item) async {

@@ -7,12 +7,14 @@ class SubtitleControlSheet extends StatefulWidget {
   final SettingsRepository settings;
   final VoidCallback onChanged;
   final Future<void> Function(int offsetMs)? onShiftTimeline;
+  final Future<void> Function()? onResetTimelineToOriginal;
 
   const SubtitleControlSheet({
     super.key,
     required this.settings,
     required this.onChanged,
     this.onShiftTimeline,
+    this.onResetTimelineToOriginal,
   });
 
   @override
@@ -84,6 +86,33 @@ class _SubtitleControlSheetState extends State<SubtitleControlSheet> {
       return;
     }
     await _shiftTimeline((seconds * 1000).round());
+  }
+
+  Future<void> _resetToOriginal() async {
+    final callback = widget.onResetTimelineToOriginal;
+    if (callback == null || _isShiftingTimeline) return;
+    setState(() => _isShiftingTimeline = true);
+    try {
+      await callback();
+      if (!mounted) return;
+      _timelineController.clear();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('✅ Đã chỉnh thời gian về file gốc ban đầu.'),
+          backgroundColor: AppTheme.primaryEmerald,
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Không thể khôi phục file gốc: $error'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isShiftingTimeline = false);
+    }
   }
 
   @override
@@ -221,19 +250,25 @@ class _SubtitleControlSheetState extends State<SubtitleControlSheet> {
           ),
           const SizedBox(height: 4),
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
-                'Vuốt trực tiếp trên phụ đề để kéo',
-                style: TextStyle(color: Colors.white54, fontSize: 12),
+              const Expanded(
+                child: Text(
+                  'Vuốt trực tiếp trên phụ đề để kéo',
+                  style: TextStyle(color: Colors.white54, fontSize: 11.5),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
+              const SizedBox(width: 4),
               TextButton.icon(
                 style: TextButton.styleFrom(
                   foregroundColor: Colors.white70,
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
-                icon: const Icon(Icons.refresh, size: 16),
-                label: const Text('Về đáy (0px)', style: TextStyle(fontSize: 12)),
+                icon: const Icon(Icons.refresh, size: 14),
+                label: const Text('Về đáy (0px)', style: TextStyle(fontSize: 11.5)),
                 onPressed: () {
                   _settings.subtitleOffsetY = 0.0;
                   _notify();
@@ -251,9 +286,33 @@ class _SubtitleControlSheetState extends State<SubtitleControlSheet> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Sớm: trừ toàn bộ mốc thời gian. Muộn: cộng toàn bộ mốc thời gian. SRT và dữ liệu giọng sẽ được lưu cùng lúc.',
-            style: TextStyle(color: Colors.white60, fontSize: 12),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Expanded(
+                child: Text(
+                  'Sớm: trừ toàn bộ mốc thời gian. Muộn: cộng toàn bộ mốc thời gian. SRT và dữ liệu giọng sẽ được lưu cùng lúc.',
+                  style: TextStyle(color: Colors.white60, fontSize: 12),
+                ),
+              ),
+              if (widget.onResetTimelineToOriginal != null) ...[
+                const SizedBox(width: 6),
+                TextButton.icon(
+                  style: TextButton.styleFrom(
+                    foregroundColor: const Color(0xFFFFB74D),
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  icon: const Icon(Icons.restart_alt_rounded, size: 15),
+                  label: const Text(
+                    'Về file gốc',
+                    style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold),
+                  ),
+                  onPressed: _isShiftingTimeline ? null : _resetToOriginal,
+                ),
+              ],
+            ],
           ),
           const SizedBox(height: 10),
           Wrap(
@@ -264,6 +323,16 @@ class _SubtitleControlSheetState extends State<SubtitleControlSheet> {
               _buildTimelineButton('Sớm 0,5s', -500),
               _buildTimelineButton('Muộn 0,5s', 500),
               _buildTimelineButton('Muộn 1s', 1000),
+              if (widget.onResetTimelineToOriginal != null)
+                OutlinedButton.icon(
+                  onPressed: _isShiftingTimeline ? null : _resetToOriginal,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFFFFB74D),
+                    side: const BorderSide(color: Color(0xFFFFB74D), width: 1.0),
+                  ),
+                  icon: const Icon(Icons.restart_alt_rounded, size: 16),
+                  label: const Text('Về file gốc'),
+                ),
             ],
           ),
           const SizedBox(height: 10),
@@ -416,7 +485,7 @@ class _SubtitleControlSheetState extends State<SubtitleControlSheet> {
                 Row(
                   children: [
                     const Icon(
-                      Icons.tune,
+                      Icons.closed_caption_rounded,
                       color: AppTheme.primaryEmerald,
                       size: 24,
                     ),
@@ -447,6 +516,8 @@ class _SubtitleControlSheetState extends State<SubtitleControlSheet> {
                             modeSection,
                             const SizedBox(height: 10),
                             fontSizeSection,
+                            const SizedBox(height: 10),
+                            styleSection,
                           ],
                         ),
                       ),
@@ -455,12 +526,11 @@ class _SubtitleControlSheetState extends State<SubtitleControlSheet> {
                         child: Column(
                           children: [
                             positionSection,
-                            if (widget.onShiftTimeline != null) ...[
+                            if (widget.onShiftTimeline != null ||
+                                widget.onResetTimelineToOriginal != null) ...[
                               const SizedBox(height: 10),
                               timelineSection,
                             ],
-                            const SizedBox(height: 10),
-                            styleSection,
                           ],
                         ),
                       ),
@@ -472,7 +542,8 @@ class _SubtitleControlSheetState extends State<SubtitleControlSheet> {
                   fontSizeSection,
                   const SizedBox(height: 10),
                   positionSection,
-                  if (widget.onShiftTimeline != null) ...[
+                  if (widget.onShiftTimeline != null ||
+                      widget.onResetTimelineToOriginal != null) ...[
                     const SizedBox(height: 10),
                     timelineSection,
                   ],

@@ -639,7 +639,7 @@ class _HongguoScreenState extends State<HongguoScreen> {
             onPressed: _toggleTranslation,
           ),
           IconButton(
-            icon: const Icon(Icons.tune_rounded, color: AppColors.textSecondary),
+            icon: const Icon(Icons.settings_rounded, color: AppColors.textSecondary),
             tooltip: 'Cài đặt tự chuyển tập & dịch ngầm',
             onPressed: _showHongguoSettingsSheet,
           ),

@@ -341,4 +341,53 @@ void main() {
     expect(ep6.lastPositionMs, 15000);
     expect(ep6.lastWatchedAt, isNotNull);
   });
+
+  test('creates backup of original subtitle and restores it correctly', () async {
+    final repo = await HistoryRepository.getInstance();
+    final originalDoc = SubtitleDocument([
+      SubtitleItem(
+        id: 1,
+        startMs: 1000,
+        endMs: 3000,
+        originalText: 'Original Audio',
+        translatedText: 'Giọng gốc ban đầu',
+        audioFilePath: '/audio/1.mp3',
+        audioDurationMs: 2000,
+      ),
+    ]);
+
+    await repo.saveHistory(
+      videoPath: 'https://example.com/video.mp4',
+      title: 'Video Test',
+      document: originalDoc,
+      durationMs: 10000,
+    );
+
+    // 1. Shift timeline by +1500ms
+    final shiftedDoc = originalDoc.shiftedBy(1500);
+    final updated = await repo.updateSubtitleDocumentForVideo(
+      videoPath: 'https://example.com/video.mp4',
+      document: shiftedDoc,
+    );
+    expect(updated, isTrue);
+
+    // 2. Verify shifted time
+    final currentDoc = await repo.loadSubtitleDocument(repo.getHistory().first);
+    expect(currentDoc?.items.first.startMs, 2500);
+    expect(currentDoc?.items.first.endMs, 4500);
+
+    // 3. Restore to original
+    final restoredDoc = await repo.restoreOriginalSubtitleDocumentForVideo(
+      videoPath: 'https://example.com/video.mp4',
+    );
+    expect(restoredDoc, isNotNull);
+    expect(restoredDoc?.items.first.startMs, 1000);
+    expect(restoredDoc?.items.first.endMs, 3000);
+    expect(restoredDoc?.items.first.audioFilePath, '/audio/1.mp3');
+
+    // 4. Verify loaded from disk is back to original
+    final reloadedDoc = await repo.loadSubtitleDocument(repo.getHistory().first);
+    expect(reloadedDoc?.items.first.startMs, 1000);
+    expect(reloadedDoc?.items.first.endMs, 3000);
+  });
 }
