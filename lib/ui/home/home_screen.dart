@@ -343,8 +343,13 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           );
           if (subs.isNotEmpty) {
             final partInfo = pages.length > 1 ? ' (P$selectedPage)' : '';
-            _probeStatusMessage =
-                '✨ Video$partInfo có sẵn phụ đề Bilibili (${subs.first.languageName})! (Chọn AI để dịch nhanh từ phụ đề, hoặc chọn CapCut để nghe lại âm thanh).';
+            if (_settings?.bilibiliSubtitleSource == 'capcut_always') {
+              _probeStatusMessage =
+                  '⚡ Video$partInfo có phụ đề Bilibili (${subs.first.languageName}) nhưng bạn đã cài đặt bỏ qua để luôn nhận diện qua CapCut STT.';
+            } else {
+              _probeStatusMessage =
+                  '✨ Video$partInfo có sẵn phụ đề Bilibili (${subs.first.languageName})! (Chọn AI để dịch nhanh từ phụ đề, hoặc chọn CapCut để nghe lại âm thanh).';
+            }
           } else {
             _probeStatusMessage =
                 '✅ Đã tìm thấy audio DASH Bilibili (~30-50MB). Sẵn sàng tạo sub!';
@@ -470,8 +475,13 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         if (mounted && _selectedBilibiliPage == pageIndex) {
           setState(() {
             if (subs.isNotEmpty) {
-              _probeStatusMessage =
-                  '✨ Video (P$pageIndex) có sẵn phụ đề Bilibili (${subs.first.languageName})! (Chọn AI để dịch nhanh từ phụ đề, hoặc chọn CapCut để nghe lại âm thanh).';
+              if (_settings?.bilibiliSubtitleSource == 'capcut_always') {
+                _probeStatusMessage =
+                    '⚡ Video (P$pageIndex) có phụ đề Bilibili (${subs.first.languageName}) nhưng bạn đã cài đặt bỏ qua để luôn nhận diện qua CapCut STT.';
+              } else {
+                _probeStatusMessage =
+                    '✨ Video (P$pageIndex) có sẵn phụ đề Bilibili (${subs.first.languageName})! (Chọn AI để dịch nhanh từ phụ đề, hoặc chọn CapCut để nghe lại âm thanh).';
+              }
             } else {
               _probeStatusMessage =
                   '✅ Đã chọn P$pageIndex: $partName (${_formatDuration(selectedPageInfo.durationSeconds * 1000)}). Sẵn sàng tạo sub!';

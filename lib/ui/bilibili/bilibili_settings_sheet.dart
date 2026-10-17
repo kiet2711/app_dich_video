@@ -9,14 +9,20 @@ import '../tts/voice_selector_sheet.dart';
 import 'bilibili_login_sheet.dart';
 
 class BilibiliSettingsSheet extends StatefulWidget {
-  const BilibiliSettingsSheet({super.key});
+  final VoidCallback? onRecreateSubtitles;
 
-  static Future<void> show(BuildContext context) {
+  const BilibiliSettingsSheet({super.key, this.onRecreateSubtitles});
+
+  static Future<void> show(
+    BuildContext context, {
+    VoidCallback? onRecreateSubtitles,
+  }) {
     return showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (ctx) => const BilibiliSettingsSheet(),
+      builder: (ctx) =>
+          BilibiliSettingsSheet(onRecreateSubtitles: onRecreateSubtitles),
     );
   }
 
@@ -31,6 +37,7 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
   bool _isLoadingProfile = true;
 
   String _translationMode = 'capcut';
+  String _subtitleSource = 'bilibili_first';
   VoiceItem _selectedVoice = VoicePresets.defaultVoice;
   bool _downloadOffline = false;
 
@@ -46,6 +53,7 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
     setState(() {
       _settings = settings;
       _translationMode = settings.bilibiliTranslationMode;
+      _subtitleSource = settings.bilibiliSubtitleSource;
       _selectedVoice = VoicePresets.vietnameseVoices.firstWhere(
         (v) => v.voiceType == settings.bilibiliSelectedTtsVoice,
         orElse: () => VoicePresets.defaultVoice,
@@ -138,6 +146,7 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
     HapticFeedback.lightImpact();
     if (_settings != null) {
       _settings!.bilibiliTranslationMode = _translationMode;
+      _settings!.bilibiliSubtitleSource = _subtitleSource;
       _settings!.bilibiliSelectedTtsVoice = _selectedVoice.voiceType;
       _settings!.downloadBilibiliVideo = _downloadOffline;
     }
@@ -288,7 +297,114 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
 
                     const SizedBox(height: 18),
 
-                    // ===== 2. CHỌN GIỌNG LỒNG TIẾNG AI =====
+                    // ===== 2. CÁCH LẤY FILE PHỤ ĐỀ (SRT) =====
+                    const Text(
+                      'CÁCH LẤY FILE PHỤ ĐỀ (SRT):',
+                      style: TextStyle(
+                        color: AppTheme.textSecondary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Tùy chọn ưu tiên lấy phụ đề Bilibili có sẵn hoặc nhảy qua CapCut nhận diện trực tiếp.',
+                      style: TextStyle(color: AppTheme.textMuted, fontSize: 11),
+                    ),
+                    const SizedBox(height: 10),
+
+                    // Lựa chọn cách lấy file SRT: 1 hàng 2 ô
+                    IntrinsicHeight(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Expanded(
+                            child: _buildModeOption(
+                              mode: 'bilibili_first',
+                              title: 'Ưu tiên Bilibili',
+                              badge: 'MẶC ĐỊNH',
+                              badgeColor: const Color(0xFF00AEEC),
+                              icon: Icons.subtitles_rounded,
+                              iconColor: const Color(0xFF00AEEC),
+                              description: 'Lấy phụ đề có sẵn\nKhông có mới qua CapCut',
+                              isSelected: _subtitleSource == 'bilibili_first',
+                              onTap: () {
+                                HapticFeedback.selectionClick();
+                                setState(() => _subtitleSource = 'bilibili_first');
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: _buildModeOption(
+                              mode: 'capcut_always',
+                              title: 'Chuyển sang CapCut',
+                              badge: 'BỎ QUA GỐC',
+                              badgeColor: Colors.amber,
+                              icon: Icons.graphic_eq_rounded,
+                              iconColor: Colors.amber,
+                              description: 'Bỏ qua phụ đề Bilibili (tránh sai)\nNhận diện thẳng âm thanh qua CapCut',
+                              isSelected: _subtitleSource == 'capcut_always',
+                              onTap: () {
+                                HapticFeedback.selectionClick();
+                                setState(() => _subtitleSource = 'capcut_always');
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    if (widget.onRecreateSubtitles != null) ...[
+                      const SizedBox(height: 10),
+                      InkWell(
+                        onTap: () async {
+                          HapticFeedback.mediumImpact();
+                          if (_settings != null) {
+                            _settings!.bilibiliTranslationMode = _translationMode;
+                            _settings!.bilibiliSubtitleSource = _subtitleSource;
+                            _settings!.bilibiliSelectedTtsVoice = _selectedVoice.voiceType;
+                            _settings!.downloadBilibiliVideo = _downloadOffline;
+                          }
+                          Navigator.of(context).pop();
+                          widget.onRecreateSubtitles!();
+                        },
+                        borderRadius: BorderRadius.circular(10),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: Colors.amber.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: Colors.amber.withValues(alpha: 0.4),
+                            ),
+                          ),
+                          child: const Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.refresh_rounded, color: Colors.amber, size: 16),
+                              SizedBox(width: 6),
+                              Flexible(
+                                child: Text(
+                                  'Tạo lại phụ đề cho video này theo thiết lập mới',
+                                  style: TextStyle(
+                                    color: Colors.amber,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+
+                    const SizedBox(height: 18),
+
+                    // ===== 3. CHỌN GIỌNG LỒNG TIẾNG AI =====
                     const Text(
                       'GIỌNG LỒNG TIẾNG AI (BILIBILI):',
                       style: TextStyle(

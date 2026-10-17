@@ -317,6 +317,14 @@ class SettingsRepository {
   set bilibiliTranslationMode(String v) =>
       prefs.setString('bilibili_translation_mode', v);
 
+  /// Nguồn lấy phụ đề gốc cho video Bilibili:
+  /// 'bilibili_first': Ưu tiên phụ đề gốc Bilibili (nếu có, nếu không mới qua CapCut) - mặc định
+  /// 'capcut_always': Bỏ qua phụ đề Bilibili, luôn nhận diện âm thanh trực tiếp qua CapCut STT
+  String get bilibiliSubtitleSource =>
+      prefs.getString('bilibili_subtitle_source') ?? 'bilibili_first';
+  set bilibiliSubtitleSource(String v) =>
+      prefs.setString('bilibili_subtitle_source', v);
+
   /// Giọng đọc lồng tiếng AI riêng cho Bilibili
   String get bilibiliSelectedTtsVoice =>
       prefs.getString('bilibili_selected_tts_voice') ?? selectedTtsVoice;

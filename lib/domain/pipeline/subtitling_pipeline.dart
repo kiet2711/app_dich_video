@@ -225,10 +225,13 @@ class SubtitlingPipeline {
         }
 
         // Tự động kiểm tra phụ đề có sẵn:
+        // - Nếu cấu hình bilibiliSubtitleSource == 'capcut_always': Luôn bỏ qua phụ đề Bilibili để nhận diện trực tiếp qua CapCut STT.
         // - Nếu chọn AI (Gemini/Groq) hoặc 'none': Dùng phụ đề Bilibili có sẵn để dịch siêu tốc mà không cần tải audio.
         // - Nếu chọn 'capcut': Vì CapCut chỉ dịch được khi nghe audio (không hỗ trợ dịch text thuần),
         //   ta bỏ qua phụ đề text có sẵn và tải audio DASH để CapCut STT bóc tách và dịch song ngữ sang tiếng Việt.
-        final shouldUseExistingSubtitles = translationEngine != 'capcut';
+        final forceCapcut = settings.bilibiliSubtitleSource == 'capcut_always';
+        final shouldUseExistingSubtitles =
+            !forceCapcut && translationEngine != 'capcut';
         if (shouldUseExistingSubtitles) {
           try {
             final subtitles = await resolver.getSubtitles(
@@ -247,7 +250,7 @@ class SubtitlingPipeline {
                     stage: ProcessStage.extractingAudio,
                     progress: 0.20,
                     message:
-          'Đã nạp ${sourceDocument.size} câu phụ đề Bilibili (${preferred.languageName}).',
+                        'Đã nạp ${sourceDocument.size} câu phụ đề Bilibili (${preferred.languageName}).',
                   ),
                 );
               }
@@ -261,6 +264,15 @@ class SubtitlingPipeline {
               ),
             );
           } catch (_) {}
+        } else if (forceCapcut) {
+          _emit(
+            const ProcessProgress(
+              stage: ProcessStage.extractingAudio,
+              progress: 0.03,
+              message:
+                  'Đã chọn bỏ qua phụ đề Bilibili: Đang tải luồng âm thanh để CapCut nghe & nhận diện trực tiếp...',
+            ),
+          );
         } else {
           _emit(
             const ProcessProgress(

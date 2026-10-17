@@ -189,7 +189,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   String _onDemandProgressMessage = '';
   double _onDemandProgressPct = 0.0;
 
-  Future<void> _startOnDemandPipeline({required bool enableTts}) async {
+  Future<void> _startOnDemandPipeline({
+    required bool enableTts,
+    bool forceRecreate = false,
+  }) async {
+    if (forceRecreate) {
+      _currentDocument = SubtitleDocument();
+    }
     if (_isTranslatingOnDemand) return;
 
     final bool isBilibili = _bilibiliDetails != null || BilibiliResolver.isBilibiliUrl(_sourceVideoUrl);
@@ -210,7 +216,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     );
 
     // TRƯỜNG HỢP 1: Nếu chưa có phụ đề trên màn hình, thử tìm trong Lịch sử trước
-    if (_currentDocument.isEmpty) {
+    if (_currentDocument.isEmpty && !forceRecreate) {
       try {
         final history = await HistoryRepository.getInstance();
         final item = history.getHistory().where((h) {
@@ -234,7 +240,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
     // TRƯỜNG HỢP 2: Nếu ĐÃ CÓ phụ đề (từ trước hoặc vừa xem Vietsub xong):
     // KHÔNG BAO GIỜ DỊCH LẠI! Trực tiếp tái sử dụng file phụ đề đã có!
-    if (_currentDocument.isNotEmpty) {
+    if (_currentDocument.isNotEmpty && !forceRecreate) {
       if (!enableTts) {
         // Người dùng chọn chế độ chỉ xem Vietsub (tắt lồng tiếng)
         setState(() {
@@ -6445,7 +6451,18 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                       color: Color(0xFF00AEEC),
                                     ),
                                     tooltip: 'Cài đặt Bilibili',
-                                    onPressed: () => BilibiliSettingsSheet.show(context),
+                                    onPressed: () async {
+                                      await BilibiliSettingsSheet.show(
+                                        context,
+                                        onRecreateSubtitles: () {
+                                          _startOnDemandPipeline(
+                                            enableTts: _settings.isTtsPlaybackEnabled,
+                                            forceRecreate: true,
+                                          );
+                                        },
+                                      );
+                                      if (mounted) setState(() {});
+                                    },
                                   ),
                                 ],
 
