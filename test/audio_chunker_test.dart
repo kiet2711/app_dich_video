@@ -114,5 +114,40 @@ void main() {
       expect(chunks[1].startMs, equals(900000));
       expect(chunks[1].durationMs, equals(300000));
     });
+    test('sliceMedia respects actualStartMs returned by native extractor', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+            const MethodChannel('com.capcut.capsub/media'),
+            (MethodCall methodCall) async {
+              if (methodCall.method == 'extractAudio') {
+                final args = methodCall.arguments as Map<dynamic, dynamic>;
+                final outputPath = args['outputPath'] as String;
+                final startMs = args['startMs'] as int? ?? 0;
+                final f = File(outputPath);
+                await f.create(recursive: true);
+                await f.writeAsString('mock audio content');
+                return {
+                  'actualStartMs': startMs > 0 ? startMs + 15 : 0,
+                  'durationMs': 600000,
+                };
+              }
+              return null;
+            },
+          );
+
+      final videoFile = File('${tempDir.path}/test_sync.mp4');
+      await videoFile.writeAsString('mock video');
+
+      final chunks = await AudioChunker.sliceMedia(
+        videoPath: videoFile.path,
+        totalDurationMs: 1200000,
+        tempDir: tempDir,
+        chunkDurationSec: 600,
+      );
+
+      expect(chunks.length, equals(2));
+      expect(chunks[0].startMs, equals(0));
+      expect(chunks[1].startMs, equals(600015));
+    });
   });
 }

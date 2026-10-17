@@ -99,7 +99,7 @@ class AudioChunker {
           '${tempDir.path}/chunk_${i.toString().padLeft(3, '0')}.m4a',
         );
 
-        await AudioExtractor.extractAudio(
+        final extractResult = await AudioExtractor.extractAudio(
           videoPath: sourceAudioPath,
           outputPath: chunkFile.path,
           startMs: startMs,
@@ -108,7 +108,7 @@ class AudioChunker {
 
         chunkList[i] = AudioChunkInfo(
           index: i,
-          startMs: startMs,
+          startMs: extractResult.actualStartMs,
           durationMs: durMs,
           file: chunkFile,
         );

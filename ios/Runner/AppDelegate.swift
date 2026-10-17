@@ -225,7 +225,11 @@ import UserNotifications
           )
         }
         let exportedMs = Int64((CMTimeGetSeconds(clipDuration) * 1000).rounded())
-        self.finish(result, value: exportedMs)
+        let resultMap: [String: Any] = [
+          "actualStartMs": safeStart,
+          "durationMs": exportedMs
+        ]
+        self.finish(result, value: resultMap)
       } catch {
         try? FileManager.default.removeItem(at: outputUrl)
         self.finish(result, value: FlutterError(code: "EXPORT_FAILED", message: error.localizedDescription, details: nil))

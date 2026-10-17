@@ -198,8 +198,8 @@ class MainActivity : FlutterActivity() {
 
                     mediaExecutor.execute {
                         try {
-                            val duration = extractAudioDirect(videoPath, outputPath, startMs, durationMs)
-                            mainHandler.post { result.success(duration) }
+                            val resultMap = extractAudioDirect(videoPath, outputPath, startMs, durationMs)
+                            mainHandler.post { result.success(resultMap) }
                         } catch (e: Exception) {
                             mainHandler.post { result.error("EXTRACT_ERROR", e.message, null) }
                         }
@@ -473,7 +473,7 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun extractAudioDirect(videoPath: String, outputPath: String, startMs: Long, durationMs: Long): Long {
+    private fun extractAudioDirect(videoPath: String, outputPath: String, startMs: Long, durationMs: Long): Map<String, Long> {
         val extractor = MediaExtractor()
         var muxer: MediaMuxer? = null
         try {
@@ -513,7 +513,7 @@ class MainActivity : FlutterActivity() {
             val endUs = if (durationMs > 0) startUs + (durationMs * 1000L) else Long.MAX_VALUE
 
             if (startUs > 0) {
-                extractor.seekTo(startUs, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
+                extractor.seekTo(startUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
             }
 
             val outFile = File(outputPath)
@@ -539,6 +539,12 @@ class MainActivity : FlutterActivity() {
                 val sampleTimeUs = extractor.sampleTime
                 if (sampleTimeUs > endUs) break
 
+                // Bỏ qua các sample âm thanh nằm trước startUs để tránh thừa âm thanh cũ của chunk trước
+                if (sampleTimeUs < startUs) {
+                    extractor.advance()
+                    continue
+                }
+
                 if (firstSampleTimeUs < 0) firstSampleTimeUs = sampleTimeUs
                 lastSampleTimeUs = sampleTimeUs
                 bufferInfo.offset = 0
@@ -552,7 +558,12 @@ class MainActivity : FlutterActivity() {
             }
 
             check(firstSampleTimeUs >= 0) { "Track âm thanh không có dữ liệu" }
-            return ((lastSampleTimeUs - firstSampleTimeUs).coerceAtLeast(0L)) / 1000
+            val actualStartMs = firstSampleTimeUs / 1000L
+            val actualDurationMs = ((lastSampleTimeUs - firstSampleTimeUs).coerceAtLeast(0L)) / 1000L
+            return mapOf(
+                "actualStartMs" to actualStartMs,
+                "durationMs" to actualDurationMs
+            )
         } finally {
             try { muxer?.stop() } catch (_: Exception) {}
             try { muxer?.release() } catch (_: Exception) {}

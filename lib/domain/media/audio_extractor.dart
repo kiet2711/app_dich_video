@@ -2,6 +2,20 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 
+class AudioExtractResult {
+  final int durationMs;
+  final int actualStartMs;
+
+  const AudioExtractResult({
+    required this.durationMs,
+    required this.actualStartMs,
+  });
+
+  @override
+  String toString() =>
+      'AudioExtractResult(actualStartMs: $actualStartMs, durationMs: $durationMs)';
+}
+
 class ContentMediaMetadata {
   const ContentMediaMetadata({
     required this.name,
@@ -45,7 +59,7 @@ class AudioExtractor {
     );
   }
 
-  static Future<int> extractAudio({
+  static Future<AudioExtractResult> extractAudio({
     required String videoPath,
     required String outputPath,
     int startMs = 0,
@@ -56,13 +70,30 @@ class AudioExtractor {
       await outFile.parent.create(recursive: true);
     }
 
-    final res = await _channel.invokeMethod<num>('extractAudio', {
+    final res = await _channel.invokeMethod<dynamic>('extractAudio', {
       'videoPath': videoPath,
       'outputPath': outputPath,
       'startMs': startMs,
       'durationMs': durationMs,
     });
 
-    return res?.toInt() ?? 0;
+    if (res is Map) {
+      final dur = (res['durationMs'] as num?)?.toInt() ?? 0;
+      final actualStart = (res['actualStartMs'] as num?)?.toInt() ?? startMs;
+      return AudioExtractResult(
+        durationMs: dur,
+        actualStartMs: actualStart,
+      );
+    } else if (res is num) {
+      return AudioExtractResult(
+        durationMs: res.toInt(),
+        actualStartMs: startMs,
+      );
+    }
+
+    return AudioExtractResult(
+      durationMs: 0,
+      actualStartMs: startMs,
+    );
   }
 }
