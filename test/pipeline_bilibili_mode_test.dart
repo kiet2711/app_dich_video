@@ -28,6 +28,15 @@ void main() {
       expect(settings.bilibiliSubtitleSource, equals('capcut_always'));
     });
 
+    test('SettingsRepository defaults bilibiliStreamMode to dash and persists muxed', () async {
+      SharedPreferences.setMockInitialValues({});
+      final settings = await SettingsRepository.getInstance();
+      expect(settings.bilibiliStreamMode, equals('dash'));
+
+      settings.bilibiliStreamMode = 'muxed';
+      expect(settings.bilibiliStreamMode, equals('muxed'));
+    });
+
     test('CapCut engine should bypass pre-existing subtitles to force audio translation', () {
       const engine = 'capcut';
       final shouldUseExistingSubtitles = engine != 'capcut';

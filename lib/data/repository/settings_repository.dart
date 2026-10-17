@@ -325,6 +325,14 @@ class SettingsRepository {
   set bilibiliSubtitleSource(String v) =>
       prefs.setString('bilibili_subtitle_source', v);
 
+  /// Định dạng luồng phát video Bilibili khi xem trực tuyến:
+  /// 'dash': Luồng DASH tách rời video & audio gốc của Bilibili (mặc định hiện tại)
+  /// 'muxed': Luồng MP4 gộp sẵn video + audio (tua mượt mà, không bị ngắt hoặc mất tiếng khi tua)
+  String get bilibiliStreamMode =>
+      prefs.getString('bilibili_stream_mode') ?? 'dash';
+  set bilibiliStreamMode(String v) =>
+      prefs.setString('bilibili_stream_mode', v);
+
   /// Giọng đọc lồng tiếng AI riêng cho Bilibili
   String get bilibiliSelectedTtsVoice =>
       prefs.getString('bilibili_selected_tts_voice') ?? selectedTtsVoice;

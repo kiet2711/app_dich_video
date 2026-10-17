@@ -38,6 +38,7 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
 
   String _translationMode = 'capcut';
   String _subtitleSource = 'bilibili_first';
+  String _streamMode = 'dash';
   VoiceItem _selectedVoice = VoicePresets.defaultVoice;
   bool _downloadOffline = false;
 
@@ -54,6 +55,7 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
       _settings = settings;
       _translationMode = settings.bilibiliTranslationMode;
       _subtitleSource = settings.bilibiliSubtitleSource;
+      _streamMode = settings.bilibiliStreamMode;
       _selectedVoice = VoicePresets.vietnameseVoices.firstWhere(
         (v) => v.voiceType == settings.bilibiliSelectedTtsVoice,
         orElse: () => VoicePresets.defaultVoice,
@@ -147,6 +149,7 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
     if (_settings != null) {
       _settings!.bilibiliTranslationMode = _translationMode;
       _settings!.bilibiliSubtitleSource = _subtitleSource;
+      _settings!.bilibiliStreamMode = _streamMode;
       _settings!.bilibiliSelectedTtsVoice = _selectedVoice.voiceType;
       _settings!.downloadBilibiliVideo = _downloadOffline;
     }
@@ -364,6 +367,7 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                           if (_settings != null) {
                             _settings!.bilibiliTranslationMode = _translationMode;
                             _settings!.bilibiliSubtitleSource = _subtitleSource;
+                            _settings!.bilibiliStreamMode = _streamMode;
                             _settings!.bilibiliSelectedTtsVoice = _selectedVoice.voiceType;
                             _settings!.downloadBilibiliVideo = _downloadOffline;
                           }
@@ -533,7 +537,67 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
 
                     const SizedBox(height: 18),
 
-                    // ===== 3. CÀI ĐẶT PHÁT VIDEO & TẢI VỀ =====
+                    // ===== 4. ĐỊNH DẠNG LUỒNG VIDEO =====
+                    const Text(
+                      'ĐỊNH DẠNG LUỒNG VIDEO (STREAM):',
+                      style: TextStyle(
+                        color: AppTheme.textSecondary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Chọn giữa luồng Muxed (chống mất tiếng khi tua) hoặc luồng DASH gốc.',
+                      style: TextStyle(color: AppTheme.textMuted, fontSize: 11),
+                    ),
+                    const SizedBox(height: 8),
+
+                    IntrinsicHeight(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Expanded(
+                            child: _buildModeOption(
+                              mode: 'muxed',
+                              title: 'Luồng Muxed',
+                              badge: 'TUA MƯỢT',
+                              badgeColor: Colors.greenAccent,
+                              icon: Icons.layers_rounded,
+                              iconColor: Colors.greenAccent,
+                              description: 'Gộp chung hình & tiếng\nTua mượt mà, chống mất tiếng',
+                              isSelected: _streamMode == 'muxed',
+                              onTap: () {
+                                HapticFeedback.selectionClick();
+                                setState(() => _streamMode = 'muxed');
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: _buildModeOption(
+                              mode: 'dash',
+                              title: 'Bình thường (DASH)',
+                              badge: 'MẶC ĐỊNH',
+                              badgeColor: const Color(0xFF00AEEC),
+                              icon: Icons.alt_route_rounded,
+                              iconColor: const Color(0xFF00AEEC),
+                              description: 'Tách 2 luồng hình & tiếng\nChuẩn Bilibili (có thể trễ tiếng)',
+                              isSelected: _streamMode == 'dash',
+                              onTap: () {
+                                HapticFeedback.selectionClick();
+                                setState(() => _streamMode = 'dash');
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 18),
+
+                    // ===== 5. CÀI ĐẶT PHÁT VIDEO & TẢI VỀ =====
                     const Text(
                       'TÙY CHỌN PHÁT & TẢI VIDEO:',
                       style: TextStyle(
