@@ -880,18 +880,6 @@ class BilibiliResolver {
     return urls;
   }
 
-  static int _scoreCdnUrl(String url) {
-    final lower = url.toLowerCase();
-    if (lower.contains('mirroraliov') || lower.contains('aliov')) return 100;
-    if (lower.contains('akamai')) return 90;
-    if (lower.contains('mirrorcos')) return 80;
-    if (lower.contains('upcdnbov')) return 75;
-    if (lower.contains('mirrorali')) return 60;
-    if (lower.contains('mirrorhw')) return 50;
-    if (lower.contains('cn-')) return 10;
-    return 40;
-  }
-
   static List<String> extractMuxedVideoUrls(Map<String, dynamic> data) {
     final durl = data['durl'] as List<dynamic>? ?? const [];
     if (durl.isEmpty || durl.first is! Map<String, dynamic>) return const [];
@@ -905,26 +893,11 @@ class BilibiliResolver {
         (url) => url.toString(),
       ),
     ];
-    final initialList = rawUrls
+    return rawUrls
         .map((url) => url.trim())
         .where((url) => url.startsWith('http://') || url.startsWith('https://'))
         .toSet()
         .toList();
-
-    // Sinh thêm link mirror quốc tế tốc độ cao nếu URL chứa cấu trúc UPOS
-    final synthesized = <String>[];
-    for (final u in initialList) {
-      final uri = Uri.tryParse(u);
-      if (uri != null && uri.path.contains('/upos/')) {
-        synthesized.add(uri.replace(host: 'upos-sz-mirroraliov.bilivideo.com').toString());
-        synthesized.add(uri.replace(host: 'upos-sz-mirrorakamai.bilivideo.com').toString());
-        synthesized.add(uri.replace(host: 'upos-sz-upcdnbov.bilivideo.com').toString());
-      }
-    }
-
-    final allUrls = {...synthesized, ...initialList}.toList();
-    allUrls.sort((a, b) => _scoreCdnUrl(b).compareTo(_scoreCdnUrl(a)));
-    return allUrls;
   }
 
   Future<List<BilibiliSubtitleInfo>> getSubtitles(

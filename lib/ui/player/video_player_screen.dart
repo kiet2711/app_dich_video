@@ -1266,7 +1266,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       final controller = AppPlayerController();
       try {
         await controller.openNetwork(candidateUrl, headers: headers);
-        await controller.initialize(timeout: const Duration(seconds: 15));
+        await controller.initialize(timeout: const Duration(seconds: 8));
         return controller;
       } catch (error) {
         lastError = error;

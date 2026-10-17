@@ -23,6 +23,24 @@ void main() {
     ]);
   });
 
+  test('extracts UPOS muxed URLs preserving official order without fake mirror hosts', () {
+    final urls = BilibiliResolver.extractMuxedVideoUrls({
+      'durl': [
+        {
+          'url': 'https://cn-gdfs-cm-01-08.bilivideo.com/upos/media/video.mp4?deadline=1',
+          'backup_url': [
+            'https://upos-sz-mirror01.bilivideo.com/upos/media/video.mp4?deadline=1',
+          ],
+        },
+      ],
+    });
+
+    expect(urls, [
+      'https://cn-gdfs-cm-01-08.bilivideo.com/upos/media/video.mp4?deadline=1',
+      'https://upos-sz-mirror01.bilivideo.com/upos/media/video.mp4?deadline=1',
+    ]);
+  });
+
   test('ignores missing and invalid playback URLs', () {
     expect(BilibiliResolver.extractMuxedVideoUrls(const {}), isEmpty);
     expect(
