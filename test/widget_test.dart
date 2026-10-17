@@ -1,5 +1,6 @@
 ﻿import 'package:flutter_test/flutter_test.dart';
 import 'package:capsub_flutter/data/model/subtitle_document.dart';
+import 'package:capsub_flutter/data/model/subtitle_item.dart';
 
 void main() {
   group('SubtitleDocument & SubtitleItem tests', () {
@@ -63,6 +64,49 @@ Chào mừng đến với CapSub Studio
       expect(recovered.size, equals(2));
       expect(recovered.items[0].originalText, equals(doc.items[0].originalText));
       expect(recovered.items[1].endMs, equals(doc.items[1].endMs));
+    });
+
+    test('shifts subtitle and voice JSON timing together', () {
+      final doc = SubtitleDocument([
+        SubtitleItem(
+          id: 1,
+          startMs: 1500,
+          endMs: 3500,
+          originalText: '你好',
+          translatedText: 'Xin chào',
+          audioFilePath: '/tts/sub_1.mp3',
+          audioDurationMs: 1800,
+          playbackSpeed: 1.2,
+        ),
+      ]);
+
+      final shifted = doc.shiftedBy(-1000);
+      expect(shifted.items.single.startMs, 500);
+      expect(shifted.items.single.endMs, 2500);
+      expect(shifted.items.single.audioFilePath, '/tts/sub_1.mp3');
+      expect(shifted.items.single.audioDurationMs, 1800);
+      expect(shifted.items.single.playbackSpeed, 1.2);
+
+      final restored = SubtitleDocument.fromJson(shifted.toJson());
+      expect(restored.items.single.startMs, 500);
+      expect(restored.items.single.endMs, 2500);
+      expect(restored.items.single.audioFilePath, '/tts/sub_1.mp3');
+      expect(shifted.toSrtString(), contains('00:00:00,500 --> 00:00:02,500'));
+    });
+
+    test('clips shifted subtitle times at the beginning of the video', () {
+      final doc = SubtitleDocument([
+        SubtitleItem(
+          id: 1,
+          startMs: 200,
+          endMs: 800,
+          originalText: 'Early cue',
+        ),
+      ]);
+
+      final shifted = doc.shiftedBy(-1000);
+      expect(shifted.items.single.startMs, 0);
+      expect(shifted.items.single.endMs, 0);
     });
 
     test('ASS Subtitle generation', () {

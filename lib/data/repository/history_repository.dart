@@ -334,6 +334,63 @@ class HistoryRepository {
     return null;
   }
 
+  /// Ghi lại đồng thời SRT và JSON có dữ liệu giọng mà không làm thay đổi
+  /// định danh cache giọng hay các metadata khác của mục lịch sử.
+  Future<bool> updateSubtitleDocumentForVideo({
+    required String videoPath,
+    required SubtitleDocument document,
+    String? seriesId,
+    int? episodeIndex,
+  }) async {
+    final items = getHistory();
+    final normalizedSeriesId = seriesId?.trim();
+    final index = items.indexWhere((item) {
+      final sameSeriesEpisode = normalizedSeriesId != null &&
+          normalizedSeriesId.isNotEmpty &&
+          episodeIndex != null &&
+          episodeIndex > 0 &&
+          item.seriesId == normalizedSeriesId &&
+          item.extractedEpisodeIndex == episodeIndex;
+      return sameSeriesEpisode ||
+          item.videoPath == videoPath ||
+          matchesBilibiliUrl(item.videoPath, videoPath);
+    });
+    if (index == -1) return false;
+
+    final current = items[index];
+    final resolvedSrtPath = await resolvePath(current.srtPath);
+    final srtFile = File(resolvedSrtPath);
+    await srtFile.parent.create(recursive: true);
+
+    String documentPath;
+    if (current.documentPath != null && current.documentPath!.isNotEmpty) {
+      documentPath = await resolvePath(current.documentPath!);
+    } else if (RegExp(r'\.[^./\\]+$').hasMatch(resolvedSrtPath)) {
+      documentPath = resolvedSrtPath.replaceFirst(
+        RegExp(r'\.[^./\\]+$'),
+        '.capsub.json',
+      );
+    } else {
+      documentPath = '$resolvedSrtPath.capsub.json';
+    }
+    final documentFile = File(documentPath);
+    await documentFile.parent.create(recursive: true);
+
+    await srtFile.writeAsString(document.toSrtString(), flush: true);
+    await documentFile.writeAsString(
+      jsonEncode(document.toJson()),
+      flush: true,
+    );
+
+    items[index] = current.copyWith(
+      srtPath: srtFile.path,
+      documentPath: documentFile.path,
+      sentenceCount: document.items.length,
+    );
+    await _save(items);
+    return true;
+  }
+
   Future<void> addItem(HistoryItem item) async {
     final items = getHistory();
     bool isSameItem(HistoryItem candidate) {

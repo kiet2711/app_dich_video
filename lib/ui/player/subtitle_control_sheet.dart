@@ -6,11 +6,13 @@ import '../theme/app_theme.dart';
 class SubtitleControlSheet extends StatefulWidget {
   final SettingsRepository settings;
   final VoidCallback onChanged;
+  final Future<void> Function(int offsetMs)? onShiftTimeline;
 
   const SubtitleControlSheet({
     super.key,
     required this.settings,
     required this.onChanged,
+    this.onShiftTimeline,
   });
 
   @override
@@ -19,10 +21,69 @@ class SubtitleControlSheet extends StatefulWidget {
 
 class _SubtitleControlSheetState extends State<SubtitleControlSheet> {
   SettingsRepository get _settings => widget.settings;
+  final TextEditingController _timelineController = TextEditingController();
+  bool _isShiftingTimeline = false;
+
+  @override
+  void dispose() {
+    _timelineController.dispose();
+    super.dispose();
+  }
 
   void _notify() {
     setState(() {});
     widget.onChanged();
+  }
+
+  Future<void> _shiftTimeline(int offsetMs) async {
+    final callback = widget.onShiftTimeline;
+    if (callback == null || offsetMs == 0 || _isShiftingTimeline) return;
+    setState(() => _isShiftingTimeline = true);
+    try {
+      await callback(offsetMs);
+      if (!mounted) return;
+      final seconds = offsetMs.abs() / 1000;
+      final value = seconds == seconds.roundToDouble()
+          ? seconds.toStringAsFixed(0)
+          : seconds.toStringAsFixed(2);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(offsetMs < 0
+              ? 'Đã cho toàn bộ phụ đề sớm hơn $value giây.'
+              : 'Đã cho toàn bộ phụ đề muộn hơn $value giây.'),
+          backgroundColor: AppTheme.primaryEmerald,
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Không thể lưu thời gian phụ đề: $error'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isShiftingTimeline = false);
+    }
+  }
+
+  Future<void> _applyCustomTimelineShift() async {
+    FocusScope.of(context).unfocus();
+    final raw = _timelineController.text
+        .trim()
+        .replaceAll(RegExp(r'[sS]|giây|giay', caseSensitive: false), '')
+        .trim()
+        .replaceAll(',', '.');
+    final seconds = double.tryParse(raw);
+    if (seconds == null || !seconds.isFinite || seconds == 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Nhập số giây khác 0. Ví dụ: -1 hoặc 0,5.'),
+        ),
+      );
+      return;
+    }
+    await _shiftTimeline((seconds * 1000).round());
   }
 
   @override
@@ -184,6 +245,68 @@ class _SubtitleControlSheetState extends State<SubtitleControlSheet> {
       ),
     );
 
+    Widget timelineSection = _buildCard(
+      title: 'Đồng Bộ Thời Gian Phụ Đề',
+      icon: Icons.more_time,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Sớm: trừ toàn bộ mốc thời gian. Muộn: cộng toàn bộ mốc thời gian. SRT và dữ liệu giọng sẽ được lưu cùng lúc.',
+            style: TextStyle(color: Colors.white60, fontSize: 12),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _buildTimelineButton('Sớm 1s', -1000),
+              _buildTimelineButton('Sớm 0,5s', -500),
+              _buildTimelineButton('Muộn 0,5s', 500),
+              _buildTimelineButton('Muộn 1s', 1000),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _timelineController,
+                  enabled: !_isShiftingTimeline,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    signed: true,
+                    decimal: true,
+                  ),
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    labelText: 'Số giây tùy chỉnh',
+                    hintText: '-1 hoặc 0,5',
+                    helperText: 'Âm = sớm, dương = muộn',
+                    border: OutlineInputBorder(),
+                  ),
+                  onSubmitted: (_) => _applyCustomTimelineShift(),
+                ),
+              ),
+              const SizedBox(width: 8),
+              FilledButton(
+                onPressed: _isShiftingTimeline
+                    ? null
+                    : _applyCustomTimelineShift,
+                child: _isShiftingTimeline
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('Áp dụng'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+
     // 4. HỘP ĐEN & PHÔNG CHỮ
     Widget styleSection = _buildCard(
       title: 'Hộp Đen Che Chữ & Phông Chữ',
@@ -274,11 +397,12 @@ class _SubtitleControlSheetState extends State<SubtitleControlSheet> {
       ),
     );
 
+    final bottomPadding = MediaQuery.of(context).viewInsets.bottom;
     return SafeArea(
       child: ConstrainedBox(
         constraints: BoxConstraints(maxHeight: maxHeight),
         child: Container(
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+          padding: EdgeInsets.fromLTRB(20, 12, 20, 20 + bottomPadding),
           decoration: BoxDecoration(
             color: AppTheme.darkCard,
             borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
@@ -331,6 +455,10 @@ class _SubtitleControlSheetState extends State<SubtitleControlSheet> {
                         child: Column(
                           children: [
                             positionSection,
+                            if (widget.onShiftTimeline != null) ...[
+                              const SizedBox(height: 10),
+                              timelineSection,
+                            ],
                             const SizedBox(height: 10),
                             styleSection,
                           ],
@@ -344,6 +472,10 @@ class _SubtitleControlSheetState extends State<SubtitleControlSheet> {
                   fontSizeSection,
                   const SizedBox(height: 10),
                   positionSection,
+                  if (widget.onShiftTimeline != null) ...[
+                    const SizedBox(height: 10),
+                    timelineSection,
+                  ],
                   const SizedBox(height: 10),
                   styleSection,
                 ],
@@ -390,6 +522,18 @@ class _SubtitleControlSheetState extends State<SubtitleControlSheet> {
           child,
         ],
       ),
+    );
+  }
+
+  Widget _buildTimelineButton(String label, int offsetMs) {
+    return OutlinedButton(
+      onPressed: _isShiftingTimeline ? null : () => _shiftTimeline(offsetMs),
+      style: OutlinedButton.styleFrom(
+        foregroundColor: offsetMs < 0
+            ? const Color(0xFF64B5F6)
+            : AppTheme.primaryEmerald,
+      ),
+      child: Text(label),
     );
   }
 

@@ -5185,6 +5185,59 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     _syncTtsWithVideo();
   }
 
+  Future<void> _shiftSubtitleTimeline(int offsetMs) async {
+    if (offsetMs == 0) return;
+    if (_currentDocument.isEmpty) {
+      throw StateError('Video chưa có phụ đề để điều chỉnh.');
+    }
+
+    final shiftedDocument = _currentDocument.shiftedBy(offsetMs);
+    final history = await HistoryRepository.getInstance();
+    final updatedExisting = await history.updateSubtitleDocumentForVideo(
+      videoPath: _sourceVideoUrl,
+      document: shiftedDocument,
+      seriesId: widget.dramaDetail?.seriesId,
+      episodeIndex: widget.dramaDetail != null ? _currentEpisodeIndex : null,
+    );
+
+    if (!updatedExisting) {
+      await history.saveHistory(
+        videoPath: _sourceVideoUrl,
+        title: _originalTitle ?? _currentTitle,
+        document: shiftedDocument,
+        durationMs: _controller?.value.duration.inMilliseconds ?? 0,
+        lastPositionMs: _currentPosMs,
+        seriesId: widget.dramaDetail?.seriesId,
+        seriesCover: widget.dramaDetail?.cover,
+        coverUrl: _coverUrl,
+        episodeIndex: widget.dramaDetail != null ? _currentEpisodeIndex : null,
+        totalEpisodes: widget.dramaDetail?.totalEpisodes,
+      );
+    }
+
+    final oldScheduler = _ttsScheduler;
+    await oldScheduler.stop();
+    if (!mounted) return;
+    setState(() {
+      _currentDocument = shiftedDocument;
+      _ttsScheduler = TtsAudioScheduler(shiftedDocument);
+    });
+    await oldScheduler.dispose();
+
+    if (_prefetchManager != null) {
+      _prefetchManager!.registerDocument(
+        _currentEpisodeIndex,
+        shiftedDocument,
+      );
+    }
+
+    if (_settings.isTtsPlaybackEnabled) {
+      await _ttsScheduler.onSeek(_currentPosMs);
+      _syncTtsWithVideo();
+      await _applyAudioVolumes();
+    }
+  }
+
   void _skipBy(int deltaMs) {
     final controller = _controller;
     if (controller == null || !controller.value.isInitialized) return;
@@ -6474,6 +6527,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                         onChanged: () {
                                           setState(() {});
                                         },
+                                        onShiftTimeline:
+                                            _currentDocument.isEmpty
+                                                ? null
+                                                : _shiftSubtitleTimeline,
                                       ),
                                     );
                                   },

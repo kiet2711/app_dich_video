@@ -98,6 +98,51 @@ void main() {
     expect(repo.getHistory(), isEmpty);
   });
 
+  test('updates shifted SRT and voice document without losing voice metadata', () async {
+    final repo = await HistoryRepository.getInstance();
+    final original = SubtitleDocument([
+      SubtitleItem(
+        id: 1,
+        startMs: 2000,
+        endMs: 4000,
+        originalText: 'Original',
+        translatedText: 'Bản dịch',
+        audioFilePath: '${tempDir.path}/tts/sub_1.mp3',
+        audioDurationMs: 1700,
+        playbackSpeed: 1.1,
+      ),
+    ]);
+    final saved = await repo.saveHistory(
+      videoPath: 'https://www.bilibili.com/video/BV1timing123',
+      title: 'Timing test',
+      document: original,
+      ttsVoice: 'Giọng thử nghiệm',
+    );
+
+    final shifted = original.shiftedBy(-1000);
+    final updated = await repo.updateSubtitleDocumentForVideo(
+      videoPath: 'https://www.bilibili.com/video/BV1timing123?p=1',
+      document: shifted,
+    );
+
+    expect(updated, isTrue);
+    final current = repo.getHistory().single;
+    expect(current.ttsVoice, 'Giọng thử nghiệm');
+    expect(current.docKey, saved.docKey);
+    expect(
+      await File(current.srtPath).readAsString(),
+      contains('00:00:01,000 --> 00:00:03,000'),
+    );
+
+    final reloaded = await repo.loadSubtitleDocument(current);
+    expect(reloaded, isNotNull);
+    expect(reloaded!.items.single.startMs, 1000);
+    expect(reloaded.items.single.endMs, 3000);
+    expect(reloaded.items.single.audioFilePath, original.items.single.audioFilePath);
+    expect(reloaded.items.single.audioDurationMs, 1700);
+    expect(reloaded.items.single.playbackSpeed, 1.1);
+  });
+
   test('updates video title and translated title correctly', () async {
     final repo = await HistoryRepository.getInstance();
     final doc = SubtitleDocument([

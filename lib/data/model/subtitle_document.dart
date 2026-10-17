@@ -24,6 +24,46 @@ class SubtitleDocument {
     }
   }
 
+  /// Creates a copy whose entire subtitle timeline is moved by [offsetMs].
+  ///
+  /// Positive values make subtitles appear later; negative values make them
+  /// appear earlier. Cues that move before the beginning of the video are
+  /// clipped at zero so both SRT and JSON keep valid, non-negative times.
+  SubtitleDocument shiftedBy(int offsetMs) {
+    if (offsetMs == 0) {
+      return SubtitleDocument(
+        items.map((item) => _copyItemWithTimes(item)).toList(),
+      );
+    }
+
+    return SubtitleDocument(
+      items.map((item) {
+        final shiftedStart = item.startMs + offsetMs;
+        final shiftedEnd = item.endMs + offsetMs;
+        final safeStart = shiftedStart < 0 ? 0 : shiftedStart;
+        final safeEnd = shiftedEnd < safeStart ? safeStart : shiftedEnd;
+        return _copyItemWithTimes(item, startMs: safeStart, endMs: safeEnd);
+      }).toList(),
+    );
+  }
+
+  static SubtitleItem _copyItemWithTimes(
+    SubtitleItem item, {
+    int? startMs,
+    int? endMs,
+  }) {
+    return SubtitleItem(
+      id: item.id,
+      startMs: startMs ?? item.startMs,
+      endMs: endMs ?? item.endMs,
+      originalText: item.originalText,
+      translatedText: item.translatedText,
+      audioFilePath: item.audioFilePath,
+      audioDurationMs: item.audioDurationMs,
+      playbackSpeed: item.playbackSpeed,
+    );
+  }
+
   void recoverLegacyBilingualText(String sourceLanguage) {
     if (!sourceLanguage.toLowerCase().startsWith('zh')) return;
     for (final item in items) {
