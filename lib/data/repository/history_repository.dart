@@ -819,9 +819,16 @@ class HistoryRepository {
   }
 
   Future<void> _deleteItemFiles(HistoryItem item) async {
-    // 1. Xóa file phụ đề .srt
+    // 1. Xóa file phụ đề .srt và các file phái sinh (.original.srt)
     final resolvedSrt = await resolvePath(item.srtPath);
     await _deleteIfExists(resolvedSrt);
+    if (resolvedSrt.endsWith('.srt')) {
+      final origSrt = resolvedSrt.replaceFirst(
+        RegExp(r'\.srt$', caseSensitive: false),
+        '.original.srt',
+      );
+      await _deleteIfExists(origSrt);
+    }
 
     // 2. Xóa toàn bộ thư mục cache âm thanh TTS (tts_cache/<docKey>) của video này
     try {
@@ -839,11 +846,34 @@ class HistoryRepository {
       }
     } catch (_) {}
 
-    // 3. Xóa file tài liệu cấu trúc .capsub.json
-    if (item.documentPath != null) {
+    // 3. Xóa file tài liệu cấu trúc .capsub.json và các file phái sinh
+    if (item.documentPath != null && item.documentPath!.isNotEmpty) {
       final resolvedDoc = await resolvePath(item.documentPath!);
       await _deleteIfExists(resolvedDoc);
+      if (resolvedDoc.endsWith('.capsub.json')) {
+        final origDoc = resolvedDoc.replaceFirst(
+          RegExp(r'\.capsub\.json$', caseSensitive: false),
+          '.original.capsub.json',
+        );
+        await _deleteIfExists(origDoc);
+      }
     }
+    // Dọn thêm file phụ đề .capsub.json sinh tự động theo resolvedSrt hoặc sub_$id nếu có
+    if (resolvedSrt.isNotEmpty) {
+      final docFromSrt = resolvedSrt.replaceFirst(
+        RegExp(r'\.srt$', caseSensitive: false),
+        '.capsub.json',
+      );
+      if (docFromSrt != resolvedSrt) {
+        await _deleteIfExists(docFromSrt);
+      }
+    }
+    try {
+      final docs = await getApplicationDocumentsDirectory();
+      final defaultDoc =
+          '${docs.path}${Platform.pathSeparator}saved_subtitles${Platform.pathSeparator}sub_${item.id}.capsub.json';
+      await _deleteIfExists(defaultDoc);
+    } catch (_) {}
 
     // 4. Xóa bản sao video nội bộ nếu video được lưu trong thư mục media của app
     // và không còn bản ghi lịch sử nào khác đang dùng video này
@@ -870,6 +900,126 @@ class HistoryRepository {
           seriesId: item.seriesId!,
           episodeIndex: item.extractedEpisodeIndex,
         );
+      } catch (_) {}
+    }
+  }
+
+  /// Tự động dọn dẹp các tập phim Hồng Quả cũ đã xem cách 3 tập (theo cài đặt hongguoAutoDeleteWatched)
+  /// Xoá toàn bộ: Video cache, file âm thanh TTS lồng tiếng, phụ đề .srt, .capsub.json và bản ghi lịch sử
+  Future<int> autoDeleteWatchedHongguoEpisodes({
+    required String seriesId,
+    required int maxEpisodeIndex,
+    String? seriesTitle,
+    void Function(int episodeIndex)? onEpisodeDeleted,
+  }) async {
+    if (maxEpisodeIndex < 1) return 0;
+    final cleanSid = seriesId.replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '').trim();
+    final items = getHistory();
+    final normTitle = seriesTitle?.trim().toLowerCase();
+
+    // 1. Tìm tất cả các tập <= maxEpisodeIndex của phim này trong lịch sử
+    final matches = items.where((it) {
+      final itSid =
+          (it.seriesId ?? '').replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '').trim();
+      final sameSeries = cleanSid.isNotEmpty && itSid == cleanSid;
+      final sameTitle = normTitle != null &&
+          normTitle.isNotEmpty &&
+          (it.extractedSeriesTitle.trim().toLowerCase() == normTitle ||
+              it.title.trim().toLowerCase().contains(normTitle));
+      return (sameSeries || sameTitle) &&
+          it.extractedEpisodeIndex >= 1 &&
+          it.extractedEpisodeIndex <= maxEpisodeIndex;
+    }).toList();
+
+    var deletedCount = 0;
+    if (matches.isNotEmpty) {
+      final idsToRemove = matches.map((m) => m.id).toSet();
+      items.removeWhere((it) => idsToRemove.contains(it.id));
+      await _save(items);
+
+      for (final item in matches) {
+        final epIdx = item.extractedEpisodeIndex;
+        onEpisodeDeleted?.call(epIdx);
+        await _deleteItemFiles(item);
+        deletedCount++;
+      }
+    }
+
+    // 2. Quét dọn thêm các file video mp4 còn sót trong cache của các tập <= maxEpisodeIndex
+    try {
+      final cacheDir = await VideoCacheManager.getCacheDirectory();
+      if (await cacheDir.exists()) {
+        final reg = RegExp('^hg_${cleanSid}_ep(\\d+)', caseSensitive: false);
+        for (final entity in cacheDir.listSync()) {
+          if (entity is File) {
+            final filename = entity.path.split(RegExp(r'[/\\]')).last;
+            final m = reg.firstMatch(filename);
+            if (m != null) {
+              final ep = int.tryParse(m.group(1) ?? '');
+              if (ep != null && ep >= 1 && ep <= maxEpisodeIndex) {
+                try {
+                  await entity.delete();
+                  onEpisodeDeleted?.call(ep);
+                } catch (_) {}
+              }
+            }
+          }
+        }
+      }
+    } catch (_) {}
+
+    return deletedCount;
+  }
+
+  /// Xóa sạch mọi tệp (video, âm thanh TTS, phụ đề SRT/JSON) của một tập phim Hồng Quả cụ thể
+  Future<void> deleteHongguoEpisodeAllFiles({
+    required String seriesId,
+    required int episodeIndex,
+    String? seriesTitle,
+    SubtitleDocument? inMemoryDoc,
+    void Function(int episodeIndex)? onEpisodeDeleted,
+  }) async {
+    final cleanSid = seriesId.replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '').trim();
+    final items = getHistory();
+    final normTitle = seriesTitle?.trim().toLowerCase();
+
+    final matches = items.where((it) {
+      final itSid =
+          (it.seriesId ?? '').replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '').trim();
+      final sameSeries = cleanSid.isNotEmpty && itSid == cleanSid;
+      final sameTitle = normTitle != null &&
+          normTitle.isNotEmpty &&
+          (it.extractedSeriesTitle.trim().toLowerCase() == normTitle ||
+              it.title.trim().toLowerCase().contains(normTitle));
+      return (sameSeries || sameTitle) &&
+          it.extractedEpisodeIndex == episodeIndex;
+    }).toList();
+
+    onEpisodeDeleted?.call(episodeIndex);
+
+    if (matches.isNotEmpty) {
+      final idsToRemove = matches.map((m) => m.id).toSet();
+      items.removeWhere((it) => idsToRemove.contains(it.id));
+      await _save(items);
+      for (final item in matches) {
+        await _deleteItemFiles(item);
+      }
+    }
+
+    await VideoCacheManager.deleteHongguoEpisodeCache(
+      seriesId: seriesId,
+      episodeIndex: episodeIndex,
+    );
+
+    if (inMemoryDoc != null && inMemoryDoc.isNotEmpty) {
+      try {
+        final docKey = TtsCacheHelper.getDocKey(inMemoryDoc);
+        await TtsCacheHelper.deleteDocCache(inMemoryDoc, docKey);
+        for (final sub in inMemoryDoc.items) {
+          if (sub.audioFilePath != null && sub.audioFilePath!.isNotEmpty) {
+            await _deleteIfExists(sub.audioFilePath!);
+          }
+        }
       } catch (_) {}
     }
   }

@@ -846,6 +846,24 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           }
         },
       );
+
+      // Dọn dẹp các tập cũ nếu người dùng mở trực tiếp một tập từ xa (ví dụ: mở tập 230)
+      if (_settings.hongguoAutoDeleteWatched && _currentEpisodeIndex > 3) {
+        final maxEpToDelete = _currentEpisodeIndex - 3;
+        unawaited(
+          HistoryRepository.getInstance().then((historyRepo) {
+            return historyRepo.autoDeleteWatchedHongguoEpisodes(
+              seriesId: widget.dramaDetail!.seriesId,
+              maxEpisodeIndex: maxEpToDelete,
+              seriesTitle: widget.dramaDetail!.title,
+              onEpisodeDeleted: (ep) => _prefetchManager?.evictEpisode(ep),
+            );
+          }).catchError((e) {
+            debugPrint('[Player] Lỗi dọn tập cũ khi mở player: $e');
+            return 0;
+          }),
+        );
+      }
     }
 
     await _initPlayerForPath(
@@ -1373,17 +1391,25 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         newTitle: epTitle,
       );
 
-      // Tự động xóa tập cũ cách 3 tập nếu người dùng xem tuần tự (+1)
-      // Ví dụ: Xem đến tập 4 xóa tập 1, tập 5 xóa tập 2... Nếu nhảy cóc thì không xóa
+      // Tự động xóa sạch toàn bộ tệp (Video, âm thanh TTS lồng tiếng, phụ đề SRT/JSON)
+      // của các tập cũ cách 3 tập nếu người dùng xem tuần tự (+1) hoặc xem tiếp
+      // Ví dụ: Xem đến tập 4 xóa tập 1, tập 5 xóa tập 2...
       if (_settings.hongguoAutoDeleteWatched && widget.dramaDetail != null) {
-        if (targetIndex == previousIndex + 1) {
-          final epToDelete = targetIndex - 3;
-          if (epToDelete >= 1) {
+        if (targetIndex == previousIndex + 1 || (previousIndex <= 1 && targetIndex > 3)) {
+          final maxEpToDelete = targetIndex - 3;
+          if (maxEpToDelete >= 1) {
             unawaited(
-              VideoCacheManager.deleteHongguoEpisodeCache(
-                seriesId: widget.dramaDetail!.seriesId,
-                episodeIndex: epToDelete,
-              ),
+              HistoryRepository.getInstance().then((historyRepo) {
+                return historyRepo.autoDeleteWatchedHongguoEpisodes(
+                  seriesId: widget.dramaDetail!.seriesId,
+                  maxEpisodeIndex: maxEpToDelete,
+                  seriesTitle: widget.dramaDetail!.title,
+                  onEpisodeDeleted: (ep) => _prefetchManager?.evictEpisode(ep),
+                );
+              }).catchError((e) {
+                debugPrint('[Player] Lỗi tự động xóa tập cũ: $e');
+                return 0;
+              }),
             );
           }
         }

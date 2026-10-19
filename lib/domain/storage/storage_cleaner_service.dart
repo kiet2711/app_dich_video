@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 
+import '../../data/model/history_item.dart';
 import '../../data/repository/history_repository.dart';
 import '../media/video_cache_manager.dart';
 
@@ -167,6 +168,23 @@ class StorageCleanerService {
     // 2. Quét Âm thanh & Lồng tiếng AI (TTS Cache trong Documents)
     try {
       final docDir = await getApplicationDocumentsDirectory();
+      final historyRepo = await HistoryRepository.getInstance();
+      final historyList = historyRepo.getHistory();
+      final activeDocKeyMap = <String, HistoryItem>{};
+      final activeSrtMap = <String, HistoryItem>{};
+      final activeDocPathMap = <String, HistoryItem>{};
+
+      for (final h in historyList) {
+        if (h.docKey != null && h.docKey!.isNotEmpty) {
+          activeDocKeyMap[h.docKey!] = h;
+        }
+        if (h.srtPath.isNotEmpty) {
+          activeSrtMap[h.srtPath] = h;
+        }
+        if (h.documentPath != null && h.documentPath!.isNotEmpty) {
+          activeDocPathMap[h.documentPath!] = h;
+        }
+      }
 
       // Thư mục tts_cache chuẩn
       final ttsDir = Directory('${docDir.path}${Platform.pathSeparator}tts_cache');
@@ -188,16 +206,35 @@ class StorageCleanerService {
           }
 
           if (folderSize > 0) {
+            final matchingHistory = activeDocKeyMap[folderName];
+            bool isOrphaned = false;
+            String dispName = 'Lồng tiếng AI ($fileCount câu thoại)';
+            String desc = 'Bộ nhớ đệm giọng đọc TTS: $folderName';
+
+            if (matchingHistory == null) {
+              isOrphaned = true;
+              dispName = 'Lồng tiếng cũ ($fileCount câu)';
+              desc = 'Dữ liệu giọng đọc của tập phim đã xóa khỏi lịch sử';
+            } else if (matchingHistory.videoPath.isNotEmpty &&
+                !matchingHistory.videoPath.startsWith('http')) {
+              final vFile = File(matchingHistory.videoPath);
+              if (!vFile.existsSync()) {
+                isOrphaned = true;
+                dispName = 'Lồng tiếng thừa: ${matchingHistory.title}';
+                desc = 'Video tập này đã bị xóa khỏi máy ($fileCount câu)';
+              }
+            }
+
             items.add(
               StorageFileItem(
                 path: docFolder.path,
-                displayName: 'Lồng tiếng AI ($fileCount câu thoại)',
-                description: 'Bộ nhớ đệm giọng đọc TTS: $folderName',
+                displayName: dispName,
+                description: desc,
                 sizeBytes: folderSize,
                 category: StorageCategory.audio,
                 modifiedAt: lastMod,
                 isDirectory: true,
-                isSafeToClean: false,
+                isSafeToClean: isOrphaned,
               ),
             );
           }
@@ -233,6 +270,18 @@ class StorageCleanerService {
     // 3. Quét Phụ đề & Kịch bản (Subtitles trong Documents)
     try {
       final docDir = await getApplicationDocumentsDirectory();
+      final historyRepo = await HistoryRepository.getInstance();
+      final historyList = historyRepo.getHistory();
+      final activeSrtMap = <String, HistoryItem>{};
+      final activeDocPathMap = <String, HistoryItem>{};
+
+      for (final h in historyList) {
+        if (h.srtPath.isNotEmpty) activeSrtMap[h.srtPath] = h;
+        if (h.documentPath != null && h.documentPath!.isNotEmpty) {
+          activeDocPathMap[h.documentPath!] = h;
+        }
+      }
+
       final subDir = Directory('${docDir.path}${Platform.pathSeparator}subtitles');
       if (await subDir.exists()) {
         for (final f in subDir.listSync().whereType<File>()) {
@@ -264,15 +313,37 @@ class StorageCleanerService {
         for (final f in savedDir.listSync().whereType<File>()) {
           final stat = f.statSync();
           final name = f.path.split(RegExp(r'[/\\]')).last;
+          final isSrt = name.endsWith('.srt');
+          final matching = activeSrtMap[f.path] ?? activeDocPathMap[f.path];
+          bool isOrphaned = false;
+          String dispName = name;
+          String desc = isSrt
+              ? 'Tệp phụ đề SRT hoàn chỉnh'
+              : 'Kịch bản phụ đề CapSub chi tiết';
+
+          if (matching == null) {
+            isOrphaned = true;
+            dispName = '$name (Không dùng)';
+            desc = 'Phụ đề của tập phim đã xóa khỏi lịch sử';
+          } else if (matching.videoPath.isNotEmpty &&
+              !matching.videoPath.startsWith('http')) {
+            final vFile = File(matching.videoPath);
+            if (!vFile.existsSync()) {
+              isOrphaned = true;
+              dispName = '$name (Đã xóa video)';
+              desc = 'Phụ đề của tập ${matching.title} đã xóa video';
+            }
+          }
+
           items.add(
             StorageFileItem(
               path: f.path,
-              displayName: name,
-              description: 'Phụ đề đã xuất / lưu trữ',
+              displayName: dispName,
+              description: desc,
               sizeBytes: stat.size,
               category: StorageCategory.subtitle,
               modifiedAt: stat.modified,
-              isSafeToClean: false,
+              isSafeToClean: isOrphaned,
             ),
           );
         }
@@ -414,7 +485,29 @@ class StorageCleanerService {
                   await historyRepo.updateVideoPath(it.path, '');
                 }
               }
+            } else if (it.category == StorageCategory.subtitle) {
+              final deadIds = historyRepo.getHistory().where((h) {
+                final match = h.srtPath == it.path || h.documentPath == it.path;
+                if (!match) return false;
+                if (h.videoPath.isEmpty || h.videoPath.startsWith('http')) return false;
+                return !File(h.videoPath).existsSync();
+              }).map((h) => h.id).toList();
+              if (deadIds.isNotEmpty) {
+                await historyRepo.deleteItems(deadIds);
+              }
             }
+          }
+        }
+
+        if (it.isDirectory && it.category == StorageCategory.audio) {
+          final docKey = it.path.split(RegExp(r'[/\\]')).last;
+          final deadIds = historyRepo.getHistory().where((h) {
+            if (h.docKey != docKey) return false;
+            if (h.videoPath.isEmpty || h.videoPath.startsWith('http')) return false;
+            return !File(h.videoPath).existsSync();
+          }).map((h) => h.id).toList();
+          if (deadIds.isNotEmpty) {
+            await historyRepo.deleteItems(deadIds);
           }
         }
       } catch (_) {}

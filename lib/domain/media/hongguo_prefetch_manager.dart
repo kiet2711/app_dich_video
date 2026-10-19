@@ -136,6 +136,18 @@ class HongguoPrefetchManager {
     return _cachedUrls[episodeIndex];
   }
 
+  /// Xoá dữ liệu tập phim khỏi bộ nhớ RAM (khi tập phim bị xoá cache / tự động dọn)
+  void evictEpisode(int episodeIndex) {
+    _cachedDocs.remove(episodeIndex);
+    _cachedUrls.remove(episodeIndex);
+    _pipelineSubs[episodeIndex]?.cancel();
+    _pipelineSubs.remove(episodeIndex);
+    _activePipelines[episodeIndex]?.cancel();
+    _activePipelines.remove(episodeIndex);
+    _inFlightDocCompleters.remove(episodeIndex);
+    _inFlightUrlCompleters.remove(episodeIndex);
+  }
+
   /// Kích hoạt khi bắt đầu phát một tập phim:
   /// 1. Nếu tập hiện tại chưa có sub -> dịch ngay tập hiện tại
   /// 2. Gối đầu dịch ngầm tập kế tiếp (N + 1)

@@ -679,7 +679,7 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
                                       ),
                                       SizedBox(height: 2),
                                       Text(
-                                        'Dọn video cách 3 tập để tránh đầy bộ nhớ máy',
+                                        'Dọn sạch video, phụ đề & lồng tiếng cách 3 tập',
                                         style: TextStyle(
                                           color: AppColors.textMuted,
                                           fontSize: 11,
