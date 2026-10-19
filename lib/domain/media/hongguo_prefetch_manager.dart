@@ -12,6 +12,8 @@ import '../service/foreground_service_manager.dart';
 import '../tts/tts_cache_helper.dart';
 import '../tts/tts_generation_manager.dart';
 import 'hongguo_resolver.dart';
+import 'multi_thread_downloader.dart';
+import 'network_header_helper.dart';
 import 'video_cache_manager.dart';
 
 class PrefetchState {
@@ -310,7 +312,11 @@ class HongguoPrefetchManager {
     bool hfOnly = false,
   }) async {
     if (_cachedUrls.containsKey(episodeIndex)) {
-      return _cachedUrls[episodeIndex];
+      final existing = _cachedUrls[episodeIndex]!;
+      final isRemote = existing.startsWith('http://') || existing.startsWith('https://');
+      if (!isRemote && await File(existing).exists() && (await File(existing).length()) > 1024 * 50) {
+        return existing;
+      }
     }
 
     int attempts = 0;
@@ -345,6 +351,53 @@ class HongguoPrefetchManager {
           onProgress: onDownloadProgress,
         );
         if (url != null && url.isNotEmpty) {
+          // Nếu đã là file cục bộ hợp lệ thì trả về ngay
+          if (!url.startsWith('http://') && !url.startsWith('https://')) {
+            return url;
+          }
+
+          // Tải trước tệp video về bộ nhớ cache máy để khi chuyển tập không phải chờ
+          try {
+            final cachedVideo = await VideoCacheManager.getCachedVideoFile(
+              url: url,
+              seriesId: detail.seriesId,
+              episodeIndex: episodeIndex,
+            );
+            final hasCache = await VideoCacheManager.hasValidCache(
+              url: url,
+              seriesId: detail.seriesId,
+              episodeIndex: episodeIndex,
+            );
+            if (!hasCache) {
+              final partFile = File('${cachedVideo.path}.part');
+              final headers = NetworkHeaderHelper.getHeadersForUrl(url);
+              await MultiThreadDownloader.downloadFile(
+                url: url,
+                outputFile: partFile,
+                headers: headers,
+                progressCallback: (p, msg) {
+                  onDownloadProgress(
+                    p,
+                    'Đang tải trước video Tập $episodeIndex: ${(p * 100).toInt()}%',
+                  );
+                },
+              );
+              if (await partFile.exists() && await partFile.length() > 1024 * 50) {
+                if (await cachedVideo.exists()) {
+                  await cachedVideo.delete();
+                }
+                await partFile.rename(cachedVideo.path);
+                _cachedUrls[episodeIndex] = cachedVideo.path;
+                return cachedVideo.path;
+              }
+            } else {
+              _cachedUrls[episodeIndex] = cachedVideo.path;
+              return cachedVideo.path;
+            }
+          } catch (dlErr) {
+            debugPrint('[Prefetch] Tải trước video tập $episodeIndex gặp lỗi nhẹ: $dlErr');
+          }
+
           return url;
         }
       } catch (e) {
@@ -385,7 +438,19 @@ class HongguoPrefetchManager {
     int bufferCount,
     int total,
   ) async {
-    final targetIndexes = <int>[
+    // 1. Số lượng tập chuẩn bị trước video (giải mã trên HF / tải offline):
+    // Luôn đi trước 1 tập (bufferCount + 1). Ví dụ: gối đầu 3 tập -> gửi 4 tập; gối đầu 2 tập -> gửi 3 tập.
+    // Đảm bảo khi người dùng chuyển sang tập tiếp theo, tập kế tiếp sau vùng đệm đã có sẵn URL từ HF,
+    // điện thoại có thể bắt đầu tải video ngay lập tức mà không cần chờ HF giải mã.
+    final videoBufferCount = bufferCount + 1;
+    final videoTargetIndexes = <int>[
+      for (var i = 1; i <= videoBufferCount; i++)
+        if (playingIndex + i <= total) playingIndex + i,
+    ];
+
+    // 2. Số lượng tập dịch thuật AI tuần tự (STT + Gemini/Groq + TTS)
+    // Giữ nguyên đúng bufferCount do người dùng cài đặt (ví dụ: 3 tập hoặc 2 tập)
+    final translationTargetIndexes = <int>[
       for (var i = 1; i <= bufferCount; i++)
         if (playingIndex + i <= total) playingIndex + i,
     ];
@@ -393,12 +458,11 @@ class HongguoPrefetchManager {
     final initialSettings = await SettingsRepository.getInstance();
     final isHf = initialSettings.hongguoVideoResolverEngine == 'hf';
 
-    // BƯỚC 1: Khởi chạy chuẩn bị video song song cho toàn bộ targetIndexes.
-    // Tải video chạy trên các luồng độc lập, nếu tập N bị lỗi & retry
-    // thì tập N+1 vẫn đang tải bình thường, không hề bị nghẽn!
+    // BƯỚC 1: Khởi chạy chuẩn bị video song song cho toàn bộ videoTargetIndexes (bufferCount + 1).
+    // Tải video chạy trên các luồng độc lập, gửi trước lên HF giải mã URL
+    // để không bao giờ bị nghẽn hay chờ giải mã khi chuyển tập!
     final videoFutures = <int, Future<String?>>{};
-    for (final episodeIndex in targetIndexes) {
-      if (_cachedDocs.containsKey(episodeIndex)) continue;
+    for (final episodeIndex in videoTargetIndexes) {
       videoFutures[episodeIndex] = _prepareEpisodeVideo(
         episodeIndex,
         playingIndex,
@@ -407,8 +471,8 @@ class HongguoPrefetchManager {
     }
 
     // BƯỚC 2: Hàng đợi dịch AI (STT + Gemini/Groq + TTS) chạy tuần tự từng tập
-    // để chống Rate Limit 429 và quá tải CPU máy.
-    for (final nextIndex in targetIndexes) {
+    // theo đúng translationTargetIndexes
+    for (final nextIndex in translationTargetIndexes) {
       if (_isDisposed || _currentPlayingIndex != playingIndex) break;
       final settings = await SettingsRepository.getInstance();
       if (!settings.autoPlayNextEpisode) break;
