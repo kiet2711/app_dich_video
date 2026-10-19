@@ -14,7 +14,8 @@
         android:label="CapSub AI Studio"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        android:usesCleartextTraffic="true">
+        android:usesCleartextTraffic="true"
+        android:largeHeap="true">
         <service
             android:name=".AppForegroundService"
             android:foregroundServiceType="dataSync|mediaPlayback"

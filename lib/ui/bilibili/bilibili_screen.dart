@@ -1343,6 +1343,7 @@ class _BilibiliScreenState extends State<BilibiliScreen>
                   if (item.cover.isNotEmpty)
                     Image.network(
                       item.cover,
+                      cacheWidth: 360,
                       fit: BoxFit.cover,
                       errorBuilder: (_, _, _) => Container(
                         color: const Color(0xFF282B37),

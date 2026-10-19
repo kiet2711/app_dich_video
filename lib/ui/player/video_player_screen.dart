@@ -5178,7 +5178,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       }
     }
     final stallChanged = _refreshPlaybackStall(now);
-    if (!_isScrubbing && now.difference(_lastUiUpdate).inMilliseconds >= 50) {
+    if (!_isScrubbing && now.difference(_lastUiUpdate).inMilliseconds >= 80) {
       _lastUiUpdate = now;
       setState(() {
         _currentPosMs = positionMs;

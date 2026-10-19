@@ -150,6 +150,19 @@ class HongguoPrefetchManager {
     _inFlightUrlCompleters.remove(episodeIndex);
   }
 
+  /// Dọn bớt dữ liệu RAM của các tập quá xa tập đang xem (giữ cửa sổ trượt ~12 tập)
+  void _trimMemoryCache(int currentPlaying) {
+    if (_cachedDocs.length > 12) {
+      final toRemove = _cachedDocs.keys
+          .where((ep) => ep < currentPlaying - 3 || ep > currentPlaying + 9)
+          .toList();
+      for (final ep in toRemove) {
+        _cachedDocs.remove(ep);
+        _cachedUrls.remove(ep);
+      }
+    }
+  }
+
   /// Kích hoạt khi bắt đầu phát một tập phim:
   /// 1. Nếu tập hiện tại chưa có sub -> dịch ngay tập hiện tại
   /// 2. Gối đầu dịch ngầm tập kế tiếp (N + 1)
@@ -158,6 +171,7 @@ class HongguoPrefetchManager {
     bool translateCurrentIfEmpty = true,
     void Function(SubtitleDocument doc)? onCurrentSubtitleReady,
   }) async {
+    _trimMemoryCache(episodeIndex);
     if (_isDisposed) return;
     _currentPlayingIndex = episodeIndex;
 
@@ -310,11 +324,16 @@ class HongguoPrefetchManager {
     int episodeIndex,
     int queuePlayingIndex, {
     bool hfOnly = false,
+    bool downloadToLocal = true,
   }) async {
     if (_cachedUrls.containsKey(episodeIndex)) {
       final existing = _cachedUrls[episodeIndex]!;
       final isRemote = existing.startsWith('http://') || existing.startsWith('https://');
       if (!isRemote && await File(existing).exists() && (await File(existing).length()) > 1024 * 50) {
+        return existing;
+      }
+      // Nếu không cần tải về máy và đã có URL remote trong cache thì trả về ngay
+      if (!downloadToLocal && isRemote) {
         return existing;
       }
     }
@@ -351,6 +370,11 @@ class HongguoPrefetchManager {
           onProgress: onDownloadProgress,
         );
         if (url != null && url.isNotEmpty) {
+          // Nếu chỉ gửi trước lên HF giải mã URL (tập +1 vượt ngoài vùng đệm tải về) -> kết thúc ngay
+          if (!downloadToLocal) {
+            return url;
+          }
+
           // Nếu đã là file cục bộ hợp lệ thì trả về ngay
           if (!url.startsWith('http://') && !url.startsWith('https://')) {
             return url;
@@ -463,10 +487,12 @@ class HongguoPrefetchManager {
     // để không bao giờ bị nghẽn hay chờ giải mã khi chuyển tập!
     final videoFutures = <int, Future<String?>>{};
     for (final episodeIndex in videoTargetIndexes) {
+      final isExtraWarmup = episodeIndex > playingIndex + bufferCount;
       videoFutures[episodeIndex] = _prepareEpisodeVideo(
         episodeIndex,
         playingIndex,
         hfOnly: isHf,
+        downloadToLocal: !isExtraWarmup,
       );
     }
 

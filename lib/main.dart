@@ -19,6 +19,9 @@ import 'ui/player/global_player_overlay.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Giới hạn bộ nhớ đệm ảnh trong RAM để tránh tràn bộ nhớ khi cuộn danh sách phim
+  PaintingBinding.instance.imageCache.maximumSizeBytes = 40 * 1024 * 1024; // 40 MB max
+  PaintingBinding.instance.imageCache.maximumSize = 120; // Tối đa 120 ảnh
   MediaKit.ensureInitialized();
   PipManager.initialize();
   final settings = await SettingsRepository.getInstance();

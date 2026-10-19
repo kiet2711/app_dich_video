@@ -1413,6 +1413,7 @@ class _HistoryScreenState extends State<HistoryScreen>
                       ? Image.network(
                           group.seriesCover!,
                           headers: _imageHeaders(group.seriesCover),
+                          cacheWidth: 150,
                           width: 52,
                           height: 70,
                           fit: BoxFit.cover,
@@ -1803,6 +1804,7 @@ class _HistoryScreenState extends State<HistoryScreen>
                           ? Image.network(
                               it.seriesCover!,
                               headers: _imageHeaders(it.seriesCover),
+                              cacheWidth: 150,
                               width: 52,
                               height: 70,
                               fit: BoxFit.cover,
@@ -2704,6 +2706,7 @@ class _HistoryScreenState extends State<HistoryScreen>
                           ? Image.network(
                               it.coverUrl!,
                               headers: _imageHeaders(it.coverUrl),
+                              cacheWidth: 200,
                               fit: BoxFit.cover,
                               errorBuilder: (_, _, _) => Container(
                                 color: AppTheme.darkSurfaceVariant,
@@ -3134,6 +3137,7 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
                             ? Image.network(
                                 currentGroup.seriesCover!,
                                 headers: widget.imageHeaders(currentGroup.seriesCover),
+                                cacheWidth: 150,
                                 width: 56,
                                 height: 74,
                                 fit: BoxFit.cover,

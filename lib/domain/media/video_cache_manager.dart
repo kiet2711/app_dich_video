@@ -157,7 +157,7 @@ class VideoCacheManager {
 
         // Quét danh sách file trong cache đề phòng case-sensitivity hoặc suffix (ví dụ _hd.mp4)
         try {
-          final entities = dir.listSync();
+          final entities = await dir.list().toList();
           final prefix = 'hg_${cleanSid}_ep$episodeIndex';
           final lowerPrefix = prefix.toLowerCase();
           for (final e in entities) {
@@ -225,23 +225,34 @@ class VideoCacheManager {
   static Future<void> pruneCacheIfNeeded({int maxSizeBytes = defaultMaxCacheSizeBytes}) async {
     try {
       final dir = await getCacheDirectory();
-      final entities = dir.listSync();
+      final entities = await dir.list().toList();
       final files = entities.whereType<File>().toList();
 
       var totalBytes = 0;
+      final fileSizes = <File, int>{};
       for (final f in files) {
-        totalBytes += f.lengthSync();
+        try {
+          final sz = await f.length();
+          fileSizes[f] = sz;
+          totalBytes += sz;
+        } catch (_) {}
       }
 
       if (totalBytes > maxSizeBytes) {
         // Sắp xếp theo thời gian truy cập/sửa đổi cũ nhất lên đầu (LRU)
-        files.sort((a, b) => a.lastModifiedSync().compareTo(b.lastModifiedSync()));
+        final fileDates = <File, DateTime>{};
+        for (final f in files) {
+          try {
+            fileDates[f] = await f.lastModified();
+          } catch (_) {}
+        }
+        files.sort((a, b) => (fileDates[a] ?? DateTime(1970)).compareTo(fileDates[b] ?? DateTime(1970)));
 
         for (final f in files) {
           if (totalBytes <= maxSizeBytes * 0.75) break; // Giảm xuống 75% ngưỡng
-          final size = f.lengthSync();
+          final size = fileSizes[f] ?? 0;
           try {
-            f.deleteSync();
+            await f.delete();
             totalBytes -= size;
           } catch (_) {}
         }

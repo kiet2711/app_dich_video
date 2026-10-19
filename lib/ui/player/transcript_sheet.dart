@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../../data/model/subtitle_document.dart';
 import '../../data/model/subtitle_item.dart';
 
-class TranscriptSheet extends StatelessWidget {
+class TranscriptSheet extends StatefulWidget {
   final SubtitleDocument document;
   final int currentPositionMs;
   final void Function(int targetMs) onSeekTo;
@@ -16,8 +16,54 @@ class TranscriptSheet extends StatelessWidget {
   });
 
   @override
+  State<TranscriptSheet> createState() => _TranscriptSheetState();
+}
+
+class _TranscriptSheetState extends State<TranscriptSheet> {
+  final ScrollController _scrollController = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollToActiveItem(animated: false);
+    });
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _scrollToActiveItem({bool animated = true}) {
+    if (!mounted || !_scrollController.hasClients) return;
+    final items = widget.document.items;
+    final activeIndex = items.indexWhere(
+      (item) =>
+          widget.currentPositionMs >= item.startMs &&
+          widget.currentPositionMs <= item.endMs,
+    );
+    if (activeIndex >= 0) {
+      final targetOffset = (activeIndex * 68.0 - 120.0).clamp(
+        0.0,
+        _scrollController.position.maxScrollExtent,
+      );
+      if (animated) {
+        _scrollController.animateTo(
+          targetOffset,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOutCubic,
+        );
+      } else {
+        _scrollController.jumpTo(targetOffset);
+      }
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final items = document.items;
+    final items = widget.document.items;
 
     return Container(
       decoration: const BoxDecoration(
@@ -49,21 +95,28 @@ class TranscriptSheet extends StatelessWidget {
                     fontSize: 16,
                   ),
                 ),
+                const Spacer(),
+                IconButton(
+                  icon: const Icon(Icons.my_location_rounded, color: Colors.blueAccent, size: 20),
+                  tooltip: 'Cuộn tới câu đang phát',
+                  onPressed: () => _scrollToActiveItem(animated: true),
+                ),
               ],
             ),
           ),
           const Divider(color: Colors.white12),
           Expanded(
             child: ListView.builder(
+              controller: _scrollController,
               itemCount: items.length,
               itemBuilder: (context, index) {
                 final item = items[index];
                 final isActive =
-                    currentPositionMs >= item.startMs &&
-                    currentPositionMs <= item.endMs;
+                    widget.currentPositionMs >= item.startMs &&
+                    widget.currentPositionMs <= item.endMs;
 
                 return InkWell(
-                  onTap: () => onSeekTo(item.startMs),
+                  onTap: () => widget.onSeekTo(item.startMs),
                   child: Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 16,
