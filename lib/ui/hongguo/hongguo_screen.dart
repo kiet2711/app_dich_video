@@ -11,6 +11,7 @@ import '../../player/global_player_manager.dart';
 import '../../data/model/watch_later_item.dart';
 import '../../data/repository/watch_later_repository.dart';
 import '../theme/app_theme.dart';
+import 'feed/hongguo_feed_screen.dart';
 import 'hongguo_settings_sheet.dart';
 
 class HongguoScreen extends StatefulWidget {
@@ -626,6 +627,29 @@ class _HongguoScreenState extends State<HongguoScreen> {
           ],
         ),
         actions: [
+          IconButton(
+            icon: const Icon(
+              Icons.swipe_vertical_rounded,
+              color: Colors.amberAccent,
+            ),
+            tooltip: 'Lướt Shorts Khám Phá (Xem thử siêu tốc)',
+            onPressed: () {
+              if (_dramas.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Đang tải danh sách phim, vui lòng đợi giây lát...')),
+                );
+                return;
+              }
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (ctx) => HongguoFeedScreen(
+                    discoverDramas: _dramas,
+                  ),
+                ),
+              );
+            },
+          ),
           IconButton(
             icon: Icon(
               Icons.translate_rounded,
@@ -2203,6 +2227,37 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                   ),
                   child: Row(
                     children: [
+                      // Nút Lướt Xem Thử (Feed Shorts)
+                      Container(
+                        margin: const EdgeInsets.only(right: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.amberAccent.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: Colors.amberAccent.withValues(alpha: 0.4),
+                          ),
+                        ),
+                        child: IconButton(
+                          icon: const Icon(
+                            Icons.swipe_vertical_rounded,
+                            color: Colors.amberAccent,
+                          ),
+                          tooltip: 'Lướt xem thử dạng Shorts',
+                          onPressed: () {
+                            Navigator.pop(context);
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (ctx) => HongguoFeedScreen(
+                                  initialDrama: widget.detail,
+                                  initialEpisodeIndex: _selectedEpisodeIndex,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+
                       // Nút Xem Vietsub (Phụ đề)
                       Expanded(
                         child: OutlinedButton.icon(
