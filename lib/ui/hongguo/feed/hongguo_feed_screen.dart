@@ -1476,9 +1476,31 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Tiêu đề phim có dấu mũi tên `>` (nhấn vào mở xem trọn bộ)
+                    // Tiêu đề phim có dấu mũi tên `>` (nhấn vào mở xem trọn bộ, nhấn giữ để sao chép tiêu đề)
                     GestureDetector(
                       onTap: () => _showEpisodePickerSheet(item.detail),
+                      onLongPress: () {
+                        HapticFeedback.lightImpact();
+                        Clipboard.setData(ClipboardData(text: item.detail.title));
+                        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Row(
+                              children: [
+                                const Icon(Icons.copy_rounded, color: Color(0xFFFF6A00), size: 16),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text('Đã sao chép tiêu đề: ${item.detail.title}'),
+                                ),
+                              ],
+                            ),
+                            backgroundColor: const Color(0xFF22242A),
+                            behavior: SnackBarBehavior.floating,
+                            duration: const Duration(seconds: 2),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          ),
+                        );
+                      },
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -3216,8 +3238,26 @@ class _ByteDanceEpisodePickerSheetState extends State<_ByteDanceEpisodePickerShe
   int _selectedRangeIndex = 0; // Index của dải tập (ví dụ 0 tương ứng 1-30, 1 tương ứng 31-60)
   late HongguoDramaDetail _currentDetail;
   bool _isLoadingDetail = false;
+  bool _isCopiedTitle = false;
+  Timer? _copyTimer;
 
   static const int _episodesPerRange = 30;
+
+  @override
+  void dispose() {
+    _copyTimer?.cancel();
+    super.dispose();
+  }
+
+  void _copyDramaTitle(String textToCopy) {
+    HapticFeedback.lightImpact();
+    Clipboard.setData(ClipboardData(text: textToCopy));
+    _copyTimer?.cancel();
+    setState(() => _isCopiedTitle = true);
+    _copyTimer = Timer(const Duration(seconds: 2), () {
+      if (mounted) setState(() => _isCopiedTitle = false);
+    });
+  }
 
   @override
   void initState() {
@@ -3302,19 +3342,57 @@ class _ByteDanceEpisodePickerSheetState extends State<_ByteDanceEpisodePickerShe
                 ),
                 const SizedBox(width: 12),
 
-                // Tiêu đề và tổng số tập
+                // Tiêu đề và tổng số tập (nhấn để sao chép tiêu đề)
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 15,
-                          fontWeight: FontWeight.bold,
+                      GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () => _copyDramaTitle(_currentDetail.title.isNotEmpty ? _currentDetail.title : title),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Flexible(
+                              child: Text(
+                                title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 200),
+                              child: _isCopiedTitle
+                                  ? Container(
+                                      key: const ValueKey('copied_badge'),
+                                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFFF6A00),
+                                        borderRadius: BorderRadius.circular(4),
+                                      ),
+                                      child: const Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(Icons.check_rounded, color: Colors.white, size: 10),
+                                          SizedBox(width: 2),
+                                          Text('Đã chép', style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
+                                        ],
+                                      ),
+                                    )
+                                  : const Icon(
+                                      Icons.copy_rounded,
+                                      key: ValueKey('copy_icon'),
+                                      color: Colors.white38,
+                                      size: 13,
+                                    ),
+                            ),
+                          ],
                         ),
                       ),
                       const SizedBox(height: 4),
