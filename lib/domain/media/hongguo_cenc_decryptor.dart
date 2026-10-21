@@ -359,7 +359,7 @@ class HongguoCencDecryptor {
     );
   }
 
-  static void _replaceFourcc(
+  static void replaceFourcc(
     Uint8List data,
     List<int> oldBytes,
     List<int> newBytes,
@@ -382,7 +382,15 @@ class HongguoCencDecryptor {
     }
   }
 
-  static void _replaceSinf(Uint8List data) {
+  static void _replaceFourcc(
+    Uint8List data,
+    List<int> oldBytes,
+    List<int> newBytes,
+  ) => replaceFourcc(data, oldBytes, newBytes);
+
+  static void _replaceSinf(Uint8List data) => replaceSinf(data);
+
+  static void replaceSinf(Uint8List data) {
     final bd = ByteData.sublistView(data);
     var i = 0;
     final limit = data.length - 4;

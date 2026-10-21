@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -10,7 +9,7 @@ import '../../../data/model/subtitle_document.dart';
 import '../../../data/model/watch_later_item.dart';
 import '../../../data/repository/watch_later_repository.dart';
 import '../../../domain/ai/offline_mlkit_translator.dart';
-import '../../../domain/media/hongguo/hongguo_feed_cache_manager.dart';
+import '../../../domain/media/hongguo/hongguo_stream_proxy_server.dart';
 import '../../../domain/media/hongguo_resolver.dart';
 import '../../../player/app_player_controller.dart';
 import '../../../player/global_player_manager.dart';
@@ -30,7 +29,9 @@ class FeedDramaPageItem {
 }
 
 /// Màn hình lướt video ngắn Hồng Quả dạng Shorts / TikTok Feed
-/// Chạy trực tiếp âm thanh gốc, lướt siêu tốc, tự động dọn rác bộ nhớ (Zero disk footprint).
+/// Ứng dụng kiến trúc chuẩn ByteDance (MDL Streaming Proxy + Dual-Player Pool)
+/// - Không tải toàn bộ video về máy: Stream và giải mã CENC On-the-fly qua Local Proxy 127.0.0.1
+/// - Dual-Player Pool: Nạp sẵn khung hình đầu tiên của tập tiếp theo -> Lướt phát ngay 0ms không xoay tròn.
 class HongguoFeedScreen extends StatefulWidget {
   final HongguoDramaDetail? initialDrama;
   final int initialEpisodeIndex;
@@ -55,9 +56,13 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen> {
   int _currentIndex = 0;
   bool _isLoadingMore = false;
 
-  // Quản lý Player Controller cho trang hiện tại
-  AppPlayerController? _currentController;
-  int? _controllerPageIndex;
+  // Dual-Player Pool: 2 controller luân phiên (1 Active phát hiện tại, 1 Preload nạp trước tập kế)
+  AppPlayerController? _activeController;
+  int? _activePageIndex;
+
+  AppPlayerController? _preloadController;
+  int? _preloadPageIndex;
+
   bool _isLoadingVideo = false;
   String? _errorMessage;
   bool _isManuallyPaused = false;
@@ -68,8 +73,16 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen> {
     super.initState();
     _buildInitialItems();
     _pageController = PageController(initialPage: _currentIndex);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _activatePage(_currentIndex);
+
+    // Khởi tạo 2 Player Controller với buffer nhẹ 16MB (chuẩn Shorts/TikTok)
+    _activeController = AppPlayerController(bufferSizeMb: 16);
+    _preloadController = AppPlayerController(bufferSizeMb: 16);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await HongguoStreamProxyServer.instance.ensureStarted();
+      if (!mounted) return;
+      await _activatePage(_currentIndex);
+      _preloadNextPage(_currentIndex + 1);
     });
   }
 
@@ -126,17 +139,45 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen> {
   @override
   void dispose() {
     _pageController.dispose();
-    _currentController?.dispose();
-    _currentController = null;
-    HongguoFeedCacheManager.instance.disposeAll();
+    _activeController?.dispose();
+    _preloadController?.dispose();
+    _activeController = null;
+    _preloadController = null;
+    HongguoStreamProxyServer.instance.maintainSessions([]);
     super.dispose();
   }
 
-  /// Kích hoạt tải và phát video cho trang hiện tại
+  /// Kích hoạt và phát video cho trang được chọn
   Future<void> _activatePage(int index) async {
     if (!mounted || index < 0 || index >= _feedItems.length) return;
 
-    _controllerPageIndex = index;
+    // 1. Kiểm tra xem tập này đã được Preload sẵn trong _preloadController chưa
+    if (_preloadPageIndex == index && _preloadController != null) {
+      // SWAP NGAY LẬP TỨC TRONG 0MS!
+      final prevActive = _activeController;
+      _activeController = _preloadController;
+      _preloadController = prevActive;
+
+      _activePageIndex = index;
+      _preloadPageIndex = null;
+
+      _activeController?.player.setPlaylistMode(PlaylistMode.loop);
+      _activeController?.player.play();
+
+      setState(() {
+        _isLoadingVideo = false;
+        _errorMessage = null;
+        _isManuallyPaused = false;
+      });
+
+      // Tự động gối đầu Preload tập tiếp theo N+1
+      _preloadNextPage(index + 1);
+      _maintainProxyMemory(index);
+      return;
+    }
+
+    // 2. Nếu chưa được Preload (Lần đầu mở hoặc nhảy cóc qua Episode Selector)
+    _activePageIndex = index;
     setState(() {
       _isLoadingVideo = true;
       _errorMessage = null;
@@ -145,79 +186,105 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen> {
 
     final item = _feedItems[index];
 
-    // 1. Dọn dẹp cache các tập nằm xa vị trí hiện tại (giữ lại index-1, index, index+1)
-    final activeVids = <String>[
-      item.vid,
-      if (index > 0) _feedItems[index - 1].vid,
-      if (index + 1 < _feedItems.length) _feedItems[index + 1].vid,
-    ];
-    HongguoFeedCacheManager.instance.maintainRollingCache(activeVids);
-
-    // 2. Chuẩn bị media tập hiện tại
-    final media = await HongguoFeedCacheManager.instance.prepareEpisode(
-      seriesId: item.detail.seriesId,
-      vid: item.vid,
-      episodeIndex: item.episodeIndex,
-    );
-
-    if (!mounted || _controllerPageIndex != index) return;
-
-    if (media == null || !media.isPlayable) {
-      setState(() {
-        _isLoadingVideo = false;
-        _errorMessage = 'Không thể nạp video tập ${item.episodeIndex}';
-      });
-      return;
-    }
-
     try {
-      if (_currentController == null || _currentController!.isDisposed) {
-        _currentController = AppPlayerController();
+      await HongguoStreamProxyServer.instance.ensureStarted();
+      final streamUrl = HongguoStreamProxyServer.instance.getStreamUrl(
+        vid: item.vid,
+        seriesId: item.detail.seriesId,
+        episodeIndex: item.episodeIndex,
+      );
+
+      if (!mounted || _activePageIndex != index) return;
+
+      if (_activeController == null || _activeController!.isDisposed) {
+        _activeController = AppPlayerController(bufferSizeMb: 16);
       }
 
-      if (media.localFilePath != null) {
-        await _currentController!.switchMedia(
-          file: File(media.localFilePath!),
-          play: true,
-        );
-      } else if (media.directStreamUrl != null) {
-        await _currentController!.switchMedia(
-          networkUrl: media.directStreamUrl!,
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
-            'Referer': 'https://hongguoduanju.com/',
-          },
-          play: true,
-        );
-      }
+      await _activeController!.switchMedia(
+        networkUrl: streamUrl,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
+        },
+        play: true,
+      );
 
-      await _currentController!.player.setPlaylistMode(PlaylistMode.loop);
-      await _currentController!.player.play();
+      await _activeController!.player.setPlaylistMode(PlaylistMode.loop);
+      await _activeController!.player.play();
 
-      if (mounted && _controllerPageIndex == index) {
+      if (mounted && _activePageIndex == index) {
         setState(() {
           _isLoadingVideo = false;
         });
       }
 
-      // 3. Tự động nạp trước (Prefetch) tập kế tiếp N+1 ngầm trong RAM/Temp
-      if (index + 1 < _feedItems.length) {
-        final nextItem = _feedItems[index + 1];
-        HongguoFeedCacheManager.instance.prepareEpisode(
-          seriesId: nextItem.detail.seriesId,
-          vid: nextItem.vid,
-          episodeIndex: nextItem.episodeIndex,
-          isPrefetch: true,
-        );
-      }
+      // Kích hoạt Preload tập N+1 gối đầu
+      _preloadNextPage(index + 1);
+      _maintainProxyMemory(index);
     } catch (e) {
-      if (mounted && _controllerPageIndex == index) {
+      debugPrint('[HongguoFeedScreen] Lỗi kích hoạt tập $index: $e');
+      if (mounted && _activePageIndex == index) {
         setState(() {
           _isLoadingVideo = false;
           _errorMessage = 'Lỗi phát video: $e';
         });
       }
     }
+  }
+
+  /// Nạp trước (Preload) tập kế tiếp vào _preloadController (Standby Player)
+  /// Frame đầu tiên được giải mã sẵn và chờ sẵn trên GPU, khi lướt là có hình ngay
+  Future<void> _preloadNextPage(int nextIndex) async {
+    if (!mounted || nextIndex < 0 || nextIndex >= _feedItems.length) return;
+    if (_preloadPageIndex == nextIndex) return; // Đang nạp đúng tập này rồi
+
+    _preloadPageIndex = nextIndex;
+    final nextItem = _feedItems[nextIndex];
+
+    try {
+      // 1. Máy chủ proxy tải trước 1MB đầu & giải mã Header
+      await HongguoStreamProxyServer.instance.preloadStream(
+        vid: nextItem.vid,
+        seriesId: nextItem.detail.seriesId,
+        episodeIndex: nextItem.episodeIndex,
+      );
+
+      if (!mounted || _preloadPageIndex != nextIndex) return;
+
+      // 2. Nạp vào Preload Controller và tạm dừng ở khung hình 0
+      final streamUrl = HongguoStreamProxyServer.instance.getStreamUrl(
+        vid: nextItem.vid,
+        seriesId: nextItem.detail.seriesId,
+        episodeIndex: nextItem.episodeIndex,
+      );
+
+      if (_preloadController == null || _preloadController!.isDisposed) {
+        _preloadController = AppPlayerController(bufferSizeMb: 16);
+      }
+
+      await _preloadController!.switchMedia(
+        networkUrl: streamUrl,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
+        },
+        play: false, // Chỉ nạp khung hình, KHÔNG phát tiếng
+      );
+      await _preloadController!.player.pause();
+
+      if (mounted) {
+        setState(() {}); // Kích hoạt vẽ khung hình của Preload Player lên PageView
+      }
+    } catch (e) {
+      debugPrint('[HongguoFeedScreen] Preload tập $nextIndex thất bại: $e');
+    }
+  }
+
+  void _maintainProxyMemory(int currentIndex) {
+    final activeVids = <String>[
+      _feedItems[currentIndex].vid,
+      if (currentIndex > 0) _feedItems[currentIndex - 1].vid,
+      if (currentIndex + 1 < _feedItems.length) _feedItems[currentIndex + 1].vid,
+    ];
+    HongguoStreamProxyServer.instance.maintainSessions(activeVids);
   }
 
   void _onPageChanged(int index) {
@@ -273,15 +340,15 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen> {
 
   void _togglePlayPause() {
     HapticFeedback.lightImpact();
-    if (_currentController == null) return;
-    if (_currentController!.value.isPlaying) {
-      _currentController!.player.pause();
+    if (_activeController == null) return;
+    if (_activeController!.value.isPlaying) {
+      _activeController!.player.pause();
       setState(() {
         _isManuallyPaused = true;
         _showPlayPauseAnim = true;
       });
     } else {
-      _currentController!.player.play();
+      _activeController!.player.play();
       setState(() {
         _isManuallyPaused = false;
         _showPlayPauseAnim = true;
@@ -295,7 +362,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen> {
   /// Mở màn hình dịch chính thức có phụ đề & lồng tiếng AI
   void _openTranslationPlayer(FeedDramaPageItem item) {
     HapticFeedback.mediumImpact();
-    _currentController?.player.pause();
+    _activeController?.player.pause();
 
     final dramaTitle = OfflineMlKitTranslator.getCachedTitle(item.detail.title) ?? item.detail.title;
 
@@ -343,11 +410,20 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen> {
           PageView.builder(
             controller: _pageController,
             scrollDirection: Axis.vertical,
+            physics: const BouncingScrollPhysics(),
             itemCount: _feedItems.length,
             onPageChanged: _onPageChanged,
             itemBuilder: (context, index) {
               final item = _feedItems[index];
               final isCurrent = index == _currentIndex;
+
+              // Xác định Controller nào được gắn cho trang này (Active hay Preload)
+              AppPlayerController? boundController;
+              if (index == _activePageIndex && _activeController != null) {
+                boundController = _activeController;
+              } else if (index == _preloadPageIndex && _preloadController != null) {
+                boundController = _preloadController;
+              }
 
               return Stack(
                 fit: StackFit.expand,
@@ -360,21 +436,21 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen> {
                       errorBuilder: (_, _, _) => const SizedBox.shrink(),
                     ),
 
-                  // Lớp phủ đen mờ nếu chưa nạp xong video
+                  // Lớp phủ đen mờ bảo vệ độ tương phản
                   Container(color: Colors.black.withValues(alpha: 0.45)),
 
-                  // Video Player của trang hiện tại
-                  if (isCurrent && _currentController != null && !_isLoadingVideo && _errorMessage == null)
+                  // Video Player: Hiển thị cả trang hiện tại VÀ trang Preload đang chờ
+                  if (boundController != null && (!isCurrent || (!_isLoadingVideo && _errorMessage == null)))
                     Center(
                       child: AspectRatio(
-                        aspectRatio: _currentController!.value.aspectRatio > 0
-                            ? _currentController!.value.aspectRatio
+                        aspectRatio: boundController.value.aspectRatio > 0
+                            ? boundController.value.aspectRatio
                             : (9 / 16),
-                        child: Video(controller: _currentController!.videoController),
+                        child: Video(controller: boundController.videoController),
                       ),
                     ),
 
-                  // Vòng xoay nạp video
+                  // Vòng xoay nạp video (chỉ hiển thị trong trường hợp hy hữu mạng quá yếu chưa kịp nạp)
                   if (isCurrent && _isLoadingVideo)
                     Center(
                       child: Column(
@@ -386,7 +462,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen> {
                           ),
                           const SizedBox(height: 12),
                           Text(
-                            'Đang tải tập ${item.episodeIndex}...',
+                            'Đang kết nối luồng tập ${item.episodeIndex}...',
                             style: const TextStyle(
                               color: Colors.white70,
                               fontSize: 12,

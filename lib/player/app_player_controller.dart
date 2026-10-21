@@ -67,7 +67,7 @@ class AppPlayerController extends ChangeNotifier {
   final Completer<void> _initCompleter = Completer<void>();
 
   AppPlayerController({int? bufferSizeMb}) {
-    final mb = (bufferSizeMb ?? 64).clamp(32, 256);
+    final mb = (bufferSizeMb ?? 64).clamp(16, 256);
     player = Player(
       configuration: PlayerConfiguration(
         title: 'CapSub MediaKit Player',
