@@ -581,6 +581,56 @@ class HongguoResolver {
     return null;
   }
 
+  /// Lấy link MP4 công khai không mã hoá từ web player (chỉ có ở tập 1).
+  /// Trả về null ngay lập tức nếu episodeIndex > 1 hoặc nếu không có link MP4 công khai.
+  /// Tuyệt đối KHÔNG tải file hay gọi HongguoLocalEngine để tránh nghẽn luồng.
+  Future<String?> getPublicWebPlayUrl(
+    String seriesId,
+    String vid, {
+    int episodeIndex = 1,
+    Duration timeout = const Duration(milliseconds: 2500),
+  }) async {
+    // Tập 2 trở đi trên web không bao giờ có link MP4 công khai (được mã hoá DRM),
+    // bỏ qua ngay lập tức để chuyển sang Local Streaming Proxy trong 0ms.
+    if (episodeIndex > 1) {
+      return null;
+    }
+
+    final actualVid = (vid.isNotEmpty && vid != seriesId) ? vid : '';
+    final candidates = <String>[
+      if (vid.isNotEmpty && vid != seriesId)
+        '$siteOrigin/player/$seriesId/$vid',
+      '$siteOrigin/player/$seriesId',
+      if (vid.isNotEmpty && vid != seriesId) '$siteOrigin/player/_/$vid',
+    ];
+
+    for (final url in candidates) {
+      try {
+        final res = await dio.get<String>(
+          url,
+          options: Options(
+            validateStatus: (status) => status != null && status < 400,
+            receiveTimeout: timeout,
+            sendTimeout: timeout,
+          ),
+        );
+        final html = res.data ?? '';
+        final webUrl = _extractBoundWebVideoUrl(
+          html,
+          seriesId: seriesId,
+          videoId: actualVid,
+        );
+        if (webUrl != null && webUrl.isNotEmpty) {
+          debugPrint(
+            '[HongguoResolver] ⚡ Lấy đúng MP4 công khai web của tập $episodeIndex: $webUrl',
+          );
+          return webUrl;
+        }
+      } catch (_) {}
+    }
+    return null;
+  }
+
   /// Lấy trực tiếp link MP4 của một tập phim để phát hoặc tải về
   Future<String> getEpisodePlayUrl(
     String seriesId,

@@ -269,23 +269,22 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen> {
       }
     } catch (_) {}
 
-    // 2. Thử lấy link MP4 công khai không mã hoá từ web
-    try {
-      final publicUrl = await _resolver.getEpisodePlayUrl(
-        item.detail.seriesId,
-        item.vid,
-        episodeIndex: item.episodeIndex,
-      );
-      if (publicUrl.isNotEmpty) {
-        if (publicUrl.contains('/video/public/') || (!publicUrl.contains('tos-cn-v') && !publicUrl.contains('qznovelvod.com'))) {
-          debugPrint('[HongguoFeedScreen] ⚡ Phát trực tiếp MP4 công khai không mã hoá: $publicUrl');
-          return publicUrl;
+    // 2. Thử lấy link MP4 công khai không mã hoá từ web (chỉ áp dụng tập 1)
+    if (item.episodeIndex == 1) {
+      try {
+        final publicUrl = await _resolver.getPublicWebPlayUrl(
+          item.detail.seriesId,
+          item.vid,
+          episodeIndex: item.episodeIndex,
+        );
+        if (publicUrl != null && publicUrl.isNotEmpty) {
+          if (publicUrl.contains('/video/public/') || (!publicUrl.contains('tos-cn-v') && !publicUrl.contains('qznovelvod.com'))) {
+            debugPrint('[HongguoFeedScreen] ⚡ Phát trực tiếp MP4 công khai không mã hoá: $publicUrl');
+            return publicUrl;
+          }
         }
-        if (File(publicUrl).existsSync()) {
-          return publicUrl;
-        }
-      }
-    } catch (_) {}
+      } catch (_) {}
+    }
 
     // 3. Luồng mã hoá CENC ByteDance: Chạy qua Local Streaming Proxy
     await HongguoStreamProxyServer.instance.ensureStarted();

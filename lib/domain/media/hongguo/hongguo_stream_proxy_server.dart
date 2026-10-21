@@ -65,7 +65,7 @@ class HongguoStreamProxyServer {
   static final HongguoStreamProxyServer instance = HongguoStreamProxyServer._();
   HongguoStreamProxyServer._();
 
-  static const int chunkSize = 512 * 1024; // 512 KB mỗi chunk
+  static const int chunkSize = 2 * 1024 * 1024; // 2 MB mỗi chunk (giảm 4x số request mạng và RTT latency)
 
   HttpServer? _server;
   int _port = 0;
@@ -190,7 +190,7 @@ class HongguoStreamProxyServer {
     final info = session.info!;
     session.isDrm = info.isDrmProtected;
 
-    // 3. Nếu không có DRM (public stream): Lấy Content-Length từ CDN
+    // 3. Nếu không có DRM (public stream): Lấy Content-Length từ CDN và nạp sẵn Chunk 0
     if (!session.isDrm) {
       try {
         final rangeRes = await _dio.get<List<int>>(
@@ -198,7 +198,7 @@ class HongguoStreamProxyServer {
           options: Options(
             responseType: ResponseType.bytes,
             headers: {
-              'Range': 'bytes=0-0',
+              'Range': 'bytes=0-${chunkSize - 1}',
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
             },
           ),
@@ -208,13 +208,16 @@ class HongguoStreamProxyServer {
           final totalStr = crHeader.split('/').last.trim();
           session.totalLength = int.tryParse(totalStr);
         }
+        if (rangeRes.data != null && rangeRes.data!.isNotEmpty) {
+          session.chunkCache[0] = Uint8List.fromList(rangeRes.data!);
+        }
       } catch (_) {}
       session.totalLength ??= 15 * 1024 * 1024;
       session.touch();
       return;
     }
 
-    // 4. Có DRM CENC: Tải 1MB đầu tiên để bóc tách Header moov và Sample Table
+    // 4. Có DRM CENC: Tải 2MB đầu tiên để bóc tách Header moov và Sample Table
     session.contentKey = Uint8List.fromList(hex.decode(info.contentKeyHex));
 
     final initChunkRes = await _dio.get<List<int>>(
@@ -222,7 +225,7 @@ class HongguoStreamProxyServer {
       options: Options(
         responseType: ResponseType.bytes,
         headers: {
-          'Range': 'bytes=0-1048575', // 1 MB đầu tiên
+          'Range': 'bytes=0-${chunkSize - 1}', // 2 MB đầu tiên
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
         },
       ),
@@ -277,9 +280,9 @@ class HongguoStreamProxyServer {
       // Đọc bảng aux (IVs)
       Uint8List auxBytes;
       if (parsed.auxOff + parsed.auxSz <= rawInitBytes.length) {
-        auxBytes = rawInitBytes.sublist(parsed.auxOff, parsed.auxOff + parsed.auxSz);
+        auxBytes = Uint8List.sublistView(rawInitBytes, parsed.auxOff, parsed.auxOff + parsed.auxSz);
       } else {
-        // Nếu aux nằm ngoài 1MB, tải thêm phần aux
+        // Nếu aux nằm ngoài 2MB, tải thêm phần aux
         final auxRes = await _dio.get<List<int>>(
           info.realMainUrl,
           options: Options(
@@ -318,15 +321,15 @@ class HongguoStreamProxyServer {
     session.samples = allSamples;
 
     // Sửa header: đổi sinf -> free và đổi FourCC encv -> hvc1/avc1, enca -> mp4a
-    final cleanHeader = rawInitBytes.sublist(0, session.moovEnd);
+    final cleanHeader = Uint8List.fromList(rawInitBytes.sublist(0, session.moovEnd));
     HongguoCencDecryptor.replaceSinf(cleanHeader);
     HongguoCencDecryptor.replaceFourcc(cleanHeader, ascii.encode('encv'), ascii.encode('hvc1'));
     HongguoCencDecryptor.replaceFourcc(cleanHeader, ascii.encode('enca'), ascii.encode('mp4a'));
     session.sanitizedHeader = cleanHeader;
 
-    // Giải mã luôn phần mdat nằm trong 1MB đầu tiên và nạp vào chunkCache (Chunk 0, 1)
+    // Giải mã luôn phần mdat nằm trong 2MB đầu tiên và nạp vào chunkCache (Chunk 0)
     if (rawInitBytes.length > session.moovEnd) {
-      final initialMdat = rawInitBytes.sublist(session.moovEnd);
+      final initialMdat = Uint8List.fromList(rawInitBytes.sublist(session.moovEnd));
       _decryptSampleIntervals(
         data: initialMdat,
         rangeStart: session.moovEnd,
@@ -334,7 +337,7 @@ class HongguoStreamProxyServer {
         contentKey: session.contentKey!,
       );
 
-      // Ghép Header + Mdat đầu tiên thành 1 khối hoàn chỉnh cho Chunk 0 & 1
+      // Ghép Header + Mdat đầu tiên thành 1 khối hoàn chỉnh cho Chunk 0
       final combined = Uint8List(cleanHeader.length + initialMdat.length);
       combined.setRange(0, cleanHeader.length, cleanHeader);
       combined.setRange(cleanHeader.length, combined.length, initialMdat);
@@ -350,16 +353,39 @@ class HongguoStreamProxyServer {
   }
 
   /// Giải mã một khối dữ liệu dựa theo vị trí offset của nó trong file
+  /// Tối ưu hoá cực đại: Tìm kiếm nhị phân O(log N), tái sử dụng IV/KeyParameter,
+  /// giải mã in-place trực tiếp không cấp phát bộ nhớ (Zero Allocation).
   static void _decryptSampleIntervals({
     required Uint8List data,
     required int rangeStart,
     required List<_SampleInterval> samples,
     required Uint8List contentKey,
   }) {
+    if (samples.isEmpty || data.isEmpty) return;
     final rangeEnd = rangeStart + data.length;
 
-    for (final s in samples) {
-      if (s.endOffset <= rangeStart) continue;
+    // Tìm nhanh sample đầu tiên có khả năng cắt qua rangeStart bằng Binary Search O(log N)
+    int low = 0;
+    int high = samples.length - 1;
+    int startIndex = samples.length;
+    while (low <= high) {
+      final mid = (low + high) >> 1;
+      if (samples[mid].endOffset > rangeStart) {
+        startIndex = mid;
+        high = mid - 1;
+      } else {
+        low = mid + 1;
+      }
+    }
+
+    if (startIndex >= samples.length) return;
+
+    final keyParam = KeyParameter(contentKey);
+    final blockIv = Uint8List(16);
+    final ivData = ByteData.sublistView(blockIv);
+
+    for (var i = startIndex; i < samples.length; i++) {
+      final s = samples[i];
       if (s.offset >= rangeEnd) break;
 
       final intersectStart = math.max(s.offset, rangeStart);
@@ -373,23 +399,19 @@ class HongguoStreamProxyServer {
       final blockIndex = sampleRelOffset ~/ 16;
       final offsetInBlock = sampleRelOffset % 16;
 
-      final blockIv = Uint8List(16);
       blockIv.setRange(0, 8, s.iv8);
-      ByteData.sublistView(blockIv).setUint64(8, blockIndex, Endian.big);
+      ivData.setUint64(8, blockIndex, Endian.big);
 
       final cipher = StreamCipher('AES/SIC')
-        ..init(false, ParametersWithIV(KeyParameter(contentKey), blockIv));
+        ..init(false, ParametersWithIV(keyParam, blockIv));
 
       if (offsetInBlock > 0) {
         final dummy = Uint8List(offsetInBlock);
         cipher.processBytes(dummy, 0, offsetInBlock, dummy, 0);
       }
 
-      final cipherSlice = data.sublist(chunkBufOffset, chunkBufOffset + intersectLen);
-      final decryptedSlice = Uint8List(intersectLen);
-      cipher.processBytes(cipherSlice, 0, intersectLen, decryptedSlice, 0);
-
-      data.setRange(chunkBufOffset, chunkBufOffset + intersectLen, decryptedSlice);
+      // In-place decryption: giải mã trực tiếp đè lên buffer data gốc
+      cipher.processBytes(data, chunkBufOffset, intersectLen, data, chunkBufOffset);
     }
   }
 
@@ -423,18 +445,21 @@ class HongguoStreamProxyServer {
       if (start < session.moovEnd && session.sanitizedHeader != null) {
         final headerOverlapEnd = math.min(session.moovEnd, end + 1);
         final overlapLen = headerOverlapEnd - start;
-        chunkData.setRange(0, overlapLen, session.sanitizedHeader!.sublist(start, headerOverlapEnd));
+        chunkData.setRange(
+          0,
+          overlapLen,
+          Uint8List.sublistView(session.sanitizedHeader!, start, headerOverlapEnd),
+        );
 
-        // Phần còn lại thuộc mdat thì giải mã
+        // Phần còn lại thuộc mdat thì giải mã in-place
         if (headerOverlapEnd < end + 1) {
-          final mdatSlice = chunkData.sublist(overlapLen);
+          final mdatView = Uint8List.sublistView(chunkData, overlapLen);
           _decryptSampleIntervals(
-            data: mdatSlice,
+            data: mdatView,
             rangeStart: headerOverlapEnd,
             samples: session.samples,
             contentKey: session.contentKey!,
           );
-          chunkData.setRange(overlapLen, chunkData.length, mdatSlice);
         }
       } else {
         // Toàn bộ chunk thuộc mdat
@@ -531,6 +556,7 @@ class HongguoStreamProxyServer {
         if (sliceStart < sliceEnd && sliceStart < chunkBytes.length) {
           try {
             request.response.add(chunkBytes.sublist(sliceStart, sliceEnd));
+            await request.response.flush();
           } catch (_) {
             break; // Client closed connection (e.g. libmpv finished probing range or seeked)
           }
