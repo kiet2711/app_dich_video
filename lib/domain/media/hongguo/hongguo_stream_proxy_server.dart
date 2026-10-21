@@ -192,17 +192,24 @@ class HongguoStreamProxyServer {
 
     // 3. Nếu không có DRM (public stream): Lấy Content-Length từ CDN
     if (!session.isDrm) {
-      final headRes = await _dio.head(
-        info.realMainUrl,
-        options: Options(
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
-            'Referer': 'https://hongguoduanju.com/',
-          },
-        ),
-      );
-      final lenStr = headRes.headers.value('content-length');
-      session.totalLength = int.tryParse(lenStr ?? '0') ?? 0;
+      try {
+        final rangeRes = await _dio.get<List<int>>(
+          info.realMainUrl,
+          options: Options(
+            responseType: ResponseType.bytes,
+            headers: {
+              'Range': 'bytes=0-0',
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
+            },
+          ),
+        );
+        final crHeader = rangeRes.headers.value('content-range');
+        if (crHeader != null && crHeader.contains('/')) {
+          final totalStr = crHeader.split('/').last.trim();
+          session.totalLength = int.tryParse(totalStr);
+        }
+      } catch (_) {}
+      session.totalLength ??= 15 * 1024 * 1024;
       session.touch();
       return;
     }
@@ -217,7 +224,6 @@ class HongguoStreamProxyServer {
         headers: {
           'Range': 'bytes=0-1048575', // 1 MB đầu tiên
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
-          'Referer': 'https://hongguoduanju.com/',
         },
       ),
     );
@@ -405,7 +411,6 @@ class HongguoStreamProxyServer {
         headers: {
           'Range': 'bytes=$start-$end',
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
-          'Referer': 'https://hongguoduanju.com/',
         },
       ),
     );
@@ -524,12 +529,19 @@ class HongguoStreamProxyServer {
         final sliceEnd = math.min(chunkBytes.length, end - chunkStartOffset + 1);
 
         if (sliceStart < sliceEnd && sliceStart < chunkBytes.length) {
-          request.response.add(chunkBytes.sublist(sliceStart, sliceEnd));
+          try {
+            request.response.add(chunkBytes.sublist(sliceStart, sliceEnd));
+          } catch (_) {
+            break; // Client closed connection (e.g. libmpv finished probing range or seeked)
+          }
         }
       }
 
-      await request.response.close();
-    } catch (e) {
+      try {
+        await request.response.close();
+      } catch (_) {}
+    } catch (e, st) {
+      debugPrint('[HongguoStreamProxyServer] Lỗi xử lý request: $e\n$st');
       try {
         request.response.statusCode = HttpStatus.internalServerError;
         await request.response.close();

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -11,6 +12,7 @@ import '../../../data/repository/watch_later_repository.dart';
 import '../../../domain/ai/offline_mlkit_translator.dart';
 import '../../../domain/media/hongguo/hongguo_stream_proxy_server.dart';
 import '../../../domain/media/hongguo_resolver.dart';
+import '../../../domain/media/video_cache_manager.dart';
 import '../../../player/app_player_controller.dart';
 import '../../../player/global_player_manager.dart';
 import '../../theme/app_theme.dart';
@@ -187,12 +189,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen> {
     final item = _feedItems[index];
 
     try {
-      await HongguoStreamProxyServer.instance.ensureStarted();
-      final streamUrl = HongguoStreamProxyServer.instance.getStreamUrl(
-        vid: item.vid,
-        seriesId: item.detail.seriesId,
-        episodeIndex: item.episodeIndex,
-      );
+      final streamUrl = await _resolveEpisodeStreamUrl(item);
 
       if (!mounted || _activePageIndex != index) return;
 
@@ -200,13 +197,20 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen> {
         _activeController = AppPlayerController(bufferSizeMb: 16);
       }
 
-      await _activeController!.switchMedia(
-        networkUrl: streamUrl,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
-        },
-        play: true,
-      );
+      if (streamUrl.startsWith('http://') || streamUrl.startsWith('https://')) {
+        await _activeController!.switchMedia(
+          networkUrl: streamUrl,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
+          },
+          play: true,
+        );
+      } else {
+        await _activeController!.switchMedia(
+          file: File(streamUrl),
+          play: true,
+        );
+      }
 
       await _activeController!.player.setPlaylistMode(PlaylistMode.loop);
       await _activeController!.player.play();
@@ -231,6 +235,51 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen> {
     }
   }
 
+  /// Phân giải nguồn phát tối ưu nhất cho tập phim:
+  /// 1. Ưu tiên file đã tải hoàn chỉnh trong cache máy (Offline)
+  /// 2. Ưu tiên MP4 công khai không mã hoá từ web (như tập 1 / public CDN)
+  /// 3. Nếu là luồng DRM ByteDance: Dùng Local Streaming Proxy giải mã On-The-Fly
+  Future<String> _resolveEpisodeStreamUrl(FeedDramaPageItem item) async {
+    // 1. Kiểm tra cache cục bộ trong VideoCacheManager
+    try {
+      final cached = await VideoCacheManager.findCachedFile(
+        url: '',
+        seriesId: item.detail.seriesId,
+        episodeIndex: item.episodeIndex,
+      );
+      if (cached != null && cached.existsSync() && cached.lengthSync() > 1024 * 50) {
+        debugPrint('[HongguoFeedScreen] ⚡ Phát file cache cục bộ: ${cached.path}');
+        return cached.path;
+      }
+    } catch (_) {}
+
+    // 2. Thử lấy link MP4 công khai không mã hoá từ web
+    try {
+      final publicUrl = await _resolver.getEpisodePlayUrl(
+        item.detail.seriesId,
+        item.vid,
+        episodeIndex: item.episodeIndex,
+      );
+      if (publicUrl.isNotEmpty) {
+        if (publicUrl.contains('/video/public/') || (!publicUrl.contains('tos-cn-v') && !publicUrl.contains('qznovelvod.com'))) {
+          debugPrint('[HongguoFeedScreen] ⚡ Phát trực tiếp MP4 công khai không mã hoá: $publicUrl');
+          return publicUrl;
+        }
+        if (File(publicUrl).existsSync()) {
+          return publicUrl;
+        }
+      }
+    } catch (_) {}
+
+    // 3. Luồng mã hoá CENC ByteDance: Chạy qua Local Streaming Proxy
+    await HongguoStreamProxyServer.instance.ensureStarted();
+    return HongguoStreamProxyServer.instance.getStreamUrl(
+      vid: item.vid,
+      seriesId: item.detail.seriesId,
+      episodeIndex: item.episodeIndex,
+    );
+  }
+
   /// Nạp trước (Preload) tập kế tiếp vào _preloadController (Standby Player)
   /// Frame đầu tiên được giải mã sẵn và chờ sẵn trên GPU, khi lướt là có hình ngay
   Future<void> _preloadNextPage(int nextIndex) async {
@@ -241,33 +290,36 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen> {
     final nextItem = _feedItems[nextIndex];
 
     try {
-      // 1. Máy chủ proxy tải trước 1MB đầu & giải mã Header
-      await HongguoStreamProxyServer.instance.preloadStream(
-        vid: nextItem.vid,
-        seriesId: nextItem.detail.seriesId,
-        episodeIndex: nextItem.episodeIndex,
-      );
-
+      final streamUrl = await _resolveEpisodeStreamUrl(nextItem);
       if (!mounted || _preloadPageIndex != nextIndex) return;
 
-      // 2. Nạp vào Preload Controller và tạm dừng ở khung hình 0
-      final streamUrl = HongguoStreamProxyServer.instance.getStreamUrl(
-        vid: nextItem.vid,
-        seriesId: nextItem.detail.seriesId,
-        episodeIndex: nextItem.episodeIndex,
-      );
+      // Nạp trước dữ liệu trong Proxy nếu là link proxy nội bộ
+      if (streamUrl.contains('127.0.0.1')) {
+        HongguoStreamProxyServer.instance.preloadStream(
+          vid: nextItem.vid,
+          seriesId: nextItem.detail.seriesId,
+          episodeIndex: nextItem.episodeIndex,
+        );
+      }
 
       if (_preloadController == null || _preloadController!.isDisposed) {
         _preloadController = AppPlayerController(bufferSizeMb: 16);
       }
 
-      await _preloadController!.switchMedia(
-        networkUrl: streamUrl,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
-        },
-        play: false, // Chỉ nạp khung hình, KHÔNG phát tiếng
-      );
+      if (streamUrl.startsWith('http://') || streamUrl.startsWith('https://')) {
+        await _preloadController!.switchMedia(
+          networkUrl: streamUrl,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
+          },
+          play: false, // Chỉ nạp khung hình, KHÔNG phát tiếng
+        );
+      } else {
+        await _preloadController!.switchMedia(
+          file: File(streamUrl),
+          play: false,
+        );
+      }
       await _preloadController!.player.pause();
 
       if (mounted) {
