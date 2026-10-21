@@ -286,25 +286,30 @@ class AppPlayerController extends ChangeNotifier {
         headers: headers,
       );
     } else if (file != null) {
-      await openFile(file);
+      await openFile(file, play: play);
     } else if (contentUri != null) {
-      await openContentUri(contentUri);
+      await openContentUri(contentUri, play: play);
     } else if (networkUrl != null && networkUrl.isNotEmpty) {
-      await openNetwork(networkUrl, headers: headers);
+      await openNetwork(networkUrl, headers: headers, play: play);
     }
 
     if (player.state.duration > Duration.zero) {
       _value = _value.copyWith(duration: player.state.duration);
     } else {
-      try {
-        final dur = await player.stream.duration
+      unawaited(
+        player.stream.duration
             .firstWhere((d) => d > Duration.zero)
-            .timeout(const Duration(seconds: 4));
-        _value = _value.copyWith(duration: dur);
-      } catch (_) {}
+            .timeout(const Duration(seconds: 4))
+            .then((dur) {
+          if (!_isDisposed) {
+            _value = _value.copyWith(duration: dur);
+            notifyListeners();
+          }
+        }).catchError((_) {}),
+      );
     }
 
-    if (play && !_isDisposed) {
+    if (play && !_isDisposed && !player.state.playing) {
       await player.play();
     }
   }
@@ -313,6 +318,7 @@ class AppPlayerController extends ChangeNotifier {
   Future<void> openNetwork(
     String url, {
     Map<String, String> headers = const {},
+    bool play = false,
   }) async {
     if (player.platform is NativePlayer) {
       final nativePlayer = player.platform as NativePlayer;
@@ -325,24 +331,24 @@ class AppPlayerController extends ChangeNotifier {
     }
     await player.open(
       Media(url, httpHeaders: headers),
-      play: false,
+      play: play,
     );
   }
 
   /// Phát file video cục bộ trên máy
-  Future<void> openFile(File file) async {
+  Future<void> openFile(File file, {bool play = false}) async {
     final uri = Uri.file(file.path);
     await player.open(
       Media(uri.toString()),
-      play: false,
+      play: play,
     );
   }
 
   /// Phát Content URI (Android)
-  Future<void> openContentUri(Uri uri) async {
+  Future<void> openContentUri(Uri uri, {bool play = false}) async {
     await player.open(
       Media(uri.toString()),
-      play: false,
+      play: play,
     );
   }
 
