@@ -391,10 +391,33 @@ class HongguoResolver {
     return result.items;
   }
 
-  /// Lấy chi tiết bộ phim và danh sách toàn bộ các tập
+  static final Map<String, HongguoDramaDetail> _detailCache = {};
+  static final Map<String, Future<HongguoDramaDetail>> _inFlightDetails = {};
+
+  /// Lấy chi tiết bộ phim và danh sách toàn bộ các tập (có cache trong RAM)
   Future<HongguoDramaDetail> getDramaDetail(String seriesId) async {
     final cleanId = await resolveSeriesId(seriesId);
+    if (_detailCache.containsKey(cleanId) && _detailCache[cleanId]!.episodes.isNotEmpty) {
+      return _detailCache[cleanId]!;
+    }
+    if (_inFlightDetails.containsKey(cleanId)) {
+      return _inFlightDetails[cleanId]!;
+    }
 
+    final future = _fetchDramaDetail(cleanId);
+    _inFlightDetails[cleanId] = future;
+    try {
+      final res = await future;
+      if (res.episodes.isNotEmpty) {
+        _detailCache[cleanId] = res;
+      }
+      return res;
+    } finally {
+      _inFlightDetails.remove(cleanId);
+    }
+  }
+
+  Future<HongguoDramaDetail> _fetchDramaDetail(String cleanId) async {
     // Mở trang player để lấy đầy đủ vid_list và thông tin phim
     final url = '$siteOrigin/player/$cleanId';
     final res = await dio.get<String>(url);
