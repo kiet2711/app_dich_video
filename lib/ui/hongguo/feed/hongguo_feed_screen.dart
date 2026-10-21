@@ -426,8 +426,8 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         });
       }
 
-      // 4. Nạp trước tập tiếp theo (N+1) trong nền
-      _preloadNextPage(index + 1);
+      // 4. Nạp trước 4 tập tiếp theo (N+1, N+2, N+3, N+4) và duy trì 7 tập trong Proxy Cache
+      _preloadAheadEpisodes(index);
       _maintainProxyMemory(index);
 
       // Kích hoạt dịch trước ngầm nếu bật tự chuyển tập
@@ -563,12 +563,28 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     }
   }
 
+  /// Nạp trước tối đa 4 tập tiếp theo (N+1, N+2, N+3, N+4) trong nền
+  Future<void> _preloadAheadEpisodes(int currentIndex) async {
+    for (var i = 1; i <= 4; i++) {
+      final targetIndex = currentIndex + i;
+      if (!mounted || _activePageIndex != currentIndex) break;
+      if (targetIndex >= _feedItems.length) break;
+      await _preloadNextPage(targetIndex);
+    }
+  }
+
+  /// Duy trì tối đa 7 tập trong Proxy Cache: 3 tập trước, 1 tập đang xem, 4 tập phía sau
   void _maintainProxyMemory(int currentIndex) {
     if (currentIndex < 0 || currentIndex >= _feedItems.length) return;
     final activeVids = <String>[
+      // 1 tập đang xem
       _feedItems[currentIndex].vid,
-      if (currentIndex > 0) _feedItems[currentIndex - 1].vid,
-      if (currentIndex + 1 < _feedItems.length) _feedItems[currentIndex + 1].vid,
+      // 3 tập trước đó
+      for (var i = 1; i <= 3; i++)
+        if (currentIndex - i >= 0) _feedItems[currentIndex - i].vid,
+      // 4 tập kế tiếp
+      for (var i = 1; i <= 4; i++)
+        if (currentIndex + i < _feedItems.length) _feedItems[currentIndex + i].vid,
     ];
     HongguoStreamProxyServer.instance.maintainSessions(activeVids);
   }
