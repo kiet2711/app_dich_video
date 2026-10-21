@@ -311,6 +311,24 @@ class SettingsRepository {
   set hongguoPlaybackSpeed(double v) =>
       prefs.setDouble('hongguo_playback_speed', v.clamp(0.5, 2.0));
 
+  /// Tự động chuyển tập cho phim Hồng Quả khi xem hết video
+  bool get hongguoAutoNextEpisode =>
+      prefs.getBool('hongguo_auto_next_ep') ?? false;
+  set hongguoAutoNextEpisode(bool v) =>
+      prefs.setBool('hongguo_auto_next_ep', v);
+
+  /// Số tập dịch trước trong nền khi bật tự chuyển tập (1, 2, 3, 5)
+  int get hongguoPreTranslateCount =>
+      prefs.getInt('hongguo_pre_translate_count') ?? 2;
+  set hongguoPreTranslateCount(int v) =>
+      prefs.setInt('hongguo_pre_translate_count', v);
+
+  /// Chế độ xử lý trước: 'sub_and_tts' (Cả Vietsub & Lồng tiếng) hoặc 'sub_only' (Chỉ Vietsub)
+  String get hongguoPreTranslateMode =>
+      prefs.getString('hongguo_pre_translate_mode') ?? 'sub_and_tts';
+  set hongguoPreTranslateMode(String v) =>
+      prefs.setString('hongguo_pre_translate_mode', v);
+
   /// Chế độ dịch riêng của Bilibili: 'capcut' (CapCut Free) hoặc 'api_online' (AI Online)
   String get bilibiliTranslationMode =>
       prefs.getString('bilibili_translation_mode') ?? 'capcut';

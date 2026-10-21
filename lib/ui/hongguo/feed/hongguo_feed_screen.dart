@@ -154,6 +154,13 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
   double _translationProgress = 0.0;
   String _translationStatus = '';
 
+  // Quản lý Tự động chuyển tập và Dịch trước ngầm (Pre-translation Queue)
+  bool _isAutoNextEpisode = false;
+  int _preTranslateCount = 2;
+  String _preTranslateMode = 'sub_and_tts'; // 'sub_and_tts' | 'sub_only'
+  bool _isPreTranslating = false;
+  StreamSubscription<bool>? _completedSub;
+
   @override
   void initState() {
     super.initState();
@@ -168,6 +175,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       if (!mounted) return;
       setState(() {
         _settings = s;
+        _isAutoNextEpisode = s.hongguoAutoNextEpisode;
+        _preTranslateCount = s.hongguoPreTranslateCount;
+        _preTranslateMode = s.hongguoPreTranslateMode;
         if (_settings!.subtitleOffsetY == 0.0) {
           _settings!.subtitleOffsetY = 90.0;
         }
@@ -249,6 +259,8 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
   void _listenToPlayerStreams() {
     _posSub?.cancel();
+    _completedSub?.cancel();
+
     _posSub = _activeController?.player.stream.position.listen((pos) {
       if (!mounted) return;
       final dur = _activeController?.player.state.duration ?? Duration.zero;
@@ -269,10 +281,17 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         }
       }
     });
+
+    _completedSub = _activeController?.player.stream.completed.listen((completed) {
+      if (completed && _isAutoNextEpisode && !_isScrubbing && mounted) {
+        _handleAutoNextEpisode();
+      }
+    });
   }
 
   @override
   void dispose() {
+    _completedSub?.cancel();
     _stallWatchdog?.cancel();
     _posSub?.cancel();
     _pageController.dispose();
@@ -390,7 +409,11 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         );
       }
 
-      await _activeController!.player.setPlaylistMode(PlaylistMode.loop);
+      if (_isAutoNextEpisode) {
+        await _activeController!.player.setPlaylistMode(PlaylistMode.none);
+      } else {
+        await _activeController!.player.setPlaylistMode(PlaylistMode.loop);
+      }
       await _activeController!.player.setRate(_playbackSpeed);
       await _activeController!.player.play();
 
@@ -406,6 +429,11 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       // 4. Nạp trước tập tiếp theo (N+1) trong nền
       _preloadNextPage(index + 1);
       _maintainProxyMemory(index);
+
+      // Kích hoạt dịch trước ngầm nếu bật tự chuyển tập
+      if (_isAutoNextEpisode) {
+        _triggerPreTranslationQueue();
+      }
     } catch (e) {
       debugPrint('[HongguoFeedScreen] Lỗi kích hoạt tập $index: $e');
       if (mounted && _activePageIndex == index) {
@@ -1563,13 +1591,8 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
                   const SizedBox(height: 14),
 
-                  // 3. Nút Tải Xem Offline (Luồng Player cũ đầy đủ)
-                  _buildRightActionButton(
-                    icon: Icons.download_for_offline_rounded,
-                    iconColor: Colors.white,
-                    label: 'Tải Offline',
-                    onTap: () => _openTranslationPlayer(item),
-                  ),
+                  // 3. Nút Tự động chuyển tập (kèm Dịch & Lồng tiếng trước trong nền)
+                  _buildAutoNextEpisodeButton(item),
 
                   const SizedBox(height: 14),
 
@@ -2007,6 +2030,643 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         ],
       ),
     );
+  }
+
+  /// Nút Tự động chuyển tập (Auto Next) & Dịch trước ngầm
+  Widget _buildAutoNextEpisodeButton(FeedDramaPageItem item) {
+    return GestureDetector(
+      onTap: () async {
+        HapticFeedback.lightImpact();
+        if (!_isDramaEpisodeMode) {
+          // Khi đang ở Discover Feed: Chuyển sang xem trọn bộ phim này & bật tự chuyển tập
+          setState(() {
+            _isAutoNextEpisode = true;
+          });
+          _settings?.hongguoAutoNextEpisode = true;
+          await _switchToDramaEpisodeMode(item.detail, targetEpisode: item.episodeIndex);
+          await _activeController?.player.setPlaylistMode(PlaylistMode.none);
+          _triggerPreTranslationQueue();
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Row(
+                  children: [
+                    const Icon(Icons.playlist_play_rounded, color: Colors.white, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Đã bật Tự chuyển tập · Đang chuẩn bị trước $_preTranslateCount tập kế tiếp...',
+                      ),
+                    ),
+                  ],
+                ),
+                backgroundColor: const Color(0xFFFF6A00),
+                behavior: SnackBarBehavior.floating,
+                duration: const Duration(seconds: 2),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+            );
+          }
+        } else {
+          // Khi đang ở chế độ Xem trọn bộ: Đảo trạng thái Bật / Tắt
+          setState(() {
+            _isAutoNextEpisode = !_isAutoNextEpisode;
+          });
+          _settings?.hongguoAutoNextEpisode = _isAutoNextEpisode;
+          if (_isAutoNextEpisode) {
+            await _activeController?.player.setPlaylistMode(PlaylistMode.none);
+            _triggerPreTranslationQueue();
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Đã bật Tự chuyển tập (${_preTranslateMode == 'sub_and_tts' ? 'Vietsub + Lồng tiếng' : 'Chỉ Vietsub'}, dịch trước $_preTranslateCount tập)'),
+                  backgroundColor: const Color(0xFFFF6A00),
+                  behavior: SnackBarBehavior.floating,
+                  duration: const Duration(seconds: 2),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+              );
+            }
+          } else {
+            await _activeController?.player.setPlaylistMode(PlaylistMode.loop);
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: const Text('Đã tắt Tự chuyển tập'),
+                  backgroundColor: Colors.black87,
+                  behavior: SnackBarBehavior.floating,
+                  duration: const Duration(seconds: 2),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+              );
+            }
+          }
+        }
+      },
+      onLongPress: () {
+        HapticFeedback.mediumImpact();
+        _showAutoNextSettingsSheet();
+      },
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: _isAutoNextEpisode
+                  ? const Color(0x33FF6A00)
+                  : Colors.black.withValues(alpha: 0.45),
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: _isAutoNextEpisode
+                    ? const Color(0xFFFF6A00)
+                    : Colors.white24,
+                width: _isAutoNextEpisode ? 1.5 : 0.6,
+              ),
+              boxShadow: _isAutoNextEpisode
+                  ? const [BoxShadow(color: Color(0x66FF6A00), blurRadius: 8)]
+                  : null,
+            ),
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Icon(
+                  _isAutoNextEpisode ? Icons.playlist_play_rounded : Icons.skip_next_rounded,
+                  color: _isAutoNextEpisode ? const Color(0xFFFF6A00) : Colors.white,
+                  size: 24,
+                ),
+                if (_isPreTranslating)
+                  Positioned(
+                    right: -2,
+                    top: -2,
+                    child: Container(
+                      width: 8,
+                      height: 8,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFFFF6A00),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            _isAutoNextEpisode ? 'Tự đổi tập' : 'Tự đổi tập',
+            style: TextStyle(
+              color: _isAutoNextEpisode ? const Color(0xFFFF6A00) : Colors.white,
+              fontSize: 10,
+              fontWeight: _isAutoNextEpisode ? FontWeight.bold : FontWeight.w500,
+              shadows: const [Shadow(color: Colors.black, blurRadius: 2)],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Bottom Sheet cài đặt Tự động chuyển tập & Dịch trước trong nền
+  void _showAutoNextSettingsSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return Container(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(context).padding.bottom + 16,
+                top: 16,
+                left: 20,
+                right: 20,
+              ),
+              decoration: const BoxDecoration(
+                color: Color(0xFF1E2024),
+                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 36,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.white24,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      const Icon(Icons.tune_rounded, color: Color(0xFFFF6A00), size: 22),
+                      const SizedBox(width: 10),
+                      const Text(
+                        'Cài đặt Tự chuyển tập & Dịch trước',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        icon: const Icon(Icons.close_rounded, color: Colors.white54, size: 20),
+                        onPressed: () => Navigator.pop(ctx),
+                      ),
+                    ],
+                  ),
+                  const Divider(color: Colors.white12, height: 20),
+
+                  // 1. Switch Tự động chuyển tập
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    activeThumbColor: const Color(0xFFFF6A00),
+                    title: const Text(
+                      'Tự động chuyển tập khi xem hết',
+                      style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600),
+                    ),
+                    subtitle: const Text(
+                      'Khi video kết thúc, tự động phát tập kế tiếp thay vì lặp lại.',
+                      style: TextStyle(color: Colors.white54, fontSize: 12),
+                    ),
+                    value: _isAutoNextEpisode,
+                    onChanged: (val) {
+                      setSheetState(() => _isAutoNextEpisode = val);
+                      setState(() => _isAutoNextEpisode = val);
+                      _settings?.hongguoAutoNextEpisode = val;
+                      if (val) {
+                        _activeController?.player.setPlaylistMode(PlaylistMode.none);
+                        _triggerPreTranslationQueue();
+                      } else {
+                        _activeController?.player.setPlaylistMode(PlaylistMode.loop);
+                      }
+                    },
+                  ),
+
+                  const SizedBox(height: 14),
+
+                  // 2. Chế độ xử lý trước
+                  const Text(
+                    'Chế độ chuẩn bị trước cho các tập kế tiếp',
+                    style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    decoration: BoxDecoration(
+                      color: Colors.black26,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.white12),
+                    ),
+                    child: RadioGroup<String>(
+                      groupValue: _preTranslateMode,
+                      onChanged: (val) {
+                        if (val == null) return;
+                        setSheetState(() => _preTranslateMode = val);
+                        setState(() => _preTranslateMode = val);
+                        _settings?.hongguoPreTranslateMode = val;
+                        if (_isAutoNextEpisode) _triggerPreTranslationQueue();
+                      },
+                      child: const Column(
+                        children: [
+                          RadioListTile<String>(
+                            contentPadding: EdgeInsets.symmetric(horizontal: 10),
+                            activeColor: Color(0xFFFF6A00),
+                            title: Text('Vietsub & Lồng tiếng AI (Khuyên dùng)', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)),
+                            subtitle: Text('Tạo cả phụ đề tiếng Việt và giọng đọc AI trước để xem liền mạch.', style: TextStyle(color: Colors.white54, fontSize: 11)),
+                            value: 'sub_and_tts',
+                          ),
+                          Divider(color: Colors.white10, height: 1),
+                          RadioListTile<String>(
+                            contentPadding: EdgeInsets.symmetric(horizontal: 10),
+                            activeColor: Color(0xFFFF6A00),
+                            title: Text('Chỉ tạo Phụ đề Vietsub', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)),
+                            subtitle: Text('Chỉ dịch phụ đề trước, không tạo trước file giọng đọc.', style: TextStyle(color: Colors.white54, fontSize: 11)),
+                            value: 'sub_only',
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  // 3. Số tập dịch trước
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Số tập dịch trước trong nền',
+                        style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold),
+                      ),
+                      Text(
+                        '$_preTranslateCount tập',
+                        style: const TextStyle(color: Color(0xFFFF6A00), fontSize: 13, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [1, 2, 3, 5].map((count) {
+                      final isSelected = _preTranslateCount == count;
+                      return Expanded(
+                        child: GestureDetector(
+                          onTap: () {
+                            setSheetState(() => _preTranslateCount = count);
+                            setState(() => _preTranslateCount = count);
+                            _settings?.hongguoPreTranslateCount = count;
+                            if (_isAutoNextEpisode) _triggerPreTranslationQueue();
+                          },
+                          child: Container(
+                            margin: const EdgeInsets.symmetric(horizontal: 4),
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            decoration: BoxDecoration(
+                              color: isSelected ? const Color(0xFFFF6A00) : Colors.white10,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: isSelected ? const Color(0xFFFF6A00) : Colors.white12,
+                              ),
+                            ),
+                            child: Center(
+                              child: Text(
+                                '$count tập',
+                                style: TextStyle(
+                                  color: isSelected ? Colors.white : Colors.white70,
+                                  fontSize: 12,
+                                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    '💡 Hệ thống tải luồng 360p siêu nhẹ (1.28MB) và xử lý ngầm, khi hết tập hiện tại thì tập sau đã có sẵn để xem ngay 0ms không phải chờ.',
+                    style: TextStyle(color: Colors.white38, fontSize: 11),
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  // Nút Xong
+                  SizedBox(
+                    width: double.infinity,
+                    height: 44,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFFF6A00),
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        if (_isAutoNextEpisode) _triggerPreTranslationQueue();
+                      },
+                      child: const Text('Xong & Áp dụng', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  /// Tự động chuyển sang tập tiếp theo khi video hiện tại kết thúc
+  Future<void> _handleAutoNextEpisode() async {
+    if (!_isAutoNextEpisode || _isScrubbing || !mounted) return;
+
+    // Nếu đang ở Discover Feed, chuyển sang chế độ Xem trọn bộ của phim này
+    if (!_isDramaEpisodeMode) {
+      if (_currentIndex >= 0 && _currentIndex < _feedItems.length) {
+        final currentItem = _feedItems[_currentIndex];
+        await _switchToDramaEpisodeMode(currentItem.detail, targetEpisode: currentItem.episodeIndex + 1);
+        _triggerPreTranslationQueue();
+        return;
+      }
+    }
+
+    if (_currentIndex < _feedItems.length - 1) {
+      final nextIndex = _currentIndex + 1;
+      HapticFeedback.mediumImpact();
+      _pageController.animateToPage(
+        nextIndex,
+        duration: const Duration(milliseconds: 350),
+        curve: Curves.easeInOut,
+      );
+      _triggerPreTranslationQueue();
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Đã xem đến tập cuối cùng của bộ phim này!'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    }
+  }
+
+  /// Kích hoạt hàng đợi dịch trước các tập tiếp theo trong nền
+  Future<void> _triggerPreTranslationQueue() async {
+    if (!_isAutoNextEpisode || _isPreTranslating || !mounted) return;
+    if (_feedItems.isEmpty || _currentIndex < 0) return;
+
+    final startIdx = _currentIndex + 1;
+    final endIdx = math.min(_feedItems.length - 1, _currentIndex + _preTranslateCount);
+    if (startIdx > endIdx) return;
+
+    for (var i = startIdx; i <= endIdx; i++) {
+      if (!_isAutoNextEpisode || !mounted) break;
+      if (i >= _feedItems.length) break;
+
+      final targetItem = _feedItems[i];
+      final targetKey = _getVideoDocKey(targetItem);
+
+      // 1. Đã có trong RAM
+      if (_episodeDocuments.containsKey(targetKey)) {
+        final existingDoc = _episodeDocuments[targetKey]!;
+        if (_preTranslateMode == 'sub_and_tts') {
+          final hasTts = existingDoc.items.any((it) => it.audioFilePath != null && it.audioFilePath!.isNotEmpty);
+          if (!hasTts) {
+            await _preGenerateTtsForDoc(existingDoc, targetItem);
+          }
+        }
+        continue;
+      }
+
+      // 2. Đã có trong Lịch sử
+      final loadedFromHistory = await _checkHistoryForDoc(targetItem);
+      if (loadedFromHistory != null) {
+        _episodeDocuments[targetKey] = loadedFromHistory;
+        if (_preTranslateMode == 'sub_and_tts') {
+          final hasTts = loadedFromHistory.items.any((it) => it.audioFilePath != null && it.audioFilePath!.isNotEmpty);
+          if (!hasTts) {
+            await _preGenerateTtsForDoc(loadedFromHistory, targetItem);
+          }
+        }
+        continue;
+      }
+
+      // 3. Chưa có -> Dịch trước tập này
+      await _preTranslateSingleEpisode(targetItem);
+    }
+  }
+
+  Future<SubtitleDocument?> _checkHistoryForDoc(FeedDramaPageItem item) async {
+    try {
+      final historyRepo = await HistoryRepository.getInstance();
+      final items = historyRepo.getHistory();
+      for (final h in items) {
+        if (h.seriesId == item.detail.seriesId && h.episodeIndex == item.episodeIndex) {
+          final doc = await historyRepo.loadSubtitleDocument(h);
+          if (doc != null && doc.isNotEmpty) {
+            final voiceType = _settings?.hongguoSelectedTtsVoice ?? VoicePresets.defaultVoice.voiceType;
+            await TtsCacheHelper.linkAudioFiles(doc, voiceType);
+            await _calibratePlaybackSpeeds(doc);
+            return doc;
+          }
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Future<void> _preGenerateTtsForDoc(SubtitleDocument doc, FeedDramaPageItem item) async {
+    try {
+      final settings = _settings ?? await SettingsRepository.getInstance();
+      final voiceType = settings.hongguoSelectedTtsVoice;
+      final voice = VoicePresets.vietnameseVoices.firstWhere(
+        (v) => v.voiceType == voiceType,
+        orElse: () => VoicePresets.defaultVoice,
+      );
+      await TtsCacheHelper.linkAudioFiles(doc, voice.voiceType);
+      final unlinked = doc.items.where(
+        (i) => (i.audioFilePath == null || i.audioFilePath!.isEmpty) &&
+               TtsGenerationManager.isPronounceable(i.translatedText),
+      ).toList();
+
+      if (unlinked.isNotEmpty) {
+        await TtsGenerationManager().generateAll(
+          document: doc,
+          voice: voice,
+          threadCount: settings.ttsThreadCount,
+        );
+        await TtsCacheHelper.linkAudioFiles(doc, voice.voiceType);
+      }
+      await _calibratePlaybackSpeeds(doc);
+    } catch (_) {}
+  }
+
+  Future<void> _preTranslateSingleEpisode(FeedDramaPageItem targetItem) async {
+    if (!mounted || _isPreTranslating) return;
+    final targetKey = _getVideoDocKey(targetItem);
+    if (_episodeDocuments.containsKey(targetKey)) return;
+
+    _isPreTranslating = true;
+    if (mounted) setState(() {});
+
+    File? tempMp4;
+    File? tempAudio;
+
+    try {
+      debugPrint('[HongguoFeed] 🚀 Dịch trước ngầm: ${targetItem.detail.title} - Tập ${targetItem.episodeIndex}');
+
+      var itemToProcess = targetItem;
+      if (itemToProcess.vid.isEmpty || itemToProcess.vid == itemToProcess.detail.seriesId) {
+        try {
+          final fullDetail = await _resolver.getDramaDetail(itemToProcess.detail.seriesId);
+          if (fullDetail.episodes.isNotEmpty) {
+            final epIdx = itemToProcess.episodeIndex.clamp(1, fullDetail.episodes.length);
+            itemToProcess = FeedDramaPageItem(
+              detail: fullDetail,
+              episodeIndex: epIdx,
+              vid: fullDetail.episodes[epIdx - 1].vid,
+            );
+          }
+        } catch (_) {}
+      }
+
+      if (itemToProcess.vid.isEmpty) return;
+
+      final videoInfo = await HongguoLocalEngine.resolveVideoInfo(itemToProcess.vid, preferLowest: true);
+      final streamUrl = videoInfo.realMainUrl;
+      if (streamUrl.isEmpty) return;
+
+      final tempDir = await getTemporaryDirectory();
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      tempMp4 = File('${tempDir.path}/pre_${itemToProcess.detail.seriesId}_${itemToProcess.episodeIndex}_$timestamp.mp4');
+      tempAudio = File('${tempDir.path}/pre_audio_${itemToProcess.detail.seriesId}_${itemToProcess.episodeIndex}_$timestamp.m4a');
+
+      final headers = NetworkHeaderHelper.getHeadersForUrl(streamUrl);
+      await MultiThreadDownloader.downloadFile(
+        url: streamUrl,
+        outputFile: tempMp4,
+        headers: headers,
+        concurrency: 4,
+      );
+
+      if (!tempMp4.existsSync() || tempMp4.lengthSync() < 1024) return;
+
+      if (videoInfo.isDrmProtected) {
+        final encryptedBytes = await tempMp4.readAsBytes();
+        final keyBytes = Uint8List.fromList(hex.decode(videoInfo.contentKeyHex));
+        final decryptedBytes = HongguoCencDecryptor.decryptMp4Cenc(encryptedBytes, keyBytes);
+        await tempMp4.writeAsBytes(decryptedBytes, flush: true);
+      }
+
+      await AudioExtractor.extractAudio(
+        videoPath: tempMp4.path,
+        outputPath: tempAudio.path,
+      );
+
+      try {
+        if (tempMp4.existsSync()) await tempMp4.delete();
+      } catch (_) {}
+
+      if (!tempAudio.existsSync() || tempAudio.lengthSync() < 1024) return;
+
+      final settings = _settings ?? await SettingsRepository.getInstance();
+      final isCapcut = settings.hongguoTranslationMode == 'capcut';
+      String engine = 'capcut';
+      if (!isCapcut) {
+        if (settings.geminiApiKeys.isNotEmpty) {
+          engine = settings.selectedGeminiModel.isNotEmpty ? settings.selectedGeminiModel : 'gemini-3.1-flash-lite';
+        } else if (settings.groqApiKeys.isNotEmpty) {
+          engine = settings.selectedGroqModel.isNotEmpty ? settings.selectedGroqModel : 'openai/gpt-oss-120b';
+        }
+      }
+
+      final pipeline = SubtitlingPipeline(
+        apiKeys: settings.geminiApiKeys,
+        groqApiKeys: settings.groqApiKeys,
+        translationEngine: engine,
+        stylePreset: 'Zhihu',
+        customPrompt: settings.hongguoCustomPrompt,
+        targetLanguage: 'vi-VN',
+        geminiThreadCount: settings.geminiThreadCount,
+        geminiBatchSize: settings.geminiBatchSize,
+        groqThreadCount: settings.groqThreadCount,
+        groqBatchSize: settings.groqBatchSize,
+      );
+
+      final doc = await pipeline.execute(
+        videoPath: tempAudio.path,
+        totalDurationMs: 120000,
+        sourceLanguage: 'zh-CN',
+        seriesId: itemToProcess.detail.seriesId,
+        episodeIndex: itemToProcess.episodeIndex,
+      );
+
+      try {
+        if (tempAudio.existsSync()) await tempAudio.delete();
+      } catch (_) {}
+
+      if (doc.isEmpty) return;
+
+      String? appliedVoice;
+      if (_preTranslateMode == 'sub_and_tts') {
+        final voiceType = settings.hongguoSelectedTtsVoice;
+        final voice = VoicePresets.vietnameseVoices.firstWhere(
+          (v) => v.voiceType == voiceType,
+          orElse: () => VoicePresets.defaultVoice,
+        );
+        appliedVoice = voice.displayName;
+        await TtsCacheHelper.linkAudioFiles(doc, voice.voiceType);
+
+        final unlinked = doc.items.where(
+          (i) => (i.audioFilePath == null || i.audioFilePath!.isEmpty) &&
+                 TtsGenerationManager.isPronounceable(i.translatedText),
+        ).toList();
+
+        if (unlinked.isNotEmpty) {
+          await TtsGenerationManager().generateAll(
+            document: doc,
+            voice: voice,
+            threadCount: settings.ttsThreadCount,
+          );
+          await TtsCacheHelper.linkAudioFiles(doc, voice.voiceType);
+        }
+        await _calibratePlaybackSpeeds(doc);
+      }
+
+      _episodeDocuments[targetKey] = doc;
+
+      try {
+        final historyRepo = await HistoryRepository.getInstance();
+        await historyRepo.saveHistory(
+          videoPath: itemToProcess.vid,
+          title: '${itemToProcess.detail.title} - Tập ${itemToProcess.episodeIndex}',
+          document: doc,
+          durationMs: 120000,
+          ttsVoice: appliedVoice,
+          seriesId: itemToProcess.detail.seriesId,
+          seriesCover: itemToProcess.detail.cover,
+          episodeIndex: itemToProcess.episodeIndex,
+          totalEpisodes: itemToProcess.detail.totalEpisodes > 0 ? itemToProcess.detail.totalEpisodes : itemToProcess.detail.episodes.length,
+          isOnlineStream: true,
+        );
+      } catch (_) {}
+
+      debugPrint('[HongguoFeed] ✅ Đã dịch trước ngầm thành công tập ${itemToProcess.episodeIndex}!');
+    } catch (e) {
+      debugPrint('[HongguoFeed] Lỗi dịch trước tập ${targetItem.episodeIndex}: $e');
+    } finally {
+      try {
+        if (tempMp4 != null && tempMp4.existsSync()) await tempMp4.delete();
+        if (tempAudio != null && tempAudio.existsSync()) await tempAudio.delete();
+      } catch (_) {}
+      _isPreTranslating = false;
+      if (mounted) setState(() {});
+    }
   }
 
   /// Tự động nạp phụ đề từ Lịch sử nếu tập này đã từng được dịch trước đó
