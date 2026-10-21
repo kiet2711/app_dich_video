@@ -101,12 +101,13 @@ class SubtitlingPipeline {
 
     try {
       final settings = await SettingsRepository.getInstance();
+      final isLocalFile = await File(videoPath).exists();
       var extractionPath = videoPath;
       SubtitleDocument? sourceDocument;
       BilibiliVideoDetails? bilibiliDetails;
 
       String canonicalIdentifier = videoPath;
-      if (BilibiliResolver.isBilibiliPageUrl(videoPath)) {
+      if (!isLocalFile && BilibiliResolver.isBilibiliPageUrl(videoPath)) {
         final resolver = BilibiliResolver();
         _emit(
           const ProcessProgress(
@@ -125,6 +126,8 @@ class SubtitlingPipeline {
         // Đảm bảo mỗi tập/part và cid có không gian checkpoint độc lập hoàn toàn:
         canonicalIdentifier =
             'bilibili_${bilibiliDetails.bvid}_p${bilibiliDetails.selectedPageIndex}_cid${bilibiliDetails.cid}';
+      } else if (seriesId != null && seriesId.isNotEmpty && episodeIndex != null) {
+        canonicalIdentifier = 'hongguo_${seriesId}_ep$episodeIndex';
       }
 
       // 0. KIỂM TRA BẢN NHÁP / CHECKPOINT DANG DỞ TỪ PHIÊN TRƯỚC
@@ -314,7 +317,9 @@ class SubtitlingPipeline {
             extractionPath = downloadedAudio.path;
           }
         }
-      } else if (sourceDocument == null && (HongguoResolver.isHongguoUrl(videoPath) || (seriesId != null && seriesId.isNotEmpty))) {
+      } else if (sourceDocument == null &&
+          !isLocalFile &&
+          (HongguoResolver.isHongguoUrl(videoPath) || (seriesId != null && seriesId.isNotEmpty))) {
         _emit(
           const ProcessProgress(
             stage: ProcessStage.extractingAudio,

@@ -71,8 +71,10 @@ class NetworkHeaderHelper {
             cookie.contains('=') ? cookie.trim() : 'SESSDATA=${cookie.trim()}';
         headers['Cookie'] = formatted;
       }
-    } else if (lower.contains('hongguoduanju.com') ||
-        lower.contains('novelquickapp.com') ||
+    } else if (lower.contains('hongguoduanju.com')) {
+      headers['Referer'] = 'https://www.hongguoduanju.com/';
+      headers['Origin'] = 'https://www.hongguoduanju.com';
+    } else if (lower.contains('novelquickapp.com') ||
         lower.contains('qznovelvod.com') ||
         lower.contains('fanqiesc.com') ||
         lower.contains('fqnovel.com') ||
@@ -82,8 +84,7 @@ class NetworkHeaderHelper {
         lower.contains('toutiaoimg.com') ||
         lower.contains('snssdk.com') ||
         lower.contains('pstatp.com')) {
-      headers['Referer'] = 'https://www.hongguoduanju.com/';
-      headers['Origin'] = 'https://www.hongguoduanju.com';
+      headers['Referer'] = 'https://novelquickapp.com/';
     } else if (lower.contains('douyin.com') ||
         lower.contains('douyinvod.com') ||
         lower.contains('iesdouyin.com')) {

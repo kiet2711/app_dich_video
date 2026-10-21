@@ -19,6 +19,7 @@ class HistoryItem {
   final String? seriesCover;
   final int? episodeIndex;
   final int? totalEpisodes;
+  final bool isOnlineStream;
 
   String? get coverUrl => seriesCover;
 
@@ -41,6 +42,7 @@ class HistoryItem {
     this.seriesCover,
     this.episodeIndex,
     this.totalEpisodes,
+    this.isOnlineStream = false,
   });
 
   bool get isSeriesEpisode {
@@ -107,6 +109,7 @@ class HistoryItem {
     String? coverUrl,
     int? episodeIndex,
     int? totalEpisodes,
+    bool? isOnlineStream,
   }) {
     return HistoryItem(
       id: id ?? this.id,
@@ -127,6 +130,7 @@ class HistoryItem {
       seriesCover: coverUrl ?? seriesCover ?? this.seriesCover,
       episodeIndex: episodeIndex ?? this.episodeIndex,
       totalEpisodes: totalEpisodes ?? this.totalEpisodes,
+      isOnlineStream: isOnlineStream ?? this.isOnlineStream,
     );
   }
 
@@ -149,6 +153,7 @@ class HistoryItem {
     if (seriesCover != null) 'seriesCover': seriesCover,
     if (episodeIndex != null) 'episodeIndex': episodeIndex,
     if (totalEpisodes != null) 'totalEpisodes': totalEpisodes,
+    if (isOnlineStream) 'isOnlineStream': true,
   };
 
   factory HistoryItem.fromJson(Map<String, dynamic> json) => HistoryItem(
@@ -170,5 +175,6 @@ class HistoryItem {
     seriesCover: (json['seriesCover'] ?? json['coverUrl']) as String?,
     episodeIndex: json['episodeIndex'] as int?,
     totalEpisodes: json['totalEpisodes'] as int?,
+    isOnlineStream: json['isOnlineStream'] as bool? ?? false,
   );
 }

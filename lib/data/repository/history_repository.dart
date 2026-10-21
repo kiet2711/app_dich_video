@@ -221,6 +221,7 @@ class HistoryRepository {
     int? episodeIndex,
     int? totalEpisodes,
     bool isPrefetch = false,
+    bool isOnlineStream = false,
   }) async {
     final docs = await getApplicationDocumentsDirectory();
     final savedSubtitlesDir = Directory('${docs.path}/saved_subtitles');
@@ -301,6 +302,7 @@ class HistoryRepository {
       seriesCover: coverUrl ?? seriesCover ?? existing?.seriesCover,
       episodeIndex: episodeIndex ?? existing?.episodeIndex,
       totalEpisodes: totalEpisodes ?? existing?.totalEpisodes,
+      isOnlineStream: isOnlineStream || (existing?.isOnlineStream ?? false),
     );
 
     await addItem(item);

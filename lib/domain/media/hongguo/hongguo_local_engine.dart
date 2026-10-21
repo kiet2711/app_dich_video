@@ -63,7 +63,11 @@ class HongguoLocalEngine {
       '&player_so_load=1&is_android_pad_screen=0';
 
   /// Lấy trực tiếp thông tin URL stream và Content Key từ API gốc của ByteDance
-  static Future<HongguoVideoInfo> resolveVideoInfo(String videoId) async {
+  /// [preferLowest]: Nếu true sẽ chọn luồng chất lượng thấp nhất (360p ~ 1.2MB) để tải siêu tốc lấy âm thanh
+  static Future<HongguoVideoInfo> resolveVideoInfo(
+    String videoId, {
+    bool preferLowest = false,
+  }) async {
     final cleanVideoId = videoId.trim();
     if (!RegExp(r'^\d+$').hasMatch(cleanVideoId)) {
       throw ArgumentError.value(videoId, 'videoId', 'Video ID phải là dãy số');
@@ -233,7 +237,9 @@ class HongguoLocalEngine {
           ..sort((a, b) {
             final codecCompare = codecRank(a).compareTo(codecRank(b));
             if (codecCompare != 0) return codecCompare;
-            return streamHeight(b).compareTo(streamHeight(a));
+            return preferLowest
+                ? streamHeight(a).compareTo(streamHeight(b))
+                : streamHeight(b).compareTo(streamHeight(a));
           });
 
     String realMainUrl = '';

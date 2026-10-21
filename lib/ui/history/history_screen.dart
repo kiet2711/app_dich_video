@@ -2081,6 +2081,49 @@ class _HistoryScreenState extends State<HistoryScreen>
                   vertical: 3,
                 ),
                 decoration: BoxDecoration(
+                  color: it.isOnlineStream
+                      ? Colors.purpleAccent.withValues(alpha: 0.18)
+                      : AppTheme.primaryEmerald.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                    color: it.isOnlineStream
+                        ? Colors.purpleAccent.withValues(alpha: 0.45)
+                        : AppTheme.primaryEmerald.withValues(alpha: 0.4),
+                    width: 0.8,
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      it.isOnlineStream
+                          ? Icons.swipe_vertical_rounded
+                          : Icons.download_done_rounded,
+                      size: 11,
+                      color: it.isOnlineStream
+                          ? Colors.purpleAccent.shade100
+                          : AppTheme.primaryEmerald,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      it.isOnlineStream ? 'Lướt Online' : 'Offline',
+                      style: TextStyle(
+                        color: it.isOnlineStream
+                            ? Colors.purpleAccent.shade100
+                            : AppTheme.primaryEmerald,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 3,
+                ),
+                decoration: BoxDecoration(
                   color: const Color(0xFF1E2029),
                   borderRadius: BorderRadius.circular(6),
                 ),
@@ -3439,13 +3482,46 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              'Tập $epNum',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 14,
-                              ),
+                            Row(
+                              children: [
+                                Text(
+                                  'Tập $epNum',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 1.5,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: ep.isOnlineStream
+                                        ? Colors.purpleAccent.withValues(alpha: 0.18)
+                                        : AppTheme.primaryEmerald.withValues(alpha: 0.15),
+                                    borderRadius: BorderRadius.circular(4),
+                                    border: Border.all(
+                                      color: ep.isOnlineStream
+                                          ? Colors.purpleAccent.withValues(alpha: 0.45)
+                                          : AppTheme.primaryEmerald.withValues(alpha: 0.4),
+                                      width: 0.8,
+                                    ),
+                                  ),
+                                  child: Text(
+                                    ep.isOnlineStream ? 'Lướt Online' : 'Offline',
+                                    style: TextStyle(
+                                      color: ep.isOnlineStream
+                                          ? Colors.purpleAccent.shade100
+                                          : AppTheme.primaryEmerald,
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                             const SizedBox(height: 3),
                             Text(
