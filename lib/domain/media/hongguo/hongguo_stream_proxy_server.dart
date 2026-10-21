@@ -9,6 +9,7 @@ import 'package:flutter/foundation.dart';
 import 'package:pointycastle/export.dart';
 
 import '../hongguo_cenc_decryptor.dart';
+import '../hongguo_resolver.dart';
 import '../video_cache_manager.dart';
 import 'hongguo_local_engine.dart';
 
@@ -29,7 +30,7 @@ class _SampleInterval {
 
 /// Session quản lý siêu dữ liệu và bộ đệm cho một video đang phát
 class _ProxyStreamSession {
-  final String vid;
+  String vid;
   final String seriesId;
   final int episodeIndex;
 
@@ -122,7 +123,7 @@ class HongguoStreamProxyServer {
     String? seriesId,
     int? episodeIndex,
   }) async {
-    if (vid.isEmpty) return;
+    if (vid.isEmpty && (seriesId == null || seriesId.isEmpty)) return;
     await ensureStarted();
 
     if (_inFlightPrepares.containsKey(vid)) {
@@ -185,8 +186,30 @@ class HongguoStreamProxyServer {
       }
     } catch (_) {}
 
+    // Tự động chuyển đổi sang vid thật nếu vid đang rỗng hoặc trùng seriesId
+    if (session.vid.isEmpty || session.vid == session.seriesId) {
+      if (session.seriesId.isNotEmpty) {
+        try {
+          final detail = await HongguoResolver().getDramaDetail(session.seriesId);
+          if (detail.episodes.isNotEmpty) {
+            final epIdx = (session.episodeIndex - 1).clamp(0, detail.episodes.length - 1);
+            final realVid = detail.episodes[epIdx].vid;
+            debugPrint('[HongguoStreamProxyServer] ✅ Đã chuyển vid từ seriesId sang vid thật: $realVid (tập ${session.episodeIndex})');
+            session.vid = realVid;
+          }
+        } catch (e) {
+          debugPrint('[HongguoStreamProxyServer] ❌ Không thể tự động phân giải vid: $e');
+        }
+      }
+    }
+
     // 2. Resolve thông tin video từ ByteDance
-    session.info ??= await HongguoLocalEngine.resolveVideoInfo(session.vid);
+    try {
+      session.info ??= await HongguoLocalEngine.resolveVideoInfo(session.vid);
+    } catch (e) {
+      _sessions.remove(session.vid);
+      rethrow;
+    }
     final info = session.info!;
     session.isDrm = info.isDrmProtected;
 
@@ -486,9 +509,27 @@ class HongguoStreamProxyServer {
         return;
       }
 
-      final vid = uri.queryParameters['vid'] ?? '';
+      var vid = uri.queryParameters['vid'] ?? '';
       final sid = uri.queryParameters['sid'] ?? '';
       final ep = int.tryParse(uri.queryParameters['ep'] ?? '1') ?? 1;
+
+      if (vid.isEmpty && sid.isEmpty) {
+        request.response.statusCode = HttpStatus.badRequest;
+        await request.response.close();
+        return;
+      }
+
+      if (vid.isEmpty || vid == sid) {
+        if (sid.isNotEmpty) {
+          try {
+            final detail = await HongguoResolver().getDramaDetail(sid);
+            if (detail.episodes.isNotEmpty) {
+              final epIdx = (ep - 1).clamp(0, detail.episodes.length - 1);
+              vid = detail.episodes[epIdx].vid;
+            }
+          } catch (_) {}
+        }
+      }
 
       if (vid.isEmpty) {
         request.response.statusCode = HttpStatus.badRequest;
