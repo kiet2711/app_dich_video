@@ -295,9 +295,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         } else if (_currentFeedTab == 'trending') {
           _switchFeedTab('trending', forceReload: true);
         } else {
-          if (_feedItems.isEmpty) {
-            _switchFeedTab('discover');
-          }
+          _switchFeedTab('discover', forceReload: true);
         }
       }
     });
@@ -309,6 +307,47 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     });
   }
 
+  final math.Random _rng = math.Random();
+
+  /// Tạo item lướt ngẫu nhiên từ tập 1-10 theo yêu cầu người dùng
+  FeedDramaPageItem _createFeedDramaItem(HongguoDramaItem drama) {
+    final detail = _dramaItemToDetail(drama);
+    final totalEp = drama.episodeCount > 0
+        ? drama.episodeCount
+        : (drama.vidList.isNotEmpty ? drama.vidList.length : 1);
+    final maxEp = math.min(10, totalEp);
+    final randomEp = maxEp > 1 ? (_rng.nextInt(maxEp) + 1) : 1;
+    final vid = (drama.vidList.length >= randomEp)
+        ? drama.vidList[randomEp - 1]
+        : (drama.vidList.isNotEmpty ? drama.vidList.first : '');
+
+    return FeedDramaPageItem(
+      detail: detail,
+      episodeIndex: randomEp,
+      vid: vid,
+    );
+  }
+
+  /// Ưu tiên hiển thị các phim chưa xem lên đầu, phim đã xem gần đây đẩy xuống sau
+  List<HongguoDramaItem> _prioritizeUnwatchedDramas(List<HongguoDramaItem> dramas) {
+    if (dramas.isEmpty) return dramas;
+    final seen = _settings?.hongguoSeenSeriesIds.toSet() ?? <String>{};
+    if (seen.isEmpty) return dramas;
+
+    final unwatched = <HongguoDramaItem>[];
+    final watched = <HongguoDramaItem>[];
+
+    for (final d in dramas) {
+      if (seen.contains(d.seriesId)) {
+        watched.add(d);
+      } else {
+        unwatched.add(d);
+      }
+    }
+
+    return [...unwatched, ...watched];
+  }
+
   void _initFeedData() {
     if (widget.initialDrama != null) {
       _isDramaEpisodeMode = true;
@@ -316,13 +355,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       _populateDramaEpisodes(_currentDramaDetail!, initialEpisode: widget.initialEpisodeIndex);
     } else if (widget.discoverDramas != null && widget.discoverDramas!.isNotEmpty) {
       _isDramaEpisodeMode = false;
-      for (final drama in widget.discoverDramas!) {
-        final detail = _dramaItemToDetail(drama);
-        final item = FeedDramaPageItem(
-          detail: detail,
-          episodeIndex: 1,
-          vid: drama.vidList.isNotEmpty ? drama.vidList.first : '',
-        );
+      final sorted = _prioritizeUnwatchedDramas(List<HongguoDramaItem>.from(widget.discoverDramas!));
+      for (final drama in sorted) {
+        final item = _createFeedDramaItem(drama);
         _feedItems.add(item);
         _discoverFeedItems.add(item);
       }
@@ -552,6 +587,12 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       // Kiểm tra tập hiện tại đã có phụ đề trong RAM hoặc Lịch sử chưa
       _checkHistoryForEpisode(index);
 
+      // Ghi nhận phim đã xem vào bộ nhớ để các lần lướt sau luôn ưu tiên phim mới
+      if (!_isDramaEpisodeMode && index >= 0 && index < _feedItems.length) {
+        final curItem = _feedItems[index];
+        _settings?.addHongguoSeenSeriesId(curItem.detail.seriesId);
+      }
+
       if (mounted && _activePageIndex == index) {
         setState(() {
           _isLoadingVideo = false;
@@ -767,14 +808,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       final existingSids = _feedItems.map((e) => e.detail.seriesId).toSet();
       for (final drama in dramas) {
         if (!existingSids.contains(drama.seriesId)) {
-          final detail = _dramaItemToDetail(drama);
-          newItems.add(
-            FeedDramaPageItem(
-              detail: detail,
-              episodeIndex: 1,
-              vid: drama.vidList.isNotEmpty ? drama.vidList.first : '',
-            ),
-          );
+          newItems.add(_createFeedDramaItem(drama));
         }
       }
       if (mounted) {
@@ -816,17 +850,16 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       if (_trendingFeedItems.isNotEmpty && !forceReload) {
         targetItems = _trendingFeedItems;
       } else {
-        _trendingPage = 1;
+        final lastPage = _settings?.hongguoFeedTrendingPage ?? 0;
+        _trendingPage = forceReload ? ((lastPage % 3) + 1) : 1;
+        _settings?.hongguoFeedTrendingPage = _trendingPage;
+
         try {
-          final hotRes = await _resolver.browseList(category: 'rank/hot-drama', page: 1);
+          final hotRes = await _resolver.browseList(category: 'rank/hot-drama', page: _trendingPage);
+          final sorted = _prioritizeUnwatchedDramas(hotRes.items);
           final items = <FeedDramaPageItem>[];
-          for (final drama in hotRes.items) {
-            final detail = _dramaItemToDetail(drama);
-            items.add(FeedDramaPageItem(
-              detail: detail,
-              episodeIndex: 1,
-              vid: drama.vidList.isNotEmpty ? drama.vidList.first : '',
-            ));
+          for (final drama in sorted) {
+            items.add(_createFeedDramaItem(drama));
           }
           targetItems = items;
           _trendingFeedItems.clear();
@@ -841,14 +874,10 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       } else {
         try {
           final list = await HongguoSimilarEngine.instance.getPersonalizedDiscoverList();
+          final sorted = _prioritizeUnwatchedDramas(list);
           final items = <FeedDramaPageItem>[];
-          for (final drama in list) {
-            final detail = _dramaItemToDetail(drama);
-            items.add(FeedDramaPageItem(
-              detail: detail,
-              episodeIndex: 1,
-              vid: drama.vidList.isNotEmpty ? drama.vidList.first : '',
-            ));
+          for (final drama in sorted) {
+            items.add(_createFeedDramaItem(drama));
           }
           targetItems = items;
           _discoverFeedItems.clear();
@@ -861,21 +890,28 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       if (_genreFeedItems.isNotEmpty && !forceReload) {
         targetItems = _genreFeedItems;
       } else {
-        _genrePage = 1;
+        final lastPage = _settings?.hongguoFeedGenrePage ?? 0;
+        _genrePage = forceReload ? ((lastPage % 12) + 1) : 1;
+        _settings?.hongguoFeedGenrePage = _genrePage;
+
         try {
-          final res = await _resolver.browseList(
+          var res = await _resolver.browseList(
             category: _selectedCategorySlug,
             genre: _selectedGenreSlug,
-            page: 1,
+            page: _genrePage,
           );
+          if (res.items.isEmpty && _genrePage > 1) {
+            _genrePage = 1;
+            res = await _resolver.browseList(
+              category: _selectedCategorySlug,
+              genre: _selectedGenreSlug,
+              page: 1,
+            );
+          }
+          final sorted = _prioritizeUnwatchedDramas(res.items);
           final items = <FeedDramaPageItem>[];
-          for (final drama in res.items) {
-            final detail = _dramaItemToDetail(drama);
-            items.add(FeedDramaPageItem(
-              detail: detail,
-              episodeIndex: 1,
-              vid: drama.vidList.isNotEmpty ? drama.vidList.first : '',
-            ));
+          for (final drama in sorted) {
+            items.add(_createFeedDramaItem(drama));
           }
           targetItems = items;
           _genreFeedItems.clear();
@@ -1291,12 +1327,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     HapticFeedback.mediumImpact();
     final items = <FeedDramaPageItem>[];
     for (final drama in similarDramas) {
-      final detail = _dramaItemToDetail(drama);
-      items.add(FeedDramaPageItem(
-        detail: detail,
-        episodeIndex: 1,
-        vid: drama.vidList.isNotEmpty ? drama.vidList.first : '',
-      ));
+      items.add(_createFeedDramaItem(drama));
     }
     if (items.isEmpty) return;
 
@@ -2109,13 +2140,13 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
                     _buildTopTabItem(
                       label: 'Thịnh hành',
                       isSelected: _currentFeedTab == 'trending',
-                      onTap: () => _switchFeedTab('trending'),
+                      onTap: () => _switchFeedTab('trending', forceReload: _currentFeedTab == 'trending'),
                     ),
                     const SizedBox(width: 18),
                     _buildTopTabItem(
                       label: 'Đề xuất',
                       isSelected: _currentFeedTab == 'discover',
-                      onTap: () => _switchFeedTab('discover'),
+                      onTap: () => _switchFeedTab('discover', forceReload: _currentFeedTab == 'discover'),
                     ),
                     const SizedBox(width: 18),
                     _buildTopTabItem(
@@ -2133,6 +2164,39 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
                   ],
                 ),
               ),
+            ),
+          ),
+
+          // Nút Làm mới luồng phim (Tải loạt phim mới)
+          GestureDetector(
+            onTap: () {
+              HapticFeedback.mediumImpact();
+              _switchFeedTab(_currentFeedTab, forceReload: true);
+              ScaffoldMessenger.of(context).hideCurrentSnackBar();
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: const Row(
+                    children: [
+                      Icon(Icons.autorenew_rounded, color: Color(0xFFFF6A00), size: 16),
+                      SizedBox(width: 8),
+                      Text('Đang nạp loạt trích đoạn phim mới...', style: TextStyle(fontWeight: FontWeight.w600)),
+                    ],
+                  ),
+                  backgroundColor: const Color(0xFF22242A),
+                  behavior: SnackBarBehavior.floating,
+                  duration: const Duration(seconds: 1),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+              );
+            },
+            child: Container(
+              padding: const EdgeInsets.all(8),
+              margin: const EdgeInsets.only(right: 8),
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.35),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.refresh_rounded, color: Colors.white, size: 20),
             ),
           ),
 

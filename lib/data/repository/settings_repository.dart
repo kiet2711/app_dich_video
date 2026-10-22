@@ -359,6 +359,33 @@ class SettingsRepository {
   set hongguoFeedZhTag(String v) =>
       prefs.setString('hongguo_feed_zh_tag', v);
 
+  /// Danh sách các phim Hồng Quả người dùng đã xem gần đây (để ưu tiên hiển thị phim mới)
+  List<String> get hongguoSeenSeriesIds =>
+      prefs.getStringList('hongguo_seen_series_ids') ?? [];
+
+  void addHongguoSeenSeriesId(String id) {
+    if (id.isEmpty) return;
+    final list = List<String>.from(prefs.getStringList('hongguo_seen_series_ids') ?? []);
+    list.remove(id);
+    list.insert(0, id);
+    if (list.length > 200) {
+      list.removeRange(200, list.length);
+    }
+    prefs.setStringList('hongguo_seen_series_ids', list);
+  }
+
+  /// Trang thể loại đã duyệt gần nhất
+  int get hongguoFeedGenrePage =>
+      prefs.getInt('hongguo_feed_genre_page') ?? 1;
+  set hongguoFeedGenrePage(int v) =>
+      prefs.setInt('hongguo_feed_genre_page', v);
+
+  /// Trang thịnh hành đã duyệt gần nhất
+  int get hongguoFeedTrendingPage =>
+      prefs.getInt('hongguo_feed_trending_page') ?? 1;
+  set hongguoFeedTrendingPage(int v) =>
+      prefs.setInt('hongguo_feed_trending_page', v);
+
   /// Chế độ dịch riêng của Bilibili: 'capcut' (CapCut Free) hoặc 'api_online' (AI Online)
   String get bilibiliTranslationMode =>
       prefs.getString('bilibili_translation_mode') ?? 'capcut';
