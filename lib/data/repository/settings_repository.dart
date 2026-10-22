@@ -329,6 +329,36 @@ class SettingsRepository {
   set hongguoPreTranslateMode(String v) =>
       prefs.setString('hongguo_pre_translate_mode', v);
 
+  /// Lưu Tab hiện tại của màn hình Lướt Hồng Quả: 'trending', 'discover', 'genre'
+  String get hongguoFeedTab =>
+      prefs.getString('hongguo_feed_tab') ?? 'discover';
+  set hongguoFeedTab(String v) =>
+      prefs.setString('hongguo_feed_tab', v);
+
+  /// Lưu Dạng phim / Danh mục đã chọn trong tab Lướt: 'category/real-drama', 'category/comic-drama', 'category/ai-drama'
+  String get hongguoFeedCategory =>
+      prefs.getString('hongguo_feed_category') ?? 'category/real-drama';
+  set hongguoFeedCategory(String v) =>
+      prefs.setString('hongguo_feed_category', v);
+
+  /// Lưu slug thể loại (rỗng nghĩa là Tất cả của dạng phim đó)
+  String get hongguoFeedGenreSlug =>
+      prefs.getString('hongguo_feed_genre_slug') ?? '';
+  set hongguoFeedGenreSlug(String v) =>
+      prefs.setString('hongguo_feed_genre_slug', v);
+
+  /// Lưu nhãn tiếng Việt của thể loại / dạng phim
+  String get hongguoFeedGenreLabel =>
+      prefs.getString('hongguo_feed_genre_label') ?? 'Người thật';
+  set hongguoFeedGenreLabel(String v) =>
+      prefs.setString('hongguo_feed_genre_label', v);
+
+  /// Lưu tag tiếng Trung tương ứng
+  String get hongguoFeedZhTag =>
+      prefs.getString('hongguo_feed_zh_tag') ?? '全部';
+  set hongguoFeedZhTag(String v) =>
+      prefs.setString('hongguo_feed_zh_tag', v);
+
   /// Chế độ dịch riêng của Bilibili: 'capcut' (CapCut Free) hoặc 'api_online' (AI Online)
   String get bilibiliTranslationMode =>
       prefs.getString('bilibili_translation_mode') ?? 'capcut';
