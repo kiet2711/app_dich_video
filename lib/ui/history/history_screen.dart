@@ -20,6 +20,7 @@ import '../settings/settings_screen.dart';
 import '../storage/storage_cleaner_screen.dart';
 import '../theme/app_theme.dart';
 import 'import_subtitle_dialog.dart';
+import '../hongguo/feed/hongguo_feed_screen.dart';
 
 /// Mô hình nhóm các tập của một bộ phim trong Lịch sử
 class DramaHistoryGroup {
@@ -800,6 +801,467 @@ class _HistoryScreenState extends State<HistoryScreen>
     }
   }
 
+  /// Điều hướng sang Trang Lướt Hồng Quả (Shorts / Feed) và tự tua đến vị trí đang xem dở
+  Future<void> _openHongguoFeed({
+    required String seriesTitle,
+    String? seriesId,
+    String? seriesCover,
+    int? totalEpisodes,
+    int episodeIndex = 1,
+    int initialPositionMs = 0,
+    HongguoDramaDetail? existingDetail,
+  }) async {
+    HongguoDramaDetail? dramaDetail = existingDetail;
+
+    if (dramaDetail == null || dramaDetail.episodes.isEmpty) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => const Center(
+          child: CircularProgressIndicator(color: AppTheme.primaryEmerald),
+        ),
+      );
+
+      try {
+        if (seriesId != null && seriesId.isNotEmpty) {
+          try {
+            dramaDetail = await _hongguoResolver.getDramaDetail(seriesId);
+          } catch (_) {}
+        }
+
+        if (dramaDetail == null || dramaDetail.episodes.isEmpty) {
+          try {
+            final searchResults = await _hongguoResolver.search(seriesTitle);
+            if (searchResults.isNotEmpty) {
+              final matched = searchResults.firstWhere(
+                (d) =>
+                    d.title.trim().toLowerCase() ==
+                    seriesTitle.trim().toLowerCase(),
+                orElse: () => searchResults.first,
+              );
+              dramaDetail = await _hongguoResolver.getDramaDetail(matched.seriesId);
+            }
+          } catch (_) {}
+        }
+      } finally {
+        if (mounted) {
+          Navigator.of(context, rootNavigator: true).pop();
+        }
+      }
+    }
+
+    dramaDetail ??= HongguoDramaDetail(
+      seriesId: seriesId ?? '',
+      title: seriesTitle,
+      cover: seriesCover ?? '',
+      intro: '',
+      totalEpisodes:
+          totalEpisodes != null && totalEpisodes > 0 ? totalEpisodes : 100,
+      episodes: [],
+    );
+
+    if (!mounted) return;
+
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => HongguoFeedScreen(
+          initialDrama: dramaDetail,
+          initialEpisodeIndex: episodeIndex,
+          initialPositionMs: initialPositionMs,
+        ),
+      ),
+    );
+
+    // Khi người dùng bấm Back từ trang lướt về, cập nhật lại lịch sử
+    if (mounted) {
+      final repo = await HistoryRepository.getInstance();
+      HistoryRepository.historyNotifier.value = repo.getHistory();
+      setState(() {});
+    }
+  }
+
+  /// Hiển thị Modal Bottom Sheet chọn chế độ xem phim Hồng Quả:
+  /// Chế độ 1: Lướt Shorts Online (HongguoFeedScreen)
+  /// Chế độ 2: Trình phát đầy đủ Player (VideoPlayerScreen)
+  void _showHongguoPlaybackOptions({
+    required DramaHistoryGroup group,
+    HistoryItem? episodeItem,
+    int? targetEpisodeIndex,
+    HongguoDramaDetail? dramaDetail,
+    WatchLaterItem? watchLaterItem,
+  }) {
+    final latest = group.latestWatchedEpisode;
+    final targetItem = episodeItem ?? (group.episodes.isNotEmpty ? latest : null);
+    final epNum = targetEpisodeIndex ?? (targetItem?.extractedEpisodeIndex ?? 1);
+    final resumePosition = (targetItem != null &&
+            targetItem.durationMs > 0 &&
+            targetItem.lastPositionMs >= targetItem.durationMs * 0.95)
+        ? 0
+        : (targetItem?.lastPositionMs ?? 0);
+    final isOnlineStream = targetItem?.isOnlineStream ?? false;
+    final hasWatchingProgress = resumePosition > 0;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return Container(
+          decoration: const BoxDecoration(
+            color: Color(0xFF161822),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
+          child: SafeArea(
+            top: false,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Thanh kéo handle
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.white24,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                // Tiêu đề phim và thông tin tập
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: (group.seriesCover != null && group.seriesCover!.isNotEmpty)
+                          ? Image.network(
+                              group.seriesCover!,
+                              headers: _imageHeaders(group.seriesCover),
+                              cacheWidth: 120,
+                              width: 44,
+                              height: 58,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, _, _) => Container(
+                                width: 44,
+                                height: 58,
+                                color: const Color(0xFF252631),
+                                child: const Icon(Icons.movie_rounded, color: Colors.white30, size: 24),
+                              ),
+                            )
+                          : Container(
+                              width: 44,
+                              height: 58,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF132F24),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Icon(
+                                Icons.movie_filter_rounded,
+                                color: AppTheme.primaryEmerald,
+                                size: 24,
+                              ),
+                            ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            group.seriesTitle,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 4),
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 4,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: AppTheme.primaryEmerald.withValues(alpha: 0.15),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  'Tập $epNum',
+                                  style: const TextStyle(
+                                    color: AppTheme.primaryEmerald,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                              if (hasWatchingProgress)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: AppTheme.accentGold.withValues(alpha: 0.15),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    targetItem?.durationMs != null && targetItem!.durationMs > 0
+                                        ? 'Đang xem: ${_formatMs(resumePosition)} / ${_formatMs(targetItem.durationMs)}'
+                                        : 'Đang xem: ${_formatMs(resumePosition)}',
+                                    style: const TextStyle(
+                                      color: AppTheme.accentGold,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close_rounded, color: Colors.white54, size: 22),
+                      onPressed: () => Navigator.pop(sheetContext),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                const Text(
+                  'CHỌN CHẾ ĐỘ XEM TIẾP',
+                  style: TextStyle(
+                    color: Colors.grey,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 0.8,
+                  ),
+                ),
+                const SizedBox(height: 12),
+
+                // 1. TÙY CHỌN 1: Lướt Shorts Online
+                InkWell(
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    _openHongguoFeed(
+                      seriesTitle: group.seriesTitle,
+                      seriesId: group.seriesId,
+                      seriesCover: group.seriesCover,
+                      totalEpisodes: group.totalEpisodes,
+                      episodeIndex: epNum,
+                      initialPositionMs: resumePosition,
+                      existingDetail: dramaDetail,
+                    );
+                  },
+                  borderRadius: BorderRadius.circular(14),
+                  child: Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: isOnlineStream
+                          ? Colors.purpleAccent.withValues(alpha: 0.12)
+                          : const Color(0xFF1E202B),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: isOnlineStream
+                            ? Colors.purpleAccent.withValues(alpha: 0.5)
+                            : Colors.white12,
+                        width: isOnlineStream ? 1.5 : 1,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 44,
+                          height: 44,
+                          decoration: BoxDecoration(
+                            color: Colors.purpleAccent.withValues(alpha: 0.18),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Icon(
+                            Icons.swipe_vertical_rounded,
+                            color: Colors.purpleAccent,
+                            size: 24,
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  const Text(
+                                    'Lướt Shorts Online',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  if (isOnlineStream) ...[
+                                    const SizedBox(width: 8),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                                      decoration: BoxDecoration(
+                                        color: Colors.purpleAccent.withValues(alpha: 0.25),
+                                        borderRadius: BorderRadius.circular(4),
+                                        border: Border.all(
+                                          color: Colors.purpleAccent.withValues(alpha: 0.6),
+                                          width: 0.8,
+                                        ),
+                                      ),
+                                      child: const Text(
+                                        'Lần trước',
+                                        style: TextStyle(
+                                          color: Colors.purpleAccent,
+                                          fontSize: 9.5,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                              const SizedBox(height: 3),
+                              const Text(
+                                'Vuốt dọc chuyển tập siêu mượt, tự động nhận phụ đề Vietsub và lồng tiếng AI',
+                                style: TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                  height: 1.25,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white30, size: 14),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+
+                // 2. TÙY CHỌN 2: Trình phát đầy đủ (Player)
+                InkWell(
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    if (targetItem != null) {
+                      _openSeriesEpisode(
+                        targetItem,
+                        group,
+                        customEpisodeIndex: epNum,
+                      );
+                    } else if (dramaDetail != null) {
+                      _openUnwatchedDramaEpisode(epNum, group, dramaDetail);
+                    } else if (watchLaterItem != null) {
+                      _openWatchLaterHongguo(watchLaterItem, targetEpisodeIndex: epNum);
+                    } else {
+                      _openSeriesEpisode(
+                        latest,
+                        group,
+                        customEpisodeIndex: epNum,
+                      );
+                    }
+                  },
+                  borderRadius: BorderRadius.circular(14),
+                  child: Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: !isOnlineStream
+                          ? AppTheme.primaryEmerald.withValues(alpha: 0.1)
+                          : const Color(0xFF1E202B),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: !isOnlineStream
+                            ? AppTheme.primaryEmerald.withValues(alpha: 0.5)
+                            : Colors.white12,
+                        width: !isOnlineStream ? 1.5 : 1,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 44,
+                          height: 44,
+                          decoration: BoxDecoration(
+                            color: AppTheme.primaryEmerald.withValues(alpha: 0.18),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Icon(
+                            Icons.play_circle_fill_rounded,
+                            color: AppTheme.primaryEmerald,
+                            size: 24,
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  const Text(
+                                    'Trình phát đầy đủ (Player)',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  if (!isOnlineStream && hasWatchingProgress) ...[
+                                    const SizedBox(width: 8),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                                      decoration: BoxDecoration(
+                                        color: AppTheme.primaryEmerald.withValues(alpha: 0.2),
+                                        borderRadius: BorderRadius.circular(4),
+                                        border: Border.all(
+                                          color: AppTheme.primaryEmerald.withValues(alpha: 0.6),
+                                          width: 0.8,
+                                        ),
+                                      ),
+                                      child: const Text(
+                                        'Offline',
+                                        style: TextStyle(
+                                          color: AppTheme.primaryEmerald,
+                                          fontSize: 9.5,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                              const SizedBox(height: 3),
+                              const Text(
+                                'Xem video offline / cache, có thanh tua tiến độ, gối đầu tập tiếp theo',
+                                style: TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                  height: 1.25,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white30, size: 14),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> _openInTts(HistoryItem item) async {
     if (widget.onOpenInTts == null) return;
     final repo = _historyRepo ?? await HistoryRepository.getInstance();
@@ -943,15 +1405,19 @@ class _HistoryScreenState extends State<HistoryScreen>
         hongguoResolver: _hongguoResolver,
         onOpenEpisode: (ep, g, {customEpisodeIndex}) {
           Navigator.pop(ctx);
-          _openSeriesEpisode(
-            ep,
-            g,
-            customEpisodeIndex: customEpisodeIndex ?? ep.extractedEpisodeIndex,
+          _showHongguoPlaybackOptions(
+            group: g,
+            episodeItem: ep,
+            targetEpisodeIndex: customEpisodeIndex ?? ep.extractedEpisodeIndex,
           );
         },
         onOpenUnwatchedEpisode: (epIndex, g, detail) {
           Navigator.pop(ctx);
-          _openUnwatchedDramaEpisode(epIndex, g, detail);
+          _showHongguoPlaybackOptions(
+            group: g,
+            targetEpisodeIndex: epIndex,
+            dramaDetail: detail,
+          );
         },
         onOpenTts: (ep) {
           Navigator.pop(ctx);
@@ -1654,7 +2120,11 @@ class _HistoryScreenState extends State<HistoryScreen>
                   Expanded(
                     flex: 5,
                     child: ElevatedButton.icon(
-                      onPressed: () => _openSeriesEpisode(latest, group),
+                      onPressed: () => _showHongguoPlaybackOptions(
+                        group: group,
+                        episodeItem: latest,
+                        targetEpisodeIndex: latestEpNum,
+                      ),
                       icon: const Icon(
                         Icons.play_arrow_rounded,
                         size: 20,
@@ -2166,7 +2636,25 @@ class _HistoryScreenState extends State<HistoryScreen>
                 Row(
                   children: [
                     ElevatedButton.icon(
-                      onPressed: () => _openItem(it),
+                      onPressed: () {
+                        if (it.isOnlineStream || (it.seriesId != null && it.seriesId!.isNotEmpty)) {
+                          final dramaGroup = DramaHistoryGroup(
+                            seriesKey: it.seriesId ?? it.extractedSeriesTitle,
+                            seriesId: it.seriesId,
+                            seriesTitle: it.extractedSeriesTitle,
+                            seriesCover: it.seriesCover ?? it.coverUrl,
+                            totalEpisodes: it.totalEpisodes ?? 0,
+                            episodes: [it],
+                          );
+                          _showHongguoPlaybackOptions(
+                            group: dramaGroup,
+                            episodeItem: it,
+                            targetEpisodeIndex: it.extractedEpisodeIndex,
+                          );
+                        } else {
+                          _openItem(it);
+                        }
+                      },
                       icon: Icon(
                         Icons.play_arrow_rounded,
                         size: 18,
@@ -2575,7 +3063,12 @@ class _HistoryScreenState extends State<HistoryScreen>
           statusText = 'Đang xem dở: Tập $latestEpNum (${_formatMs(latest.lastPositionMs)})';
           buttonText = 'Xem tiếp Tập $latestEpNum (${_formatMs(latest.lastPositionMs)})';
           buttonIcon = Icons.play_arrow_rounded;
-          onPlayAction = () => _openSeriesEpisode(latest, dramaGroup);
+          onPlayAction = () => _showHongguoPlaybackOptions(
+            group: dramaGroup,
+            episodeItem: latest,
+            targetEpisodeIndex: latestEpNum,
+            watchLaterItem: it,
+          );
         } else if (isFinished) {
           final nextEpNum = latestEpNum + 1;
           final nextEp = matchingEpisodes
@@ -2584,16 +3077,22 @@ class _HistoryScreenState extends State<HistoryScreen>
           statusText = 'Đã xem xong Tập $latestEpNum';
           buttonText = 'Xem tiếp Tập $nextEpNum';
           buttonIcon = Icons.skip_next_rounded;
-          if (nextEp != null) {
-            onPlayAction = () => _openSeriesEpisode(nextEp, dramaGroup);
-          } else {
-            onPlayAction = () => _openWatchLaterHongguo(it, targetEpisodeIndex: nextEpNum);
-          }
+          onPlayAction = () => _showHongguoPlaybackOptions(
+            group: dramaGroup,
+            episodeItem: nextEp,
+            targetEpisodeIndex: nextEpNum,
+            watchLaterItem: it,
+          );
         } else {
           statusText = 'Đã lưu ${matchingEpisodes.length} tập trong máy';
           buttonText = 'Xem tiếp Tập $latestEpNum';
           buttonIcon = Icons.play_arrow_rounded;
-          onPlayAction = () => _openSeriesEpisode(latest, dramaGroup);
+          onPlayAction = () => _showHongguoPlaybackOptions(
+            group: dramaGroup,
+            episodeItem: latest,
+            targetEpisodeIndex: latestEpNum,
+            watchLaterItem: it,
+          );
         }
 
         return _WatchLaterHistoryLink(
@@ -2619,7 +3118,23 @@ class _HistoryScreenState extends State<HistoryScreen>
           statusText: epCountText,
           buttonText: 'Xem ngay (Tập 1)',
           buttonIcon: Icons.play_arrow_rounded,
-          onPlay: () => _openWatchLaterHongguo(it),
+          onPlay: () {
+            final dramaGroup = DramaHistoryGroup(
+              seriesKey: dramaId.isNotEmpty ? dramaId : it.title,
+              seriesTitle: it.title,
+              seriesId: dramaId.isNotEmpty ? dramaId : null,
+              seriesCover: it.coverUrl,
+              totalEpisodes: (it.totalEpisodes != null && it.totalEpisodes! > 0)
+                  ? it.totalEpisodes!
+                  : 100,
+              episodes: [],
+            );
+            _showHongguoPlaybackOptions(
+              group: dramaGroup,
+              targetEpisodeIndex: 1,
+              watchLaterItem: it,
+            );
+          },
         );
       }
     } else {

@@ -61,12 +61,14 @@ class FeedDramaPageItem {
 class HongguoFeedScreen extends StatefulWidget {
   final HongguoDramaDetail? initialDrama;
   final int initialEpisodeIndex;
+  final int? initialPositionMs;
   final List<HongguoDramaItem>? discoverDramas;
 
   const HongguoFeedScreen({
     super.key,
     this.initialDrama,
     this.initialEpisodeIndex = 1,
+    this.initialPositionMs,
     this.discoverDramas,
   });
 
@@ -175,10 +177,12 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
   String _preTranslateMode = 'sub_and_tts'; // 'sub_and_tts' | 'sub_only'
   bool _isPreTranslating = false;
   StreamSubscription<bool>? _completedSub;
+  int? _pendingInitialSeekMs;
 
   @override
   void initState() {
     super.initState();
+    _pendingInitialSeekMs = widget.initialPositionMs;
     _initFeedData();
     _pageController = PageController(initialPage: _currentIndex);
     _activeController = AppPlayerController(bufferSizeMb: 32);
@@ -431,6 +435,20 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       }
       await _activeController!.player.setRate(_playbackSpeed);
       await _activeController!.player.play();
+
+      if (_pendingInitialSeekMs != null && _pendingInitialSeekMs! > 0) {
+        final seekMs = _pendingInitialSeekMs!;
+        _pendingInitialSeekMs = null;
+        Future.delayed(const Duration(milliseconds: 120), () async {
+          if (!mounted || _activeController == null) return;
+          try {
+            await _activeController!.player.seek(Duration(milliseconds: seekMs));
+            _ttsScheduler?.onSeek(seekMs);
+          } catch (e) {
+            debugPrint('[HongguoFeedScreen] initial seek error: $e');
+          }
+        });
+      }
 
       // Kiểm tra tập hiện tại đã có phụ đề trong RAM hoặc Lịch sử chưa
       _checkHistoryForEpisode(index);
