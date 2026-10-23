@@ -8,21 +8,73 @@ on:
 jobs:
   build-android:
     name: Build Android APK
-    runs-on: ubuntu-latest
+    # Pin runner & Flutter: tránh ubuntu-latest/stable đổi phiên bản giữa hai lần build.
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Java
         uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '17'
+          cache: 'gradle'
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: '3.47.5'
           channel: 'stable'
           cache: true
+
+      - name: Install Android NDK 28.2.13676358
+        shell: bash
+        run: |
+          set -u
+          NDK_VERSION="28.2.13676358"
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+
+          if [[ -z "${SDK_ROOT}" || "${SDK_ROOT}" == "/" ]]; then
+            echo "Invalid Android SDK location: ${SDK_ROOT:-<empty>}"
+            exit 1
+          fi
+
+          NDK_DIR="${SDK_ROOT}/ndk/${NDK_VERSION}"
+          SDKMANAGER="${SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
+
+          ndk_is_valid() {
+            [[ -f "${NDK_DIR}/source.properties" ]] &&
+            grep -q "Pkg.Revision = ${NDK_VERSION}" "${NDK_DIR}/source.properties" &&
+            [[ -x "${NDK_DIR}/ndk-build" ]] &&
+            [[ -x "${NDK_DIR}/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" ]]
+          }
+
+          if ndk_is_valid; then
+            echo "NDK ${NDK_VERSION} is already valid."
+            exit 0
+          fi
+
+          if [[ ! -x "${SDKMANAGER}" ]]; then
+            echo "Missing sdkmanager: ${SDKMANAGER}"
+            exit 1
+          fi
+
+          for attempt in 1 2 3; do
+            echo "Installing NDK ${NDK_VERSION} (attempt ${attempt}/3)..."
+            rm -rf -- "${NDK_DIR}"
+
+            if "${SDKMANAGER}" --install "ndk;${NDK_VERSION}" && ndk_is_valid; then
+              echo "NDK ${NDK_VERSION} installed successfully."
+              exit 0
+            fi
+
+            echo "NDK archive/install was invalid; clearing SDK temporary downloads before retry."
+            rm -rf -- "${SDK_ROOT}/.temp"
+            sleep $((attempt * 5))
+          done
+
+          echo "Failed to install a valid NDK ${NDK_VERSION} after 3 attempts."
+          exit 1
 
       - name: Install dependencies
         run: flutter pub get
@@ -32,7 +84,7 @@ jobs:
 
       - name: Build APK Release (ARM64)
         run: |
-          flutter build apk --release --target-platform android-arm64
+          flutter build apk --release --target-platform android-arm64 --no-pub
           cp build/app/outputs/flutter-apk/app-release.apk CapSub-APK-Release.apk
 
       - name: Upload APK Artifact
@@ -46,11 +98,12 @@ jobs:
     name: Build iOS IPA
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: '3.47.5'
           channel: 'stable'
           cache: true
 

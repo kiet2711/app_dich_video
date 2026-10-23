@@ -7,7 +7,8 @@ plugins {
 android {
     namespace = "com.capcut.capsub_flutter"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    // Keep this in sync with the explicit NDK install in GitHub Actions.
+    ndkVersion = "28.2.13676358"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
