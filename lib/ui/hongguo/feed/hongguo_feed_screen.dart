@@ -377,6 +377,13 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     _settings!.hongguoFeedZhTag = _selectedZhTag;
   }
 
+  // Lưu vị trí video đang xem của từng tab để khôi phục mượt mà như TikTok
+  final Map<String, int> _tabCurrentIndices = {
+    'trending': 0,
+    'discover': 0,
+    'genre': 0,
+  };
+
   // Cache danh sách cho từng tab để chuyển qua lại mượt mà không phải tải lại
   final List<FeedDramaPageItem> _trendingFeedItems = [];
   final List<FeedDramaPageItem> _discoverFeedItems = [];
@@ -554,9 +561,17 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       }
     });
 
-    if (!_isDramaEpisodeMode &&
-        (_feedItems.isEmpty || targetFeedTab != _currentFeedTab)) {
-      await _switchFeedTab(targetFeedTab, forceReload: _feedItems.isEmpty);
+    final seen = settings.hongguoSeenSeriesIds.toSet();
+    final unseenCount = _feedItems
+        .where((it) => !seen.contains(it.detail.seriesId))
+        .length;
+    final shouldReload =
+        _feedItems.isEmpty ||
+        unseenCount < 6 ||
+        targetFeedTab != _currentFeedTab;
+
+    if (!_isDramaEpisodeMode && shouldReload) {
+      await _switchFeedTab(targetFeedTab, forceReload: true);
       return;
     }
     await _activatePage(_currentIndex);
@@ -579,10 +594,11 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     return FeedDramaPageItem(detail: detail, episodeIndex: randomEp, vid: vid);
   }
 
-  /// Ưu tiên hiển thị các phim chưa xem lên đầu, phim đã xem gần đây đẩy xuống sau
+  /// Ưu tiên hiển thị các phim chưa xem lên đầu, loại bỏ các phim đã xem để tránh lặp lại
   List<HongguoDramaItem> _prioritizeUnwatchedDramas(
-    List<HongguoDramaItem> dramas,
-  ) {
+    List<HongguoDramaItem> dramas, {
+    bool strictFilter = false,
+  }) {
     if (dramas.isEmpty) return dramas;
     final seen = _settings?.hongguoSeenSeriesIds.toSet() ?? <String>{};
     if (seen.isEmpty) return dramas;
@@ -598,7 +614,14 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       }
     }
 
-    return [...unwatched, ...watched];
+    // Nếu có đủ phim chưa xem (>= 6) hoặc yêu cầu lọc chặt chẽ, loại bỏ hoàn toàn phim đã xem
+    if (unwatched.length >= 6 || strictFilter) {
+      return unwatched;
+    }
+
+    final rng = math.Random();
+    final shuffledWatched = List<HongguoDramaItem>.from(watched)..shuffle(rng);
+    return [...unwatched, ...shuffledWatched];
   }
 
   void _initFeedData() {
@@ -1497,6 +1520,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
   void _onPageChanged(int index) {
     HapticFeedback.selectionClick();
     _currentIndex = index;
+    _tabCurrentIndices[_currentFeedTab] = index;
 
     // Dừng ngay lập tức âm thanh lồng tiếng của tập cũ và reset volume video gốc về 100%
     _ttsScheduler?.stop();
@@ -1522,22 +1546,48 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       List<HongguoDramaItem> dramas = [];
       if (_currentFeedTab == 'trending') {
         _trendingPage++;
-        final res = await _resolver.browseList(
-          category: 'rank/hot-drama',
-          page: _trendingPage,
-        );
+        HongguoBrowseResult res;
+        if (_trendingPage <= 3) {
+          res = await _resolver.browseList(
+            category: 'rank/hot-drama',
+            page: _trendingPage,
+          );
+        } else if (_trendingPage <= 6) {
+          res = await _resolver.browseList(
+            category: 'rank/hot-real-drama',
+            page: _trendingPage - 3,
+          );
+        } else {
+          final pool = [
+            'category/real-drama',
+            'category/comic-drama',
+            'category/ai-drama',
+          ];
+          final cat = pool[(_trendingPage % pool.length)];
+          final p = ((_trendingPage - 6) % 20) + 1;
+          res = await _resolver.browseList(category: cat, page: p);
+        }
         dramas = res.items;
       } else if (_currentFeedTab == 'genre') {
         _genrePage++;
-        final res = await _resolver.browseList(
+        var res = await _resolver.browseList(
           category: _selectedCategorySlug,
           genre: _selectedGenreSlug,
           page: _genrePage,
         );
+        if (res.items.isEmpty) {
+          _genrePage = math.Random().nextInt(15) + 1;
+          res = await _resolver.browseList(
+            category: _selectedCategorySlug,
+            genre: _selectedGenreSlug,
+            page: _genrePage,
+          );
+        }
         dramas = res.items;
       } else {
+        final existingSids = _feedItems.map((e) => e.detail.seriesId).toSet();
         dramas = await HongguoSimilarEngine.instance
-            .getPersonalizedDiscoverList();
+            .getPersonalizedDiscoverList(excludedSeriesIds: existingSids);
       }
 
       if (!mounted ||
@@ -1546,17 +1596,40 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         _isLoadingMore = false;
         return;
       }
+
+      final seenIds = _settings?.hongguoSeenSeriesIds.toSet() ?? <String>{};
       final newItems = <FeedDramaPageItem>[];
       final existingSids = _feedItems.map((e) => e.detail.seriesId).toSet();
+
+      // Ưu tiên nạp các phim chưa xem
       for (final drama in dramas) {
-        if (!existingSids.contains(drama.seriesId)) {
+        if (!existingSids.contains(drama.seriesId) &&
+            !seenIds.contains(drama.seriesId)) {
           newItems.add(_createFeedDramaItem(drama));
           existingSids.add(drama.seriesId);
         }
       }
+
+      // Fallback nếu toàn bộ phim vừa lấy về đều đã xem:
+      if (newItems.isEmpty) {
+        for (final drama in dramas) {
+          if (!existingSids.contains(drama.seriesId)) {
+            newItems.add(_createFeedDramaItem(drama));
+            existingSids.add(drama.seriesId);
+          }
+        }
+      }
+
       if (mounted) {
         setState(() {
           _feedItems.addAll(newItems);
+          if (_currentFeedTab == 'discover') {
+            _discoverFeedItems.addAll(newItems);
+          } else if (_currentFeedTab == 'trending') {
+            _trendingFeedItems.addAll(newItems);
+          } else if (_currentFeedTab == 'genre') {
+            _genreFeedItems.addAll(newItems);
+          }
           _isLoadingMore = false;
         });
       }
@@ -1575,7 +1648,8 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     _activationRequestId++;
     _isLoadingMore = false;
 
-    // Lưu lại danh sách của tab hiện tại trước khi chuyển
+    // 1. Lưu lại vị trí và danh sách của tab hiện tại trước khi chuyển
+    _tabCurrentIndices[_currentFeedTab] = _currentIndex;
     if (_currentFeedTab == 'discover') {
       _discoverFeedItems.clear();
       _discoverFeedItems.addAll(_feedItems);
@@ -1586,6 +1660,11 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       _genreFeedItems.clear();
       _genreFeedItems.addAll(_feedItems);
     }
+
+    // Tạm dừng video và TTS ở tab cũ ngay lập tức
+    unawaited(_activeController?.muteAndPause());
+    _ttsScheduler?.stop();
+    _ttsScheduler?.setDocument(null);
 
     setState(() {
       _currentFeedTab = tabKey;
@@ -1599,8 +1678,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       if (_trendingFeedItems.isNotEmpty && !forceReload) {
         targetItems = _trendingFeedItems;
       } else {
-        final lastPage = _settings?.hongguoFeedTrendingPage ?? 0;
-        _trendingPage = forceReload ? ((lastPage % 3) + 1) : 1;
+        _tabCurrentIndices['trending'] = 0;
+        final rng = math.Random();
+        _trendingPage = forceReload ? (rng.nextInt(3) + 1) : 1;
         _settings?.hongguoFeedTrendingPage = _trendingPage;
 
         try {
@@ -1624,6 +1704,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       if (_discoverFeedItems.isNotEmpty && !forceReload) {
         targetItems = _discoverFeedItems;
       } else {
+        _tabCurrentIndices['discover'] = 0;
         try {
           final list = await HongguoSimilarEngine.instance
               .getPersonalizedDiscoverList();
@@ -1643,8 +1724,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       if (_genreFeedItems.isNotEmpty && !forceReload) {
         targetItems = _genreFeedItems;
       } else {
-        final lastPage = _settings?.hongguoFeedGenrePage ?? 0;
-        _genrePage = forceReload ? ((lastPage % 12) + 1) : 1;
+        _tabCurrentIndices['genre'] = 0;
+        final rng = math.Random();
+        _genrePage = forceReload ? (rng.nextInt(15) + 1) : 1;
         _settings?.hongguoFeedGenrePage = _genrePage;
 
         try {
@@ -1684,13 +1766,16 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     if (targetItems.isNotEmpty) {
       _feedItems.clear();
       _feedItems.addAll(targetItems);
-      _currentIndex = 0;
+      final restoredIndex = forceReload
+          ? 0
+          : (_tabCurrentIndices[tabKey] ?? 0).clamp(0, targetItems.length - 1);
+      _currentIndex = restoredIndex;
       _preloadedStreamUrls.clear();
       _preloadingMediaKeys.clear();
       _dramaEpisodeSessionKey++;
-      _replacePageController(0);
+      _replacePageController(restoredIndex);
       _activePageIndex = -1;
-      await _activatePage(0);
+      await _activatePage(restoredIndex);
     } else {
       setState(() => _isLoadingVideo = false);
     }
@@ -1986,6 +2071,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
                           _selectedGenreLabel = tempLabel;
                           _genreFeedItems.clear();
                           _genrePage = 1;
+                          _tabCurrentIndices['genre'] = 0;
                         });
                         _saveFeedPreferences();
                         _switchFeedTab('genre', forceReload: true);
@@ -2409,7 +2495,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
             // 1. Vertical PageView lướt video dạng TikTok/Shorts
             PageView.builder(
               key: ValueKey(
-                'hongguo_page_view_${_isDramaEpisodeMode ? _currentDramaDetail?.seriesId : "discover"}_$_dramaEpisodeSessionKey',
+                'hongguo_page_view_${_isDramaEpisodeMode ? _currentDramaDetail?.seriesId : _currentFeedTab}_$_dramaEpisodeSessionKey',
               ),
               controller: _pageController,
               scrollDirection: Axis.vertical,

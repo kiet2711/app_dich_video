@@ -351,17 +351,36 @@ class HongguoResolver {
       'rank/hot-real-drama',
     ];
     final selectedCat = pool[rng.nextInt(pool.length)];
-    final maxPage = selectedCat.startsWith('rank/') ? 3 : 5;
+    final maxPage = selectedCat.startsWith('rank/')
+        ? 3
+        : (selectedCat == 'category/real-drama' ? 20 : 10);
     final randomPage = rng.nextInt(maxPage) + 1;
+    String pickedGenre = '';
+    if (selectedCat == 'category/real-drama') {
+      final genres = [
+        'wealthy-family',
+        'sweet-love',
+        'rebirth',
+        'counter-attack',
+        'urban',
+        'fantasy',
+        'historical',
+        'suspense',
+        'war-god',
+        'time-travel',
+        '',
+      ];
+      pickedGenre = genres[rng.nextInt(genres.length)];
+    }
 
     try {
       var res = await browseList(
         category: selectedCat,
-        genre: '',
+        genre: pickedGenre,
         page: randomPage,
       );
       if (res.items.isEmpty && randomPage > 1) {
-        res = await browseList(category: selectedCat, genre: '', page: 1);
+        res = await browseList(category: selectedCat, genre: pickedGenre, page: 1);
       }
       if (res.items.isNotEmpty) {
         final shuffled = List<HongguoDramaItem>.from(res.items)..shuffle(rng);

@@ -455,59 +455,92 @@ class HongguoSimilarEngine {
   }
 
   /// Tạo luồng Shorts đề xuất kết hợp tỷ lệ vàng:
-  /// - 60% Gu yêu thích của bạn
-  /// - 25% Siêu phẩm Hot Trend
-  /// - 15% Khám phá mới lạ
-  Future<List<HongguoDramaItem>> getPersonalizedDiscoverList() async {
+  /// - 50% Gu yêu thích của bạn
+  /// - 30% Siêu phẩm Hot Trend
+  /// - 20% Khám phá mới lạ & Deep Explore
+  Future<List<HongguoDramaItem>> getPersonalizedDiscoverList({
+    Set<String>? excludedSeriesIds,
+  }) async {
     final topTags = await getTopFavoriteTags();
     final rng = Random();
     final result = <HongguoDramaItem>[];
     final seenIds = <String>{};
 
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final historySeen = prefs.getStringList('hongguo_seen_series_ids') ?? [];
+      seenIds.addAll(historySeen);
+    } catch (_) {}
+    if (excludedSeriesIds != null) {
+      seenIds.addAll(excludedSeriesIds);
+    }
+
     void addUnique(List<HongguoDramaItem> list, int maxAdd) {
       var added = 0;
       for (final item in list) {
         if (added >= maxAdd) break;
-        if (seenIds.add(item.seriesId)) {
+        if (!seenIds.contains(item.seriesId)) {
+          seenIds.add(item.seriesId);
           result.add(item);
           added++;
         }
       }
     }
 
-    // 1. Lấy 60% từ Top Tag yêu thích (nếu người dùng đã có lịch sử)
+    // 1. Lấy từ Top Tag yêu thích (nếu người dùng đã có lịch sử)
     if (topTags.isNotEmpty) {
-      final pickedTag = topTags[rng.nextInt(topTags.length)];
-      try {
-        final tagList = await _resolver.search(pickedTag);
-        final shuffled = List<HongguoDramaItem>.from(tagList)..shuffle(rng);
-        addUnique(shuffled, 6);
-      } catch (_) {}
+      final sampleCount = min(2, topTags.length);
+      final pickedTags = List<String>.from(topTags)..shuffle(rng);
+      for (var i = 0; i < sampleCount; i++) {
+        try {
+          final tagList = await _resolver.search(pickedTags[i]);
+          final shuffled = List<HongguoDramaItem>.from(tagList)..shuffle(rng);
+          addUnique(shuffled, 5);
+        } catch (_) {}
+      }
     }
 
-    // 2. Lấy 25% từ Bảng xếp hạng Hot Trend
+    // 2. Lấy từ Bảng xếp hạng Hot Trend (luân phiên cả 2 bảng rank)
     try {
+      final rankCategories = ['rank/hot-drama', 'rank/hot-real-drama'];
+      final pickedCategory = rankCategories[rng.nextInt(rankCategories.length)];
       final hotRes = await _resolver.browseList(
-        category: 'rank/hot-drama',
-        page: rng.nextInt(2) + 1,
+        category: pickedCategory,
+        page: rng.nextInt(3) + 1,
       );
       final shuffledHot = List<HongguoDramaItem>.from(hotRes.items)..shuffle(rng);
-      addUnique(shuffledHot, 4);
+      addUnique(shuffledHot, 6);
     } catch (_) {}
 
-    // 3. Lấy 15% Khám phá thể loại mới ngẫu nhiên
+    // 3. Khám phá thể loại mới ngẫu nhiên (Deep Exploration)
     try {
       final exploreRes = await _resolver.getRandomRecommendations();
       final shuffledExp = List<HongguoDramaItem>.from(exploreRes.items)..shuffle(rng);
-      addUnique(shuffledExp, 3);
+      addUnique(shuffledExp, 8);
     } catch (_) {}
 
-    // Fallback nếu thiếu
-    if (result.isEmpty) {
-      final fallback = await _resolver.getRandomRecommendations();
-      addUnique(fallback.items, 10);
+    // 4. Nếu chưa đủ 15 phim mới, bổ sung thêm lượt quét ngẫu nhiên khác
+    if (result.length < 15) {
+      try {
+        final extraRes = await _resolver.getRandomRecommendations();
+        final shuffledExtra = List<HongguoDramaItem>.from(extraRes.items)..shuffle(rng);
+        addUnique(shuffledExtra, 15 - result.length);
+      } catch (_) {}
     }
 
+    // 5. Fallback tuyệt đối nếu lọc quá gắt (toàn bộ phim mới đều đã xem hết)
+    if (result.isEmpty) {
+      try {
+        final fallback = await _resolver.getRandomRecommendations();
+        final shuffled = List<HongguoDramaItem>.from(fallback.items)..shuffle(rng);
+        for (final item in shuffled) {
+          if (result.length >= 10) break;
+          result.add(item);
+        }
+      } catch (_) {}
+    }
+
+    result.shuffle(rng);
     return result;
   }
 }

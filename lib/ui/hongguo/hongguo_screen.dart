@@ -634,18 +634,10 @@ class _HongguoScreenState extends State<HongguoScreen> {
             ),
             tooltip: 'Lướt Shorts Khám Phá (Xem thử siêu tốc)',
             onPressed: () {
-              if (_dramas.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Đang tải danh sách phim, vui lòng đợi giây lát...')),
-                );
-                return;
-              }
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (ctx) => HongguoFeedScreen(
-                    discoverDramas: _dramas,
-                  ),
+                  builder: (ctx) => const HongguoFeedScreen(),
                 ),
               );
             },
