@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
@@ -64,7 +65,7 @@ class AppPlayerController extends ChangeNotifier {
   final List<StreamSubscription> _subscriptions = [];
   bool _isDisposed = false;
   bool get isDisposed => _isDisposed;
-  final Completer<void> _initCompleter = Completer<void>();
+  Completer<void> _initCompleter = Completer<void>();
 
   AppPlayerController({int? bufferSizeMb}) {
     final mb = (bufferSizeMb ?? 64).clamp(16, 256);
@@ -100,10 +101,7 @@ class AppPlayerController extends ChangeNotifier {
       player.stream.duration.listen((dur) {
         if (_isDisposed) return;
         if (dur > Duration.zero) {
-          _value = _value.copyWith(
-            duration: dur,
-            isInitialized: true,
-          );
+          _value = _value.copyWith(duration: dur, isInitialized: true);
           if (!_initCompleter.isCompleted) {
             _initCompleter.complete();
           }
@@ -151,10 +149,7 @@ class AppPlayerController extends ChangeNotifier {
     _subscriptions.add(
       player.stream.error.listen((err) {
         if (_isDisposed) return;
-        _value = _value.copyWith(
-          hasError: true,
-          errorDescription: err,
-        );
+        _value = _value.copyWith(hasError: true, errorDescription: err);
         notifyListeners();
       }),
     );
@@ -184,10 +179,7 @@ class AppPlayerController extends ChangeNotifier {
     for (var attempt = 1; attempt <= 3; attempt++) {
       try {
         await player.setAudioTrack(
-          AudioTrack.uri(
-            audioUrl,
-            title: 'Bilibili DASH audio',
-          ),
+          AudioTrack.uri(audioUrl, title: 'Bilibili DASH audio'),
         );
 
         if (!_hasRealAudioTrack(player.state.tracks)) {
@@ -208,7 +200,9 @@ class AppPlayerController extends ChangeNotifier {
   }
 
   /// Chờ cho đến khi media được nạp xong và xác định được độ dài / kích thước
-  Future<void> initialize({Duration timeout = const Duration(seconds: 25)}) async {
+  Future<void> initialize({
+    Duration timeout = const Duration(seconds: 25),
+  }) async {
     if (_value.isInitialized && _value.duration > Duration.zero) return;
     try {
       await _initCompleter.future.timeout(timeout);
@@ -224,7 +218,9 @@ class AppPlayerController extends ChangeNotifier {
       }
       // Ngược lại, nếu hết thời gian mà duration vẫn = 0 (do nghẽn tải metadata MP4 lớn hoặc link chết),
       // ném TimeoutException để caller biết mà tự động chuyển sang luồng dự phòng (DASH)
-      throw TimeoutException('Không tải được thông tin video trong thời gian quy định (${timeout.inSeconds}s)');
+      throw TimeoutException(
+        'Không tải được thông tin video trong thời gian quy định (${timeout.inSeconds}s)',
+      );
     }
   }
 
@@ -235,19 +231,15 @@ class AppPlayerController extends ChangeNotifier {
     Map<String, String> headers = const {},
   }) async {
     if (headers.isNotEmpty && player.platform is NativePlayer) {
-      final headerStr = headers.entries.map((e) => '${e.key}: ${e.value}').join('\r\n');
+      final headerStr = headers.entries
+          .map((e) => '${e.key}: ${e.value}')
+          .join('\r\n');
       final nativePlayer = player.platform as NativePlayer;
       await nativePlayer.setProperty('http-header-fields', headerStr);
     }
 
     // Nạp luồng video chính
-    await player.open(
-      Media(
-        videoUrl,
-        httpHeaders: headers,
-      ),
-      play: false,
-    );
+    await player.open(Media(videoUrl, httpHeaders: headers), play: false);
 
     // Chờ video load ổn định rồi mới ghép audio để tránh mpv reset mất track.
     if (audioUrl.isNotEmpty && player.platform is NativePlayer) {
@@ -271,12 +263,11 @@ class AppPlayerController extends ChangeNotifier {
       await player.pause();
     } catch (_) {}
 
-    _value = _value.copyWith(
-      position: Duration.zero,
-      isPlaying: false,
-      hasError: false,
-      errorDescription: null,
-    );
+    // Mỗi nguồn media phải có vòng đời khởi tạo riêng. Giữ lại duration,
+    // kích thước hoặc Completer của nguồn trước sẽ khiến UI hiển thị sai tỷ lệ,
+    // thanh tiến trình cũ và initialize() trả về quá sớm.
+    _initCompleter = Completer<void>();
+    _value = AppVideoPlayerValue(playbackSpeed: _value.playbackSpeed);
     notifyListeners();
 
     if (dashVideoUrl != null && dashVideoUrl.isNotEmpty) {
@@ -294,18 +285,29 @@ class AppPlayerController extends ChangeNotifier {
     }
 
     if (player.state.duration > Duration.zero) {
-      _value = _value.copyWith(duration: player.state.duration);
+      _value = _value.copyWith(
+        duration: player.state.duration,
+        isInitialized: true,
+      );
+      if (!_initCompleter.isCompleted) {
+        _initCompleter.complete();
+      }
+      notifyListeners();
     } else {
       unawaited(
         player.stream.duration
             .firstWhere((d) => d > Duration.zero)
             .timeout(const Duration(seconds: 4))
             .then((dur) {
-          if (!_isDisposed) {
-            _value = _value.copyWith(duration: dur);
-            notifyListeners();
-          }
-        }).catchError((_) {}),
+              if (!_isDisposed) {
+                _value = _value.copyWith(duration: dur, isInitialized: true);
+                if (!_initCompleter.isCompleted) {
+                  _initCompleter.complete();
+                }
+                notifyListeners();
+              }
+            })
+            .catchError((_) {}),
       );
     }
 
@@ -323,33 +325,26 @@ class AppPlayerController extends ChangeNotifier {
     if (player.platform is NativePlayer) {
       final nativePlayer = player.platform as NativePlayer;
       if (headers.isNotEmpty) {
-        final headerStr = headers.entries.map((e) => '${e.key}: ${e.value}').join('\r\n');
+        final headerStr = headers.entries
+            .map((e) => '${e.key}: ${e.value}')
+            .join('\r\n');
         await nativePlayer.setProperty('http-header-fields', headerStr);
       } else {
         await nativePlayer.setProperty('http-header-fields', '');
       }
     }
-    await player.open(
-      Media(url, httpHeaders: headers),
-      play: play,
-    );
+    await player.open(Media(url, httpHeaders: headers), play: play);
   }
 
   /// Phát file video cục bộ trên máy
   Future<void> openFile(File file, {bool play = false}) async {
     final uri = Uri.file(file.path);
-    await player.open(
-      Media(uri.toString()),
-      play: play,
-    );
+    await player.open(Media(uri.toString()), play: play);
   }
 
   /// Phát Content URI (Android)
   Future<void> openContentUri(Uri uri, {bool play = false}) async {
-    await player.open(
-      Media(uri.toString()),
-      play: play,
-    );
+    await player.open(Media(uri.toString()), play: play);
   }
 
   Future<void> play() async {
