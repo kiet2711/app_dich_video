@@ -777,7 +777,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
           currentPos > Duration.zero &&
           currentPos == _lastObservedPos) {
         _stallTickCount++;
-        if (_stallTickCount >= 8) {
+        if (_stallTickCount >= 4) {
           debugPrint(
             '[HongguoFeedScreen] ⚡ Phục hồi phát video tại $currentPos',
           );
@@ -871,16 +871,12 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     });
 
     try {
-      await previousController?.player.pause();
-      await preparedController.player.setAudioTrack(AudioTrack.auto());
-      await preparedController.setVolume(1.0);
-      if (_isAutoNextEpisode) {
-        await preparedController.player.setPlaylistMode(PlaylistMode.none);
-      } else {
-        await preparedController.player.setPlaylistMode(PlaylistMode.loop);
-      }
-      await preparedController.player.setRate(_playbackSpeed);
-      await preparedController.player.play();
+      await previousController?.muteAndPause();
+      await preparedController.unmuteAndPlay(
+        rate: _playbackSpeed,
+        playlistMode:
+            _isAutoNextEpisode ? PlaylistMode.none : PlaylistMode.loop,
+      );
 
       if (!_isActivationCurrent(
         requestId: requestId,
@@ -1342,7 +1338,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     if (existingController == null ||
         existingController.isDisposed ||
         identical(existingController, _activeController)) {
-      controller = AppPlayerController(bufferSizeMb: 16);
+      controller = AppPlayerController(bufferSizeMb: 16, silent: true);
     } else {
       controller = existingController;
     }
@@ -1399,14 +1395,15 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
                   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
             },
             play: false,
+            silentStandby: true,
           );
         } else {
-          await controller.switchMedia(file: File(streamUrl), play: false);
+          await controller.switchMedia(
+            file: File(streamUrl),
+            play: false,
+            silentStandby: true,
+          );
         }
-        // Player dự phòng chỉ cần giải mã hình. Tắt audio để việc mở N+1
-        // không giành audio focus và pause player đang xem trên Android.
-        await controller.player.setAudioTrack(AudioTrack.no());
-        await controller.setVolume(0.0);
         await controller.player.setRate(_playbackSpeed);
         return _isStandbyRequestCurrent(
           requestId: requestId,
@@ -1459,6 +1456,11 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       _disposeStandbyPlayer();
       return;
     }
+
+    // Đợi 600ms để video hiện tại bắt đầu phát và ổn định nhịp render/audio
+    // trước khi nạp ngầm tập N+1 trên standby player.
+    await Future<void>.delayed(const Duration(milliseconds: 600));
+    if (!isStillCurrent()) return;
 
     await _prepareStandbyPlayer(nextIndex);
     if (!isStillCurrent()) return;

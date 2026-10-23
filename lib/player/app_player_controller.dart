@@ -67,12 +67,13 @@ class AppPlayerController extends ChangeNotifier {
   bool get isDisposed => _isDisposed;
   Completer<void> _initCompleter = Completer<void>();
 
-  AppPlayerController({int? bufferSizeMb}) {
+  AppPlayerController({int? bufferSizeMb, bool silent = false}) {
     final mb = (bufferSizeMb ?? 64).clamp(16, 256);
     player = Player(
       configuration: PlayerConfiguration(
         title: 'CapSub MediaKit Player',
         bufferSize: mb * 1024 * 1024,
+        muted: silent,
       ),
     );
     videoController = VideoController(player);
@@ -257,6 +258,7 @@ class AppPlayerController extends ChangeNotifier {
     String? dashAudioUrl,
     Map<String, String> headers = const {},
     bool play = false,
+    bool silentStandby = false,
   }) async {
     if (_isDisposed) return;
     try {
@@ -270,6 +272,30 @@ class AppPlayerController extends ChangeNotifier {
     _value = AppVideoPlayerValue(playbackSpeed: _value.playbackSpeed);
     notifyListeners();
 
+    if (silentStandby) {
+      try {
+        await player.setVolume(0.0);
+        if (player.platform is NativePlayer) {
+          final native = player.platform as NativePlayer;
+          await native.setProperty('mute', 'yes');
+          await native.setProperty('aid', 'no');
+          await native.setProperty('demuxer-readahead-secs', '1');
+        }
+        await player.setAudioTrack(AudioTrack.no());
+      } catch (_) {}
+    } else {
+      try {
+        if (player.platform is NativePlayer) {
+          final native = player.platform as NativePlayer;
+          await native.setProperty('demuxer-readahead-secs', '10');
+          await native.setProperty('mute', 'no');
+          await native.setProperty('aid', 'auto');
+        }
+        await player.setAudioTrack(AudioTrack.auto());
+        await player.setVolume(100.0);
+      } catch (_) {}
+    }
+
     if (dashVideoUrl != null && dashVideoUrl.isNotEmpty) {
       await openBilibiliDash(
         videoUrl: dashVideoUrl,
@@ -282,6 +308,18 @@ class AppPlayerController extends ChangeNotifier {
       await openContentUri(contentUri, play: play);
     } else if (networkUrl != null && networkUrl.isNotEmpty) {
       await openNetwork(networkUrl, headers: headers, play: play);
+    }
+
+    if (silentStandby) {
+      try {
+        await player.setAudioTrack(AudioTrack.no());
+        await player.setVolume(0.0);
+        if (player.platform is NativePlayer) {
+          final native = player.platform as NativePlayer;
+          await native.setProperty('mute', 'yes');
+          await native.setProperty('aid', 'no');
+        }
+      } catch (_) {}
     }
 
     if (player.state.duration > Duration.zero) {
@@ -314,6 +352,45 @@ class AppPlayerController extends ChangeNotifier {
     if (play && !_isDisposed && !player.state.playing) {
       await player.play();
     }
+  }
+
+  /// Kích hoạt phát video có tiếng (thoát khỏi chế độ standby yên lặng)
+  Future<void> unmuteAndPlay({
+    double rate = 1.0,
+    PlaylistMode playlistMode = PlaylistMode.loop,
+  }) async {
+    if (_isDisposed) return;
+    try {
+      if (player.platform is NativePlayer) {
+        final native = player.platform as NativePlayer;
+        await native.setProperty('demuxer-readahead-secs', '10');
+        await native.setProperty('mute', 'no');
+        await native.setProperty('aid', 'auto');
+      }
+      await player.setAudioTrack(AudioTrack.auto());
+      await setVolume(1.0);
+      await player.setPlaylistMode(playlistMode);
+      await player.setRate(rate);
+      await player.play();
+    } catch (e) {
+      debugPrint('[AppPlayerController] unmuteAndPlay lỗi: $e');
+    }
+  }
+
+  /// Tạm dừng và tắt tiếng hoàn toàn (đưa vào trạng thái standby yên lặng)
+  Future<void> muteAndPause() async {
+    if (_isDisposed) return;
+    try {
+      await player.pause();
+      await setVolume(0.0);
+      if (player.platform is NativePlayer) {
+        final native = player.platform as NativePlayer;
+        await native.setProperty('mute', 'yes');
+        await native.setProperty('aid', 'no');
+        await native.setProperty('demuxer-readahead-secs', '1');
+      }
+      await player.setAudioTrack(AudioTrack.no());
+    } catch (_) {}
   }
 
   /// Phát video qua link mạng thông thường (MP4, HLS/M3U8)
