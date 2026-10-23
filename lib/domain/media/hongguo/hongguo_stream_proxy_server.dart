@@ -189,8 +189,22 @@ class HongguoStreamProxyServer {
     required String seriesId,
     required int episodeIndex,
   }) {
+    if (vid.isNotEmpty && _sessions.containsKey(vid)) {
+      return _sessions[vid]!;
+    }
+    for (final s in _sessions.values) {
+      if (s.seriesId.isNotEmpty &&
+          s.seriesId == seriesId &&
+          s.episodeIndex == episodeIndex) {
+        if (vid.isNotEmpty && vid != s.vid) {
+          _sessions[vid] = s;
+        }
+        return s;
+      }
+    }
+    final key = vid.isNotEmpty ? vid : seriesId;
     return _sessions.putIfAbsent(
-      vid,
+      key,
       () => _ProxyStreamSession(
         vid: vid,
         seriesId: seriesId,
@@ -311,7 +325,11 @@ class HongguoStreamProxyServer {
             debugPrint(
               '[HongguoStreamProxyServer] ✅ Đã chuyển vid từ seriesId sang vid thật: $realVid (tập ${session.episodeIndex})',
             );
+            final oldVid = session.vid;
             session.vid = realVid;
+            if (oldVid != realVid) {
+              _sessions[realVid] = session;
+            }
           }
         } catch (e) {
           debugPrint(
@@ -877,13 +895,21 @@ class HongguoStreamProxyServer {
     await stream.pipe(request.response);
   }
 
-  /// Dọn dẹp các session cũ để giải phóng RAM (Chỉ giữ lại activeVids)
+  /// Dọn dẹp các session cũ để giải phóng RAM (Chỉ giữ lại activeVids / activeSids)
   void maintainSessions(List<String> activeVids) {
-    final activeSet = activeVids.toSet();
+    final activeSet = activeVids.where((v) => v.isNotEmpty).toSet();
+    if (activeSet.isEmpty) {
+      _sessions.clear();
+      return;
+    }
     final toRemove = <String>[];
 
     for (final entry in _sessions.entries) {
-      if (!activeSet.contains(entry.key)) {
+      final session = entry.value;
+      final isRetained = activeSet.contains(entry.key) ||
+          activeSet.contains(session.vid) ||
+          activeSet.contains(session.seriesId);
+      if (!isRetained) {
         toRemove.add(entry.key);
       }
     }

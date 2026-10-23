@@ -322,6 +322,8 @@ class AppPlayerController extends ChangeNotifier {
       } catch (_) {}
     }
 
+    if (_isDisposed) return;
+
     if (player.state.duration > Duration.zero) {
       _value = _value.copyWith(
         duration: player.state.duration,

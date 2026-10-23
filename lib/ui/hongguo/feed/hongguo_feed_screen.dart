@@ -523,6 +523,14 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     }
   }
 
+  void _replacePageController(int initialPage) {
+    final oldController = _pageController;
+    _pageController = PageController(initialPage: initialPage);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      oldController.dispose();
+    });
+  }
+
   Future<void> _bootstrapFeed() async {
     await HongguoStreamProxyServer.instance.ensureStarted();
     final settings = await SettingsRepository.getInstance();
@@ -1471,17 +1479,19 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     }
   }
 
-  /// Duy trì previous/current/next trong Proxy Cache để giới hạn RAM.
+  /// Duy trì previous/current/next/secondNext trong Proxy Cache để giới hạn RAM.
   void _maintainProxyMemory(int currentIndex) {
     if (currentIndex < 0 || currentIndex >= _feedItems.length) return;
-    final activeVids = <String>[
-      // 1 tập đang xem
-      _feedItems[currentIndex].vid,
-      if (currentIndex - 1 >= 0) _feedItems[currentIndex - 1].vid,
-      if (currentIndex + 1 < _feedItems.length)
-        _feedItems[currentIndex + 1].vid,
-    ];
-    HongguoStreamProxyServer.instance.maintainSessions(activeVids);
+    final activeKeys = <String>[];
+    for (var offset = -1; offset <= 2; offset++) {
+      final idx = currentIndex + offset;
+      if (idx >= 0 && idx < _feedItems.length) {
+        final it = _feedItems[idx];
+        if (it.vid.isNotEmpty) activeKeys.add(it.vid);
+        if (it.detail.seriesId.isNotEmpty) activeKeys.add(it.detail.seriesId);
+      }
+    }
+    HongguoStreamProxyServer.instance.maintainSessions(activeKeys);
   }
 
   void _onPageChanged(int index) {
@@ -1678,8 +1688,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       _preloadedStreamUrls.clear();
       _preloadingMediaKeys.clear();
       _dramaEpisodeSessionKey++;
-      _pageController.dispose();
-      _pageController = PageController(initialPage: 0);
+      _replacePageController(0);
       _activePageIndex = -1;
       await _activatePage(0);
     } else {
@@ -2153,8 +2162,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       _preloadingMediaKeys.clear();
       _dramaEpisodeSessionKey++;
     });
-    _pageController.dispose();
-    _pageController = PageController(initialPage: 0);
+    _replacePageController(0);
     _activePageIndex = -1;
     await _activatePage(0);
 
@@ -2306,8 +2314,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     final maxIdx = totalCount > 0 ? totalCount - 1 : 0;
     final int targetIdx = (targetEpisode - 1).clamp(0, maxIdx).toInt();
 
-    _pageController.dispose();
-    _pageController = PageController(initialPage: targetIdx);
+    _replacePageController(targetIdx);
     _activePageIndex = -1;
 
     setState(() {
@@ -2347,8 +2354,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         _preloadingMediaKeys.clear();
         _dramaEpisodeSessionKey++;
       });
-      _pageController.dispose();
-      _pageController = PageController(initialPage: _currentIndex);
+      _replacePageController(_currentIndex);
       _activePageIndex = -1;
       _activatePage(_currentIndex);
     } else {
@@ -2378,7 +2384,6 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
             if (targetPage != _currentIndex) {
               _currentIndex = targetPage;
               _pageController.jumpToPage(targetPage);
-              await _activatePage(targetPage);
             }
           } else {
             // Đang ở Discover Feed -> chuyển sang Drama Episode Mode của phim này với toàn bộ tập
