@@ -382,13 +382,21 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
   final List<FeedDramaPageItem> _discoverFeedItems = [];
   final List<FeedDramaPageItem> _genreFeedItems = [];
 
-  // Single Player Controller duy nhất cho hiệu năng tối đa
+  // Hai player luân phiên: player hiện tại phát, player dự phòng mở sẵn trang kế.
+  // Mỗi trang có texture riêng nên kéo giữ giữa hai trang không phải đổi media
+  // trên cùng một surface.
   AppPlayerController? _activeController;
+  String? _activeMediaKey;
+  AppPlayerController? _standbyController;
+  String? _standbyMediaKey;
+  bool _standbyReady = false;
+  int _standbyRequestId = 0;
   int? _activePageIndex;
   int _dramaEpisodeSessionKey = 0;
   int _feedGeneration = 0;
   int _activationRequestId = 0;
   Future<void> _playerSwitchTail = Future<void>.value();
+  Future<void> _standbySwitchTail = Future<void>.value();
 
   // Cache theo danh tính media, không theo index vì index 0 có thể thuộc nhiều tab.
   final Map<String, String> _preloadedStreamUrls = {};
@@ -501,6 +509,18 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         _currentIndex >= 0 &&
         _currentIndex < _feedItems.length &&
         _mediaKey(_feedItems[_currentIndex]) == mediaKey;
+  }
+
+  void _disposeStandbyPlayer() {
+    _standbyRequestId++;
+    _standbySwitchTail = Future<void>.value();
+    final controller = _standbyController;
+    _standbyController = null;
+    _standbyMediaKey = null;
+    _standbyReady = false;
+    if (controller != null && !identical(controller, _activeController)) {
+      controller.dispose();
+    }
   }
 
   Future<void> _bootstrapFeed() async {
@@ -619,6 +639,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     HongguoDramaDetail detail, {
     int initialEpisode = 1,
   }) {
+    _disposeStandbyPlayer();
     _feedGeneration++;
     _activationRequestId++;
     _feedItems.clear();
@@ -704,6 +725,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
   void dispose() {
     _activationRequestId++;
     _feedGeneration++;
+    _standbyRequestId++;
     _completedSub?.cancel();
     _stallWatchdog?.cancel();
     _loadingIndicatorTimer?.cancel();
@@ -712,6 +734,12 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     _pageController.dispose();
     _ttsScheduler?.dispose();
     _ttsScheduler = null;
+    final standbyController = _standbyController;
+    _standbyController = null;
+    if (standbyController != null &&
+        !identical(standbyController, _activeController)) {
+      standbyController.dispose();
+    }
     _activeController?.dispose();
     _activeController = null;
     _preloadedStreamUrls.clear();
@@ -764,10 +792,86 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
   }
 
   /// Kích hoạt và phát video cho trang được chọn
+  void _afterSuccessfulActivation(int index) {
+    unawaited(_checkHistoryForEpisode(index));
+
+    if (!_isDramaEpisodeMode && index >= 0 && index < _feedItems.length) {
+      _settings?.addHongguoSeenSeriesId(_feedItems[index].detail.seriesId);
+    }
+
+    _maintainProxyMemory(index);
+    if (_isAutoNextEpisode) {
+      _triggerPreTranslationQueue();
+    }
+  }
+
+  Future<bool> _activatePreparedStandby({
+    required int index,
+    required int requestId,
+    required int feedGeneration,
+    required String mediaKey,
+  }) async {
+    final preparedController = _standbyController;
+    if (!_standbyReady ||
+        _standbyMediaKey != mediaKey ||
+        preparedController == null ||
+        preparedController.isDisposed) {
+      return false;
+    }
+
+    final previousController = _activeController;
+    _standbyRequestId++;
+    _activeController = preparedController;
+    _activeMediaKey = mediaKey;
+    _standbyController = previousController;
+    _standbyMediaKey = null;
+    _standbyReady = false;
+    _listenToPlayerStreams();
+
+    _loadingIndicatorTimer?.cancel();
+    setState(() {
+      _isLoadingVideo = false;
+      _showLoadingIndicator = false;
+      _errorMessage = null;
+      _isManuallyPaused = false;
+      _isDescriptionExpanded = false;
+    });
+
+    // Tái sử dụng player vừa rời màn hình để mở N+1 ngay khi trang đổi.
+    unawaited(_preloadAheadEpisodes(index));
+
+    try {
+      await previousController?.player.pause();
+      if (_isAutoNextEpisode) {
+        await preparedController.player.setPlaylistMode(PlaylistMode.none);
+      } else {
+        await preparedController.player.setPlaylistMode(PlaylistMode.loop);
+      }
+      await preparedController.player.setRate(_playbackSpeed);
+      await preparedController.player.play();
+
+      if (!_isActivationCurrent(
+        requestId: requestId,
+        feedGeneration: feedGeneration,
+        mediaKey: mediaKey,
+      )) {
+        return true;
+      }
+
+      _afterSuccessfulActivation(index);
+      return true;
+    } catch (e) {
+      debugPrint('[HongguoFeedScreen] Lỗi đổi sang player đã nạp sẵn: $e');
+      return false;
+    }
+  }
+
   Future<void> _activatePage(int index) async {
     if (!mounted || index < 0 || index >= _feedItems.length) return;
 
+    final requestedMediaKey = _mediaKey(_feedItems[index]);
     if (_activePageIndex == index &&
+        _activeMediaKey == requestedMediaKey &&
         _activeController != null &&
         _activeController!.value.isPlaying) {
       return;
@@ -775,13 +879,29 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
     final requestId = ++_activationRequestId;
     final feedGeneration = _feedGeneration;
-    final mediaKey = _mediaKey(_feedItems[index]);
+    final mediaKey = requestedMediaKey;
     _activePageIndex = index;
     _loadingIndicatorTimer?.cancel();
     _currentPos = Duration.zero;
     _currentDur = Duration.zero;
     _isPlayerBuffering = false;
     _playbackRevision.value++;
+
+    if (await _activatePreparedStandby(
+      index: index,
+      requestId: requestId,
+      feedGeneration: feedGeneration,
+      mediaKey: mediaKey,
+    )) {
+      return;
+    }
+
+    // Nếu người dùng đến trang khi player dự phòng vẫn đang mở, hủy bản mở
+    // dở để active player không phải cạnh tranh decoder/network cho cùng video.
+    if (_standbyMediaKey == mediaKey) {
+      _disposeStandbyPlayer();
+    }
+
     setState(() {
       _isLoadingVideo = true;
       _showLoadingIndicator = false;
@@ -875,6 +995,11 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         _listenToPlayerStreams();
       }
 
+      // Gắn texture vào trang mới ngay trước khi mở media. Trạng thái loading
+      // không che surface nên frame đầu hiện ngay khi player giải mã xong.
+      _activeMediaKey = mediaKey;
+      setState(() {});
+
       // 3. Tuần tự hóa thao tác open trên player. Request cũ đang open sẽ kết
       // thúc trước, nhưng chỉ request mới nhất được phép open/phát tiếp theo.
       final switchFuture = _playerSwitchTail.then<bool>((_) async {
@@ -954,14 +1079,6 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       }
 
       // Kiểm tra tập hiện tại đã có phụ đề trong RAM hoặc Lịch sử chưa
-      _checkHistoryForEpisode(index);
-
-      // Ghi nhận phim đã xem vào bộ nhớ để các lần lướt sau luôn ưu tiên phim mới
-      if (!_isDramaEpisodeMode && index >= 0 && index < _feedItems.length) {
-        final curItem = _feedItems[index];
-        _settings?.addHongguoSeenSeriesId(curItem.detail.seriesId);
-      }
-
       if (_isActivationCurrent(
         requestId: requestId,
         feedGeneration: feedGeneration,
@@ -974,14 +1091,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         });
       }
 
-      // 4. Nạp trước 4 tập tiếp theo (N+1, N+2, N+3, N+4) và duy trì 7 tập trong Proxy Cache
-      _preloadAheadEpisodes(index);
-      _maintainProxyMemory(index);
-
-      // Kích hoạt dịch trước ngầm nếu bật tự chuyển tập
-      if (_isAutoNextEpisode) {
-        _triggerPreTranslationQueue();
-      }
+      // Mở sẵn N+1 trên player dự phòng và chuẩn bị metadata N+2.
+      _afterSuccessfulActivation(index);
+      unawaited(_preloadAheadEpisodes(index));
     } catch (e) {
       debugPrint('[HongguoFeedScreen] Lỗi kích hoạt tập $index: $e');
       if (_isActivationCurrent(
@@ -1092,8 +1204,23 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     if (!mounted || nextIndex < 0 || nextIndex >= _feedItems.length) return;
     final feedGeneration = _feedGeneration;
     final initialMediaKey = _mediaKey(_feedItems[nextIndex]);
-    if (_preloadedStreamUrls.containsKey(initialMediaKey) ||
-        _preloadingMediaKeys.contains(initialMediaKey)) {
+    if (_preloadingMediaKeys.contains(initialMediaKey)) {
+      return;
+    }
+
+    final cachedUrl = _preloadedStreamUrls[initialMediaKey];
+    if (cachedUrl != null && cachedUrl.isNotEmpty) {
+      final cachedItem = _feedItems[nextIndex];
+      if (warmStream &&
+          cachedUrl.contains('127.0.0.1') &&
+          cachedItem.vid.isNotEmpty &&
+          cachedItem.vid != cachedItem.detail.seriesId) {
+        await HongguoStreamProxyServer.instance.preloadStream(
+          vid: cachedItem.vid,
+          seriesId: cachedItem.detail.seriesId,
+          episodeIndex: cachedItem.episodeIndex,
+        );
+      }
       return;
     }
 
@@ -1151,21 +1278,157 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     }
   }
 
-  /// N+1 được warm chunk đầu; N+2 chỉ chuẩn bị URL/metadata danh sách.
+  bool _isStandbyRequestCurrent({
+    required int requestId,
+    required int feedGeneration,
+    required int index,
+    required String mediaKey,
+    required AppPlayerController controller,
+  }) {
+    return mounted &&
+        requestId == _standbyRequestId &&
+        feedGeneration == _feedGeneration &&
+        index >= 0 &&
+        index < _feedItems.length &&
+        _mediaKey(_feedItems[index]) == mediaKey &&
+        _standbyMediaKey == mediaKey &&
+        identical(_standbyController, controller) &&
+        !identical(_activeController, controller);
+  }
+
+  Future<void> _prepareStandbyPlayer(int index) async {
+    if (!mounted || index < 0 || index >= _feedItems.length) return;
+
+    final feedGeneration = _feedGeneration;
+    final mediaKey = _mediaKey(_feedItems[index]);
+    if (_activeMediaKey == mediaKey || _standbyMediaKey == mediaKey) return;
+
+    final requestId = ++_standbyRequestId;
+    final existingController = _standbyController;
+    final AppPlayerController controller;
+    if (existingController == null ||
+        existingController.isDisposed ||
+        identical(existingController, _activeController)) {
+      controller = AppPlayerController(bufferSizeMb: 16);
+    } else {
+      controller = existingController;
+    }
+
+    _standbyController = controller;
+    _standbyMediaKey = mediaKey;
+    _standbyReady = false;
+    setState(() {});
+
+    try {
+      await _preloadNextPage(index, warmStream: true);
+      if (!_isStandbyRequestCurrent(
+        requestId: requestId,
+        feedGeneration: feedGeneration,
+        index: index,
+        mediaKey: mediaKey,
+        controller: controller,
+      )) {
+        return;
+      }
+
+      final item = _feedItems[index];
+      var streamUrl = _preloadedStreamUrls[mediaKey] ?? '';
+      if (streamUrl.isEmpty) {
+        streamUrl = await _resolveEpisodeStreamUrl(item);
+        if (!_isStandbyRequestCurrent(
+          requestId: requestId,
+          feedGeneration: feedGeneration,
+          index: index,
+          mediaKey: mediaKey,
+          controller: controller,
+        )) {
+          return;
+        }
+        _preloadedStreamUrls[mediaKey] = streamUrl;
+      }
+
+      final switchFuture = _standbySwitchTail.then<bool>((_) async {
+        if (!_isStandbyRequestCurrent(
+          requestId: requestId,
+          feedGeneration: feedGeneration,
+          index: index,
+          mediaKey: mediaKey,
+          controller: controller,
+        )) {
+          return false;
+        }
+        if (streamUrl.startsWith('http://') ||
+            streamUrl.startsWith('https://')) {
+          await controller.switchMedia(
+            networkUrl: streamUrl,
+            headers: const {
+              'User-Agent':
+                  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
+            },
+            play: false,
+          );
+        } else {
+          await controller.switchMedia(file: File(streamUrl), play: false);
+        }
+        await controller.player.setRate(_playbackSpeed);
+        await controller.player.pause();
+        return _isStandbyRequestCurrent(
+          requestId: requestId,
+          feedGeneration: feedGeneration,
+          index: index,
+          mediaKey: mediaKey,
+          controller: controller,
+        );
+      });
+      _standbySwitchTail = switchFuture.then<void>(
+        (_) {},
+        onError: (Object _, StackTrace _) {},
+      );
+      final switched = await switchFuture;
+      if (!switched) return;
+
+      _standbyReady = true;
+      setState(() {});
+    } catch (e) {
+      if (_isStandbyRequestCurrent(
+        requestId: requestId,
+        feedGeneration: feedGeneration,
+        index: index,
+        mediaKey: mediaKey,
+        controller: controller,
+      )) {
+        debugPrint('[HongguoFeedScreen] Không thể nạp player kế tiếp: $e');
+        _standbyReady = false;
+      }
+    }
+  }
+
+  /// N+1 được mở sẵn trên player dự phòng; N+2 chuẩn bị URL/metadata.
   Future<void> _preloadAheadEpisodes(int currentIndex) async {
     final feedGeneration = _feedGeneration;
     final currentMediaKey = _mediaKey(_feedItems[currentIndex]);
-    for (var i = 1; i <= 2; i++) {
-      final targetIndex = currentIndex + i;
-      if (!mounted ||
-          feedGeneration != _feedGeneration ||
-          _activePageIndex != currentIndex ||
-          currentIndex >= _feedItems.length ||
-          _mediaKey(_feedItems[currentIndex]) != currentMediaKey) {
-        break;
-      }
-      if (targetIndex >= _feedItems.length) break;
-      await _preloadNextPage(targetIndex, warmStream: i == 1);
+    bool isStillCurrent() {
+      return mounted &&
+          feedGeneration == _feedGeneration &&
+          _activePageIndex == currentIndex &&
+          currentIndex >= 0 &&
+          currentIndex < _feedItems.length &&
+          _mediaKey(_feedItems[currentIndex]) == currentMediaKey;
+    }
+
+    final nextIndex = currentIndex + 1;
+    if (!isStillCurrent()) return;
+    if (nextIndex >= _feedItems.length) {
+      _disposeStandbyPlayer();
+      return;
+    }
+
+    await _prepareStandbyPlayer(nextIndex);
+    if (!isStillCurrent()) return;
+
+    final secondNextIndex = currentIndex + 2;
+    if (secondNextIndex < _feedItems.length) {
+      await _preloadNextPage(secondNextIndex, warmStream: false);
     }
   }
 
@@ -1258,6 +1521,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     if (_currentFeedTab == tabKey && !forceReload && _feedItems.isNotEmpty) {
       return;
     }
+    _disposeStandbyPlayer();
     final switchGeneration = ++_feedGeneration;
     _activationRequestId++;
     _isLoadingMore = false;
@@ -1838,6 +2102,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     }
     if (items.isEmpty) return;
 
+    _disposeStandbyPlayer();
     setState(() {
       _feedGeneration++;
       _activationRequestId++;
@@ -2030,6 +2295,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
     if (_isDramaEpisodeMode && _savedDiscoverItems.isNotEmpty) {
       // Quay lại Discover Feed
+      _disposeStandbyPlayer();
       setState(() {
         _feedGeneration++;
         _activationRequestId++;
@@ -2241,47 +2507,35 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
   /// Giao diện cho từng trang video trong PageView
   Widget _buildFeedPageItem(FeedDramaPageItem item, bool isCurrent) {
+    final itemMediaKey = _mediaKey(item);
+    final pageController = _activeMediaKey == itemMediaKey
+        ? _activeController
+        : (_standbyReady && _standbyMediaKey == itemMediaKey
+              ? _standbyController
+              : null);
     final videoAspect =
-        (_activeController != null &&
-            !_isLoadingVideo &&
-            _activeController!.value.isInitialized &&
-            _activeController!.value.aspectRatio > 0)
-        ? _activeController!.value.aspectRatio
+        (pageController != null &&
+            pageController.value.isInitialized &&
+            pageController.value.aspectRatio > 0)
+        ? pageController.value.aspectRatio
         : (9 / 16);
     final isLandscapeVideo = videoAspect > 1.05;
 
     return Stack(
       fit: StackFit.expand,
       children: [
-        // Poster là lớp chuyển tiếp; không chặn việc mở video và được ImageCache tái sử dụng.
         Container(color: Colors.black),
-        if (item.detail.cover.trim().isNotEmpty)
-          Image.network(
-            item.detail.cover,
-            fit: BoxFit.cover,
-            cacheWidth:
-                (MediaQuery.sizeOf(context).width *
-                        MediaQuery.devicePixelRatioOf(context))
-                    .round(),
-            filterQuality: FilterQuality.low,
-            gaplessPlayback: true,
-            errorBuilder: (_, _, _) => const SizedBox.shrink(),
-          ),
-        Container(color: Colors.black.withValues(alpha: 0.28)),
 
         // Video Player
-        if (isCurrent &&
-            !_isLoadingVideo &&
-            _activeController != null &&
-            _errorMessage == null)
+        if (pageController != null && (!isCurrent || _errorMessage == null))
           Center(
             child: AspectRatio(
               aspectRatio: videoAspect,
               child: Video(
                 key: ValueKey(
-                  'feed_active_player_${_activeController.hashCode}',
+                  'feed_player_${pageController.hashCode}_$itemMediaKey',
                 ),
-                controller: _activeController!.videoController,
+                controller: pageController.videoController,
                 controls: NoVideoControls,
               ),
             ),
