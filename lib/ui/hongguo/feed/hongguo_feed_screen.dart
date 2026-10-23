@@ -805,6 +805,39 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     }
   }
 
+  Future<void> _restoreActivePlaybackAfterStandbyOpen(
+    AppPlayerController standbyController,
+  ) async {
+    // Kiểm tra ngay và kiểm tra lại sau một nhịp vì media_kit cập nhật trạng thái
+    // playing bất đồng bộ sau lệnh pause/audio-focus trên một số máy Android.
+    for (var attempt = 0; attempt < 2; attempt++) {
+      if (attempt > 0) {
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+      }
+
+      final activeController = _activeController;
+      if (!mounted ||
+          activeController == null ||
+          identical(activeController, standbyController) ||
+          _isManuallyPaused ||
+          _isLoadingVideo ||
+          WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed ||
+          _activePageIndex != _currentIndex ||
+          _currentIndex < 0 ||
+          _currentIndex >= _feedItems.length ||
+          _activeMediaKey != _mediaKey(_feedItems[_currentIndex])) {
+        return;
+      }
+
+      if (!activeController.player.state.playing) {
+        debugPrint(
+          '[HongguoFeedScreen] Khôi phục active player sau khi mở standby',
+        );
+        await activeController.player.play();
+      }
+    }
+  }
+
   Future<bool> _activatePreparedStandby({
     required int index,
     required int requestId,
@@ -837,11 +870,10 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       _isDescriptionExpanded = false;
     });
 
-    // Tái sử dụng player vừa rời màn hình để mở N+1 ngay khi trang đổi.
-    unawaited(_preloadAheadEpisodes(index));
-
     try {
       await previousController?.player.pause();
+      await preparedController.player.setAudioTrack(AudioTrack.auto());
+      await preparedController.setVolume(1.0);
       if (_isAutoNextEpisode) {
         await preparedController.player.setPlaylistMode(PlaylistMode.none);
       } else {
@@ -859,6 +891,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       }
 
       _afterSuccessfulActivation(index);
+      unawaited(_preloadAheadEpisodes(index));
       return true;
     } catch (e) {
       debugPrint('[HongguoFeedScreen] Lỗi đổi sang player đã nạp sẵn: $e');
@@ -1370,8 +1403,11 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         } else {
           await controller.switchMedia(file: File(streamUrl), play: false);
         }
+        // Player dự phòng chỉ cần giải mã hình. Tắt audio để việc mở N+1
+        // không giành audio focus và pause player đang xem trên Android.
+        await controller.player.setAudioTrack(AudioTrack.no());
+        await controller.setVolume(0.0);
         await controller.player.setRate(_playbackSpeed);
-        await controller.player.pause();
         return _isStandbyRequestCurrent(
           requestId: requestId,
           feedGeneration: feedGeneration,
@@ -1389,6 +1425,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
       _standbyReady = true;
       setState(() {});
+      await _restoreActivePlaybackAfterStandbyOpen(controller);
     } catch (e) {
       if (_isStandbyRequestCurrent(
         requestId: requestId,
