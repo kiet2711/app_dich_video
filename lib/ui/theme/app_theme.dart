@@ -1,4 +1,5 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
+import 'package:flutter/material.dart';
 
 class AppColors {
   static const darkBackground = Color(0xFF0F1015);
@@ -34,6 +35,15 @@ ThemeData buildAppTheme() {
         borderRadius: BorderRadius.circular(16),
         side: const BorderSide(color: AppColors.cardBorder, width: 1),
       ),
+    ),
+    pageTransitionsTheme: const PageTransitionsTheme(
+      builders: {
+        TargetPlatform.android: CupertinoPageTransitionsBuilder(),
+        TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+        TargetPlatform.macOS: CupertinoPageTransitionsBuilder(),
+        TargetPlatform.windows: CupertinoPageTransitionsBuilder(),
+        TargetPlatform.linux: CupertinoPageTransitionsBuilder(),
+      },
     ),
     useMaterial3: true,
   );

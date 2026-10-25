@@ -462,6 +462,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
   // Chế độ ẩn toàn bộ giao diện để xem không bị che (Clean View Mode)
   bool _isCleanMode = false;
+  double _edgeSwipeDistance = 0.0;
 
   // Quản lý mở rộng mô tả phim
   bool _isDescriptionExpanded = false;
@@ -2685,6 +2686,31 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
                 child: ValueListenableBuilder<int>(
                   valueListenable: _playbackRevision,
                   builder: (_, _, _) => _buildProgressScrubber(),
+                ),
+              ),
+
+            // 7. Cử chỉ vuốt mép trái sang phải để Back (khi xem trọn bộ hoặc clean mode)
+            if ((_isDramaEpisodeMode || _isCleanMode) && !_isLandscapeFullscreen)
+              Positioned(
+                left: 0,
+                top: 0,
+                bottom: 60,
+                width: 36,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onHorizontalDragStart: (_) {
+                    _edgeSwipeDistance = 0.0;
+                  },
+                  onHorizontalDragUpdate: (details) {
+                    _edgeSwipeDistance += details.primaryDelta ?? 0.0;
+                  },
+                  onHorizontalDragEnd: (details) {
+                    final velocity = details.primaryVelocity ?? 0.0;
+                    if (velocity > 200 || _edgeSwipeDistance > 60) {
+                      _handleBackNavigation();
+                    }
+                    _edgeSwipeDistance = 0.0;
+                  },
                 ),
               ),
           ],
