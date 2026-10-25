@@ -161,14 +161,115 @@ class HongguoStreamProxyServer {
     return 'http://127.0.0.1:$_port/stream?vid=$qVid&sid=$qSid&ep=$qEp';
   }
 
+  Directory? _chunkCacheDir;
+  Future<Directory> _getChunkDir() async {
+    if (_chunkCacheDir != null && _chunkCacheDir!.existsSync()) {
+      return _chunkCacheDir!;
+    }
+    final baseDir = await VideoCacheManager.getCacheDirectory();
+    final dir = Directory('${baseDir.path}${Platform.pathSeparator}chunks');
+    if (!dir.existsSync()) {
+      await dir.create(recursive: true);
+    }
+    _chunkCacheDir = dir;
+    return dir;
+  }
+
+  String _getChunkBaseName(_ProxyStreamSession session) {
+    if (session.seriesId.isNotEmpty && session.episodeIndex > 0) {
+      final cleanSid = session.seriesId.replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '');
+      return 'hg_${cleanSid}_ep${session.episodeIndex}';
+    }
+    final cleanVid = session.vid.replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '');
+    return 'vid_$cleanVid';
+  }
+
+  File _getChunkFile(Directory chunkDir, _ProxyStreamSession session, int chunkIndex) {
+    final base = _getChunkBaseName(session);
+    return File('${chunkDir.path}${Platform.pathSeparator}${base}_c$chunkIndex.part');
+  }
+
+  File _getMetaFile(Directory chunkDir, _ProxyStreamSession session) {
+    final base = _getChunkBaseName(session);
+    return File('${chunkDir.path}${Platform.pathSeparator}$base.meta');
+  }
+
+  void _saveChunkToDiskAsync(File file, Uint8List data) {
+    unawaited(() async {
+      try {
+        if (file.existsSync() && file.lengthSync() == data.length) return;
+        final parent = file.parent;
+        if (!parent.existsSync()) {
+          await parent.create(recursive: true);
+        }
+        final tmp = File('${file.path}.tmp_${DateTime.now().microsecondsSinceEpoch}');
+        await tmp.writeAsBytes(data, flush: true);
+        if (await tmp.exists() && await tmp.length() == data.length) {
+          await tmp.rename(file.path);
+        }
+      } catch (_) {}
+    }());
+  }
+
+  void _checkAndStitchCompleteVideo(_ProxyStreamSession session) {
+    unawaited(() async {
+      final total = session.totalLength;
+      if (total == null || total <= 0) return;
+      if (session.seriesId.isEmpty || session.episodeIndex <= 0) return;
+
+      try {
+        final chunkDir = await _getChunkDir();
+        final numChunks = (total + chunkSize - 1) ~/ chunkSize;
+        final chunkFiles = <File>[];
+        var totalChunkBytes = 0;
+
+        for (var i = 0; i < numChunks; i++) {
+          final f = _getChunkFile(chunkDir, session, i);
+          if (!f.existsSync() || f.lengthSync() <= 0) return;
+          chunkFiles.add(f);
+          totalChunkBytes += f.lengthSync();
+        }
+
+        if (totalChunkBytes < total) return;
+
+        final cleanSid = session.seriesId.replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '');
+        final targetFile = File('${chunkDir.parent.path}${Platform.pathSeparator}hg_${cleanSid}_ep${session.episodeIndex}.mp4');
+        final tmpFile = File('${targetFile.path}.tmp');
+
+        final sink = tmpFile.openWrite();
+        for (final cf in chunkFiles) {
+          await sink.addStream(cf.openRead());
+        }
+        await sink.flush();
+        await sink.close();
+
+        if (await tmpFile.exists() && await tmpFile.length() >= total) {
+          await tmpFile.rename(targetFile.path);
+          session.existingLocalFile = targetFile;
+          debugPrint('[HongguoStreamProxyServer] 🎉 Đã tự động ghép hoàn chỉnh file offline: ${targetFile.path}');
+
+          for (final cf in chunkFiles) {
+            try { await cf.delete(); } catch (_) {}
+          }
+          final meta = _getMetaFile(chunkDir, session);
+          try { if (meta.existsSync()) await meta.delete(); } catch (_) {}
+        }
+      } catch (e) {
+        debugPrint('[HongguoStreamProxyServer] Lỗi ghép chunk video: $e');
+      }
+    }());
+  }
+
   /// Nạp trước (Preload) Header và 1.5MB đầu tiên của tập kế tiếp
   /// Giúp khi người dùng vuốt sang là phát ngay lập tức không có độ trễ
   Future<void> preloadStream({
     required String vid,
     String? seriesId,
     int? episodeIndex,
+    CancelToken? cancelToken,
   }) async {
     if (vid.isEmpty && (seriesId == null || seriesId.isEmpty)) return;
+    if (cancelToken?.isCancelled == true) return;
     await ensureStarted();
 
     try {
@@ -177,10 +278,12 @@ class HongguoStreamProxyServer {
         seriesId: seriesId ?? '',
         episodeIndex: episodeIndex ?? 1,
       );
-      await _prepareSessionMetadata(session);
+      await _prepareSessionMetadata(session, cancelToken: cancelToken);
     } catch (e) {
+      if (e is DioException && e.type == DioExceptionType.cancel) {
+        return; // Bị hủy do bộ bảo vệ băng thông
+      }
       debugPrint('[HongguoStreamProxyServer] Preload lỗi ($vid): $e');
-      rethrow;
     }
   }
 
@@ -268,7 +371,10 @@ class HongguoStreamProxyServer {
   }
 
   /// Chuẩn bị thông tin video, tải Header và giải mã bảng mẫu (Sample Table)
-  Future<void> _prepareSessionMetadata(_ProxyStreamSession session) async {
+  Future<void> _prepareSessionMetadata(
+    _ProxyStreamSession session, {
+    CancelToken? cancelToken,
+  }) async {
     if (session.totalLength != null &&
         (session.sanitizedHeader != null ||
             !session.isDrm ||
@@ -280,7 +386,7 @@ class HongguoStreamProxyServer {
     final inFlight = session.prepareFuture;
     if (inFlight != null) return inFlight;
 
-    final future = _prepareSessionMetadataImpl(session);
+    final future = _prepareSessionMetadataImpl(session, cancelToken: cancelToken);
     session.prepareFuture = future;
     try {
       await future;
@@ -291,7 +397,10 @@ class HongguoStreamProxyServer {
     }
   }
 
-  Future<void> _prepareSessionMetadataImpl(_ProxyStreamSession session) async {
+  Future<void> _prepareSessionMetadataImpl(
+    _ProxyStreamSession session, {
+    CancelToken? cancelToken,
+  }) async {
     // 1. Kiểm tra xem file đã có sẵn trong VideoCacheManager chưa
     try {
       final cachedFile = await VideoCacheManager.findCachedFile(
@@ -306,6 +415,35 @@ class HongguoStreamProxyServer {
         session.totalLength = cachedFile.lengthSync();
         session.touch();
         return;
+      }
+    } catch (_) {}
+
+    // 1.1 Kiểm tra xem Chunk 0 & Metadata đã có trong Disk Cache chưa (Khôi phục 0ms không cần mạng)
+    try {
+      final chunkDir = await _getChunkDir();
+      final metaFile = _getMetaFile(chunkDir, session);
+      final chunk0File = _getChunkFile(chunkDir, session, 0);
+      if (metaFile.existsSync() && chunk0File.existsSync() && chunk0File.lengthSync() > 0) {
+        final metaContent = await metaFile.readAsString();
+        final metaJson = jsonDecode(metaContent) as Map<String, dynamic>;
+        final totalLen = metaJson['totalLength'] as int?;
+        if (totalLen != null && totalLen > 0) {
+          session.totalLength = totalLen;
+          session.isDrm = (metaJson['isDrm'] as bool?) ?? false;
+          session.moovEnd = (metaJson['moovEnd'] as int?) ?? 0;
+          final hexKey = metaJson['contentKeyHex'] as String?;
+          if (hexKey != null && hexKey.isNotEmpty) {
+            session.contentKey = Uint8List.fromList(hex.decode(hexKey));
+          }
+          final chunk0Bytes = await chunk0File.readAsBytes();
+          if (session.moovEnd > 0 && chunk0Bytes.length >= session.moovEnd) {
+            session.sanitizedHeader = Uint8List.fromList(chunk0Bytes.sublist(0, session.moovEnd));
+          }
+          session.cacheChunk(0, chunk0Bytes);
+          session.touch();
+          debugPrint('[HongguoStreamProxyServer] ⚡ Khôi phục Session từ Disk Cache 0ms: ${session.vid} (tập ${session.episodeIndex})');
+          return;
+        }
       }
     } catch (_) {}
 
@@ -353,6 +491,7 @@ class HongguoStreamProxyServer {
     if (!session.isDrm) {
       final rangeRes = await _dio.get<List<int>>(
         info.realMainUrl,
+        cancelToken: cancelToken,
         options: Options(
           responseType: ResponseType.bytes,
           headers: {
@@ -367,10 +506,20 @@ class HongguoStreamProxyServer {
         throw StateError('CDN không trả về kích thước video hợp lệ');
       }
       final firstEnd = math.min(chunkSize, session.totalLength!) - 1;
-      session.cacheChunk(
-        0,
-        _rangeBytesFromResponse(rangeRes, start: 0, end: firstEnd),
-      );
+      final chunk0Bytes = _rangeBytesFromResponse(rangeRes, start: 0, end: firstEnd);
+      session.cacheChunk(0, chunk0Bytes);
+      try {
+        final chunkDir = await _getChunkDir();
+        final chunk0File = _getChunkFile(chunkDir, session, 0);
+        _saveChunkToDiskAsync(chunk0File, chunk0Bytes);
+        final metaFile = _getMetaFile(chunkDir, session);
+        await metaFile.writeAsString(jsonEncode({
+          'totalLength': session.totalLength,
+          'isDrm': false,
+          'moovEnd': 0,
+          'contentKeyHex': '',
+        }));
+      } catch (_) {}
       session.touch();
       return;
     }
@@ -380,6 +529,7 @@ class HongguoStreamProxyServer {
 
     final initChunkRes = await _dio.get<List<int>>(
       info.realMainUrl,
+      cancelToken: cancelToken,
       options: Options(
         responseType: ResponseType.bytes,
         headers: {
@@ -459,6 +609,7 @@ class HongguoStreamProxyServer {
         // Nếu aux nằm ngoài 2MB, tải thêm phần aux
         final auxRes = await _dio.get<List<int>>(
           info.realMainUrl,
+          cancelToken: cancelToken,
           options: Options(
             responseType: ResponseType.bytes,
             headers: {
@@ -533,8 +684,25 @@ class HongguoStreamProxyServer {
       for (var off = 0; off < combined.length; off += chunkSize) {
         final end = math.min(off + chunkSize, combined.length);
         final chunkIdx = off ~/ chunkSize;
-        session.cacheChunk(chunkIdx, Uint8List.sublistView(combined, off, end));
+        final chunkBytes = Uint8List.sublistView(combined, off, end);
+        session.cacheChunk(chunkIdx, chunkBytes);
+        try {
+          final chunkDir = await _getChunkDir();
+          final chunkFile = _getChunkFile(chunkDir, session, chunkIdx);
+          _saveChunkToDiskAsync(chunkFile, chunkBytes);
+        } catch (_) {}
       }
+
+      try {
+        final chunkDir = await _getChunkDir();
+        final metaFile = _getMetaFile(chunkDir, session);
+        await metaFile.writeAsString(jsonEncode({
+          'totalLength': session.totalLength,
+          'isDrm': true,
+          'moovEnd': session.moovEnd,
+          'contentKeyHex': info.contentKeyHex,
+        }));
+      } catch (_) {}
     }
 
     session.touch();
@@ -612,18 +780,39 @@ class HongguoStreamProxyServer {
   /// Lấy 1 chunk 2 MB (đã giải mã) tại chunkIndex.
   Future<Uint8List> _getOrFetchChunk(
     _ProxyStreamSession session,
-    int chunkIndex,
-  ) async {
+    int chunkIndex, {
+    CancelToken? cancelToken,
+  }) async {
     final cached = session.getCachedChunk(chunkIndex);
     if (cached != null) return cached;
+
+    // 1. Kiểm tra Disk Chunk Cache
+    try {
+      final chunkDir = await _getChunkDir();
+      final chunkFile = _getChunkFile(chunkDir, session, chunkIndex);
+      if (chunkFile.existsSync() && chunkFile.lengthSync() > 0) {
+        final diskBytes = await chunkFile.readAsBytes();
+        if (diskBytes.isNotEmpty) {
+          session.cacheChunk(chunkIndex, diskBytes);
+          return diskBytes;
+        }
+      }
+    } catch (_) {}
 
     final inFlight = session.inFlightChunks[chunkIndex];
     if (inFlight != null) return inFlight;
 
-    final future = _fetchAndDecryptChunk(session, chunkIndex);
+    final future = _fetchAndDecryptChunk(session, chunkIndex, cancelToken: cancelToken);
     session.inFlightChunks[chunkIndex] = future;
     try {
-      return await future;
+      final chunkData = await future;
+      try {
+        final chunkDir = await _getChunkDir();
+        final chunkFile = _getChunkFile(chunkDir, session, chunkIndex);
+        _saveChunkToDiskAsync(chunkFile, chunkData);
+      } catch (_) {}
+      _checkAndStitchCompleteVideo(session);
+      return chunkData;
     } finally {
       if (identical(session.inFlightChunks[chunkIndex], future)) {
         session.inFlightChunks.remove(chunkIndex);
@@ -633,8 +822,9 @@ class HongguoStreamProxyServer {
 
   Future<Uint8List> _fetchAndDecryptChunk(
     _ProxyStreamSession session,
-    int chunkIndex,
-  ) async {
+    int chunkIndex, {
+    CancelToken? cancelToken,
+  }) async {
     final start = chunkIndex * chunkSize;
     final total = session.totalLength;
     if (total == null || total <= 0) {
@@ -646,6 +836,7 @@ class HongguoStreamProxyServer {
     // Tải chunk từ CDN
     final res = await _dio.get<List<int>>(
       session.info!.realMainUrl,
+      cancelToken: cancelToken,
       options: Options(
         responseType: ResponseType.bytes,
         headers: {

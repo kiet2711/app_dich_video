@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'package:dio/dio.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:convert/convert.dart';
 import 'package:media_kit_video/media_kit_video.dart';
@@ -409,6 +410,29 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
   final Map<String, String> _preloadedStreamUrls = {};
   final Set<String> _preloadingMediaKeys = {};
 
+  // Bộ bảo vệ băng thông và nạp trước bậc thang (Bandwidth Gatekeeper)
+  CancelToken? _cascadingPreloadCancelToken;
+
+  void _cancelCascadingPreload() {
+    final token = _cascadingPreloadCancelToken;
+    if (token != null && !token.isCancelled) {
+      token.cancel('Bandwidth gatekeeper: prioritizing active stream');
+    }
+    _cascadingPreloadCancelToken = null;
+  }
+
+  void _scheduleCascadingPreloadIfNeeded() {
+    if (!mounted || _isPlayerBuffering || _activeController == null) return;
+    if (!_activeController!.value.isPlaying || _isManuallyPaused) return;
+    Future.delayed(const Duration(milliseconds: 350), () {
+      if (!mounted || _isPlayerBuffering || _activeController == null) return;
+      if (!_activeController!.value.isPlaying || _isManuallyPaused) return;
+      if (_cascadingPreloadCancelToken == null || _cascadingPreloadCancelToken!.isCancelled) {
+        unawaited(_preloadAheadEpisodes(_currentIndex));
+      }
+    });
+  }
+
   // Watchdog giám sát chống đứng hình 1s
   Timer? _stallWatchdog;
   Duration _lastObservedPos = Duration.zero;
@@ -731,6 +755,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       _isPlayerBuffering = buffering;
       if (buffering) {
         _stallTickCount = 0;
+        _cancelCascadingPreload(); // 🛑 BẢO VỆ BĂNG THÔNG: Dừng ngay preload khi video chính bị khựng!
+      } else {
+        _scheduleCascadingPreloadIfNeeded();
       }
       if (_isTtsActive && _ttsScheduler != null && _activeController != null) {
         _ttsScheduler!.onVideoStateUpdate(
@@ -754,6 +781,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
   @override
   void dispose() {
+    _cancelCascadingPreload();
     _activationRequestId++;
     _feedGeneration++;
     _standbyRequestId++;
@@ -941,6 +969,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     final feedGeneration = _feedGeneration;
     final mediaKey = requestedMediaKey;
     _activePageIndex = index;
+    _cancelCascadingPreload();
     _loadingIndicatorTimer?.cancel();
     _currentPos = Duration.zero;
     _currentDur = Duration.zero;
@@ -1256,12 +1285,14 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     );
   }
 
-  /// Nạp trước metadata; chỉ N+1 mới warm chunk đầu để không tranh băng thông.
+  /// Nạp trước metadata & dữ liệu chunk; hỗ trợ CancelToken để bảo vệ băng thông
   Future<void> _preloadNextPage(
     int nextIndex, {
     required bool warmStream,
+    CancelToken? cancelToken,
   }) async {
     if (!mounted || nextIndex < 0 || nextIndex >= _feedItems.length) return;
+    if (cancelToken?.isCancelled == true) return;
     final feedGeneration = _feedGeneration;
     final initialMediaKey = _mediaKey(_feedItems[nextIndex]);
     if (_preloadingMediaKeys.contains(initialMediaKey)) {
@@ -1275,10 +1306,12 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
           cachedUrl.contains('127.0.0.1') &&
           cachedItem.vid.isNotEmpty &&
           cachedItem.vid != cachedItem.detail.seriesId) {
+        if (cancelToken?.isCancelled == true) return;
         await HongguoStreamProxyServer.instance.preloadStream(
           vid: cachedItem.vid,
           seriesId: cachedItem.detail.seriesId,
           episodeIndex: cachedItem.episodeIndex,
+          cancelToken: cancelToken,
         );
       }
       return;
@@ -1313,11 +1346,14 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         } catch (_) {}
       }
 
+      if (cancelToken?.isCancelled == true) return;
+
       final streamUrl = await _resolveEpisodeStreamUrl(nextItem);
       if (!mounted ||
           feedGeneration != _feedGeneration ||
           nextIndex >= _feedItems.length ||
-          _mediaKey(_feedItems[nextIndex]) != initialMediaKey) {
+          _mediaKey(_feedItems[nextIndex]) != initialMediaKey ||
+          cancelToken?.isCancelled == true) {
         return;
       }
       _preloadedStreamUrls[initialMediaKey] = streamUrl;
@@ -1330,6 +1366,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
           vid: nextItem.vid,
           seriesId: nextItem.detail.seriesId,
           episodeIndex: nextItem.episodeIndex,
+          cancelToken: cancelToken,
         );
       }
     } catch (_) {
@@ -1356,8 +1393,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         !identical(_activeController, controller);
   }
 
-  Future<void> _prepareStandbyPlayer(int index) async {
+  Future<void> _prepareStandbyPlayer(int index, {CancelToken? cancelToken}) async {
     if (!mounted || index < 0 || index >= _feedItems.length) return;
+    if (cancelToken?.isCancelled == true) return;
 
     final feedGeneration = _feedGeneration;
     final mediaKey = _mediaKey(_feedItems[index]);
@@ -1380,14 +1418,14 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     setState(() {});
 
     try {
-      await _preloadNextPage(index, warmStream: true);
+      await _preloadNextPage(index, warmStream: true, cancelToken: cancelToken);
       if (!_isStandbyRequestCurrent(
         requestId: requestId,
         feedGeneration: feedGeneration,
         index: index,
         mediaKey: mediaKey,
         controller: controller,
-      )) {
+      ) || (cancelToken?.isCancelled == true)) {
         return;
       }
 
@@ -1401,7 +1439,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
           index: index,
           mediaKey: mediaKey,
           controller: controller,
-        )) {
+        ) || (cancelToken?.isCancelled == true)) {
           return;
         }
         _preloadedStreamUrls[mediaKey] = streamUrl;
@@ -1468,7 +1506,8 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     }
   }
 
-  /// N+1 được mở sẵn trên player dự phòng; N+2 chuẩn bị URL/metadata.
+  /// N+1 mở trên standby player; N+2 & N+3 nạp trước Chunk 0 vào RAM/Disk; N+4 nạp URL.
+  /// Có cơ chế Bảo Vệ Băng Thông (Bandwidth Gatekeeper) tự động nhường mạng cho video đang xem.
   Future<void> _preloadAheadEpisodes(int currentIndex) async {
     final feedGeneration = _feedGeneration;
     final currentMediaKey = _mediaKey(_feedItems[currentIndex]);
@@ -1481,32 +1520,51 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
           _mediaKey(_feedItems[currentIndex]) == currentMediaKey;
     }
 
+    _cancelCascadingPreload();
+    final cancelToken = CancelToken();
+    _cascadingPreloadCancelToken = cancelToken;
+
+    // Đợi 500ms để video hiện tại bắt đầu phát và ổn định nhịp render/audio
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    if (!isStillCurrent() || cancelToken.isCancelled || _isPlayerBuffering) return;
+
+    // 1. Bước 1: Nạp N+1 (Standby player + Chunk 0 2MB)
     final nextIndex = currentIndex + 1;
-    if (!isStillCurrent()) return;
-    if (nextIndex >= _feedItems.length) {
-      _disposeStandbyPlayer();
-      return;
+    if (nextIndex < _feedItems.length) {
+      await _prepareStandbyPlayer(nextIndex, cancelToken: cancelToken);
     }
+    if (!isStillCurrent() || cancelToken.isCancelled || _isPlayerBuffering) return;
 
-    // Đợi 600ms để video hiện tại bắt đầu phát và ổn định nhịp render/audio
-    // trước khi nạp ngầm tập N+1 trên standby player.
-    await Future<void>.delayed(const Duration(milliseconds: 600));
-    if (!isStillCurrent()) return;
-
-    await _prepareStandbyPlayer(nextIndex);
-    if (!isStillCurrent()) return;
-
+    // 2. Bước 2: Nạp trước Chunk 0 (2MB) cho N+2 (Lưu thẳng vào RAM & Disk Cache)
     final secondNextIndex = currentIndex + 2;
     if (secondNextIndex < _feedItems.length) {
-      await _preloadNextPage(secondNextIndex, warmStream: false);
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      if (!isStillCurrent() || cancelToken.isCancelled || _isPlayerBuffering) return;
+      await _preloadNextPage(secondNextIndex, warmStream: true, cancelToken: cancelToken);
+    }
+    if (!isStillCurrent() || cancelToken.isCancelled || _isPlayerBuffering) return;
+
+    // 3. Bước 3: Nạp trước Chunk 0 (2MB) cho N+3 (Lưu thẳng vào RAM & Disk Cache)
+    final thirdNextIndex = currentIndex + 3;
+    if (thirdNextIndex < _feedItems.length) {
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      if (!isStillCurrent() || cancelToken.isCancelled || _isPlayerBuffering) return;
+      await _preloadNextPage(thirdNextIndex, warmStream: true, cancelToken: cancelToken);
+    }
+    if (!isStillCurrent() || cancelToken.isCancelled || _isPlayerBuffering) return;
+
+    // 4. Bước 4: Nạp trước URL cho N+4 (warmStream: false, chuẩn bị sẵn link CDN)
+    final fourthNextIndex = currentIndex + 4;
+    if (fourthNextIndex < _feedItems.length) {
+      await _preloadNextPage(fourthNextIndex, warmStream: false, cancelToken: cancelToken);
     }
   }
 
-  /// Duy trì previous/current/next/secondNext trong Proxy Cache để giới hạn RAM.
+  /// Duy trì [-3 .. +3] xung quanh vị trí xem trong Proxy Cache để giới hạn RAM.
   void _maintainProxyMemory(int currentIndex) {
     if (currentIndex < 0 || currentIndex >= _feedItems.length) return;
     final activeKeys = <String>[];
-    for (var offset = -1; offset <= 2; offset++) {
+    for (var offset = -3; offset <= 3; offset++) {
       final idx = currentIndex + offset;
       if (idx >= 0 && idx < _feedItems.length) {
         final it = _feedItems[idx];

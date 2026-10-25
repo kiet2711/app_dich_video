@@ -225,7 +225,7 @@ class VideoCacheManager {
   static Future<void> pruneCacheIfNeeded({int maxSizeBytes = defaultMaxCacheSizeBytes}) async {
     try {
       final dir = await getCacheDirectory();
-      final entities = await dir.list().toList();
+      final entities = await dir.list(recursive: true).toList();
       final files = entities.whereType<File>().toList();
 
       var totalBytes = 0;
