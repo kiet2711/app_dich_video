@@ -22,7 +22,6 @@ import '../../../domain/ai/offline_mlkit_translator.dart';
 import '../../../domain/media/audio_extractor.dart';
 import '../../../domain/media/hongguo/hongguo_local_engine.dart';
 import '../../../domain/media/hongguo/hongguo_similar_engine.dart';
-import '../../../domain/media/hongguo/hongguo_stream_proxy_server.dart';
 import '../../../domain/media/hongguo_cenc_decryptor.dart';
 import '../../../domain/media/hongguo_resolver.dart';
 import '../../../domain/media/multi_thread_downloader.dart';
@@ -50,6 +49,19 @@ class FeedDramaPageItem {
     required this.detail,
     required this.episodeIndex,
     required this.vid,
+  });
+}
+
+/// Nguồn phát video trực tiếp kèm key giải mã FFmpeg native
+class _FeedPlaybackSource {
+  final String url;
+  final String? decryptionKey;
+  final Map<String, String> headers;
+
+  const _FeedPlaybackSource({
+    required this.url,
+    this.decryptionKey,
+    this.headers = const {},
   });
 }
 
@@ -406,8 +418,8 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
   Future<void> _playerSwitchTail = Future<void>.value();
   Future<void> _standbySwitchTail = Future<void>.value();
 
-  // Cache theo danh tính media, không theo index vì index 0 có thể thuộc nhiều tab.
-  final Map<String, String> _preloadedStreamUrls = {};
+  // Nguồn phát trực tiếp (URL + Content Key CENC) đã nạp trước trong RAM
+  final Map<String, _FeedPlaybackSource> _preloadedSources = {};
   final Set<String> _preloadingMediaKeys = {};
 
   // Bộ bảo vệ băng thông và nạp trước bậc thang (Bandwidth Gatekeeper)
@@ -564,7 +576,6 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
   }
 
   Future<void> _bootstrapFeed() async {
-    await HongguoStreamProxyServer.instance.ensureStarted();
     final settings = await SettingsRepository.getInstance();
     if (!mounted) return;
     final targetFeedTab = settings.hongguoFeedTab;
@@ -699,7 +710,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     _feedGeneration++;
     _activationRequestId++;
     _feedItems.clear();
-    _preloadedStreamUrls.clear();
+    _preloadedSources.clear();
     _preloadingMediaKeys.clear();
 
     final episodes = detail.episodes;
@@ -802,10 +813,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     }
     _activeController?.dispose();
     _activeController = null;
-    _preloadedStreamUrls.clear();
+    _preloadedSources.clear();
     _preloadingMediaKeys.clear();
     _playbackRevision.dispose();
-    HongguoStreamProxyServer.instance.maintainSessions([]);
     // Khôi phục hướng màn hình dọc nếu đang xoay ngang
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
@@ -859,7 +869,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       _settings?.addHongguoSeenSeriesId(_feedItems[index].detail.seriesId);
     }
 
-    _maintainProxyMemory(index);
+    _maintainFeedWindow(index);
     if (_isAutoNextEpisode) {
       _triggerPreTranslationQueue();
     }
@@ -1059,16 +1069,16 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         return;
       }
 
-      // 2. Lấy URL stream (ưu tiên từ URL đã nạp sẵn trong RAM)
-      String streamUrl = _preloadedStreamUrls[mediaKey] ?? '';
-      if (streamUrl.isEmpty) {
-        streamUrl = await _resolveEpisodeStreamUrl(item);
+      // 2. Lấy nguồn phát trực tiếp (ưu tiên từ bộ đệm RAM đã nạp sẵn)
+      _FeedPlaybackSource? source = _preloadedSources[mediaKey];
+      if (source == null || source.url.isEmpty) {
+        source = await _resolveEpisodeStreamSource(item);
         if (_isActivationCurrent(
           requestId: requestId,
           feedGeneration: feedGeneration,
           mediaKey: mediaKey,
         )) {
-          _preloadedStreamUrls[mediaKey] = streamUrl;
+          _preloadedSources[mediaKey] = source;
         }
       }
 
@@ -1100,19 +1110,23 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         )) {
           return false;
         }
-        if (streamUrl.startsWith('http://') ||
-            streamUrl.startsWith('https://')) {
+        if (source!.url.startsWith('http://') ||
+            source.url.startsWith('https://')) {
           await _activeController!.switchMedia(
-            networkUrl: streamUrl,
-            headers: {
-              'User-Agent':
-                  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
-            },
+            networkUrl: source.url,
+            decryptionKey: source.decryptionKey,
+            headers: source.headers.isNotEmpty
+                ? source.headers
+                : const {
+                    'User-Agent':
+                        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
+                    'Referer': 'https://novel.snssdk.com/',
+                  },
             play: false,
           );
         } else {
           await _activeController!.switchMedia(
-            file: File(streamUrl),
+            file: File(source.url),
             play: false,
           );
         }
@@ -1201,11 +1215,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     }
   }
 
-  /// Phân giải nguồn phát tối ưu nhất cho tập phim:
-  /// ƯU TIÊN SỐ 1 TUYỆT ĐỐI: Local Streaming Proxy (Chất lượng gốc 720p/1080p từ ByteDance CDN, giải mã in-place 0ms).
-  /// Tuyệt đối KHÔNG ưu tiên link web công khai 360p vì vừa mờ, vừa chậm vừa giật.
-  Future<String> _resolveEpisodeStreamUrl(FeedDramaPageItem item) async {
-    // 0. Đảm bảo item có vid thật trước khi gọi proxy
+  /// Phân giải nguồn phát trực tiếp: Link CDN ByteDance + CENC Decryption Key (Giải mã phần cứng qua FFmpeg Native)
+  Future<_FeedPlaybackSource> _resolveEpisodeStreamSource(FeedDramaPageItem item) async {
+    // 0. Đảm bảo item có vid thật trước khi gọi API
     if (item.vid.isEmpty ||
         item.vid == item.detail.seriesId ||
         item.detail.episodes.isEmpty) {
@@ -1230,12 +1242,12 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         }
       } catch (e) {
         debugPrint(
-          '[HongguoFeedScreen] _resolveEpisodeStreamUrl getDramaDetail failed: $e',
+          '[HongguoFeedScreen] _resolveEpisodeStreamSource getDramaDetail failed: $e',
         );
       }
     }
 
-    // 1. Kiểm tra cache hoàn chỉnh trên máy
+    // 1. Kiểm tra cache hoàn chỉnh trên máy nếu có
     try {
       final cached = await VideoCacheManager.findCachedFile(
         url: '',
@@ -1245,25 +1257,31 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       if (cached != null &&
           cached.existsSync() &&
           cached.lengthSync() > 1024 * 50) {
-        return cached.path;
+        return _FeedPlaybackSource(url: cached.path);
       }
     } catch (_) {}
 
-    // 2. ƯU TIÊN SỐ 1: Chạy trực tiếp qua Local Streaming Proxy (720p/1080p gốc, phát 0ms)
+    // 2. ƯU TIÊN SỐ 1 TUYỆT ĐỐI: Phân giải trực tiếp từ ByteDance API (720p/1080p, giải mã FFmpeg native)
     try {
-      await HongguoStreamProxyServer.instance.ensureStarted();
-      return HongguoStreamProxyServer.instance.getStreamUrl(
-        vid: item.vid,
-        seriesId: item.detail.seriesId,
-        episodeIndex: item.episodeIndex,
-      );
+      final info = await HongguoLocalEngine.resolveVideoInfo(item.vid);
+      if (info.realMainUrl.isNotEmpty) {
+        return _FeedPlaybackSource(
+          url: info.realMainUrl,
+          decryptionKey: info.isDrmProtected ? info.contentKeyHex : null,
+          headers: const {
+            'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
+            'Referer': 'https://novel.snssdk.com/',
+          },
+        );
+      }
     } catch (e) {
       debugPrint(
-        '[HongguoFeedScreen] Khởi tạo proxy lỗi: $e -> Chuyển sang fallback web',
+        '[HongguoFeedScreen] resolveVideoInfo lỗi: $e -> Chuyển sang fallback web',
       );
     }
 
-    // 3. DỰ PHÒNG HY HỮU (Fallback): Chỉ khi proxy gặp lỗi mới thử lấy link web công khai
+    // 3. DỰ PHÒNG HY HỮU (Fallback): Chỉ khi API gặp lỗi mới thử lấy link web công khai
     if (item.episodeIndex == 1) {
       try {
         final publicUrl = await _resolver.getPublicWebPlayUrl(
@@ -1272,21 +1290,37 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
           episodeIndex: item.episodeIndex,
         );
         if (publicUrl != null && publicUrl.isNotEmpty) {
-          return publicUrl;
+          return _FeedPlaybackSource(url: publicUrl);
         }
       } catch (_) {}
     }
 
-    // Mặc định luôn trả về URL Streaming Proxy
-    await HongguoStreamProxyServer.instance.ensureStarted();
-    return HongguoStreamProxyServer.instance.getStreamUrl(
-      vid: item.vid,
-      seriesId: item.detail.seriesId,
-      episodeIndex: item.episodeIndex,
-    );
+    throw StateError('Không thể lấy link phát cho video ${item.vid}');
   }
 
-  /// Nạp trước metadata & dữ liệu chunk; hỗ trợ CancelToken để bảo vệ băng thông
+  void _warmupConnection(String url, CancelToken? cancelToken) {
+    if (cancelToken?.isCancelled == true) return;
+    unawaited(() async {
+      try {
+        final dio = Dio();
+        await dio.head(
+          url,
+          options: Options(
+            headers: const {
+              'User-Agent':
+                  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
+              'Referer': 'https://novel.snssdk.com/',
+            },
+            receiveTimeout: const Duration(seconds: 4),
+            sendTimeout: const Duration(seconds: 4),
+          ),
+          cancelToken: cancelToken,
+        );
+      } catch (_) {}
+    }());
+  }
+
+  /// Nạp trước metadata & warm-up kết nối CDN; hỗ trợ CancelToken để bảo vệ băng thông
   Future<void> _preloadNextPage(
     int nextIndex, {
     required bool warmStream,
@@ -1300,20 +1334,12 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       return;
     }
 
-    final cachedUrl = _preloadedStreamUrls[initialMediaKey];
-    if (cachedUrl != null && cachedUrl.isNotEmpty) {
-      final cachedItem = _feedItems[nextIndex];
+    final cachedSource = _preloadedSources[initialMediaKey];
+    if (cachedSource != null && cachedSource.url.isNotEmpty) {
       if (warmStream &&
-          cachedUrl.contains('127.0.0.1') &&
-          cachedItem.vid.isNotEmpty &&
-          cachedItem.vid != cachedItem.detail.seriesId) {
-        if (cancelToken?.isCancelled == true) return;
-        await HongguoStreamProxyServer.instance.preloadStream(
-          vid: cachedItem.vid,
-          seriesId: cachedItem.detail.seriesId,
-          episodeIndex: cachedItem.episodeIndex,
-          cancelToken: cancelToken,
-        );
+          (cachedSource.url.startsWith('http://') ||
+              cachedSource.url.startsWith('https://'))) {
+        _warmupConnection(cachedSource.url, cancelToken);
       }
       return;
     }
@@ -1349,7 +1375,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
       if (cancelToken?.isCancelled == true) return;
 
-      final streamUrl = await _resolveEpisodeStreamUrl(nextItem);
+      final source = await _resolveEpisodeStreamSource(nextItem);
       if (!mounted ||
           feedGeneration != _feedGeneration ||
           nextIndex >= _feedItems.length ||
@@ -1357,18 +1383,12 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
           cancelToken?.isCancelled == true) {
         return;
       }
-      _preloadedStreamUrls[initialMediaKey] = streamUrl;
+      _preloadedSources[initialMediaKey] = source;
 
       if (warmStream &&
-          streamUrl.contains('127.0.0.1') &&
-          nextItem.vid.isNotEmpty &&
-          nextItem.vid != nextItem.detail.seriesId) {
-        await HongguoStreamProxyServer.instance.preloadStream(
-          vid: nextItem.vid,
-          seriesId: nextItem.detail.seriesId,
-          episodeIndex: nextItem.episodeIndex,
-          cancelToken: cancelToken,
-        );
+          (source.url.startsWith('http://') ||
+              source.url.startsWith('https://'))) {
+        _warmupConnection(source.url, cancelToken);
       }
     } catch (_) {
     } finally {
@@ -1431,9 +1451,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       }
 
       final item = _feedItems[index];
-      var streamUrl = _preloadedStreamUrls[mediaKey] ?? '';
-      if (streamUrl.isEmpty) {
-        streamUrl = await _resolveEpisodeStreamUrl(item);
+      var source = _preloadedSources[mediaKey];
+      if (source == null || source.url.isEmpty) {
+        source = await _resolveEpisodeStreamSource(item);
         if (!_isStandbyRequestCurrent(
           requestId: requestId,
           feedGeneration: feedGeneration,
@@ -1443,7 +1463,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         ) || (cancelToken?.isCancelled == true)) {
           return;
         }
-        _preloadedStreamUrls[mediaKey] = streamUrl;
+        _preloadedSources[mediaKey] = source;
       }
 
       final switchFuture = _standbySwitchTail.then<bool>((_) async {
@@ -1456,20 +1476,24 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         )) {
           return false;
         }
-        if (streamUrl.startsWith('http://') ||
-            streamUrl.startsWith('https://')) {
+        if (source!.url.startsWith('http://') ||
+            source.url.startsWith('https://')) {
           await controller.switchMedia(
-            networkUrl: streamUrl,
-            headers: const {
-              'User-Agent':
-                  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
-            },
+            networkUrl: source.url,
+            decryptionKey: source.decryptionKey,
+            headers: source.headers.isNotEmpty
+                ? source.headers
+                : const {
+                    'User-Agent':
+                        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
+                    'Referer': 'https://novel.snssdk.com/',
+                  },
             play: false,
             silentStandby: true,
           );
         } else {
           await controller.switchMedia(
-            file: File(streamUrl),
+            file: File(source.url),
             play: false,
             silentStandby: true,
           );
@@ -1536,7 +1560,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     }
     if (!isStillCurrent() || cancelToken.isCancelled || _isPlayerBuffering) return;
 
-    // 2. Bước 2: Nạp trước Chunk 0 (2MB) cho N+2 (Lưu thẳng vào RAM & Disk Cache)
+    // 2. Bước 2: Nạp metadata & warm-up kết nối CDN cho N+2 (DNS, TLS, TCP)
     final secondNextIndex = currentIndex + 2;
     if (secondNextIndex < _feedItems.length) {
       await Future<void>.delayed(const Duration(milliseconds: 250));
@@ -1545,7 +1569,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     }
     if (!isStillCurrent() || cancelToken.isCancelled || _isPlayerBuffering) return;
 
-    // 3. Bước 3: Nạp trước Chunk 0 (2MB) cho N+3 (Lưu thẳng vào RAM & Disk Cache)
+    // 3. Bước 3: Nạp metadata & warm-up kết nối CDN cho N+3
     final thirdNextIndex = currentIndex + 3;
     if (thirdNextIndex < _feedItems.length) {
       await Future<void>.delayed(const Duration(milliseconds: 300));
@@ -1561,19 +1585,17 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     }
   }
 
-  /// Duy trì [-3 .. +3] xung quanh vị trí xem trong Proxy Cache để giới hạn RAM.
-  void _maintainProxyMemory(int currentIndex) {
+  /// Duy trì [-2 .. +3] xung quanh vị trí xem trong RAM (Giữ cả tập n-2 theo yêu cầu của bạn).
+  void _maintainFeedWindow(int currentIndex) {
     if (currentIndex < 0 || currentIndex >= _feedItems.length) return;
-    final activeKeys = <String>[];
-    for (var offset = -3; offset <= 3; offset++) {
+    final retainedMediaKeys = <String>{};
+    for (var offset = -2; offset <= 3; offset++) {
       final idx = currentIndex + offset;
       if (idx >= 0 && idx < _feedItems.length) {
-        final it = _feedItems[idx];
-        if (it.vid.isNotEmpty) activeKeys.add(it.vid);
-        if (it.detail.seriesId.isNotEmpty) activeKeys.add(it.detail.seriesId);
+        retainedMediaKeys.add(_mediaKey(_feedItems[idx]));
       }
     }
-    HongguoStreamProxyServer.instance.maintainSessions(activeKeys);
+    _preloadedSources.removeWhere((key, _) => !retainedMediaKeys.contains(key));
   }
 
   void _onPageChanged(int index) {
@@ -1586,6 +1608,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     _ttsScheduler?.setDocument(null);
     _activeController?.setVolume(1.0);
 
+    _maintainFeedWindow(index);
     _activatePage(index);
 
     // Tự động nạp thêm khi ở chế độ khám phá
@@ -1829,7 +1852,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
           ? 0
           : (_tabCurrentIndices[tabKey] ?? 0).clamp(0, targetItems.length - 1);
       _currentIndex = restoredIndex;
-      _preloadedStreamUrls.clear();
+      _preloadedSources.clear();
       _preloadingMediaKeys.clear();
       _dramaEpisodeSessionKey++;
       _replacePageController(restoredIndex);
@@ -2303,7 +2326,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       _feedItems.clear();
       _feedItems.addAll(items);
       _currentIndex = 0;
-      _preloadedStreamUrls.clear();
+      _preloadedSources.clear();
       _preloadingMediaKeys.clear();
       _dramaEpisodeSessionKey++;
     });
@@ -2495,7 +2518,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         _feedItems.clear();
         _feedItems.addAll(_savedDiscoverItems);
         _currentIndex = _savedDiscoverIndex.clamp(0, _feedItems.length - 1);
-        _preloadedStreamUrls.clear();
+        _preloadedSources.clear();
         _preloadingMediaKeys.clear();
         _dramaEpisodeSessionKey++;
       });
@@ -5398,7 +5421,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       try {
         final historyRepo = await HistoryRepository.getInstance();
         await historyRepo.saveHistory(
-          videoPath: _preloadedStreamUrls[_mediaKey(item)] ?? item.vid,
+          videoPath: _preloadedSources[_mediaKey(item)]?.url ?? item.vid,
           title: '${item.detail.title} - Tập $epIdx',
           document: doc,
           durationMs: _currentDur.inMilliseconds > 0

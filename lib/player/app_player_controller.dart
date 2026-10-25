@@ -256,6 +256,7 @@ class AppPlayerController extends ChangeNotifier {
     Uri? contentUri,
     String? dashVideoUrl,
     String? dashAudioUrl,
+    String? decryptionKey,
     Map<String, String> headers = const {},
     bool play = false,
     bool silentStandby = false,
@@ -264,6 +265,24 @@ class AppPlayerController extends ChangeNotifier {
     try {
       await player.pause();
     } catch (_) {}
+
+    // Cấu hình giải mã CENC (AES-128-CTR) bằng phần cứng qua FFmpeg nếu có key
+    if (player.platform is NativePlayer) {
+      try {
+        final native = player.platform as NativePlayer;
+        final lavfOptions = <String>[
+          'seg_max_retry=3',
+          'strict=experimental',
+          'allowed_extensions=ALL',
+          'protocol_whitelist=[http,https,tcp,tls,crypto,data,file]',
+        ];
+        if (decryptionKey != null && decryptionKey.isNotEmpty) {
+          lavfOptions.add('decryption_key=$decryptionKey');
+        }
+        await native.setProperty('demuxer-lavf-o', lavfOptions.join(','));
+        await native.setProperty('network-timeout', '20');
+      } catch (_) {}
+    }
 
     // Mỗi nguồn media phải có vòng đời khởi tạo riêng. Giữ lại duration,
     // kích thước hoặc Completer của nguồn trước sẽ khiến UI hiển thị sai tỷ lệ,
@@ -307,7 +326,12 @@ class AppPlayerController extends ChangeNotifier {
     } else if (contentUri != null) {
       await openContentUri(contentUri, play: play);
     } else if (networkUrl != null && networkUrl.isNotEmpty) {
-      await openNetwork(networkUrl, headers: headers, play: play);
+      await openNetwork(
+        networkUrl,
+        headers: headers,
+        decryptionKey: decryptionKey,
+        play: play,
+      );
     }
 
     if (silentStandby) {
@@ -399,6 +423,7 @@ class AppPlayerController extends ChangeNotifier {
   Future<void> openNetwork(
     String url, {
     Map<String, String> headers = const {},
+    String? decryptionKey,
     bool play = false,
   }) async {
     if (player.platform is NativePlayer) {
@@ -411,6 +436,17 @@ class AppPlayerController extends ChangeNotifier {
       } else {
         await nativePlayer.setProperty('http-header-fields', '');
       }
+      final lavfOptions = <String>[
+        'seg_max_retry=3',
+        'strict=experimental',
+        'allowed_extensions=ALL',
+        'protocol_whitelist=[http,https,tcp,tls,crypto,data,file]',
+      ];
+      if (decryptionKey != null && decryptionKey.isNotEmpty) {
+        lavfOptions.add('decryption_key=$decryptionKey');
+      }
+      await nativePlayer.setProperty('demuxer-lavf-o', lavfOptions.join(','));
+      await nativePlayer.setProperty('network-timeout', '20');
     }
     await player.open(Media(url, httpHeaders: headers), play: play);
   }

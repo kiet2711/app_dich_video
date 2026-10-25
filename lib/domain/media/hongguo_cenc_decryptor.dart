@@ -50,9 +50,9 @@ class HongguoCencDecryptor {
     }
   }
 
-  /// Trích xuất 16-byte content_key từ chuỗi Base64 `spade_a`
-  /// Thuật toán đảo ngược DRM của ByteDance / Fanqie Novel
-  static Uint8List deriveContentKey(String spadeB64) {
+  /// Trích xuất chuỗi 32 ký tự Hex của content_key từ chuỗi Base64 `spade_a`
+  /// Dùng để truyền trực tiếp vào bộ giải mã FFmpeg native (`decryption_key=<hex>`)
+  static String deriveContentKeyHex(String spadeB64) {
     var s = spadeB64.trim();
     final m = 4 - (s.length % 4);
     if (m != 4) {
@@ -103,7 +103,13 @@ class HongguoCencDecryptor {
       v13[i] = (v26 + v25) & 0xFF;
     }
 
-    final hexStr = ascii.decode(v13.sublist(1, 33));
+    return ascii.decode(v13.sublist(1, 33)).toLowerCase();
+  }
+
+  /// Trích xuất 16-byte content_key từ chuỗi Base64 `spade_a`
+  /// Thuật toán đảo ngược DRM của ByteDance / Fanqie Novel
+  static Uint8List deriveContentKey(String spadeB64) {
+    final hexStr = deriveContentKeyHex(spadeB64);
     final keyBytes = Uint8List(16);
     for (var i = 0; i < 16; i++) {
       keyBytes[i] = int.parse(hexStr.substring(i * 2, i * 2 + 2), radix: 16);
