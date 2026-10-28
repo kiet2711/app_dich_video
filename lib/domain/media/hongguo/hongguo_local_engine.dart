@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 
 import '../hongguo_cenc_decryptor.dart';
 import '../video_cache_manager.dart';
+import 'hongguo_device_service.dart';
 import 'hongguo_sixgod_signer.dart';
 
 Future<void> _decryptDownloadedHongguoVideo(Map<String, String> args) async {
@@ -73,6 +74,21 @@ class HongguoLocalEngine {
       throw ArgumentError.value(videoId, 'videoId', 'Video ID phải là dãy số');
     }
 
+    return _resolveWithDeviceRetry(
+      cleanVideoId,
+      preferLowest: preferLowest,
+      allowDeviceRefresh: true,
+    );
+  }
+
+  static Future<HongguoVideoInfo> _resolveWithDeviceRetry(
+    String videoId, {
+    required bool preferLowest,
+    required bool allowDeviceRefresh,
+  }) async {
+    final cleanVideoId = videoId;
+    final device = await HongguoDeviceService.instance.getOrRegisterDevice();
+
     final payload = {
       'biz_param': {
         'detail_page_version': 0,
@@ -92,6 +108,8 @@ class HongguoLocalEngine {
     final signed = HongguoSixgodSigner.signRequest(
       url: videoModelUrlTemplate,
       body: payload,
+      deviceId: device.deviceId,
+      installId: device.installId,
     );
 
     final res = await _dio.post(
@@ -106,17 +124,43 @@ class HongguoLocalEngine {
     debugPrint('[HongguoLocalEngine] API status: ${res.statusCode}');
 
     final data = res.data is Map ? res.data as Map : <String, dynamic>{};
+    final dataMap =
+        data['data'] is Map ? data['data'] as Map : <String, dynamic>{};
+
+    // Nếu server trả về rỗng hoặc data rỗng (do device ID chết/bị từ chối) -> tự động xin device ID mới và thử lại
+    if ((res.data == null || dataMap.isEmpty) && allowDeviceRefresh) {
+      debugPrint(
+        '[HongguoLocalEngine] Device ID hiện tại (${device.deviceId}) không hợp lệ hoặc đã hết hạn. Đang xin ID mới...',
+      );
+      await HongguoDeviceService.instance.invalidateDevice();
+      await HongguoDeviceService.instance.getOrRegisterDevice(forceRefresh: true);
+      return _resolveWithDeviceRetry(
+        videoId,
+        preferLowest: preferLowest,
+        allowDeviceRefresh: false,
+      );
+    }
+
     final apiCode =
         int.tryParse((data['Code'] ?? data['code'])?.toString() ?? '0') ?? 0;
     if (apiCode != 0) {
+      if (allowDeviceRefresh) {
+        debugPrint(
+          '[HongguoLocalEngine] ByteDance báo lỗi code $apiCode. Thử xin device ID mới...',
+        );
+        await HongguoDeviceService.instance.invalidateDevice();
+        await HongguoDeviceService.instance.getOrRegisterDevice(forceRefresh: true);
+        return _resolveWithDeviceRetry(
+          videoId,
+          preferLowest: preferLowest,
+          allowDeviceRefresh: false,
+        );
+      }
       throw StateError(
         'ByteDance từ chối request (code $apiCode): '
         '${data['Message'] ?? data['message'] ?? 'không rõ lỗi'}',
       );
     }
-    final dataMap = data['data'] is Map
-        ? data['data'] as Map
-        : <String, dynamic>{};
     var videoEntry = dataMap[cleanVideoId];
     if (videoEntry == null && dataMap.isNotEmpty) {
       videoEntry = dataMap.values.first;
