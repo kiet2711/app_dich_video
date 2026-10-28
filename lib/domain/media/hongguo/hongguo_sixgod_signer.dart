@@ -88,8 +88,10 @@ class HongguoSixgodSigner {
 
     final uri = Uri.parse(url);
     final queryMap = Map<String, String>.from(uri.queryParameters);
-    final effectiveDeviceId = deviceId ?? generateSyntheticId();
-    final effectiveInstallId = installId ?? generateSyntheticId();
+    final effectiveDeviceId =
+        (deviceId != null && deviceId.isNotEmpty) ? deviceId : defaultDeviceId;
+    final effectiveInstallId =
+        (installId != null && installId.isNotEmpty) ? installId : defaultInstallId;
     queryMap['iid'] = effectiveInstallId;
     queryMap['device_id'] = effectiveDeviceId;
 
