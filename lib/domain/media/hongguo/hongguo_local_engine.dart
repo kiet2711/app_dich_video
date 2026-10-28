@@ -124,8 +124,9 @@ class HongguoLocalEngine {
     debugPrint('[HongguoLocalEngine] API status: ${res.statusCode}');
 
     final data = res.data is Map ? res.data as Map : <String, dynamic>{};
-    final dataMap =
-        data['data'] is Map ? data['data'] as Map : <String, dynamic>{};
+    final dataMap = data['data'] is Map
+        ? data['data'] as Map
+        : <String, dynamic>{};
 
     // Nếu server trả về rỗng hoặc data rỗng (do device ID chết/bị từ chối) -> tự động xin device ID mới và thử lại
     if ((res.data == null || dataMap.isEmpty) && allowDeviceRefresh) {
@@ -133,7 +134,9 @@ class HongguoLocalEngine {
         '[HongguoLocalEngine] Device ID hiện tại (${device.deviceId}) không hợp lệ hoặc đã hết hạn. Đang xin ID mới...',
       );
       await HongguoDeviceService.instance.invalidateDevice();
-      await HongguoDeviceService.instance.getOrRegisterDevice(forceRefresh: true);
+      await HongguoDeviceService.instance.getOrRegisterDevice(
+        forceRefresh: true,
+      );
       return _resolveWithDeviceRetry(
         videoId,
         preferLowest: preferLowest,
@@ -149,7 +152,9 @@ class HongguoLocalEngine {
           '[HongguoLocalEngine] ByteDance báo lỗi code $apiCode. Thử xin device ID mới...',
         );
         await HongguoDeviceService.instance.invalidateDevice();
-        await HongguoDeviceService.instance.getOrRegisterDevice(forceRefresh: true);
+        await HongguoDeviceService.instance.getOrRegisterDevice(
+          forceRefresh: true,
+        );
         return _resolveWithDeviceRetry(
           videoId,
           preferLowest: preferLowest,
