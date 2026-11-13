@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -10,6 +12,11 @@ import '../../domain/media/network_header_helper.dart';
 import '../settings/settings_screen.dart';
 import '../theme/app_theme.dart';
 import 'hongguo_assistant_controller.dart';
+
+const _geminiBlue = Color(0xFF4285F4);
+const _geminiPurple = Color(0xFF9B72CB);
+const _geminiSurface = Color(0xFF171B24);
+const _geminiPillSurface = Color(0xFF212633);
 
 class HongguoAssistantSheet extends StatefulWidget {
   final HongguoAssistantController controller;
@@ -51,7 +58,6 @@ class HongguoAssistantSheet extends StatefulWidget {
 class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
   final TextEditingController _inputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
-  bool _showFiltersBar = true;
   int _lastMsgCount = 0;
 
   @override
@@ -109,6 +115,81 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
     }
   }
 
+  Future<void> _openQuickKeyDialog() async {
+    final ctrl = TextEditingController();
+    final saved = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _geminiSurface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+          side: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
+        ),
+        title: const Text(
+          'Nhập nhanh Gemini API Key',
+          style: TextStyle(
+            color: AppColors.textPrimary,
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Dán key AIza... (nhiều key cách nhau bởi dấu phẩy hoặc xuống dòng). Key sẽ được lưu vào Settings bảo mật.',
+              style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: ctrl,
+              maxLines: 3,
+              minLines: 2,
+              autofocus: true,
+              style: const TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: 12.5,
+                fontFamily: 'monospace',
+              ),
+              decoration: InputDecoration(
+                hintText: 'AIzaSy...',
+                hintStyle: const TextStyle(color: AppColors.textMuted),
+                filled: true,
+                fillColor: AppColors.darkBackground,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(
+                    color: Colors.white.withValues(alpha: 0.12),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Hủy'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _geminiBlue,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+            child: const Text('Lưu Key'),
+          ),
+        ],
+      ),
+    );
+    ctrl.dispose();
+
+    if (saved != null && saved.isNotEmpty) {
+      await widget.controller.saveQuickGeminiKeys(saved);
+    }
+  }
+
   Future<void> _pickCustomCountDialog() async {
     final ctrl = TextEditingController(
       text: (widget.controller.preferredCount ?? 5).toString(),
@@ -116,10 +197,10 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
     final res = await showDialog<int>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: AppColors.darkSurface,
+        backgroundColor: _geminiSurface,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-          side: const BorderSide(color: AppColors.cardBorder),
+          borderRadius: BorderRadius.circular(18),
+          side: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
         ),
         title: const Text(
           'Số lượng phim gợi ý',
@@ -142,8 +223,8 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primaryEmerald,
-              foregroundColor: Colors.black,
+              backgroundColor: _geminiBlue,
+              foregroundColor: Colors.white,
             ),
             onPressed: () {
               final n = int.tryParse(ctrl.text.trim());
@@ -162,6 +243,669 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
     }
   }
 
+  String _shortModelLabel(String modelId) {
+    return switch (modelId) {
+      'gemini-3.8-live' => '3.8 Live',
+      'gemini-3.8-live-extended-thinking' => '3.8 Thinking',
+      'gemini-3.1-flash-live-preview' => '3 Flash Live',
+      _ => modelId,
+    };
+  }
+
+  ({IconData icon, String badge, String detail}) _modelPresentation(
+    AiModelInfo m,
+  ) {
+    return switch (m.id) {
+      'gemini-3.8-live' => (
+        icon: Icons.auto_awesome_rounded,
+        badge: 'Cân bằng',
+        detail: 'Tốc độ nhanh, gọi hàm chính xác và hội thoại tự nhiên.',
+      ),
+      'gemini-3.8-live-extended-thinking' => (
+        icon: Icons.psychology_rounded,
+        badge: 'Suy luận sâu',
+        detail:
+            'Phân tích mô tả phim nhiều lớp, gom & đối chiếu cốt truyện kỹ hơn.',
+      ),
+      'gemini-3.1-flash-live-preview' => (
+        icon: Icons.bolt_rounded,
+        badge: 'Siêu nhanh',
+        detail: 'Phản hồi văn bản & giọng nói độ trễ cực thấp.',
+      ),
+      _ => (
+        icon: Icons.smart_toy_rounded,
+        badge: 'Live',
+        detail: m.shortDescription,
+      ),
+    };
+  }
+
+  Future<void> _showGeminiModelPickerSheet(HongguoAssistantController c) async {
+    HapticFeedback.selectionClick();
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (sheetCtx) {
+        final available = c.lastDiagnostics?.availableBidiModels ?? const [];
+        return Container(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 22),
+          decoration: BoxDecoration(
+            color: _geminiSurface,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
+            border: Border(
+              top: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
+            ),
+          ),
+          child: SafeArea(
+            top: false,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 14),
+                    decoration: BoxDecoration(
+                      color: Colors.white24,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const Text(
+                  'Chọn mô hình Gemini',
+                  style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Chuyển mô hình bất cứ lúc nào mà vẫn giữ nguyên ngữ cảnh & danh sách phim.',
+                  style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+                ),
+                const SizedBox(height: 14),
+                for (final m in AiModelRegistry.geminiLiveModels) ...[
+                  Builder(
+                    builder: (_) {
+                      final selected = c.selectedModelId == m.id;
+                      final meta = _modelPresentation(m);
+                      final candidates =
+                          AiModelRegistry.liveModelCandidateIds[m.id] ?? [m.id];
+                      final isDiscovered =
+                          available.isNotEmpty &&
+                          candidates.any(available.contains);
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: InkWell(
+                          onTap: () {
+                            HapticFeedback.selectionClick();
+                            Navigator.pop(sheetCtx);
+                            c.switchModel(m.id);
+                          },
+                          borderRadius: BorderRadius.circular(18),
+                          child: Container(
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: selected
+                                  ? _geminiBlue.withValues(alpha: 0.14)
+                                  : _geminiPillSurface.withValues(alpha: 0.65),
+                              borderRadius: BorderRadius.circular(18),
+                              border: Border.all(
+                                color: selected
+                                    ? _geminiBlue.withValues(alpha: 0.75)
+                                    : Colors.white.withValues(alpha: 0.08),
+                                width: selected ? 1.4 : 1.0,
+                              ),
+                            ),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Container(
+                                  width: 38,
+                                  height: 38,
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      colors: selected
+                                          ? [_geminiBlue, _geminiPurple]
+                                          : [
+                                              Colors.white.withValues(
+                                                alpha: 0.08,
+                                              ),
+                                              Colors.white.withValues(
+                                                alpha: 0.04,
+                                              ),
+                                            ],
+                                    ),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Icon(
+                                    meta.icon,
+                                    color: selected
+                                        ? Colors.white
+                                        : AppColors.textSecondary,
+                                    size: 20,
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Flexible(
+                                            child: Text(
+                                              m.displayName,
+                                              style: const TextStyle(
+                                                color: AppColors.textPrimary,
+                                                fontSize: 14.5,
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 6),
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 7,
+                                              vertical: 2,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: selected
+                                                  ? _geminiBlue.withValues(
+                                                      alpha: 0.25,
+                                                    )
+                                                  : Colors.white.withValues(
+                                                      alpha: 0.07,
+                                                    ),
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
+                                            ),
+                                            child: Text(
+                                              meta.badge,
+                                              style: TextStyle(
+                                                color: selected
+                                                    ? Colors.lightBlueAccent
+                                                    : AppColors.textSecondary,
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        meta.detail,
+                                        style: const TextStyle(
+                                          color: AppColors.textSecondary,
+                                          fontSize: 12,
+                                          height: 1.35,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Row(
+                                        children: [
+                                          Text(
+                                            m.id,
+                                            style: const TextStyle(
+                                              color: AppColors.textMuted,
+                                              fontSize: 10.5,
+                                              fontFamily: 'monospace',
+                                            ),
+                                          ),
+                                          if (available.isNotEmpty) ...[
+                                            const SizedBox(width: 8),
+                                            Text(
+                                              isDiscovered
+                                                  ? '• Có sẵn trên Key'
+                                                  : '• Tự thử fallback',
+                                              style: TextStyle(
+                                                color: isDiscovered
+                                                    ? AppColors.primaryEmerald
+                                                    : AppColors.accentGold,
+                                                fontSize: 10.5,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                          ],
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 6),
+                                  child: Icon(
+                                    selected
+                                        ? Icons.check_circle_rounded
+                                        : Icons.radio_button_unchecked_rounded,
+                                    color: selected
+                                        ? _geminiBlue
+                                        : AppColors.textMuted,
+                                    size: 22,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _showSessionDiagnosticsSheet(
+    HongguoAssistantController c, {
+    bool runTestOnOpen = false,
+  }) async {
+    bool startedAutoTest = false;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (sheetCtx) {
+        return StatefulBuilder(
+          builder: (ctx, setModalState) {
+            if (runTestOnOpen && !startedAutoTest) {
+              startedAutoTest = true;
+              unawaited(() async {
+                await c.testConnection();
+                if (ctx.mounted) setModalState(() {});
+              }());
+            }
+
+            final diag = c.lastDiagnostics;
+            final isOk = c.isConnected;
+            final isTesting = c.isTestingConnection;
+
+            return Container(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(ctx).size.height * 0.84,
+              ),
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
+              decoration: BoxDecoration(
+                color: _geminiSurface,
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(24),
+                ),
+                border: Border(
+                  top: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
+                ),
+              ),
+              child: SafeArea(
+                top: false,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 36,
+                        height: 4,
+                        margin: const EdgeInsets.only(bottom: 12),
+                        decoration: BoxDecoration(
+                          color: Colors.white24,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                    Row(
+                      children: [
+                        Icon(
+                          isTesting
+                              ? Icons.sync_rounded
+                              : (isOk
+                                    ? Icons.verified_rounded
+                                    : Icons.hub_outlined),
+                          color: isTesting
+                              ? Colors.amber
+                              : (isOk
+                                    ? AppColors.primaryEmerald
+                                    : (c.errorBanner != null
+                                          ? Colors.redAccent
+                                          : _geminiBlue)),
+                        ),
+                        const SizedBox(width: 8),
+                        const Expanded(
+                          child: Text(
+                            'Kiểm tra phiên Gemini Live & API Key',
+                            style: TextStyle(
+                              color: AppColors.textPrimary,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(
+                            Icons.close_rounded,
+                            color: AppColors.textMuted,
+                          ),
+                          onPressed: () => Navigator.pop(sheetCtx),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Flexible(
+                      child: SingleChildScrollView(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Status Summary Card
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: _geminiPillSurface,
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(
+                                  color: isOk
+                                      ? AppColors.primaryEmerald.withValues(
+                                          alpha: 0.5,
+                                        )
+                                      : (c.errorBanner != null
+                                            ? Colors.redAccent.withValues(
+                                                alpha: 0.5,
+                                              )
+                                            : Colors.white.withValues(
+                                                alpha: 0.08,
+                                              )),
+                                ),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      if (isTesting)
+                                        const SizedBox(
+                                          width: 14,
+                                          height: 14,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: Colors.amber,
+                                          ),
+                                        )
+                                      else
+                                        Container(
+                                          width: 9,
+                                          height: 9,
+                                          decoration: BoxDecoration(
+                                            shape: BoxShape.circle,
+                                            color: isOk
+                                                ? AppColors.primaryEmerald
+                                                : (c.errorBanner != null
+                                                      ? Colors.redAccent
+                                                      : Colors.white38),
+                                          ),
+                                        ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(
+                                          isTesting
+                                              ? 'Đang bắt tay WebSocket tới Gemini Live...'
+                                              : (isOk
+                                                    ? 'Phiên Live đang hoạt động & sẵn sàng chat'
+                                                    : (c.errorBanner ??
+                                                          'Chưa kết nối phiên Live. Bấm Test bên dưới để kiểm tra.')),
+                                          style: const TextStyle(
+                                            color: AppColors.textPrimary,
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 10),
+                                  _diagRow(
+                                    'Gemini API Key đã nạp',
+                                    c.hasApiKeys
+                                        ? '${c.maskedActiveKey} (${c.apiKeyCount} key)'
+                                        : 'Chưa có key',
+                                  ),
+                                  _diagRow(
+                                    'Model đang chọn',
+                                    c.selectedModelId,
+                                  ),
+                                  _diagRow(
+                                    'Model server phản hồi',
+                                    c.resolvedServerModelId.isNotEmpty
+                                        ? '${c.resolvedServerModelId} (${c.resolvedApiVersion})'
+                                        : 'Chưa mở phiên',
+                                  ),
+                                  if (diag != null) ...[
+                                    _diagRow(
+                                      'Cấu hình phiên / Độ trễ',
+                                      '${diag.profileLabel} · ${diag.latencyMs} ms',
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: AppColors.textPrimary,
+                                      side: BorderSide(
+                                        color: Colors.white.withValues(
+                                          alpha: 0.14,
+                                        ),
+                                      ),
+                                    ),
+                                    onPressed: () async {
+                                      await _openQuickKeyDialog();
+                                      if (ctx.mounted) setModalState(() {});
+                                    },
+                                    icon: const Icon(
+                                      Icons.vpn_key_outlined,
+                                      size: 16,
+                                    ),
+                                    label: const Text('Dán Key nhanh'),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: AppColors.textPrimary,
+                                      side: BorderSide(
+                                        color: Colors.white.withValues(
+                                          alpha: 0.14,
+                                        ),
+                                      ),
+                                    ),
+                                    onPressed: () async {
+                                      await _openSettingsForKey();
+                                      if (ctx.mounted) setModalState(() {});
+                                    },
+                                    icon: const Icon(
+                                      Icons.settings_outlined,
+                                      size: 16,
+                                    ),
+                                    label: const Text('Mở Cài đặt'),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            if (diag != null &&
+                                diag.availableBidiModels.isNotEmpty) ...[
+                              const SizedBox(height: 14),
+                              const Text(
+                                'Model Live (BidiGenerateContent) Key hỗ trợ:',
+                                style: TextStyle(
+                                  color: AppColors.textSecondary,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Wrap(
+                                spacing: 6,
+                                runSpacing: 6,
+                                children: [
+                                  for (final m in diag.availableBidiModels)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 4,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: m == c.resolvedServerModelId
+                                            ? AppColors.primaryEmerald
+                                                  .withValues(alpha: 0.2)
+                                            : _geminiPillSurface,
+                                        borderRadius: BorderRadius.circular(8),
+                                        border: Border.all(
+                                          color: m == c.resolvedServerModelId
+                                              ? AppColors.primaryEmerald
+                                              : Colors.white.withValues(
+                                                  alpha: 0.1,
+                                                ),
+                                        ),
+                                      ),
+                                      child: Text(
+                                        m,
+                                        style: TextStyle(
+                                          color: m == c.resolvedServerModelId
+                                              ? AppColors.primaryEmerald
+                                              : AppColors.textSecondary,
+                                          fontSize: 11,
+                                          fontFamily: 'monospace',
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ],
+                            if (diag != null &&
+                                diag.attemptLogs.isNotEmpty) ...[
+                              const SizedBox(height: 14),
+                              const Text(
+                                'Nhật ký bắt tay gần nhất:',
+                                style: TextStyle(
+                                  color: AppColors.textSecondary,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.all(10),
+                                decoration: BoxDecoration(
+                                  color: AppColors.darkBackground,
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(
+                                    color: Colors.white.withValues(alpha: 0.08),
+                                  ),
+                                ),
+                                child: SelectableText(
+                                  diag.attemptLogs.join('\n'),
+                                  style: const TextStyle(
+                                    color: AppColors.textMuted,
+                                    fontSize: 11,
+                                    fontFamily: 'monospace',
+                                    height: 1.4,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 44,
+                      child: ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _geminiBlue,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        onPressed: isTesting
+                            ? null
+                            : () async {
+                                await c.testConnection();
+                                if (ctx.mounted) setModalState(() {});
+                              },
+                        icon: isTesting
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Icon(Icons.bolt_rounded, size: 19),
+                        label: Text(
+                          isTesting
+                              ? 'Đang kiểm tra kết nối...'
+                              : 'Test kết nối phiên Live ngay',
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _diagRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 140,
+            child: Text(
+              label,
+              style: const TextStyle(color: AppColors.textMuted, fontSize: 11.5),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = widget.controller;
@@ -169,18 +913,20 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
     final screenH = MediaQuery.of(context).size.height;
 
     return Container(
-      height: screenH * 0.90,
-      decoration: const BoxDecoration(
+      height: screenH * 0.92,
+      decoration: BoxDecoration(
         color: AppColors.darkBackground,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
-        border: Border(top: BorderSide(color: AppColors.cardBorder)),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
+        border: Border(
+          top: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
+        ),
       ),
       child: Column(
         children: [
           _buildHeader(c),
-          _buildModelSelectorBar(c),
-          if (_showFiltersBar) _buildGuidedFiltersBar(c),
-          if (c.errorBanner != null || !c.hasApiKeys) _buildNoticeOrKeyBanner(c),
+          _buildSessionAndFilterStrip(c),
+          if (!c.hasApiKeys || c.errorBanner != null)
+            _buildNoticeOrKeyBanner(c),
           Expanded(
             child: c.messages.isEmpty
                 ? _buildEmptyGuideView(c)
@@ -198,31 +944,19 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
   }
 
   Widget _buildHeader(HongguoAssistantController c) {
-    final (statusLabel, statusColor) = switch (c.connectionState) {
-      AssistantConnectionState.ready => (
-        c.isMicActive
-            ? 'Đang nghe'
-            : (c.isAiSpeaking ? 'Đang nói' : 'Live Sẵn sàng'),
-        AppColors.primaryEmerald,
-      ),
-      AssistantConnectionState.connecting => ('Đang kết nối...', Colors.amber),
-      AssistantConnectionState.reconnecting => (
-        'Đang nối lại phiên...',
-        Colors.amber,
-      ),
-      AssistantConnectionState.error => ('Cần kiểm tra', Colors.redAccent),
-      AssistantConnectionState.disconnected => (
-        'Chờ tin nhắn',
-        AppColors.textMuted,
-      ),
-    };
+    final shortModel = _shortModelLabel(c.selectedModelId);
+    final isLive = c.isConnected;
+    final isConnecting =
+        c.isTestingConnection ||
+        c.connectionState == AssistantConnectionState.connecting ||
+        c.connectionState == AssistantConnectionState.reconnecting;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
           margin: const EdgeInsets.only(top: 8, bottom: 4),
-          width: 38,
+          width: 36,
           height: 4,
           decoration: BoxDecoration(
             color: Colors.white24,
@@ -230,70 +964,90 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
           ),
         ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(14, 4, 10, 6),
+          padding: const EdgeInsets.fromLTRB(14, 4, 8, 6),
           child: Row(
             children: [
-              Container(
-                padding: const EdgeInsets.all(7),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      AppColors.primaryEmerald.withValues(alpha: 0.28),
-                      AppColors.accentGold.withValues(alpha: 0.18),
+              // Gemini-style clickable Model Pill ở góc trái
+              InkWell(
+                onTap: () => _showGeminiModelPickerSheet(c),
+                borderRadius: BorderRadius.circular(22),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 11,
+                    vertical: 7,
+                  ),
+                  decoration: BoxDecoration(
+                    color: _geminiPillSurface,
+                    borderRadius: BorderRadius.circular(22),
+                    border: Border.all(
+                      color: isLive
+                          ? _geminiBlue.withValues(alpha: 0.45)
+                          : Colors.white.withValues(alpha: 0.1),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ShaderMask(
+                        shaderCallback: (bounds) => const LinearGradient(
+                          colors: [
+                            _geminiBlue,
+                            _geminiPurple,
+                            AppColors.primaryEmerald,
+                          ],
+                        ).createShader(bounds),
+                        child: const Icon(
+                          Icons.auto_awesome_rounded,
+                          size: 17,
+                          color: Colors.white,
+                        ),
+                      ),
+                      const SizedBox(width: 7),
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 145),
+                        child: Text(
+                          shortModel,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: AppColors.textPrimary,
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.1,
+                          ),
+                        ),
+                      ),
+                      if (isConnecting || isLive) ...[
+                        const SizedBox(width: 6),
+                        if (isConnecting)
+                          const SizedBox(
+                            width: 10,
+                            height: 10,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 1.8,
+                              color: Colors.amber,
+                            ),
+                          )
+                        else
+                          Container(
+                            width: 7,
+                            height: 7,
+                            decoration: const BoxDecoration(
+                              color: AppColors.primaryEmerald,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                      ],
+                      const SizedBox(width: 3),
+                      const Icon(
+                        Icons.keyboard_arrow_down_rounded,
+                        size: 18,
+                        color: AppColors.textSecondary,
+                      ),
                     ],
                   ),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color: AppColors.primaryEmerald.withValues(alpha: 0.5),
-                  ),
-                ),
-                child: const Icon(
-                  Icons.auto_awesome_rounded,
-                  size: 18,
-                  color: AppColors.primaryEmerald,
                 ),
               ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Trợ lý AI Hồng Quả',
-                      style: TextStyle(
-                        color: AppColors.textPrimary,
-                        fontSize: 15,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    Row(
-                      children: [
-                        Container(
-                          width: 7,
-                          height: 7,
-                          decoration: BoxDecoration(
-                            color: statusColor,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                        const SizedBox(width: 5),
-                        Flexible(
-                          child: Text(
-                            statusLabel,
-                            style: TextStyle(
-                              color: statusColor,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
+              const Spacer(),
               // Công tắc đầu ra: Chữ / Lời nói
               InkWell(
                 onTap: () {
@@ -303,18 +1057,18 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
                 borderRadius: BorderRadius.circular(20),
                 child: Container(
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 9,
-                    vertical: 5,
+                    horizontal: 10,
+                    vertical: 6,
                   ),
                   decoration: BoxDecoration(
                     color: c.outputAudioEnabled
-                        ? AppColors.primaryEmerald.withValues(alpha: 0.2)
-                        : AppColors.darkSurfaceVariant,
+                        ? AppColors.primaryEmerald.withValues(alpha: 0.18)
+                        : _geminiPillSurface,
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(
                       color: c.outputAudioEnabled
-                          ? AppColors.primaryEmerald
-                          : AppColors.cardBorder,
+                          ? AppColors.primaryEmerald.withValues(alpha: 0.7)
+                          : Colors.white.withValues(alpha: 0.08),
                     ),
                   ),
                   child: Row(
@@ -323,7 +1077,7 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
                       Icon(
                         c.outputAudioEnabled
                             ? Icons.volume_up_rounded
-                            : Icons.text_snippet_rounded,
+                            : Icons.notes_rounded,
                         size: 14,
                         color: c.outputAudioEnabled
                             ? AppColors.primaryEmerald
@@ -331,10 +1085,10 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
                       ),
                       const SizedBox(width: 4),
                       Text(
-                        c.outputAudioEnabled ? 'Lời nói' : 'Chỉ Chữ',
+                        c.outputAudioEnabled ? 'Lời nói' : 'Chữ',
                         style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600,
                           color: c.outputAudioEnabled
                               ? AppColors.primaryEmerald
                               : AppColors.textSecondary,
@@ -344,26 +1098,12 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
                   ),
                 ),
               ),
+              const SizedBox(width: 2),
               IconButton(
                 visualDensity: VisualDensity.compact,
-                tooltip: _showFiltersBar
-                    ? 'Ẩn thanh bộ lọc nhanh'
-                    : 'Hiện thanh bộ lọc nhanh',
-                icon: Icon(
-                  Icons.tune_rounded,
-                  size: 19,
-                  color: _showFiltersBar
-                      ? AppColors.accentGold
-                      : AppColors.textMuted,
-                ),
-                onPressed: () =>
-                    setState(() => _showFiltersBar = !_showFiltersBar),
-              ),
-              IconButton(
-                visualDensity: VisualDensity.compact,
-                tooltip: 'Phiên trò chuyện mới',
+                tooltip: 'Cuộc trò chuyện mới',
                 icon: const Icon(
-                  Icons.restart_alt_rounded,
+                  Icons.add_comment_outlined,
                   size: 19,
                   color: AppColors.textSecondary,
                 ),
@@ -374,9 +1114,10 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
               ),
               IconButton(
                 visualDensity: VisualDensity.compact,
-                tooltip: 'Thu gọn',
+                tooltip: 'Đóng',
                 icon: const Icon(
-                  Icons.keyboard_arrow_down_rounded,
+                  Icons.close_rounded,
+                  size: 20,
                   color: AppColors.textSecondary,
                 ),
                 onPressed: () => Navigator.pop(context),
@@ -388,141 +1129,268 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
     );
   }
 
-  Widget _buildModelSelectorBar(HongguoAssistantController c) {
+  Widget _buildSessionAndFilterStrip(HongguoAssistantController c) {
+    final diag = c.lastDiagnostics;
+    final isTesting =
+        c.isTestingConnection ||
+        c.connectionState == AssistantConnectionState.connecting ||
+        c.connectionState == AssistantConnectionState.reconnecting;
+    final isConnected = c.isConnected;
+    final isError = c.connectionState == AssistantConnectionState.error;
+
+    final Color dotColor = isTesting
+        ? Colors.amber
+        : (isConnected
+              ? AppColors.primaryEmerald
+              : (isError || !c.hasApiKeys
+                    ? Colors.redAccent
+                    : Colors.white38));
+
+    final String sessionLabel;
+    if (isTesting) {
+      sessionLabel = 'Đang kết nối...';
+    } else if (isConnected) {
+      final ms = (diag != null && diag.latencyMs > 0)
+          ? ' · ${diag.latencyMs}ms'
+          : '';
+      final keyText = c.maskedActiveKey.isNotEmpty
+          ? ' · ${c.maskedActiveKey}'
+          : '';
+      sessionLabel = 'Live$keyText$ms';
+    } else if (!c.hasApiKeys) {
+      sessionLabel = 'Chưa có Key';
+    } else if (isError) {
+      sessionLabel = 'Lỗi kết nối';
+    } else {
+      sessionLabel = c.maskedActiveKey.isNotEmpty
+          ? 'Chưa nối · ${c.maskedActiveKey}'
+          : 'Chưa mở phiên';
+    }
+
+    final sourceLabel = switch (c.sourceFilter) {
+      'category/real-drama' => 'Người thật',
+      'category/comic-drama' => 'Hoạt hình',
+      'category/ai-drama' => 'Phim AI',
+      _ => 'Tất cả nguồn',
+    };
+    final countLabel = c.preferredCount != null
+        ? '${c.preferredCount} phim'
+        : 'SL mặc định';
+
     return SizedBox(
       height: 36,
-      child: ListView.separated(
+      child: ListView(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 14),
-        itemCount: AiModelRegistry.geminiLiveModels.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 6),
-        itemBuilder: (ctx, i) {
-          final m = AiModelRegistry.geminiLiveModels[i];
-          final selected = c.selectedModelId == m.id;
-          return ChoiceChip(
-            visualDensity: VisualDensity.compact,
-            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            label: Text(
-              m.displayName,
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: selected ? FontWeight.bold : FontWeight.normal,
-                color: selected ? Colors.white : AppColors.textSecondary,
-              ),
-            ),
-            selected: selected,
-            selectedColor: AppColors.primaryEmerald.withValues(alpha: 0.25),
-            backgroundColor: AppColors.darkSurface,
-            side: BorderSide(
-              color: selected ? AppColors.primaryEmerald : AppColors.cardBorder,
-            ),
-            onSelected: (_) {
-              HapticFeedback.selectionClick();
-              c.switchModel(m.id);
-            },
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildGuidedFiltersBar(HongguoAssistantController c) {
-    const sources = [
-      (slug: '', label: 'Tất cả'),
-      (slug: 'category/real-drama', label: '🎬 Người thật'),
-      (slug: 'category/comic-drama', label: '🎨 Hoạt hình'),
-      (slug: 'category/ai-drama', label: '🤖 Phim AI'),
-    ];
-    const counts = [3, 5, 10, 15];
-
-    return Container(
-      margin: const EdgeInsets.fromLTRB(14, 6, 14, 4),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-      decoration: BoxDecoration(
-        color: AppColors.darkSurface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.cardBorder),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
         children: [
-          SizedBox(
-            height: 28,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemCount: sources.length,
-              separatorBuilder: (_, _) => const SizedBox(width: 6),
-              itemBuilder: (_, i) {
-                final s = sources[i];
-                final selected = c.sourceFilter == s.slug;
-                return ChoiceChip(
-                  visualDensity: VisualDensity.compact,
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  padding: const EdgeInsets.symmetric(horizontal: 6),
-                  label: Text(
-                    s.label,
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: selected ? FontWeight.bold : FontWeight.normal,
-                      color: selected ? Colors.white : AppColors.textSecondary,
+          // Pill Trạng thái phiên & Key (chạm để xem chi tiết / dán Key)
+          InkWell(
+            onTap: () => _showSessionDiagnosticsSheet(c),
+            borderRadius: BorderRadius.circular(18),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: _geminiSurface,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: isConnected
+                      ? AppColors.primaryEmerald.withValues(alpha: 0.4)
+                      : (isError
+                            ? Colors.redAccent.withValues(alpha: 0.45)
+                            : Colors.white.withValues(alpha: 0.08)),
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (isTesting)
+                    const SizedBox(
+                      width: 10,
+                      height: 10,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.8,
+                        color: Colors.amber,
+                      ),
+                    )
+                  else
+                    Container(
+                      width: 7,
+                      height: 7,
+                      decoration: BoxDecoration(
+                        color: dotColor,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  const SizedBox(width: 6),
+                  Text(
+                    sessionLabel,
+                    style: const TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
-                  selected: selected,
-                  selectedColor: AppColors.primaryEmerald.withValues(alpha: 0.3),
-                  backgroundColor: Colors.transparent,
-                  side: BorderSide(
-                    color: selected
-                        ? AppColors.primaryEmerald
-                        : AppColors.cardBorder.withValues(alpha: 0.7),
-                  ),
-                  onSelected: (_) {
-                    HapticFeedback.selectionClick();
-                    c.setSourceFilter(s.slug);
-                  },
-                );
-              },
+                ],
+              ),
             ),
           ),
-          const SizedBox(height: 6),
-          Row(
-            children: [
-              const Text(
-                'Số lượng:',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: AppColors.accentGold,
-                  fontWeight: FontWeight.w600,
+          const SizedBox(width: 6),
+          // Nút Test phiên Live 1 chạm
+          InkWell(
+            onTap: () => _showSessionDiagnosticsSheet(c, runTestOnOpen: true),
+            borderRadius: BorderRadius.circular(18),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: _geminiBlue.withValues(alpha: 0.14),
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: _geminiBlue.withValues(alpha: 0.45),
                 ),
               ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: SizedBox(
-                  height: 26,
-                  child: ListView(
-                    scrollDirection: Axis.horizontal,
-                    children: [
-                      for (final n in counts) ...[
-                        _CountChip(
-                          label: '$n',
-                          selected: c.preferredCount == n,
-                          onTap: () => c.setPreferredCount(n),
-                        ),
-                        const SizedBox(width: 5),
-                      ],
-                      _CountChip(
-                        label: (c.preferredCount != null &&
-                                !counts.contains(c.preferredCount))
-                            ? '${c.preferredCount} (Tùy chỉnh)'
-                            : 'Tùy chỉnh...',
-                        selected: c.preferredCount != null &&
-                            !counts.contains(c.preferredCount),
-                        onTap: _pickCustomCountDialog,
-                      ),
-                    ],
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    isConnected
+                        ? Icons.verified_outlined
+                        : Icons.bolt_rounded,
+                    size: 13.5,
+                    color: Colors.lightBlueAccent,
                   ),
-                ),
+                  const SizedBox(width: 4),
+                  const Text(
+                    'Test phiên',
+                    style: TextStyle(
+                      color: Colors.lightBlueAccent,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          // Pill chọn Nguồn phim (gọn 1 dòng)
+          PopupMenuButton<String>(
+            color: _geminiSurface,
+            initialValue: c.sourceFilter,
+            onSelected: (slug) {
+              HapticFeedback.selectionClick();
+              c.setSourceFilter(slug);
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: '', child: Text('Tất cả nguồn')),
+              PopupMenuItem(
+                value: 'category/real-drama',
+                child: Text('🎬 Phim Người thật'),
+              ),
+              PopupMenuItem(
+                value: 'category/comic-drama',
+                child: Text('🎨 Hoạt hình / Anime'),
+              ),
+              PopupMenuItem(
+                value: 'category/ai-drama',
+                child: Text('🤖 Phim AI'),
               ),
             ],
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: c.sourceFilter.isNotEmpty
+                    ? AppColors.primaryEmerald.withValues(alpha: 0.16)
+                    : _geminiSurface,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: c.sourceFilter.isNotEmpty
+                      ? AppColors.primaryEmerald.withValues(alpha: 0.5)
+                      : Colors.white.withValues(alpha: 0.08),
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.filter_list_rounded,
+                    size: 13.5,
+                    color: AppColors.textSecondary,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    sourceLabel,
+                    style: TextStyle(
+                      color: c.sourceFilter.isNotEmpty
+                          ? Colors.white
+                          : AppColors.textSecondary,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(width: 2),
+                  const Icon(
+                    Icons.arrow_drop_down_rounded,
+                    size: 16,
+                    color: AppColors.textMuted,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          // Pill chọn Số lượng gợi ý
+          PopupMenuButton<int>(
+            color: _geminiSurface,
+            onSelected: (val) {
+              HapticFeedback.selectionClick();
+              if (val == -1) {
+                _pickCustomCountDialog();
+              } else {
+                c.setPreferredCount(val);
+              }
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: 3, child: Text('3 phim')),
+              PopupMenuItem(value: 5, child: Text('5 phim')),
+              PopupMenuItem(value: 10, child: Text('10 phim')),
+              PopupMenuItem(value: 15, child: Text('15 phim')),
+              PopupMenuItem(value: -1, child: Text('Nhập số tùy chỉnh...')),
+            ],
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: c.preferredCount != null
+                    ? AppColors.accentGold.withValues(alpha: 0.15)
+                    : _geminiSurface,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: c.preferredCount != null
+                      ? AppColors.accentGold.withValues(alpha: 0.5)
+                      : Colors.white.withValues(alpha: 0.08),
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    countLabel,
+                    style: TextStyle(
+                      color: c.preferredCount != null
+                          ? AppColors.accentGold
+                          : AppColors.textSecondary,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(width: 2),
+                  const Icon(
+                    Icons.arrow_drop_down_rounded,
+                    size: 16,
+                    color: AppColors.textMuted,
+                  ),
+                ],
+              ),
+            ),
           ),
         ],
       ),
@@ -532,37 +1400,64 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
   Widget _buildNoticeOrKeyBanner(HongguoAssistantController c) {
     final needsKey = !c.hasApiKeys;
     return Container(
-      margin: const EdgeInsets.fromLTRB(14, 4, 14, 4),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      margin: const EdgeInsets.fromLTRB(14, 8, 14, 2),
+      padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
       decoration: BoxDecoration(
-        color: Colors.redAccent.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.redAccent.withValues(alpha: 0.45)),
+        color: _geminiSurface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.redAccent.withValues(alpha: 0.4)),
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          const Icon(Icons.info_outline_rounded,
-              color: Colors.redAccent, size: 18),
-          const SizedBox(width: 8),
+          Icon(
+            needsKey ? Icons.vpn_key_outlined : Icons.error_outline_rounded,
+            color: Colors.redAccent,
+            size: 19,
+          ),
+          const SizedBox(width: 10),
           Expanded(
             child: Text(
               needsKey
-                  ? 'Bạn chưa thêm Gemini API Key. Hãy nhập key để dùng Trợ lý Live.'
-                  : (c.errorBanner ?? ''),
-              style: const TextStyle(color: Colors.white, fontSize: 12),
+                  ? 'Chưa có Gemini API Key. Hãy dán key để bật Trợ lý Live.'
+                  : (c.errorBanner ?? 'Lỗi kết nối Gemini Live.'),
+              style: const TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: 12,
+                height: 1.35,
+              ),
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
             ),
           ),
-          if (needsKey)
-            TextButton(
-              onPressed: _openSettingsForKey,
-              child: const Text(
-                'Mở Cài đặt',
-                style: TextStyle(
-                  color: AppColors.primaryEmerald,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 12,
-                ),
+          const SizedBox(width: 6),
+          TextButton(
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            onPressed: needsKey
+                ? _openQuickKeyDialog
+                : () => _showSessionDiagnosticsSheet(c, runTestOnOpen: true),
+            child: Text(
+              needsKey ? 'Nhập Key' : 'Chi tiết',
+              style: const TextStyle(
+                color: Colors.lightBlueAccent,
+                fontWeight: FontWeight.w700,
+                fontSize: 12,
               ),
+            ),
+          ),
+          if (!needsKey)
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(
+                Icons.close_rounded,
+                size: 16,
+                color: AppColors.textMuted,
+              ),
+              onPressed: c.clearErrorBanner,
             ),
         ],
       ),
@@ -576,7 +1471,7 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
         color: Colors.pinkAccent,
         title: 'Tìm theo mô tả chi tiết (Hẹp → Rộng)',
         subtitle:
-            'Ví dụ: Học đường thanh xuân, nữ chính mạnh mẽ, tình yêu ngọt ngào',
+            'Học đường thanh xuân, nữ chính mạnh mẽ, tình yêu ngọt ngào',
         prompt:
             'Tìm cho mình ${c.preferredCount ?? 5} phim học đường thanh xuân, nữ chính mạnh mẽ, tình yêu ngọt ngào.',
       ),
@@ -584,88 +1479,86 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
         icon: Icons.smart_toy_rounded,
         color: AppColors.primaryEmerald,
         title: 'Tìm Phim AI / Hoạt hình theo thể loại',
-        subtitle: 'Mạt thế sinh tồn, não động hệ thống, tu tiên huyền huyễn',
+        subtitle: 'Mạt thế sinh tồn, hệ thống, tu tiên huyền huyễn',
         prompt:
             'Tìm ${c.preferredCount ?? 5} phim AI hoặc hoạt hình thể loại mạt thế sinh tồn hoặc hệ thống kịch tính.',
       ),
       (
         icon: Icons.leaderboard_rounded,
         color: AppColors.accentGold,
-        title: 'Tra cứu 10 Bảng Xếp Hạng Hồng Quả',
-        subtitle: 'Phim mới ra, Điểm cao uy tín, Nhiều người sưu tầm, Phải xem',
+        title: 'Tra cứu Bảng Xếp Hạng Hồng Quả',
+        subtitle: 'Phim mới ra, Điểm cao uy tín, Nhiều người sưu tầm',
         prompt:
             'Lấy giúp mình Top ${c.preferredCount ?? 5} phim trong BXH Điểm cao uy tín và tóm tắt nhanh từng bộ.',
       ),
       (
-        icon: Icons.auto_stories_rounded,
+        icon: Icons.bolt_rounded,
         color: Colors.lightBlueAccent,
-        title: 'Xem xong danh sách ➔ Tổng hợp hết cốt truyện',
+        title: 'Kiểm tra kết nối & model trên Key trước khi chat',
         subtitle:
-            'Sau khi có danh sách, chỉ cần chạm 1 nút hoặc nói "phim số 2" để AI tóm tắt',
+            'Xem key đang nạp (${c.apiKeyCount} key), endpoint & test phiên Live',
         prompt: null,
       ),
     ];
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
+      padding: const EdgeInsets.fromLTRB(18, 22, 18, 16),
       children: [
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: AppColors.darkSurface,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: AppColors.cardBorder),
-          ),
-          child: const Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Cách dùng Trợ lý hiệu quả nhất:',
-                style: TextStyle(
-                  color: AppColors.textPrimary,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 13.5,
-                ),
-              ),
-              SizedBox(height: 6),
-              Text(
-                '• Chọn Nguồn & Số lượng ngay thanh trên (hoặc nói trực tiếp).\n'
-                '• Mô tả cốt truyện bằng Tiếng Việt — AI tự tách từ khóa Trung từ hẹp tới rộng và kết hợp tag thật của app.\n'
-                '• Không cần gõ tiếng Trung: bấm Ghim trên thẻ phim hoặc nói "phim số 2" để hỏi tiếp / tóm tắt.',
-                style: TextStyle(
-                  color: AppColors.textSecondary,
-                  fontSize: 12,
-                  height: 1.45,
-                ),
-              ),
-            ],
+        ShaderMask(
+          shaderCallback: (bounds) => const LinearGradient(
+            colors: [_geminiBlue, _geminiPurple, AppColors.primaryEmerald],
+          ).createShader(bounds),
+          child: const Text(
+            'Xin chào',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 30,
+              fontWeight: FontWeight.w700,
+              letterSpacing: -0.5,
+            ),
           ),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 6),
+        const Text(
+          'Hỏi mình bất cứ gu phim nào trên Hồng Quả bằng tiếng Việt — hoặc chạm "Test phiên" bên trên để kiểm tra API key trước.',
+          style: TextStyle(
+            color: AppColors.textSecondary,
+            fontSize: 13.5,
+            height: 1.4,
+          ),
+        ),
+        const SizedBox(height: 22),
         for (final p in presets)
           Padding(
-            padding: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.only(bottom: 10),
             child: InkWell(
-              onTap: p.prompt == null ? null : () => _submitText(p.prompt),
-              borderRadius: BorderRadius.circular(12),
+              onTap: p.prompt != null
+                  ? () => _submitText(p.prompt)
+                  : () => _showSessionDiagnosticsSheet(c, runTestOnOpen: true),
+              borderRadius: BorderRadius.circular(18),
               child: Container(
-                padding: const EdgeInsets.all(11),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 13,
+                ),
                 decoration: BoxDecoration(
-                  color: AppColors.darkSurface,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppColors.cardBorder),
+                  color: _geminiSurface,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.08),
+                  ),
                 ),
                 child: Row(
                   children: [
                     Container(
-                      padding: const EdgeInsets.all(8),
+                      padding: const EdgeInsets.all(9),
                       decoration: BoxDecoration(
-                        color: p.color.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(10),
+                        color: p.color.withValues(alpha: 0.14),
+                        borderRadius: BorderRadius.circular(12),
                       ),
-                      child: Icon(p.icon, color: p.color, size: 18),
+                      child: Icon(p.icon, color: p.color, size: 19),
                     ),
-                    const SizedBox(width: 10),
+                    const SizedBox(width: 12),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -674,8 +1567,8 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
                             p.title,
                             style: const TextStyle(
                               color: AppColors.textPrimary,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 12.5,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 13,
                             ),
                           ),
                           const SizedBox(height: 2),
@@ -689,12 +1582,11 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
                         ],
                       ),
                     ),
-                    if (p.prompt != null)
-                      const Icon(
-                        Icons.arrow_forward_ios_rounded,
-                        size: 13,
-                        color: AppColors.textMuted,
-                      ),
+                    const Icon(
+                      Icons.arrow_forward_ios_rounded,
+                      size: 13,
+                      color: AppColors.textMuted,
+                    ),
                   ],
                 ),
               ),
@@ -705,9 +1597,10 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
   }
 
   Widget _buildMessagesList(HongguoAssistantController c) {
+    final modelShort = _shortModelLabel(c.selectedModelId);
     return ListView.builder(
       controller: _scrollController,
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
       itemCount: c.messages.length,
       itemBuilder: (ctx, i) {
         final msg = c.messages[i];
@@ -715,11 +1608,13 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
           return Center(
             child: Container(
               margin: const EdgeInsets.symmetric(vertical: 6),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
               decoration: BoxDecoration(
-                color: AppColors.darkSurfaceVariant,
+                color: _geminiSurface,
                 borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: AppColors.cardBorder),
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.08),
+                ),
               ),
               child: Text(
                 msg.text,
@@ -737,58 +1632,76 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
           return Align(
             alignment: Alignment.centerRight,
             child: Container(
-              margin: const EdgeInsets.only(left: 44, top: 4, bottom: 6),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+              margin: const EdgeInsets.only(left: 52, top: 6, bottom: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(
-                color: AppColors.primaryEmerald.withValues(alpha: 0.18),
-                borderRadius: BorderRadius.circular(14),
+                color: _geminiPillSurface,
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(20),
+                  topRight: Radius.circular(20),
+                  bottomLeft: Radius.circular(20),
+                  bottomRight: Radius.circular(6),
+                ),
                 border: Border.all(
-                  color: AppColors.primaryEmerald.withValues(alpha: 0.45),
+                  color: Colors.white.withValues(alpha: 0.08),
                 ),
               ),
               child: Text(
                 msg.text,
                 style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 13,
-                  height: 1.35,
+                  color: AppColors.textPrimary,
+                  fontSize: 13.5,
+                  height: 1.4,
                 ),
               ),
             ),
           );
         }
 
-        // Assistant bubble + Rich Movie Cards
+        // Gemini Assistant Turn + Rich Movie Cards
         final report = msg.searchReport;
         return Container(
-          margin: const EdgeInsets.only(right: 12, top: 4, bottom: 8),
+          margin: const EdgeInsets.only(top: 6, bottom: 12),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              Row(
+                children: [
+                  ShaderMask(
+                    shaderCallback: (bounds) => const LinearGradient(
+                      colors: [_geminiBlue, _geminiPurple],
+                    ).createShader(bounds),
+                    child: const Icon(
+                      Icons.auto_awesome_rounded,
+                      size: 16,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Gemini · $modelShort',
+                    style: const TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
               if (msg.text.trim().isNotEmpty || msg.isStreaming)
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 10,
-                  ),
-                  decoration: BoxDecoration(
-                    color: AppColors.darkSurface,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: AppColors.cardBorder),
-                  ),
+                Padding(
+                  padding: const EdgeInsets.only(top: 6, left: 2, right: 6),
                   child: SelectableText(
-                    msg.text.trim().isEmpty
-                        ? 'Đang suy nghĩ...'
-                        : msg.text,
+                    msg.text.trim().isEmpty ? 'Đang suy nghĩ...' : msg.text,
                     style: const TextStyle(
                       color: AppColors.textPrimary,
-                      fontSize: 13,
-                      height: 1.45,
+                      fontSize: 13.5,
+                      height: 1.5,
                     ),
                   ),
                 ),
               if (report != null && report.candidates.isNotEmpty) ...[
-                const SizedBox(height: 8),
+                const SizedBox(height: 10),
                 _buildSearchResultGroup(c, report),
               ],
             ],
@@ -901,15 +1814,15 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
 
   Widget _buildBusyStrip(HongguoAssistantController c) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-      color: AppColors.darkSurface,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      color: AppColors.darkBackground,
       child: Row(
         children: [
           if (c.isAiSpeaking)
             const Icon(
               Icons.graphic_eq_rounded,
               size: 16,
-              color: AppColors.primaryEmerald,
+              color: _geminiBlue,
             )
           else
             const SizedBox(
@@ -917,14 +1830,14 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
               height: 14,
               child: CircularProgressIndicator(
                 strokeWidth: 2,
-                color: AppColors.primaryEmerald,
+                color: _geminiBlue,
               ),
             ),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
               c.isAiSpeaking && c.busyLabel.isEmpty
-                  ? 'Trợ lý đang đọc câu trả lời...'
+                  ? 'Gemini đang đọc câu trả lời...'
                   : c.busyLabel,
               style: const TextStyle(
                 color: AppColors.textSecondary,
@@ -942,85 +1855,77 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
   Widget _buildPinnedStrip(HongguoAssistantController c) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(12, 6, 12, 2),
-      color: AppColors.darkSurface,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          SizedBox(
-            height: 28,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              children: [
-                const Center(
-                  child: Text(
-                    'Đang ghim:',
-                    style: TextStyle(
-                      color: AppColors.accentGold,
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
+      padding: const EdgeInsets.fromLTRB(14, 6, 14, 2),
+      color: AppColors.darkBackground,
+      child: SizedBox(
+        height: 30,
+        child: ListView(
+          scrollDirection: Axis.horizontal,
+          children: [
+            const Center(
+              child: Text(
+                'Đang ghim:',
+                style: TextStyle(
+                  color: AppColors.accentGold,
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
                 ),
-                const SizedBox(width: 6),
-                for (final id in c.pinnedSeriesIds) ...[
-                  Builder(
-                    builder: (_) {
-                      final cand = c.engine.getBySeriesId(id);
-                      final title = cand != null
-                          ? '#${cand.displayIndex} ${cand.viTitle}'
-                          : id;
-                      return Padding(
-                        padding: const EdgeInsets.only(right: 6),
-                        child: InputChip(
-                          visualDensity: VisualDensity.compact,
-                          materialTapTargetSize:
-                              MaterialTapTargetSize.shrinkWrap,
-                          label: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 160),
-                            child: Text(
-                              title,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 11,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ),
-                          backgroundColor:
-                              AppColors.primaryEmerald.withValues(alpha: 0.2),
-                          side: const BorderSide(color: AppColors.primaryEmerald),
-                          deleteIconColor: Colors.white70,
-                          onDeleted: () => c.unpinCandidate(id),
-                        ),
-                      );
-                    },
-                  ),
-                ],
-                ActionChip(
-                  visualDensity: VisualDensity.compact,
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  label: const Text(
-                    '✨ Tóm tắt phim ghim',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: AppColors.accentGold,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  backgroundColor: Colors.transparent,
-                  side: BorderSide(
-                    color: AppColors.accentGold.withValues(alpha: 0.6),
-                  ),
-                  onPressed: () => _submitText(
-                    'Hãy tổng hợp và tóm tắt chi tiết cốt truyện của các phim mình đang ghim ở trên.',
-                  ),
-                ),
-              ],
+              ),
             ),
-          ),
-        ],
+            const SizedBox(width: 6),
+            for (final id in c.pinnedSeriesIds) ...[
+              Builder(
+                builder: (_) {
+                  final cand = c.engine.getBySeriesId(id);
+                  final title = cand != null
+                      ? '#${cand.displayIndex} ${cand.viTitle}'
+                      : id;
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: InputChip(
+                      visualDensity: VisualDensity.compact,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      label: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 160),
+                        child: Text(
+                          title,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                      backgroundColor: _geminiBlue.withValues(alpha: 0.2),
+                      side: BorderSide(color: _geminiBlue.withValues(alpha: 0.7)),
+                      deleteIconColor: Colors.white70,
+                      onDeleted: () => c.unpinCandidate(id),
+                    ),
+                  );
+                },
+              ),
+            ],
+            ActionChip(
+              visualDensity: VisualDensity.compact,
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              label: const Text(
+                '✨ Tóm tắt phim ghim',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: AppColors.accentGold,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              backgroundColor: Colors.transparent,
+              side: BorderSide(
+                color: AppColors.accentGold.withValues(alpha: 0.6),
+              ),
+              onPressed: () => _submitText(
+                'Hãy tổng hợp và tóm tắt chi tiết cốt truyện của các phim mình đang ghim ở trên.',
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1029,14 +1934,51 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
     final hasText = _inputController.text.trim().isNotEmpty;
 
     return Container(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-      decoration: const BoxDecoration(
-        color: AppColors.darkSurface,
-        border: Border(top: BorderSide(color: AppColors.cardBorder)),
+      margin: const EdgeInsets.fromLTRB(12, 6, 12, 12),
+      padding: const EdgeInsets.fromLTRB(14, 6, 8, 6),
+      decoration: BoxDecoration(
+        color: _geminiSurface,
+        borderRadius: BorderRadius.circular(28),
+        border: Border.all(
+          color: c.isMicActive
+              ? Colors.redAccent.withValues(alpha: 0.6)
+              : Colors.white.withValues(alpha: 0.12),
+        ),
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          // Nút Micro thu âm Live Voice
+          Expanded(
+            child: TextField(
+              controller: _inputController,
+              textInputAction: TextInputAction.send,
+              maxLines: 4,
+              minLines: 1,
+              onChanged: (_) => setState(() {}),
+              onSubmitted: (_) => _submitText(),
+              style: const TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: 14,
+                height: 1.35,
+              ),
+              decoration: InputDecoration(
+                hintText: c.isMicActive
+                    ? 'Đang nghe... chạm nút đỏ để dừng'
+                    : 'Hỏi Gemini về phim Hồng Quả...',
+                hintStyle: const TextStyle(
+                  color: AppColors.textMuted,
+                  fontSize: 13.5,
+                ),
+                border: InputBorder.none,
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 4,
+                  vertical: 9,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          // Nút Micro Live Voice kiểu Gemini
           GestureDetector(
             onTap: () {
               HapticFeedback.mediumImpact();
@@ -1044,18 +1986,16 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
             },
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 140),
-              width: 44,
-              height: 44,
+              width: 40,
+              height: 40,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: c.isMicActive
-                    ? Colors.redAccent
-                    : AppColors.darkSurfaceVariant,
+                color: c.isMicActive ? Colors.redAccent : _geminiPillSurface,
                 border: Border.all(
                   color: c.isMicActive
                       ? Colors.redAccent.shade100
-                      : AppColors.cardBorder,
-                  width: c.isMicActive ? (1.5 + c.micLevel * 2.5) : 1.0,
+                      : Colors.white.withValues(alpha: 0.08),
+                  width: c.isMicActive ? (1.5 + c.micLevel * 2.0) : 1.0,
                 ),
                 boxShadow: c.isMicActive
                     ? [
@@ -1069,65 +2009,27 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
                     : null,
               ),
               child: Icon(
-                c.isMicActive ? Icons.stop_rounded : Icons.mic_rounded,
-                color: c.isMicActive ? Colors.white : AppColors.primaryEmerald,
-                size: 22,
+                c.isMicActive ? Icons.stop_rounded : Icons.mic_none_rounded,
+                color: c.isMicActive ? Colors.white : AppColors.textPrimary,
+                size: 20,
               ),
             ),
           ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Container(
-              decoration: BoxDecoration(
-                color: AppColors.darkSurfaceVariant,
-                borderRadius: BorderRadius.circular(22),
-                border: Border.all(color: AppColors.cardBorder),
-              ),
-              child: TextField(
-                controller: _inputController,
-                textInputAction: TextInputAction.send,
-                maxLines: 3,
-                minLines: 1,
-                onChanged: (_) => setState(() {}),
-                onSubmitted: (_) => _submitText(),
-                style: const TextStyle(
-                  color: AppColors.textPrimary,
-                  fontSize: 13.5,
-                ),
-                decoration: InputDecoration(
-                  hintText: c.isMicActive
-                      ? 'Đang thu âm... Bấm nút đỏ để gửi xong'
-                      : 'Mô tả phim, gọi "phim số 2" hoặc gõ lệnh...',
-                  hintStyle: const TextStyle(
-                    color: AppColors.textMuted,
-                    fontSize: 12.5,
-                  ),
-                  border: InputBorder.none,
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 10,
-                  ),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           InkWell(
             onTap: hasText ? () => _submitText() : null,
-            borderRadius: BorderRadius.circular(22),
+            borderRadius: BorderRadius.circular(20),
             child: Container(
-              width: 42,
-              height: 42,
+              width: 40,
+              height: 40,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: hasText
-                    ? AppColors.primaryEmerald
-                    : AppColors.darkSurfaceVariant,
+                color: hasText ? _geminiBlue : _geminiPillSurface,
               ),
               child: Icon(
-                Icons.send_rounded,
-                size: 19,
-                color: hasText ? Colors.black : AppColors.textMuted,
+                Icons.arrow_upward_rounded,
+                size: 20,
+                color: hasText ? Colors.white : AppColors.textMuted,
               ),
             ),
           ),
@@ -1413,47 +2315,6 @@ class _AssistantMovieCard extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-class _CountChip extends StatelessWidget {
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  const _CountChip({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return ChoiceChip(
-      visualDensity: VisualDensity.compact,
-      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      padding: const EdgeInsets.symmetric(horizontal: 6),
-      label: Text(
-        label,
-        style: TextStyle(
-          fontSize: 11,
-          fontWeight: selected ? FontWeight.bold : FontWeight.normal,
-          color: selected ? Colors.black : AppColors.textSecondary,
-        ),
-      ),
-      selected: selected,
-      selectedColor: AppColors.accentGold,
-      backgroundColor: Colors.transparent,
-      side: BorderSide(
-        color: selected
-            ? AppColors.accentGold
-            : AppColors.cardBorder.withValues(alpha: 0.7),
-      ),
-      onSelected: (_) {
-        HapticFeedback.selectionClick();
-        onTap();
-      },
     );
   }
 }

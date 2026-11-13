@@ -78,6 +78,14 @@ class HongguoAssistantController extends ChangeNotifier {
   String? _errorBanner;
   bool _needsSessionRenewalOnIdle = false;
   bool _hasApiKeys = true;
+  int _apiKeyCount = 0;
+  String _maskedActiveKey = '';
+  String _resolvedApiVersion = 'v1beta';
+  LiveConnectionDiagnostics? _lastDiagnostics;
+  bool _isTestingConnection = false;
+  bool _hasEstablishedSessionOnce = false;
+  Future<bool>? _connectInFlight;
+  bool _autoReconnectInFlight = false;
   bool _disposed = false;
   int _msgSeq = 0;
 
@@ -107,6 +115,7 @@ class HongguoAssistantController extends ChangeNotifier {
   AssistantConnectionState get connectionState => _connectionState;
   String get selectedModelId => _selectedModelId;
   String get resolvedServerModelId => _resolvedServerModelId;
+  String get resolvedApiVersion => _resolvedApiVersion;
   bool get outputAudioEnabled => _outputAudioEnabled;
   String get sourceFilter => _sourceFilter;
   int? get preferredCount => _preferredCount;
@@ -118,14 +127,36 @@ class HongguoAssistantController extends ChangeNotifier {
   String get busyLabel => _busyLabel;
   String? get errorBanner => _errorBanner;
   bool get hasApiKeys => _hasApiKeys;
+  int get apiKeyCount => _apiKeyCount;
+  String get maskedActiveKey => _maskedActiveKey;
+  LiveConnectionDiagnostics? get lastDiagnostics => _lastDiagnostics;
+  bool get isTestingConnection => _isTestingConnection;
+  bool get hasEstablishedSessionOnce => _hasEstablishedSessionOnce;
+  bool get isConnected => _liveClient.isConnected;
+
+  void _syncKeyMetadata(List<String> keys) {
+    _apiKeyCount = keys.length;
+    _hasApiKeys = keys.isNotEmpty;
+    final active = _liveClient.activeApiKey;
+    if (active.isNotEmpty) {
+      _maskedActiveKey = GeminiLiveClient.maskApiKey(active);
+    } else if (keys.isNotEmpty) {
+      _maskedActiveKey = GeminiLiveClient.maskApiKey(keys.first);
+    } else {
+      _maskedActiveKey = '';
+    }
+  }
 
   Future<void> initialize() async {
     try {
       final settings = await SettingsRepository.getInstance();
+      try {
+        await settings.reloadSecureKeys();
+      } catch (_) {}
       _selectedModelId = settings.hongguoAssistantModel;
       _outputAudioEnabled = settings.hongguoAssistantOutputAudio;
       _preferredCount = settings.hongguoAssistantDefaultCount;
-      _hasApiKeys = settings.geminiApiKeys.isNotEmpty;
+      _syncKeyMetadata(settings.geminiApiKeys);
       _audioOutput.setEnabled(_outputAudioEnabled);
       _syncEngineLocks();
       if (!_disposed) notifyListeners();
@@ -135,9 +166,48 @@ class HongguoAssistantController extends ChangeNotifier {
   Future<void> refreshApiKeyStatus() async {
     try {
       final settings = await SettingsRepository.getInstance();
-      _hasApiKeys = settings.geminiApiKeys.isNotEmpty;
+      try {
+        await settings.reloadSecureKeys();
+      } catch (_) {}
+      _syncKeyMetadata(settings.geminiApiKeys);
+      if (_hasApiKeys &&
+          _connectionState == AssistantConnectionState.error &&
+          _errorBanner != null &&
+          _errorBanner!.contains('Chưa có Gemini API Key')) {
+        _errorBanner = null;
+        _connectionState = AssistantConnectionState.disconnected;
+      }
       if (!_disposed) notifyListeners();
     } catch (_) {}
+  }
+
+  /// Lưu nhanh danh sách Gemini API Key (cách nhau bởi xuống dòng hoặc dấu phẩy) ngay từ trợ lý.
+  Future<void> saveQuickGeminiKeys(String raw) async {
+    final parsed = raw
+        .split(RegExp(r'[\r\n,;]+'))
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+    final settings = await SettingsRepository.getInstance();
+    settings.geminiApiKeys = parsed;
+    _syncKeyMetadata(settings.geminiApiKeys);
+    if (_hasApiKeys) {
+      _errorBanner = null;
+      if (_connectionState == AssistantConnectionState.error) {
+        _connectionState = AssistantConnectionState.disconnected;
+      }
+    }
+    if (!_disposed) notifyListeners();
+  }
+
+  void clearErrorBanner() {
+    if (_errorBanner == null) return;
+    _errorBanner = null;
+    if (_connectionState == AssistantConnectionState.error &&
+        !_liveClient.isConnected) {
+      _connectionState = AssistantConnectionState.disconnected;
+    }
+    if (!_disposed) notifyListeners();
   }
 
   void _syncEngineLocks() {
@@ -220,24 +290,73 @@ class HongguoAssistantController extends ChangeNotifier {
   Future<bool> ensureConnected({
     bool seedContextSnapshot = false,
     bool forceFreshSession = false,
+    bool forceRefreshModelDiscovery = false,
+  }) {
+    final inFlight = _connectInFlight;
+    if (inFlight != null) {
+      return inFlight;
+    }
+
+    final future = _ensureConnectedInternal(
+      seedContextSnapshot: seedContextSnapshot,
+      forceFreshSession: forceFreshSession,
+      forceRefreshModelDiscovery: forceRefreshModelDiscovery,
+    );
+    _connectInFlight = future;
+    return future.whenComplete(() {
+      if (identical(_connectInFlight, future)) {
+        _connectInFlight = null;
+      }
+    });
+  }
+
+  Future<bool> _ensureConnectedInternal({
+    bool seedContextSnapshot = false,
+    bool forceFreshSession = false,
+    bool forceRefreshModelDiscovery = false,
   }) async {
     if (_liveClient.isConnected && !forceFreshSession) {
+      _resolvedServerModelId = _liveClient.activeModelId;
+      _resolvedApiVersion = _liveClient.activeApiVersion;
+      _connectionState = AssistantConnectionState.ready;
       return true;
     }
 
+    if (forceFreshSession && _liveClient.isConnected) {
+      await _liveClient.disconnect(intentional: true);
+    }
+
     final settings = await SettingsRepository.getInstance();
+    try {
+      await settings.reloadSecureKeys();
+    } catch (_) {}
     final apiKeys = settings.geminiApiKeys;
-    _hasApiKeys = apiKeys.isNotEmpty;
+    _syncKeyMetadata(apiKeys);
     if (apiKeys.isEmpty) {
-      _errorBanner =
-          'Chưa có Gemini API Key. Hãy thêm key trong phần Cài đặt ➔ Gemini.';
+      const msg =
+          'Chưa có Gemini API Key. Hãy thêm key trong Cài đặt ➔ Gemini hoặc bấm Test phiên để dán nhanh key.';
+      _errorBanner = msg;
       _connectionState = AssistantConnectionState.error;
+      _lastDiagnostics = LiveConnectionDiagnostics(
+        success: false,
+        requestedModelId: _selectedModelId,
+        resolvedModelId: '',
+        apiVersion: _resolvedApiVersion,
+        setupProfile: null,
+        maskedKey: '',
+        apiKeyCount: 0,
+        latencyMs: 0,
+        availableBidiModels: const [],
+        summaryMessage: msg,
+        attemptLogs: const ['Không tìm thấy Gemini API Key nào trong bộ nhớ bảo mật.'],
+        checkedAt: DateTime.now(),
+      );
       if (!_disposed) notifyListeners();
       return false;
     }
 
     _errorBanner = null;
-    _connectionState = _messages.isNotEmpty
+    _connectionState = (_messages.isNotEmpty && _hasEstablishedSessionOnce)
         ? AssistantConnectionState.reconnecting
         : AssistantConnectionState.connecting;
     if (!_disposed) notifyListeners();
@@ -250,16 +369,23 @@ class HongguoAssistantController extends ChangeNotifier {
       final decls = HongguoAssistantEngine.buildFunctionDeclarations();
       final handle = forceFreshSession ? null : _liveClient.lastResumptionHandle;
 
-      await _liveClient.connect(
+      final diag = await _liveClient.connect(
         apiKeys: apiKeys,
         modelId: _selectedModelId,
         systemPrompt: prompt,
         functionDeclarations: decls,
         resumptionHandle: handle,
+        forceRefreshModelDiscovery: forceRefreshModelDiscovery,
       );
 
+      _lastDiagnostics = diag;
       _connectionState = AssistantConnectionState.ready;
-      _resolvedServerModelId = _liveClient.activeModelId;
+      _resolvedServerModelId = diag.resolvedModelId;
+      _resolvedApiVersion = diag.apiVersion;
+      if (diag.maskedKey.isNotEmpty) {
+        _maskedActiveKey = diag.maskedKey;
+      }
+      _hasEstablishedSessionOnce = true;
       _needsSessionRenewalOnIdle = false;
 
       if (seedContextSnapshot &&
@@ -273,10 +399,66 @@ class HongguoAssistantController extends ChangeNotifier {
       if (!_disposed) notifyListeners();
       return true;
     } catch (e) {
+      _lastDiagnostics = _liveClient.lastDiagnostics;
       _connectionState = AssistantConnectionState.error;
-      _errorBanner = e.toString().replaceFirst('Bad state: ', '');
+      final summary = _lastDiagnostics?.summaryMessage;
+      _errorBanner = (summary != null && summary.isNotEmpty)
+          ? summary
+          : e.toString().replaceFirst('Bad state: ', '');
       if (!_disposed) notifyListeners();
       return false;
+    }
+  }
+
+  /// Kiểm tra kết nối trực tiếp tới phiên Gemini Live (và giữ phiên sẵn sàng nếu thành công).
+  Future<LiveConnectionDiagnostics> testConnection() async {
+    if (_isTestingConnection && _connectInFlight != null) {
+      await _connectInFlight;
+      if (_lastDiagnostics != null) {
+        return _lastDiagnostics!;
+      }
+    }
+
+    _isTestingConnection = true;
+    _errorBanner = null;
+    if (!_disposed) notifyListeners();
+
+    try {
+      await stopMic();
+      await _audioOutput.interrupt();
+      _liveClient.clearResumptionHandle();
+      await _liveClient.disconnect(intentional: true);
+      _hasEstablishedSessionOnce = false;
+
+      final ok = await ensureConnected(
+        seedContextSnapshot:
+            _messages.isNotEmpty || engine.lastDisplayedCandidates.isNotEmpty,
+        forceFreshSession: true,
+        forceRefreshModelDiscovery: true,
+      );
+
+      final diag = _lastDiagnostics ??
+          LiveConnectionDiagnostics(
+            success: ok,
+            requestedModelId: _selectedModelId,
+            resolvedModelId: _resolvedServerModelId,
+            apiVersion: _resolvedApiVersion,
+            setupProfile: null,
+            maskedKey: _maskedActiveKey,
+            apiKeyCount: _apiKeyCount,
+            latencyMs: 0,
+            availableBidiModels: const [],
+            summaryMessage: ok
+                ? 'Đã kết nối thành công với phiên Gemini Live.'
+                : (_errorBanner ?? 'Không thể kết nối tới Gemini Live.'),
+            attemptLogs: const [],
+            checkedAt: DateTime.now(),
+          );
+      _lastDiagnostics = diag;
+      return diag;
+    } finally {
+      _isTestingConnection = false;
+      if (!_disposed) notifyListeners();
     }
   }
 
@@ -284,9 +466,13 @@ class HongguoAssistantController extends ChangeNotifier {
   Future<void> switchModel(String newModelId) async {
     if (_selectedModelId == newModelId && _liveClient.isConnected) return;
 
+    final wasConnected = _liveClient.isConnected;
     await stopMic();
     await _audioOutput.interrupt();
     _selectedModelId = newModelId;
+    _errorBanner = null;
+    _hasEstablishedSessionOnce = false;
+    _resolvedServerModelId = '';
     try {
       final s = await SettingsRepository.getInstance();
       s.hongguoAssistantModel = newModelId;
@@ -313,8 +499,14 @@ class HongguoAssistantController extends ChangeNotifier {
       );
     }
 
-    if (_messages.isNotEmpty || engine.lastDisplayedCandidates.isNotEmpty) {
-      await ensureConnected(seedContextSnapshot: true, forceFreshSession: true);
+    if (wasConnected ||
+        _messages.isNotEmpty ||
+        engine.lastDisplayedCandidates.isNotEmpty) {
+      await ensureConnected(
+        seedContextSnapshot:
+            _messages.isNotEmpty || engine.lastDisplayedCandidates.isNotEmpty,
+        forceFreshSession: true,
+      );
     } else {
       await _liveClient.disconnect(intentional: true);
       _connectionState = AssistantConnectionState.disconnected;
@@ -334,6 +526,10 @@ class HongguoAssistantController extends ChangeNotifier {
     _activeUserVoiceMsgId = null;
     _pendingTurnReport = null;
     _isAssistantBusy = false;
+    _isTestingConnection = false;
+    _hasEstablishedSessionOnce = false;
+    _autoReconnectInFlight = false;
+    _resolvedServerModelId = '';
     _busyLabel = '';
     _errorBanner = null;
     _connectionState = AssistantConnectionState.disconnected;
@@ -434,8 +630,10 @@ class HongguoAssistantController extends ChangeNotifier {
         }
       },
       onAmplitude: (level) {
-        _micLevel = level;
-        if (!_disposed) notifyListeners();
+        if ((_micLevel - level).abs() > 0.05 || (level == 0.0 && _micLevel != 0.0)) {
+          _micLevel = level;
+          if (!_disposed) notifyListeners();
+        }
       },
       onError: (err) {
         _errorBanner = 'Lỗi Micro: $err';
@@ -516,9 +714,12 @@ class HongguoAssistantController extends ChangeNotifier {
     if (_disposed) return;
 
     switch (event) {
-      case LiveSetupCompleteEvent(:final resolvedModelId):
+      case LiveSetupCompleteEvent(:final resolvedModelId, :final apiVersion):
         _connectionState = AssistantConnectionState.ready;
         _resolvedServerModelId = resolvedModelId;
+        _resolvedApiVersion = apiVersion;
+        _hasEstablishedSessionOnce = true;
+        _errorBanner = null;
         notifyListeners();
 
       case LiveInputTranscriptEvent(:final text, :final finished):
@@ -573,11 +774,20 @@ class HongguoAssistantController extends ChangeNotifier {
 
       case LiveConnectionClosedEvent(:final intentional, :final reason):
         if (!intentional) {
-          _connectionState = AssistantConnectionState.disconnected;
-          // Nếu đang có cuộc trò chuyện và rớt giữa chừng/hết 10 phút WebSocket -> tự nối lại phiên
-          if (_messages.isNotEmpty) {
+          final shouldAutoReconnect =
+              _hasEstablishedSessionOnce &&
+              _messages.isNotEmpty &&
+              !_autoReconnectInFlight &&
+              _connectInFlight == null;
+          _hasEstablishedSessionOnce = false;
+          if (shouldAutoReconnect) {
             unawaited(_autoReconnectAfterDrop(reason));
           } else {
+            if (_connectionState != AssistantConnectionState.error) {
+              _connectionState = AssistantConnectionState.disconnected;
+            }
+            _isAssistantBusy = false;
+            _busyLabel = '';
             notifyListeners();
           }
         }
@@ -586,6 +796,9 @@ class HongguoAssistantController extends ChangeNotifier {
         _errorBanner = message;
         _isAssistantBusy = false;
         _busyLabel = '';
+        if (!_liveClient.isConnected && _connectInFlight == null) {
+          _connectionState = AssistantConnectionState.error;
+        }
         notifyListeners();
     }
   }
@@ -728,26 +941,32 @@ class HongguoAssistantController extends ChangeNotifier {
   }
 
   Future<void> _autoReconnectAfterDrop(String? reason) async {
-    if (_disposed) return;
-    _connectionState = AssistantConnectionState.reconnecting;
-    notifyListeners();
+    if (_disposed || _autoReconnectInFlight) return;
+    _autoReconnectInFlight = true;
+    try {
+      _connectionState = AssistantConnectionState.reconnecting;
+      notifyListeners();
 
-    final resumed = await ensureConnected(
-      seedContextSnapshot: _liveClient.lastResumptionHandle == null,
-      forceFreshSession: false,
-    );
-    if (!resumed && !_disposed) {
-      // Nếu handle cũ đã hết hạn -> thử tạo phiên sạch + bơm snapshot ngữ cảnh
-      _liveClient.clearResumptionHandle();
-      final freshOk = await ensureConnected(
-        seedContextSnapshot: true,
-        forceFreshSession: true,
+      final hasHandle = _liveClient.lastResumptionHandle != null;
+      final resumed = await ensureConnected(
+        seedContextSnapshot: !hasHandle,
+        forceFreshSession: !hasHandle,
       );
-      if (freshOk) {
-        _appendSystemNotice(
-          'Phiên cũ vừa hết hạn (${reason ?? "timeout"}), đã tự khởi tạo phiên mới và giữ nguyên danh sách phim.',
+      if (!resumed && hasHandle && !_disposed) {
+        // Nếu handle cũ đã hết hạn -> thử tạo phiên sạch 1 lần duy nhất + bơm snapshot ngữ cảnh
+        _liveClient.clearResumptionHandle();
+        final freshOk = await ensureConnected(
+          seedContextSnapshot: true,
+          forceFreshSession: true,
         );
+        if (freshOk) {
+          _appendSystemNotice(
+            'Phiên cũ vừa hết hạn (${reason ?? "timeout"}), đã tự khởi tạo phiên mới và giữ nguyên danh sách phim.',
+          );
+        }
       }
+    } finally {
+      _autoReconnectInFlight = false;
     }
   }
 

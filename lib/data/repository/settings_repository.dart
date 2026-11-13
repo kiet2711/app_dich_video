@@ -42,6 +42,25 @@ class SettingsRepository {
     return _instance!;
   }
 
+  /// Đọc lại API key mới nhất từ Secure Storage (tránh cache cũ nếu màn khác vừa lưu).
+  Future<void> reloadSecureKeys() async {
+    try {
+      final freshGemini = await _secureStorage.read(key: 'gemini_api_keys');
+      if (freshGemini != null && freshGemini.trim().isNotEmpty) {
+        _geminiApiKeysRaw = freshGemini;
+      } else {
+        final legacy = prefs.getString('gemini_api_keys');
+        if (legacy != null && legacy.trim().isNotEmpty) {
+          _geminiApiKeysRaw = legacy;
+        }
+      }
+      final freshGroq = await _secureStorage.read(key: 'groq_api_keys');
+      if (freshGroq != null && freshGroq.trim().isNotEmpty) {
+        _groqApiKeysRaw = freshGroq;
+      }
+    } catch (_) {}
+  }
+
   List<String> get geminiApiKeys {
     return _geminiApiKeysRaw
         .split(RegExp(r'[,;\n]'))

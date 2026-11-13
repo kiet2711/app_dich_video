@@ -96,10 +96,12 @@ class AiModelRegistry {
       'gemini-3.8-live',
     ],
     'gemini-3.1-flash-live-preview': [
+      'gemini-3.1-flash-live-preview',
       'gemini-3-flash-live',
       'gemini-3-flash-live-preview',
-      'gemini-3.1-flash-live-preview',
       'gemini-3.0-flash-live-preview',
+      'gemini-live-2.5-flash-preview',
+      'gemini-2.5-flash-native-audio-preview-12-2025',
     ],
   };
 

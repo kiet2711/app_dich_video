@@ -296,7 +296,9 @@ NGUYÊN TẮC BẮT BUỘC:
   }
 
   /// Khai báo Function Calling Declarations chuẩn Gemini Live API.
-  static List<Map<String, dynamic>> buildFunctionDeclarations() {
+  static List<Map<String, dynamic>> buildFunctionDeclarations({
+    bool includeNonBlockingBehavior = false,
+  }) {
     final realSlugs = HongguoResolver.realDramaGenres
         .map((g) => g.slug)
         .where((s) => s.isNotEmpty)
@@ -310,7 +312,6 @@ NGUYÊN TẮC BẮT BUỘC:
         .where((s) => s.isNotEmpty)
         .toList();
     final allGenreSlugs = <String>{
-      '',
       ...realSlugs,
       ...comicSlugs,
       ...aiSlugs,
@@ -319,7 +320,7 @@ NGUYÊN TẮC BẮT BUỘC:
         .map((r) => r.slug.replaceFirst('rank/', ''))
         .toList();
 
-    return [
+    final declarations = <Map<String, dynamic>>[
       {
         'name': 'progressive_search',
         'description':
@@ -435,6 +436,12 @@ NGUYÊN TẮC BẮT BUỘC:
         },
       },
     ];
+    if (includeNonBlockingBehavior) {
+      for (final d in declarations) {
+        d['behavior'] = 'NON_BLOCKING';
+      }
+    }
+    return declarations;
   }
 
   /// Chuẩn hóa nguồn từ mọi cách viết của AI về `'category/...'` hoặc `''`.

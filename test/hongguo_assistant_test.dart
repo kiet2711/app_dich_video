@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -5,8 +6,11 @@ import 'package:capsub_flutter/domain/ai/live/gemini_live_client.dart';
 import 'package:capsub_flutter/domain/ai/live/live_audio_io.dart';
 import 'package:capsub_flutter/domain/media/hongguo/hongguo_assistant_engine.dart';
 import 'package:capsub_flutter/domain/media/hongguo_resolver.dart';
+import 'package:capsub_flutter/ui/hongguo/hongguo_assistant_controller.dart';
 import 'package:dio/dio.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class _MockAdapter implements HttpClientAdapter {
   final Future<ResponseBody> Function(RequestOptions options) handler;
@@ -445,4 +449,309 @@ void main() {
       );
     });
   });
+
+  group('GeminiLiveClient setup profiles, URLs & pre-setup guard', () {
+    test('wsUrlForVersion and maskApiKey work cleanly', () {
+      expect(
+        GeminiLiveClient.wsUrlForVersion('v1alpha'),
+        GeminiLiveClient.wsAlphaBaseUrl,
+      );
+      expect(
+        GeminiLiveClient.wsUrlForVersion('v1beta'),
+        GeminiLiveClient.wsBetaBaseUrl,
+      );
+      expect(
+        GeminiLiveClient.maskApiKey('AIzaSyAbCdEfGhIjKlMnOpQr1234'),
+        'AIzaSy...1234',
+      );
+      expect(GeminiLiveClient.maskApiKey(''), '(trống)');
+    });
+
+    test('buildSetupPayload differentiates full/compatible/minimal and extended-thinking', () {
+      final decls = HongguoAssistantEngine.buildFunctionDeclarations(
+        includeNonBlockingBehavior: true,
+      );
+      final extFull = GeminiLiveClient.buildSetupPayload(
+        modelId: 'gemini-3.8-live-extended-thinking',
+        systemPrompt: 'Sys',
+        functionDeclarations: decls,
+        profile: LiveSetupProfile.full,
+        includeNonBlockingBehavior: true,
+      );
+      final setupFull = extFull['setup'] as Map<String, dynamic>;
+      expect(setupFull['thinkingConfig'], {'thinkingLevel': 'low'});
+      expect(
+        ((setupFull['contextWindowCompression'] as Map)['slidingWindow'] as Map)['targetTokens'],
+        16384,
+      );
+      final toolDecls =
+          ((setupFull['tools'] as List).first as Map)['functionDeclarations'] as List;
+      expect((toolDecls.first as Map)['behavior'], 'NON_BLOCKING');
+
+      final compat = GeminiLiveClient.buildSetupPayload(
+        modelId: 'gemini-3.8-live',
+        systemPrompt: 'Sys',
+        functionDeclarations: decls,
+        profile: LiveSetupProfile.compatible,
+        includeNonBlockingBehavior: false,
+      )['setup'] as Map<String, dynamic>;
+      expect(compat.containsKey('thinkingConfig'), isFalse);
+      expect(compat.containsKey('contextWindowCompression'), isFalse);
+      expect(compat.containsKey('inputAudioTranscription'), isTrue);
+
+      final minimal = GeminiLiveClient.buildSetupPayload(
+        modelId: 'gemini-3.8-live',
+        systemPrompt: 'Sys',
+        functionDeclarations: decls,
+        profile: LiveSetupProfile.minimal,
+      )['setup'] as Map<String, dynamic>;
+      expect(minimal.containsKey('inputAudioTranscription'), isFalse);
+      expect(minimal.containsKey('sessionResumption'), isFalse);
+      expect((minimal['generationConfig'] as Map).containsKey('speechConfig'), isFalse);
+    });
+
+    test('genre_slug enum in buildFunctionDeclarations has no empty string', () {
+      final decls = HongguoAssistantEngine.buildFunctionDeclarations();
+      for (final d in decls) {
+        final props =
+            (d['parameters'] as Map)['properties'] as Map<String, dynamic>;
+        final genre = props['genre_slug'];
+        if (genre is Map && genre['enum'] is List) {
+          final values = (genre['enum'] as List).cast<String>();
+          expect(values, isNot(contains('')));
+        }
+      }
+    });
+
+    test('handleDecodedServerJson suppresses LiveErrorEvent before setupComplete and emits apiVersion on setupComplete', () async {
+      final client = GeminiLiveClient();
+      final emitted = <GeminiLiveEvent>[];
+      final sub = client.events.listen(emitted.add);
+
+      client.handleDecodedServerJson({
+        'error': {'message': 'Pre-setup unsupported field'},
+      }, apiVersion: 'v1alpha');
+      await Future<void>.delayed(Duration.zero);
+      expect(emitted.whereType<LiveErrorEvent>(), isEmpty);
+
+      client.handleDecodedServerJson(
+        {'setupComplete': {}},
+        modelId: 'gemini-3.8-live-extended-thinking',
+        apiVersion: 'v1alpha',
+      );
+      client.handleDecodedServerJson({
+        'error': {'message': 'Mid-session error'},
+      });
+      await Future<void>.delayed(Duration.zero);
+
+      final setupEvt = emitted.whereType<LiveSetupCompleteEvent>().single;
+      expect(setupEvt.apiVersion, 'v1alpha');
+      expect(setupEvt.resolvedModelId, 'gemini-3.8-live-extended-thinking');
+      expect(emitted.whereType<LiveErrorEvent>().single.message, 'Mid-session error');
+
+      await sub.cancel();
+      await client.dispose();
+    });
+  });
+
+  group('HongguoAssistantController handshake, testConnection & no blink loop', () {
+    test('handles missing keys, testConnection, quick key save, and single non-looping reconnect on drop', () async {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      SharedPreferences.setMockInitialValues({});
+      final secureStore = <String, String>{};
+      const channel = MethodChannel('plugins.it_nomads.com/flutter_secure_storage');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            final args = (call.arguments as Map?) ?? const {};
+            final key = args['key']?.toString() ?? '';
+            switch (call.method) {
+              case 'read':
+                return secureStore[key];
+              case 'write':
+                secureStore[key] = args['value']?.toString() ?? '';
+                return null;
+              case 'delete':
+                secureStore.remove(key);
+                return null;
+              default:
+                return null;
+            }
+          });
+
+      final fakeClient = _FakeGeminiLiveClient();
+      final controller = HongguoAssistantController(
+        liveClient: fakeClient,
+        audioOutput: _NoopAudioOutput(),
+      );
+      await controller.initialize();
+
+      // 1. Không có key -> testConnection báo lỗi sạch, không gọi connect()
+      final noKeyDiag = await controller.testConnection();
+      expect(noKeyDiag.success, isFalse);
+      expect(controller.connectionState, AssistantConnectionState.error);
+      expect(fakeClient.connectCalls, 0);
+
+      // 2. Lưu key nhanh -> testConnection thành công & giữ trạng thái Live
+      await controller.saveQuickGeminiKeys('AIzaSyFakeKeyForTest9876');
+      expect(controller.hasApiKeys, isTrue);
+      expect(controller.apiKeyCount, 1);
+      expect(controller.maskedActiveKey, 'AIzaSy...9876');
+
+      final okDiag = await controller.testConnection();
+      expect(okDiag.success, isTrue);
+      expect(fakeClient.connectCalls, 1);
+      expect(controller.connectionState, AssistantConnectionState.ready);
+      expect(controller.isConnected, isTrue);
+      expect(controller.resolvedApiVersion, 'v1beta');
+
+      // 3. Gửi tin nhắn trên phiên Live -> không gọi reconnect dư
+      await controller.sendTextMessage('Tìm giúp mình phim học đường');
+      expect(fakeClient.sentClientTexts.length, 1);
+      expect(fakeClient.connectCalls, 1);
+
+      // 4. Giả lập phiên rớt đột ngột sau khi đã setup thành công, nhưng connect mới fail:
+      // phải thử nối lại ĐÚNG 1 lần (1 -> 2), KHÔNG nháy vòng lặp vô hạn!
+      fakeClient.failNextConnect = true;
+      fakeClient.simulateUnexpectedDrop('timeout');
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      expect(fakeClient.connectCalls, 2);
+      expect(controller.connectionState, AssistantConnectionState.error);
+
+      // Nếu lại có event close khác khi chưa từng thiết lập lại phiên -> KHÔNG nối tiếp
+      fakeClient.simulateUnexpectedDrop('second');
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      expect(fakeClient.connectCalls, 2);
+
+      controller.dispose();
+    });
+  });
+}
+
+class _FakeGeminiLiveClient extends GeminiLiveClient {
+  final StreamController<GeminiLiveEvent> _fakeEvents =
+      StreamController<GeminiLiveEvent>.broadcast();
+
+  int connectCalls = 0;
+  bool failNextConnect = false;
+  bool _fakeConnected = false;
+  String _fakeKey = '';
+  String _fakeModel = 'gemini-3.8-live';
+  final String _fakeVersion = 'v1beta';
+  LiveConnectionDiagnostics? _fakeDiag;
+  final List<String> sentClientTexts = [];
+
+  @override
+  Stream<GeminiLiveEvent> get events => _fakeEvents.stream;
+
+  @override
+  bool get isConnected => _fakeConnected;
+
+  @override
+  String get activeApiKey => _fakeKey;
+
+  @override
+  String get activeModelId => _fakeModel;
+
+  @override
+  String get activeApiVersion => _fakeVersion;
+
+  @override
+  LiveConnectionDiagnostics? get lastDiagnostics => _fakeDiag;
+
+  @override
+  Future<LiveConnectionDiagnostics> connect({
+    required List<String> apiKeys,
+    required String modelId,
+    required String systemPrompt,
+    required List<Map<String, dynamic>> functionDeclarations,
+    String? resumptionHandle,
+    String voiceName = 'Aoede',
+    bool forceRefreshModelDiscovery = false,
+  }) async {
+    connectCalls++;
+    _fakeModel = modelId;
+    _fakeKey = apiKeys.isNotEmpty ? apiKeys.first : '';
+    if (failNextConnect) {
+      _fakeConnected = false;
+      _fakeDiag = LiveConnectionDiagnostics(
+        success: false,
+        requestedModelId: modelId,
+        resolvedModelId: '',
+        apiVersion: _fakeVersion,
+        setupProfile: null,
+        maskedKey: GeminiLiveClient.maskApiKey(_fakeKey),
+        apiKeyCount: apiKeys.length,
+        latencyMs: 12,
+        availableBidiModels: const [],
+        summaryMessage: 'Simulated handshake error',
+        attemptLogs: const ['Simulated failure'],
+        checkedAt: DateTime.now(),
+      );
+      throw StateError('Simulated handshake error');
+    }
+
+    _fakeConnected = true;
+    _fakeDiag = LiveConnectionDiagnostics(
+      success: true,
+      requestedModelId: modelId,
+      resolvedModelId: modelId,
+      apiVersion: _fakeVersion,
+      setupProfile: LiveSetupProfile.full,
+      maskedKey: GeminiLiveClient.maskApiKey(_fakeKey),
+      apiKeyCount: apiKeys.length,
+      latencyMs: 28,
+      availableBidiModels: [modelId],
+      summaryMessage: 'OK',
+      attemptLogs: const ['OK'],
+      checkedAt: DateTime.now(),
+    );
+    _fakeEvents.add(LiveSetupCompleteEvent(modelId, apiVersion: _fakeVersion));
+    return _fakeDiag!;
+  }
+
+  @override
+  Future<void> disconnect({bool intentional = true}) async {
+    _fakeConnected = false;
+  }
+
+  @override
+  void sendClientText(String text, {bool turnComplete = true}) {
+    sentClientTexts.add(text);
+  }
+
+  @override
+  void sendHistoryTurns(
+    List<Map<String, dynamic>> turns, {
+    bool turnComplete = false,
+  }) {}
+
+  void simulateUnexpectedDrop(String reason) {
+    _fakeConnected = false;
+    _fakeEvents.add(LiveConnectionClosedEvent(intentional: false, reason: reason));
+  }
+
+  @override
+  Future<void> dispose() async {
+    await _fakeEvents.close();
+  }
+}
+
+class _NoopAudioOutput implements LivePcmAudioOutput {
+  bool _enabled = false;
+  @override
+  VoidCallback? onPlaybackStateChanged;
+  @override
+  bool get isEnabled => _enabled;
+  @override
+  bool get isPlaying => false;
+  @override
+  void setEnabled(bool enabled) => _enabled = enabled;
+  @override
+  Future<void> enqueuePcmChunk(Uint8List pcmBytes) async {}
+  @override
+  Future<void> flushTurn() async {}
+  @override
+  Future<void> interrupt() async {}
+  @override
+  Future<void> dispose() async {}
 }

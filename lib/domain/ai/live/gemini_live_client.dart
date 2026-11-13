@@ -7,6 +7,51 @@ import 'package:flutter/foundation.dart';
 
 import '../ai_model_registry.dart';
 
+enum LiveSetupProfile {
+  full,
+  compatible,
+  minimal,
+}
+
+class LiveConnectionDiagnostics {
+  final bool success;
+  final String requestedModelId;
+  final String resolvedModelId;
+  final String apiVersion;
+  final LiveSetupProfile? setupProfile;
+  final String maskedKey;
+  final int apiKeyCount;
+  final int latencyMs;
+  final List<String> availableBidiModels;
+  final String summaryMessage;
+  final List<String> attemptLogs;
+  final DateTime checkedAt;
+
+  const LiveConnectionDiagnostics({
+    required this.success,
+    required this.requestedModelId,
+    required this.resolvedModelId,
+    required this.apiVersion,
+    required this.setupProfile,
+    required this.maskedKey,
+    required this.apiKeyCount,
+    required this.latencyMs,
+    required this.availableBidiModels,
+    required this.summaryMessage,
+    required this.attemptLogs,
+    required this.checkedAt,
+  });
+
+  String get profileLabel {
+    return switch (setupProfile) {
+      LiveSetupProfile.full => 'Đầy đủ (Audio + Tools + Transcript + Resumption)',
+      LiveSetupProfile.compatible => 'Tương thích (Bỏ compression / voice)',
+      LiveSetupProfile.minimal => 'Tối giản (Audio + Tools)',
+      null => 'Chưa khớp',
+    };
+  }
+}
+
 class LiveFunctionCall {
   final String id;
   final String name;
@@ -43,7 +88,11 @@ sealed class GeminiLiveEvent {
 
 class LiveSetupCompleteEvent extends GeminiLiveEvent {
   final String resolvedModelId;
-  const LiveSetupCompleteEvent(this.resolvedModelId);
+  final String apiVersion;
+  const LiveSetupCompleteEvent(
+    this.resolvedModelId, {
+    this.apiVersion = 'v1beta',
+  });
 }
 
 class LiveInputTranscriptEvent extends GeminiLiveEvent {
@@ -112,14 +161,20 @@ class LiveErrorEvent extends GeminiLiveEvent {
   const LiveErrorEvent(this.message);
 }
 
-/// Client WebSocket `BidiGenerateContent` cho Gemini Live API (`v1beta`).
-/// Hỗ trợ auto-resolve model ID, xoay vòng API key, `sessionResumption`, `contextWindowCompression`,
-/// và parse đồng thời cả Audio PCM 24kHz, Transcript chữ và Function Calling.
+/// Client WebSocket `BidiGenerateContent` cho Gemini Live API (`v1beta` + `v1alpha`).
+/// Hỗ trợ auto-resolve model ID theo từng API Key, setup fallback đa tầng (không văng 1007),
+/// `sessionResumption`, `contextWindowCompression`, và chẩn đoán kết nối chi tiết.
 class GeminiLiveClient {
-  static const String wsBaseUrl =
+  static const String wsBetaBaseUrl =
       'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
+  static const String wsAlphaBaseUrl =
+      'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent';
 
-  static final Map<String, List<String>> _discoveredBidiModelsCache = {};
+  static String wsUrlForVersion(String apiVersion) =>
+      apiVersion == 'v1alpha' ? wsAlphaBaseUrl : wsBetaBaseUrl;
+
+  static final Map<String, ({List<String> models, String? error})>
+  _discoveredModelsCache = {};
 
   final Dio _dio;
   final StreamController<GeminiLiveEvent> _events =
@@ -132,8 +187,11 @@ class GeminiLiveClient {
   bool _isSetupDone = false;
   bool _intentionalClose = false;
   String _activeModelId = 'gemini-3.8-live';
+  String _activeApiVersion = 'v1beta';
   String _activeApiKey = '';
   String? _lastResumptionHandle;
+  String? _lastSetupErrorFromServer;
+  LiveConnectionDiagnostics? _lastDiagnostics;
 
   GeminiLiveClient({Dio? dio})
     : _dio =
@@ -148,10 +206,20 @@ class GeminiLiveClient {
   Stream<GeminiLiveEvent> get events => _events.stream;
   bool get isConnected => _isConnected && _isSetupDone;
   String get activeModelId => _activeModelId;
+  String get activeApiVersion => _activeApiVersion;
+  String get activeApiKey => _activeApiKey;
   String? get lastResumptionHandle => _lastResumptionHandle;
+  LiveConnectionDiagnostics? get lastDiagnostics => _lastDiagnostics;
 
   void clearResumptionHandle() {
     _lastResumptionHandle = null;
+  }
+
+  static String maskApiKey(String key) {
+    final clean = key.trim();
+    if (clean.isEmpty) return '(trống)';
+    if (clean.length <= 10) return clean;
+    return '${clean.substring(0, 6)}...${clean.substring(clean.length - 4)}';
   }
 
   /// Chọn model ID khớp nhất từ danh sách model thực tế có hỗ trợ `bidiGenerateContent`.
@@ -177,10 +245,17 @@ class GeminiLiveClient {
       }
     }
 
-    // Nếu là biến thể Flash Live, thử khớp mờ tên chứa flash & live
+    if (cleanReq.contains('thinking')) {
+      for (final m in normalizedAvailable) {
+        if (m.contains('thinking') && m.contains('live')) {
+          return m;
+        }
+      }
+    }
+
     if (cleanReq.contains('flash') && cleanReq.contains('live')) {
       for (final m in normalizedAvailable) {
-        if (m.contains('flash') && m.contains('live')) {
+        if (m.contains('flash') && (m.contains('live') || m.contains('native-audio'))) {
           return m;
         }
       }
@@ -188,51 +263,98 @@ class GeminiLiveClient {
     return cleanReq;
   }
 
-  /// Dò danh sách model hỗ trợ `bidiGenerateContent` của API key (có cache trong phiên).
-  Future<List<String>> fetchBidiSupportedModels(String apiKey) async {
+  /// Dò danh sách model hỗ trợ `bidiGenerateContent` qua REST API (`v1beta` hoặc `v1alpha`, có phân trang).
+  Future<({List<String> models, String? error})> discoverBidiSupportedModels(
+    String apiKey, {
+    String apiVersion = 'v1beta',
+    bool forceRefresh = false,
+  }) async {
     final cleanKey = apiKey.trim();
-    if (cleanKey.isEmpty) return const [];
-    if (_discoveredBidiModelsCache.containsKey(cleanKey)) {
-      return _discoveredBidiModelsCache[cleanKey]!;
+    if (cleanKey.isEmpty) {
+      return (models: const <String>[], error: 'API Key trống');
     }
 
+    final cacheKey = '$apiVersion::$cleanKey';
+    if (!forceRefresh && _discoveredModelsCache.containsKey(cacheKey)) {
+      final cached = _discoveredModelsCache[cacheKey]!;
+      if (cached.models.isNotEmpty) return cached;
+    }
+
+    final discovered = <String>[];
+    String? pageToken;
+    String? apiError;
+
     try {
-      final res = await _dio.get<dynamic>(
-        'https://generativelanguage.googleapis.com/v1beta/models',
-        queryParameters: {'key': cleanKey, 'pageSize': 100},
-        options: Options(validateStatus: (s) => s != null && s < 500),
-      );
-      if (res.statusCode == 200 && res.data is Map) {
-        final rawModels = (res.data as Map)['models'];
-        if (rawModels is List) {
-          final result = <String>[];
-          for (final m in rawModels) {
-            if (m is! Map) continue;
-            final methods = (m['supportedGenerationMethods'] as List?) ?? [];
-            final supportsBidi = methods.any(
-              (x) => x.toString().toLowerCase().contains('bidigeneratecontent'),
-            );
-            if (supportsBidi) {
-              final name = (m['name'] ?? '')
-                  .toString()
-                  .replaceFirst(RegExp(r'^models/'), '')
-                  .trim();
-              if (name.isNotEmpty) result.add(name);
+      for (var page = 0; page < 5; page++) {
+        final query = <String, dynamic>{
+          'key': cleanKey,
+          'pageSize': 100,
+          if (pageToken != null && pageToken.isNotEmpty) 'pageToken': pageToken,
+        };
+        final res = await _dio.get<dynamic>(
+          'https://generativelanguage.googleapis.com/$apiVersion/models',
+          queryParameters: query,
+          options: Options(validateStatus: (s) => s != null && s < 600),
+        );
+
+        if (res.statusCode != 200) {
+          final data = res.data;
+          if (data is Map && data['error'] is Map) {
+            final msg = (data['error']['message'] ?? '').toString().trim();
+            apiError = 'HTTP ${res.statusCode}: $msg';
+          } else {
+            apiError = 'HTTP ${res.statusCode}';
+          }
+          break;
+        }
+
+        if (res.data is Map) {
+          final map = res.data as Map;
+          final rawModels = map['models'];
+          if (rawModels is List) {
+            for (final m in rawModels) {
+              if (m is! Map) continue;
+              final methods = (m['supportedGenerationMethods'] as List?) ?? [];
+              final supportsBidi = methods.any(
+                (x) =>
+                    x.toString().toLowerCase().contains('bidigeneratecontent'),
+              );
+              if (supportsBidi) {
+                final name = (m['name'] ?? '')
+                    .toString()
+                    .replaceFirst(RegExp(r'^models/'), '')
+                    .trim();
+                if (name.isNotEmpty && !discovered.contains(name)) {
+                  discovered.add(name);
+                }
+              }
             }
           }
-          if (result.isNotEmpty) {
-            _discoveredBidiModelsCache[cleanKey] = result;
-            return result;
-          }
+          pageToken = (map['nextPageToken'] ?? '').toString().trim();
+          if (pageToken.isEmpty) break;
+        } else {
+          break;
         }
       }
     } catch (e) {
-      debugPrint('[GeminiLive] Không tra được danh sách bidi models: $e');
+      apiError = e.toString();
+      debugPrint('[GeminiLive] Không tra được /$apiVersion/models: $e');
     }
-    return const [];
+
+    final result = (models: discovered, error: apiError);
+    if (discovered.isNotEmpty) {
+      _discoveredModelsCache[cacheKey] = result;
+    }
+    return result;
   }
 
-  /// Tạo payload `setup` chuẩn cho WebSocket `BidiGenerateContent`.
+  /// Backward-compatible wrapper cho tests & callers cũ.
+  Future<List<String>> fetchBidiSupportedModels(String apiKey) async {
+    final res = await discoverBidiSupportedModels(apiKey, apiVersion: 'v1beta');
+    return res.models;
+  }
+
+  /// Tạo payload `setup` chuẩn cho WebSocket `BidiGenerateContent` theo profile tương thích.
   static Map<String, dynamic> buildSetupPayload({
     required String modelId,
     required String systemPrompt,
@@ -240,133 +362,381 @@ class GeminiLiveClient {
     String voiceName = 'Aoede',
     String? resumptionHandle,
     bool enableCompression = true,
+    LiveSetupProfile profile = LiveSetupProfile.full,
+    bool includeNonBlockingBehavior = false,
   }) {
     final cleanModel = modelId.startsWith('models/')
         ? modelId
         : 'models/$modelId';
-    return {
-      'setup': {
-        'model': cleanModel,
-        'generationConfig': {
-          'responseModalities': ['AUDIO'],
-          'temperature': 0.35,
-          'speechConfig': {
-            'voiceConfig': {
-              'prebuiltVoiceConfig': {'voiceName': voiceName},
-            },
+    final isExtendedThinking = modelId.toLowerCase().contains('extended-thinking');
+
+    final preparedDecls = functionDeclarations.map((decl) {
+      final copy = Map<String, dynamic>.from(decl);
+      if (includeNonBlockingBehavior) {
+        copy['behavior'] = 'NON_BLOCKING';
+      } else {
+        copy.remove('behavior');
+      }
+      return copy;
+    }).toList();
+
+    final generationConfig = <String, dynamic>{
+      'responseModalities': ['AUDIO'],
+      if (profile == LiveSetupProfile.full && voiceName.trim().isNotEmpty)
+        'speechConfig': {
+          'voiceConfig': {
+            'prebuiltVoiceConfig': {'voiceName': voiceName.trim()},
           },
         },
-        'systemInstruction': {
-          'parts': [
-            {'text': systemPrompt},
-          ],
-        },
-        if (functionDeclarations.isNotEmpty)
-          'tools': [
-            {'functionDeclarations': functionDeclarations},
-          ],
-        'inputAudioTranscription': <String, dynamic>{},
-        'outputAudioTranscription': <String, dynamic>{},
-        if (enableCompression)
-          'contextWindowCompression': {
-            'slidingWindow': <String, dynamic>{},
-          },
-        if (resumptionHandle != null && resumptionHandle.trim().isNotEmpty)
-          'sessionResumption': {'handle': resumptionHandle.trim()}
-        else
-          'sessionResumption': <String, dynamic>{},
-      },
     };
+
+    final setupMap = <String, dynamic>{
+      'model': cleanModel,
+      'generationConfig': generationConfig,
+      'systemInstruction': {
+        'parts': [
+          {'text': systemPrompt},
+        ],
+      },
+      if (preparedDecls.isNotEmpty)
+        'tools': [
+          {'functionDeclarations': preparedDecls},
+        ],
+    };
+
+    if (profile == LiveSetupProfile.full || profile == LiveSetupProfile.compatible) {
+      setupMap['inputAudioTranscription'] = <String, dynamic>{};
+      setupMap['outputAudioTranscription'] = <String, dynamic>{};
+      if (resumptionHandle != null && resumptionHandle.trim().isNotEmpty) {
+        setupMap['sessionResumption'] = {'handle': resumptionHandle.trim()};
+      } else {
+        setupMap['sessionResumption'] = <String, dynamic>{};
+      }
+    }
+
+    if (profile == LiveSetupProfile.full) {
+      if (isExtendedThinking) {
+        setupMap['thinkingConfig'] = {'thinkingLevel': 'low'};
+      }
+      if (enableCompression) {
+        setupMap['contextWindowCompression'] = {
+          'triggerTokens': 32768,
+          'slidingWindow': {'targetTokens': 16384},
+        };
+      }
+    }
+
+    return {'setup': setupMap};
   }
 
-  /// Kết nối (hoặc kết nối lại) WebSocket tới Gemini Live API, tự xoay vòng key nếu gặp lỗi.
-  Future<void> connect({
+  /// Kết nối WebSocket tới Gemini Live API, tự dò version + model + setup fallback, KHÔNG spam event rớt phiên khi chưa handshake xong.
+  Future<LiveConnectionDiagnostics> connect({
     required List<String> apiKeys,
     required String modelId,
     required String systemPrompt,
     required List<Map<String, dynamic>> functionDeclarations,
     String? resumptionHandle,
     String voiceName = 'Aoede',
+    bool forceRefreshModelDiscovery = false,
   }) async {
     final validKeys = apiKeys
         .map((e) => e.trim())
         .where((e) => e.isNotEmpty)
         .toList();
     if (validKeys.isEmpty) {
-      throw StateError(
-        'Chưa có Gemini API Key. Hãy thêm key trong phần Cài đặt ➔ Gemini.',
+      const msg =
+          'Chưa có Gemini API Key. Hãy nhập và Lưu key trong Cài đặt ➔ Gemini.';
+      _lastDiagnostics = LiveConnectionDiagnostics(
+        success: false,
+        requestedModelId: modelId,
+        resolvedModelId: '',
+        apiVersion: 'v1beta',
+        setupProfile: null,
+        maskedKey: '(không có)',
+        apiKeyCount: 0,
+        latencyMs: 0,
+        availableBidiModels: const [],
+        summaryMessage: msg,
+        attemptLogs: const [msg],
+        checkedAt: DateTime.now(),
       );
+      throw StateError(msg);
     }
 
     await disconnect(intentional: true);
     _intentionalClose = false;
 
-    Object? lastError;
-    for (final apiKey in validKeys) {
-      final availableBidi = await fetchBidiSupportedModels(apiKey);
-      final preferredModel = matchPreferredBidiModel(modelId, availableBidi);
-      final candidates = <String>{
-        preferredModel,
-        ...(AiModelRegistry.liveModelCandidateIds[modelId] ?? [modelId]),
-      }.toList();
+    final attemptLogs = <String>[];
+    final combinedAvailableModels = <String>{};
+    final prefersAlphaFirst = modelId.toLowerCase().contains('extended-thinking');
+    final versionOrder = prefersAlphaFirst
+        ? const ['v1alpha', 'v1beta']
+        : const ['v1beta', 'v1alpha'];
 
-      for (final candidateModel in candidates) {
-        // Thử lần 1 với resumptionHandle (nếu có); nếu handle cũ hết hạn, tự thử lại sạch
-        final handleAttempts =
-            (resumptionHandle != null && resumptionHandle.trim().isNotEmpty)
-            ? <String?>[resumptionHandle.trim(), null]
-            : <String?>[null];
+    for (var kIdx = 0; kIdx < validKeys.length; kIdx++) {
+      final apiKey = validKeys[kIdx];
+      final masked = maskApiKey(apiKey);
 
-        for (final handle in handleAttempts) {
-          try {
-            await _connectSingleSocket(
-              apiKey: apiKey,
-              modelId: candidateModel,
-              systemPrompt: systemPrompt,
-              functionDeclarations: functionDeclarations,
-              voiceName: voiceName,
-              resumptionHandle: handle,
-            );
-            _activeApiKey = apiKey;
-            _activeModelId = candidateModel;
-            return;
-          } catch (e) {
-            lastError = e;
-            debugPrint(
-              '[GeminiLive] Kết nối thất bại ($candidateModel, key=...${apiKey.length > 4 ? apiKey.substring(apiKey.length - 4) : apiKey}): $e',
-            );
+      final betaDiscovery = await discoverBidiSupportedModels(
+        apiKey,
+        apiVersion: 'v1beta',
+        forceRefresh: forceRefreshModelDiscovery,
+      );
+      final alphaDiscovery = await discoverBidiSupportedModels(
+        apiKey,
+        apiVersion: 'v1alpha',
+        forceRefresh: forceRefreshModelDiscovery,
+      );
+
+      combinedAvailableModels.addAll(betaDiscovery.models);
+      combinedAvailableModels.addAll(alphaDiscovery.models);
+
+      if (betaDiscovery.error != null) {
+        attemptLogs.add('Key $masked REST v1beta: ${betaDiscovery.error}');
+      }
+      if (alphaDiscovery.error != null && betaDiscovery.models.isEmpty) {
+        attemptLogs.add('Key $masked REST v1alpha: ${alphaDiscovery.error}');
+      }
+
+      // Nếu key rõ ràng invalid / bị khóa trên cả 2 REST endpoint -> ghi nhận và chuyển key tiếp theo
+      final hardAuthError = _extractHardKeyError(betaDiscovery.error ?? alphaDiscovery.error);
+      if (hardAuthError != null &&
+          betaDiscovery.models.isEmpty &&
+          alphaDiscovery.models.isEmpty) {
+        attemptLogs.add('Key $masked từ chối xác thực: $hardAuthError');
+        continue;
+      }
+
+      for (final apiVersion in versionOrder) {
+        final discoveredForVer = apiVersion == 'v1alpha'
+            ? (alphaDiscovery.models.isNotEmpty
+                  ? alphaDiscovery.models
+                  : betaDiscovery.models)
+            : (betaDiscovery.models.isNotEmpty
+                  ? betaDiscovery.models
+                  : alphaDiscovery.models);
+
+        final preferredModel = matchPreferredBidiModel(
+          modelId,
+          discoveredForVer,
+        );
+
+        final aliasCandidates =
+            AiModelRegistry.liveModelCandidateIds[modelId] ?? [modelId];
+        final candidates = <String>{
+          preferredModel,
+          ...aliasCandidates,
+        }.where((s) => s.trim().isNotEmpty).toList();
+
+        // Nếu API Key thực sự trả về danh sách Bidi models trên endpoint này,
+        // ưu tiên chạy những model thực sự xuất hiện trong danh sách trước để đỡ thử model 404.
+        if (discoveredForVer.isNotEmpty) {
+          final inDiscovered = candidates
+              .where((c) => discoveredForVer.contains(c))
+              .toList();
+          if (inDiscovered.isNotEmpty) {
+            final others = candidates
+                .where((c) => !discoveredForVer.contains(c))
+                .toList();
+            candidates
+              ..clear()
+              ..addAll(inDiscovered)
+              ..addAll(others.take(1));
+          }
+        }
+
+        for (final candidateModel in candidates) {
+          final profiles = <LiveSetupProfile>[
+            LiveSetupProfile.full,
+            LiveSetupProfile.compatible,
+            LiveSetupProfile.minimal,
+          ];
+
+          for (final profile in profiles) {
+            final includeNonBlocking =
+                candidateModel.toLowerCase().contains('extended-thinking') &&
+                profile != LiveSetupProfile.minimal;
+
+            final handleAttempts =
+                (resumptionHandle != null &&
+                    resumptionHandle.trim().isNotEmpty &&
+                    profile != LiveSetupProfile.minimal)
+                ? <String?>[resumptionHandle.trim(), null]
+                : <String?>[null];
+
+            var abortRemainingProfilesForModel = false;
+            for (final handle in handleAttempts) {
+              final sw = Stopwatch()..start();
+              try {
+                await _connectSingleSocket(
+                  apiKey: apiKey,
+                  apiVersion: apiVersion,
+                  modelId: candidateModel,
+                  systemPrompt: systemPrompt,
+                  functionDeclarations: functionDeclarations,
+                  voiceName: voiceName,
+                  resumptionHandle: handle,
+                  profile: profile,
+                  includeNonBlockingBehavior: includeNonBlocking,
+                );
+                sw.stop();
+                _activeApiKey = apiKey;
+                _activeModelId = candidateModel;
+                _activeApiVersion = apiVersion;
+
+                final diag = LiveConnectionDiagnostics(
+                  success: true,
+                  requestedModelId: modelId,
+                  resolvedModelId: candidateModel,
+                  apiVersion: apiVersion,
+                  setupProfile: profile,
+                  maskedKey: masked,
+                  apiKeyCount: validKeys.length,
+                  latencyMs: sw.elapsedMilliseconds,
+                  availableBidiModels: combinedAvailableModels.toList(),
+                  summaryMessage:
+                      'Đã kết nối phiên Live thành công ($candidateModel · $apiVersion · ${sw.elapsedMilliseconds}ms).',
+                  attemptLogs: attemptLogs,
+                  checkedAt: DateTime.now(),
+                );
+                _lastDiagnostics = diag;
+                return diag;
+              } catch (e) {
+                sw.stop();
+                final errText = _formatFriendlyAttemptError(e);
+                attemptLogs.add(
+                  '[$masked | $apiVersion | $candidateModel | ${profile.name}] $errText',
+                );
+                debugPrint(
+                  '[GeminiLive] Handshake fail [$masked | $apiVersion | $candidateModel | ${profile.name}]: $e',
+                );
+
+                // Nếu lỗi rõ ràng là Model không tồn tại (1008 / not found) hoặc API key chết -> không cần thử minimal trên cùng model nữa
+                final lower = e.toString().toLowerCase();
+                if (lower.contains('not found') ||
+                    lower.contains('not supported for bidi') ||
+                    lower.contains('api key not valid') ||
+                    lower.contains('permission denied') ||
+                    lower.contains('1008')) {
+                  abortRemainingProfilesForModel = true;
+                  break;
+                }
+              }
+            }
+            if (abortRemainingProfilesForModel) break;
           }
         }
       }
     }
 
-    throw StateError(
-      'Không thể kết nối Gemini Live API ($modelId): $lastError',
+    final summary = _summarizeFailure(
+      modelId: modelId,
+      maskedKey: maskApiKey(validKeys.first),
+      keyCount: validKeys.length,
+      availableModels: combinedAvailableModels.toList(),
+      attemptLogs: attemptLogs,
     );
+
+    _lastDiagnostics = LiveConnectionDiagnostics(
+      success: false,
+      requestedModelId: modelId,
+      resolvedModelId: '',
+      apiVersion: prefersAlphaFirst ? 'v1alpha' : 'v1beta',
+      setupProfile: null,
+      maskedKey: maskApiKey(validKeys.first),
+      apiKeyCount: validKeys.length,
+      latencyMs: 0,
+      availableBidiModels: combinedAvailableModels.toList(),
+      summaryMessage: summary,
+      attemptLogs: attemptLogs,
+      checkedAt: DateTime.now(),
+    );
+
+    throw StateError(summary);
+  }
+
+  static String? _extractHardKeyError(String? err) {
+    if (err == null || err.isEmpty) return null;
+    final lower = err.toLowerCase();
+    if (lower.contains('api key not valid') ||
+        lower.contains('http 400') ||
+        lower.contains('http 403')) {
+      return err;
+    }
+    return null;
+  }
+
+  static String _formatFriendlyAttemptError(Object e) {
+    final s = e.toString().replaceFirst('Bad state: ', '').trim();
+    if (s.length > 180) return '${s.substring(0, 180)}...';
+    return s;
+  }
+
+  static String _summarizeFailure({
+    required String modelId,
+    required String maskedKey,
+    required int keyCount,
+    required List<String> availableModels,
+    required List<String> attemptLogs,
+  }) {
+    final joined = attemptLogs.join(' | ').toLowerCase();
+    if (joined.contains('api key not valid') ||
+        joined.contains('api_key_invalid')) {
+      return 'API Key ($maskedKey) không hợp lệ hoặc đã bị thu hồi. Hãy kiểm tra lại trong Cài đặt.';
+    }
+    if (joined.contains('quota') ||
+        joined.contains('resource_exhausted') ||
+        joined.contains('429')) {
+      return 'Key ($maskedKey) đã hết hạn mức Live API (429). Hãy thêm key khác hoặc đổi model.';
+    }
+    if (joined.contains('socketexception') ||
+        joined.contains('handshakeexception') ||
+        joined.contains('timed out') ||
+        joined.contains('failed host lookup')) {
+      return 'Không kết nối được máy chủ Google Live WebSocket (kiểm tra mạng/VPN/DNS).';
+    }
+    if (availableModels.isNotEmpty) {
+      return 'Key $maskedKey ($keyCount key) chưa mở/khớp được với $modelId. Các model Live khả dụng trên key: ${availableModels.join(", ")}.';
+    }
+    final lastDetail = attemptLogs.isNotEmpty ? attemptLogs.last : 'Không rõ nguyên nhân';
+    return 'Không kết nối được $modelId (Key $maskedKey): $lastDetail';
   }
 
   Future<void> _connectSingleSocket({
     required String apiKey,
+    required String apiVersion,
     required String modelId,
     required String systemPrompt,
     required List<Map<String, dynamic>> functionDeclarations,
     required String voiceName,
+    required LiveSetupProfile profile,
+    required bool includeNonBlockingBehavior,
     String? resumptionHandle,
   }) async {
-    final uri = Uri.parse('$wsBaseUrl?key=${Uri.encodeComponent(apiKey)}');
+    final baseUrl = wsUrlForVersion(apiVersion);
+    final uri = Uri.parse('$baseUrl?key=${Uri.encodeComponent(apiKey)}');
     final ws = await WebSocket.connect(uri.toString()).timeout(
-      const Duration(seconds: 12),
+      const Duration(seconds: 10),
     );
 
     _socket = ws;
     _isConnected = true;
     _isSetupDone = false;
+    _lastSetupErrorFromServer = null;
     _setupCompleter = Completer<void>();
 
+    var setupDoneOnThisSocket = false;
+
     _socketSub = ws.listen(
-      (raw) => _handleRawServerMessage(raw, modelId),
+      (raw) {
+        final beforeSetup = _isSetupDone;
+        _handleRawServerMessage(raw, modelId, apiVersion: apiVersion);
+        if (!beforeSetup && _isSetupDone) {
+          setupDoneOnThisSocket = true;
+        }
+      },
       onError: (Object err) {
-        if (!_intentionalClose) {
+        if (setupDoneOnThisSocket && !_intentionalClose) {
           _events.add(LiveErrorEvent('Lỗi kết nối Live WebSocket: $err'));
         }
         if (!(_setupCompleter?.isCompleted ?? true)) {
@@ -379,14 +749,24 @@ class GeminiLiveClient {
         final wasIntentional = _intentionalClose;
         _isConnected = false;
         _isSetupDone = false;
+
         if (!(_setupCompleter?.isCompleted ?? true)) {
+          final serverDetail = _lastSetupErrorFromServer;
+          final reasonText = [
+            if (code != null) 'code=$code',
+            if (reason != null && reason.isNotEmpty) reason,
+            if (serverDetail != null && serverDetail.isNotEmpty) serverDetail,
+          ].join(' · ');
           _setupCompleter?.completeError(
             StateError(
-              'WebSocket đóng trước setupComplete (code=$code, reason=$reason)',
+              'WebSocket đóng trước setupComplete (${reasonText.isNotEmpty ? reasonText : "closed"})',
             ),
           );
+          return;
         }
-        if (!wasIntentional) {
+
+        // CHỈ phát sự kiện rớt phiên nếu phiên đã từng setupComplete thành công (tránh vòng lặp nháy lỗi khi connect thất bại)
+        if (setupDoneOnThisSocket && !wasIntentional) {
           _events.add(
             LiveConnectionClosedEvent(
               closeCode: code,
@@ -405,11 +785,13 @@ class GeminiLiveClient {
       functionDeclarations: functionDeclarations,
       voiceName: voiceName,
       resumptionHandle: resumptionHandle,
+      profile: profile,
+      includeNonBlockingBehavior: includeNonBlockingBehavior,
     );
     ws.add(jsonEncode(setupPayload));
 
     try {
-      await _setupCompleter!.future.timeout(const Duration(seconds: 12));
+      await _setupCompleter!.future.timeout(const Duration(seconds: 10));
     } catch (e) {
       await _cleanupSocketOnly();
       rethrow;
@@ -421,22 +803,30 @@ class GeminiLiveClient {
   void handleDecodedServerJson(
     Map<String, dynamic> json, {
     String modelId = '',
+    String apiVersion = 'v1beta',
   }) {
     final effectiveModel = modelId.isNotEmpty ? modelId : _activeModelId;
 
     if (json.containsKey('setupComplete')) {
       _isSetupDone = true;
       _activeModelId = effectiveModel;
+      _activeApiVersion = apiVersion;
       if (!(_setupCompleter?.isCompleted ?? true)) {
         _setupCompleter?.complete();
       }
-      _events.add(LiveSetupCompleteEvent(effectiveModel));
+      _events.add(
+        LiveSetupCompleteEvent(effectiveModel, apiVersion: apiVersion),
+      );
     }
 
     final errorObj = json['error'];
     if (errorObj is Map) {
       final msg = (errorObj['message'] ?? errorObj.toString()).toString();
-      _events.add(LiveErrorEvent(msg));
+      if (!_isSetupDone) {
+        _lastSetupErrorFromServer = msg;
+      } else {
+        _events.add(LiveErrorEvent(msg));
+      }
     }
 
     final resumption = json['sessionResumptionUpdate'];
@@ -562,7 +952,11 @@ class GeminiLiveClient {
     }
   }
 
-  void _handleRawServerMessage(dynamic raw, String modelId) {
+  void _handleRawServerMessage(
+    dynamic raw,
+    String modelId, {
+    String apiVersion = 'v1beta',
+  }) {
     try {
       final text = raw is String ? raw : utf8.decode(raw as List<int>);
       if (text.trim().isEmpty) return;
@@ -571,6 +965,7 @@ class GeminiLiveClient {
         handleDecodedServerJson(
           Map<String, dynamic>.from(decoded),
           modelId: modelId,
+          apiVersion: apiVersion,
         );
       }
     } catch (e) {
@@ -647,8 +1042,6 @@ class GeminiLiveClient {
       },
     });
   }
-
-  String get activeApiKey => _activeApiKey;
 
   Future<void> _cleanupSocketOnly() async {
     _isConnected = false;

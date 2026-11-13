@@ -70,6 +70,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
         .where((e) => e.isNotEmpty)
         .toList();
 
+    if (_settings != null && keys.isNotEmpty) {
+      // Tự đồng bộ key đã nhập để Trợ lý AI & bộ dịch dùng được ngay kể cả khi chưa bấm nút Lưu
+      _settings!.geminiApiKeys = keys;
+    }
+
     if (keys.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -317,6 +322,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     controller: _apiKeysController,
                     maxLines: 4,
                     style: const TextStyle(color: Colors.white, fontSize: 13),
+                    onChanged: (val) {
+                      if (_settings == null) return;
+                      _settings!.geminiApiKeys = val
+                          .split(RegExp(r'[,;\n]'))
+                          .map((e) => e.trim())
+                          .where((e) => e.isNotEmpty)
+                          .toList();
+                    },
                     decoration: InputDecoration(
                       filled: true,
                       fillColor: const Color(0xFF1E202A),
