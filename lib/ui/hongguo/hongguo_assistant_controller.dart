@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 
@@ -90,8 +91,12 @@ class HongguoAssistantController extends ChangeNotifier {
   int _msgSeq = 0;
 
   String? _activeAssistantMsgId;
+  String? _lastAssistantMsgId;
   String? _activeUserVoiceMsgId;
   bool _turnReceivedTranscript = false;
+  bool _turnExecutedTool = false;
+  int _inFlightToolCount = 0;
+  String _lastUserPrompt = '';
   HongguoSearchReport? _pendingTurnReport;
 
   HongguoAssistantController({
@@ -523,8 +528,12 @@ class HongguoAssistantController extends ChangeNotifier {
     _messages.clear();
     _pinnedSeriesIds.clear();
     _activeAssistantMsgId = null;
+    _lastAssistantMsgId = null;
     _activeUserVoiceMsgId = null;
     _pendingTurnReport = null;
+    _turnExecutedTool = false;
+    _inFlightToolCount = 0;
+    _lastUserPrompt = '';
     _isAssistantBusy = false;
     _isTestingConnection = false;
     _hasEstablishedSessionOnce = false;
@@ -569,6 +578,9 @@ class HongguoAssistantController extends ChangeNotifier {
 
     try {
       final decorated = engine.decorateUserInput(clean);
+      _closeDanglingAssistantTurnIfNeeded();
+      _lastUserPrompt = clean;
+      _turnExecutedTool = false;
       _prepareNewAssistantTurn();
       _liveClient.sendClientText(decorated, turnComplete: true);
     } catch (e) {
@@ -686,6 +698,7 @@ class HongguoAssistantController extends ChangeNotifier {
 
   void _prepareNewAssistantTurn() {
     _activeAssistantMsgId = 'a_${++_msgSeq}';
+    _lastAssistantMsgId = _activeAssistantMsgId;
     _turnReceivedTranscript = false;
     _pendingTurnReport = null;
     _messages.add(
@@ -696,6 +709,16 @@ class HongguoAssistantController extends ChangeNotifier {
         isStreaming: true,
       ),
     );
+  }
+
+  void _closeDanglingAssistantTurnIfNeeded() {
+    final prevId = _activeAssistantMsgId;
+    if (prevId == null) return;
+    final idx = _messages.indexWhere((m) => m.id == prevId);
+    if (idx != -1 && _messages[idx].isStreaming) {
+      _messages[idx] = _messages[idx].copyWith(isStreaming: false);
+    }
+    _activeAssistantMsgId = null;
   }
 
   void _appendSystemNotice(String text) {
@@ -744,6 +767,8 @@ class HongguoAssistantController extends ChangeNotifier {
         }
 
       case LiveToolCallEvent(:final calls):
+        _turnExecutedTool = true;
+        _inFlightToolCount++;
         unawaited(_executeAndRespondTools(calls));
 
       case LiveToolCallCancelledEvent():
@@ -751,8 +776,23 @@ class HongguoAssistantController extends ChangeNotifier {
         _busyLabel = '';
         notifyListeners();
 
-      case LiveTurnCompleteEvent():
+      case LiveTurnCompleteEvent(:final interactionStatus, :final isGenerationOnly):
         unawaited(_audioOutput.flushTurn());
+        if (_inFlightToolCount > 0 || interactionStatus == 'IN_PROGRESS') {
+          // Extended Thinking / NON_BLOCKING tool vẫn đang chạy: giữ nguyên turn & tiếp tục chờ kết quả
+          _attachReportToActiveAssistant();
+          _isAssistantBusy = true;
+          if (_inFlightToolCount == 0 && _busyLabel.isEmpty) {
+            _busyLabel = 'Gemini đang tổng hợp câu trả lời...';
+          }
+          notifyListeners();
+          break;
+        }
+        if (isGenerationOnly) {
+          // Chờ `turnComplete: true` thực sự, chỉ gắn trước card nếu đã sẵn sàng
+          _attachReportToActiveAssistant();
+          break;
+        }
         _finalizeActiveAssistantTurn();
         if (_needsSessionRenewalOnIdle) {
           unawaited(_renewSessionSeamlessly());
@@ -806,6 +846,8 @@ class HongguoAssistantController extends ChangeNotifier {
   void _handleInputTranscript(String delta, {bool finished = false}) {
     if (_activeUserVoiceMsgId == null) {
       _activeUserVoiceMsgId = 'uv_${++_msgSeq}';
+      _turnExecutedTool = false;
+      _lastUserPrompt = delta.trim();
       _messages.add(
         AssistantChatMessage(
           id: _activeUserVoiceMsgId!,
@@ -827,6 +869,7 @@ class HongguoAssistantController extends ChangeNotifier {
       final nextText = cur.text == '🎙️ Đang nghe bạn nói...'
           ? delta
           : '${cur.text}$delta';
+      _lastUserPrompt = nextText.trim();
       _messages[idx] = cur.copyWith(text: nextText, isStreaming: !finished);
       if (finished) {
         _activeUserVoiceMsgId = null;
@@ -853,14 +896,19 @@ class HongguoAssistantController extends ChangeNotifier {
 
   void _attachReportToActiveAssistant() {
     if (_pendingTurnReport == null) return;
-    if (_activeAssistantMsgId == null) {
+    final targetId = _activeAssistantMsgId ?? _lastAssistantMsgId;
+    if (targetId == null) {
       _prepareNewAssistantTurn();
+      _attachReportToMessageId(_activeAssistantMsgId!, _pendingTurnReport!);
+      return;
     }
-    final idx = _messages.indexWhere((m) => m.id == _activeAssistantMsgId);
+    _attachReportToMessageId(targetId, _pendingTurnReport!);
+  }
+
+  void _attachReportToMessageId(String msgId, HongguoSearchReport report) {
+    final idx = _messages.indexWhere((m) => m.id == msgId);
     if (idx != -1) {
-      _messages[idx] = _messages[idx].copyWith(
-        searchReport: _pendingTurnReport,
-      );
+      _messages[idx] = _messages[idx].copyWith(searchReport: report);
       notifyListeners();
     }
   }
@@ -868,16 +916,25 @@ class HongguoAssistantController extends ChangeNotifier {
   void _finalizeActiveAssistantTurn() {
     _isAssistantBusy = false;
     _busyLabel = '';
-    if (_activeAssistantMsgId != null) {
-      final idx = _messages.indexWhere((m) => m.id == _activeAssistantMsgId);
+    final finishedMsgId = _activeAssistantMsgId;
+    final pendingPrompt = _lastUserPrompt;
+    final executedToolThisTurn = _turnExecutedTool;
+    var hasAttachedReport = _pendingTurnReport != null;
+    var hasNonEmptyReplyText = false;
+
+    if (finishedMsgId != null) {
+      final idx = _messages.indexWhere((m) => m.id == finishedMsgId);
       if (idx != -1) {
         final cur = _messages[idx];
-        if (cur.text.trim().isEmpty && cur.searchReport == null) {
+        final effectiveReport = _pendingTurnReport ?? cur.searchReport;
+        hasAttachedReport = effectiveReport != null;
+        hasNonEmptyReplyText = cur.text.trim().isNotEmpty;
+        if (!hasNonEmptyReplyText && effectiveReport == null) {
           _messages.removeAt(idx);
         } else {
           _messages[idx] = cur.copyWith(
             isStreaming: false,
-            searchReport: _pendingTurnReport ?? cur.searchReport,
+            searchReport: effectiveReport,
           );
         }
       }
@@ -885,7 +942,39 @@ class HongguoAssistantController extends ChangeNotifier {
       _pendingTurnReport = null;
       _turnReceivedTranscript = false;
     }
+
+    // Safety net: nếu Gemini Live bỏ qua tool calling và chỉ trả lời text tên phim + tóm tắt,
+    // tự động lấy danh sách phim thật kèm ảnh bìa Hồng Quả đính vào ngay dưới câu trả lời.
+    if (finishedMsgId != null &&
+        !executedToolThisTurn &&
+        !hasAttachedReport &&
+        hasNonEmptyReplyText &&
+        pendingPrompt.isNotEmpty &&
+        HongguoAssistantEngine.looksLikeMovieDiscoveryQuery(pendingPrompt)) {
+      _lastUserPrompt = '';
+      unawaited(_attachAutoFallbackCardsIfNeeded(finishedMsgId, pendingPrompt));
+    }
+
     notifyListeners();
+  }
+
+  Future<void> _attachAutoFallbackCardsIfNeeded(
+    String msgId,
+    String prompt,
+  ) async {
+    try {
+      final report = await engine.autoSearchFallbackFromPrompt(
+        prompt,
+        onSearchResultsUpdated: (r) {
+          if (!_disposed && r.candidates.isNotEmpty) {
+            _attachReportToMessageId(msgId, r);
+          }
+        },
+      );
+      if (!_disposed && report != null && report.candidates.isNotEmpty) {
+        _attachReportToMessageId(msgId, report);
+      }
+    } catch (_) {}
   }
 
   Future<void> _executeAndRespondTools(List<LiveFunctionCall> calls) async {
@@ -894,38 +983,43 @@ class HongguoAssistantController extends ChangeNotifier {
     if (_activeAssistantMsgId == null) {
       _prepareNewAssistantTurn();
     }
+    final targetMsgId = _activeAssistantMsgId!;
     notifyListeners();
 
-    final responses = await Future.wait(
-      calls.map(
-        (call) => engine.executeToolCall(
-          call,
-          onProgress: (status) {
-            if (_disposed) return;
-            _busyLabel = status;
-            notifyListeners();
-          },
-          onSearchResultsUpdated: (report) {
-            _pendingTurnReport = report;
-            _attachReportToActiveAssistant();
-          },
+    try {
+      final responses = await Future.wait(
+        calls.map(
+          (call) => engine.executeToolCall(
+            call,
+            onProgress: (status) {
+              if (_disposed) return;
+              _busyLabel = status;
+              notifyListeners();
+            },
+            onSearchResultsUpdated: (report) {
+              _pendingTurnReport = report;
+              _attachReportToMessageId(targetMsgId, report);
+            },
+          ),
         ),
-      ),
-    );
+      );
 
-    if (_disposed) return;
-    _busyLabel = 'Gemini đang tổng hợp câu trả lời...';
-    notifyListeners();
+      if (_disposed) return;
+      _busyLabel = 'Gemini đang tổng hợp câu trả lời...';
+      notifyListeners();
 
-    if (_liveClient.isConnected) {
-      try {
-        _liveClient.sendToolResponses(responses);
-      } catch (e) {
-        _errorBanner = 'Lỗi trả dữ liệu tool cho Gemini: $e';
-        _isAssistantBusy = false;
-        _busyLabel = '';
-        notifyListeners();
+      if (_liveClient.isConnected) {
+        try {
+          _liveClient.sendToolResponses(responses);
+        } catch (e) {
+          _errorBanner = 'Lỗi trả dữ liệu tool cho Gemini: $e';
+          _finalizeActiveAssistantTurn();
+        }
+      } else {
+        _finalizeActiveAssistantTurn();
       }
+    } finally {
+      _inFlightToolCount = math.max(0, _inFlightToolCount - 1);
     }
   }
 

@@ -128,7 +128,12 @@ class LiveToolCallCancelledEvent extends GeminiLiveEvent {
 }
 
 class LiveTurnCompleteEvent extends GeminiLiveEvent {
-  const LiveTurnCompleteEvent();
+  final String? interactionStatus;
+  final bool isGenerationOnly;
+  const LiveTurnCompleteEvent({
+    this.interactionStatus,
+    this.isGenerationOnly = false,
+  });
 }
 
 class LiveInterruptedEvent extends GeminiLiveEvent {
@@ -851,18 +856,8 @@ class GeminiLiveClient {
       if (rawCalls is List && rawCalls.isNotEmpty) {
         final calls = <LiveFunctionCall>[];
         for (final c in rawCalls) {
-          if (c is! Map) continue;
-          final rawArgs = c['args'];
-          final argsMap = rawArgs is Map
-              ? Map<String, dynamic>.from(rawArgs)
-              : <String, dynamic>{};
-          calls.add(
-            LiveFunctionCall(
-              id: (c['id'] ?? '').toString(),
-              name: (c['name'] ?? '').toString(),
-              args: argsMap,
-            ),
-          );
+          final parsed = _parseFunctionCall(c);
+          if (parsed != null) calls.add(parsed);
         }
         if (calls.isNotEmpty) {
           _events.add(LiveToolCallEvent(calls));
@@ -918,10 +913,16 @@ class GeminiLiveClient {
       if (modelTurn is Map) {
         final parts = modelTurn['parts'];
         if (parts is List) {
+          final modelTurnCalls = <LiveFunctionCall>[];
           for (final part in parts) {
             if (part is! Map) continue;
             // Bỏ qua phần suy luận nội bộ (`thought: true`) của Extended Thinking
             if (part['thought'] == true) continue;
+
+            final fnCall = _parseFunctionCall(part['functionCall']);
+            if (fnCall != null) {
+              modelTurnCalls.add(fnCall);
+            }
 
             final text = (part['text'] ?? '').toString();
             if (text.isNotEmpty) {
@@ -942,14 +943,69 @@ class GeminiLiveClient {
               }
             }
           }
+          if (modelTurnCalls.isNotEmpty) {
+            _events.add(LiveToolCallEvent(modelTurnCalls));
+          }
         }
       }
 
-      if (serverContent['turnComplete'] == true ||
-          serverContent['generationComplete'] == true) {
-        _events.add(const LiveTurnCompleteEvent());
+      final rawInteractionStatus =
+          (serverContent['interactionStatus'] ??
+                  serverContent['interaction_status'] ??
+                  json['interactionStatus'] ??
+                  json['interaction_status'])
+              ?.toString()
+              .trim()
+              .toUpperCase();
+      final interactionStatus =
+          (rawInteractionStatus != null && rawInteractionStatus.isNotEmpty)
+              ? rawInteractionStatus
+              : null;
+      final isTurnComplete = serverContent['turnComplete'] == true;
+      final isGenerationComplete = serverContent['generationComplete'] == true;
+      if (isTurnComplete || isGenerationComplete) {
+        _events.add(
+          LiveTurnCompleteEvent(
+            interactionStatus: interactionStatus,
+            isGenerationOnly: !isTurnComplete && isGenerationComplete,
+          ),
+        );
       }
     }
+
+    // Xử lý sự kiện top-level `interactionStatus` nếu tách khỏi `serverContent`
+    if (serverContent is! Map) {
+      final topStatus = (json['interactionStatus'] ?? json['interaction_status'])
+          ?.toString()
+          .trim()
+          .toUpperCase();
+      if (topStatus == 'IDLE') {
+        _events.add(const LiveTurnCompleteEvent(interactionStatus: 'IDLE'));
+      }
+    }
+  }
+
+  static LiveFunctionCall? _parseFunctionCall(dynamic raw) {
+    if (raw is! Map) return null;
+    final name = (raw['name'] ?? '').toString().trim();
+    if (name.isEmpty) return null;
+    final rawArgs = raw['args'];
+    Map<String, dynamic> argsMap = <String, dynamic>{};
+    if (rawArgs is Map) {
+      argsMap = Map<String, dynamic>.from(rawArgs);
+    } else if (rawArgs is String && rawArgs.trim().isNotEmpty) {
+      try {
+        final decoded = jsonDecode(rawArgs);
+        if (decoded is Map) {
+          argsMap = Map<String, dynamic>.from(decoded);
+        }
+      } catch (_) {}
+    }
+    return LiveFunctionCall(
+      id: (raw['id'] ?? '').toString(),
+      name: name,
+      args: argsMap,
+    );
   }
 
   void _handleRawServerMessage(

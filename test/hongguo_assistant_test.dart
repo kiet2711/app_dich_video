@@ -448,6 +448,133 @@ void main() {
         contains('id=$idAi'),
       );
     });
+
+    test('empty search falls back to Hongguo browse catalog & caps slow translation timeout', () async {
+      final dio = Dio();
+      dio.httpClientAdapter = _MockAdapter((options) async {
+        if (options.uri.path.contains('/api/search/result')) {
+          return ResponseBody.fromString(
+            jsonEncode({'searchList': <dynamic>[], 'pageNum': 1, 'totalPages': 0}),
+            200,
+            headers: {
+              Headers.contentTypeHeader: ['application/json'],
+            },
+          );
+        }
+        final htmlPayload = {
+          'loaderData': {
+            'routes/page': {
+              'dramaList': [
+                {
+                  'seriesId': '7688352674999159991',
+                  'seriesName': '热播宫廷甜宠',
+                  'cover': 'https://p6-novel.byteimg.com/novel-pic/fallback_cover.jpeg',
+                  'episodeCount': 66,
+                  'tags': ['古装', '甜宠'],
+                },
+              ],
+            },
+          },
+        };
+        return ResponseBody.fromString(
+          '<script>window._ROUTER_DATA = ${jsonEncode(htmlPayload)};</script>',
+          200,
+          headers: {
+            Headers.contentTypeHeader: ['text/html; charset=utf-8'],
+          },
+        );
+      });
+
+      final engine = HongguoAssistantEngine(
+        resolver: HongguoResolver(dio: dio),
+        // Mô phỏng MLKit treo 5 giây -> engine phải cắt timeout <= 1.8s để hiện thẻ + ảnh bìa ngay
+        translateTitle: (zh) async {
+          await Future<void>.delayed(const Duration(seconds: 5));
+          return 'NEVER';
+        },
+      );
+
+      final sw = Stopwatch()..start();
+      final resp = await engine.executeToolCall(
+        const LiveFunctionCall(
+          id: 't-empty',
+          name: 'progressive_search',
+          args: {
+            'queries_narrow_to_broad': ['不存在的电影'],
+            'source_type': 'all',
+            'limit': 5,
+          },
+        ),
+      );
+      sw.stop();
+
+      expect(sw.elapsedMilliseconds, lessThan(3500));
+      expect(resp.response['returnedCount'], 1);
+      expect(engine.lastDisplayedCandidates.single.item.cover, contains('fallback_cover.jpeg'));
+      expect(engine.lastDisplayedCandidates.single.viTitle, '热播宫廷甜宠');
+    });
+
+    test('looksLikeMovieDiscoveryQuery distinguishes new searches from #N follow-ups & autoSearchFallbackFromPrompt populates covers', () async {
+      expect(HongguoAssistantEngine.looksLikeMovieDiscoveryQuery('Tìm phim học đường ngọt sủng'), isTrue);
+      expect(HongguoAssistantEngine.looksLikeMovieDiscoveryQuery('Gợi ý cho mình vài bộ hay'), isTrue);
+      expect(HongguoAssistantEngine.looksLikeMovieDiscoveryQuery('Tóm tắt phim số 2'), isFalse);
+      expect(
+        HongguoAssistantEngine.looksLikeMovieDiscoveryQuery(
+          'Hãy tổng hợp và so sánh hết cốt truyện của toàn bộ danh sách phim vừa rồi',
+        ),
+        isFalse,
+      );
+
+      final dio = Dio();
+      dio.httpClientAdapter = _MockAdapter((options) async {
+        if (options.uri.path.contains('/api/search/result')) {
+          return ResponseBody.fromString(
+            jsonEncode({
+              'searchList': [
+                {
+                  'video_data': {
+                    'series_id': '7688352674999158881',
+                    'series_title': '校园微甜恋爱',
+                    'series_cover': 'https://p6-novel.byteimg.com/novel-pic/fb_search_cover.jpeg',
+                    'episode_cnt': 60,
+                    'tags': ['校园', '甜宠'],
+                  },
+                },
+              ],
+              'pageNum': 1,
+              'totalPages': 1,
+            }),
+            200,
+            headers: {
+              Headers.contentTypeHeader: ['application/json'],
+            },
+          );
+        }
+        final htmlPayload = {
+          'loaderData': {
+            'routes/page': {'dramaList': <dynamic>[]},
+          },
+        };
+        return ResponseBody.fromString(
+          '<script>window._ROUTER_DATA = ${jsonEncode(htmlPayload)};</script>',
+          200,
+          headers: {
+            Headers.contentTypeHeader: ['text/html; charset=utf-8'],
+          },
+        );
+      });
+
+      final engine = HongguoAssistantEngine(
+        resolver: HongguoResolver(dio: dio),
+        translateTitle: (zh) async => 'Yêu Ngọt Học Đường',
+      );
+
+      final report = await engine.autoSearchFallbackFromPrompt('Tìm giúp mình phim học đường ngọt sủng');
+      expect(report, isNotNull);
+      expect(report!.candidates.length, 1);
+      expect(report.candidates.single.viTitle, 'Yêu Ngọt Học Đường');
+      expect(report.candidates.single.item.cover, contains('fb_search_cover.jpeg'));
+    });
   });
 
   group('GeminiLiveClient setup profiles, URLs & pre-setup guard', () {
@@ -552,6 +679,45 @@ void main() {
       await sub.cancel();
       await client.dispose();
     });
+
+    test('handleDecodedServerJson parses modelTurn.parts functionCall and interactionStatus', () async {
+      final client = GeminiLiveClient();
+      final emitted = <GeminiLiveEvent>[];
+      final sub = client.events.listen(emitted.add);
+
+      client.handleDecodedServerJson({'setupComplete': {}}, modelId: 'gemini-3.8-live-extended-thinking');
+      client.handleDecodedServerJson({
+        'serverContent': {
+          'interactionStatus': 'IN_PROGRESS',
+          'modelTurn': {
+            'parts': [
+              {
+                'functionCall': {
+                  'id': 'call_mt_1',
+                  'name': 'progressive_search',
+                  'args': '{"queries_narrow_to_broad":["校园"],"limit":3}',
+                },
+              },
+              {'text': 'Đang tìm phim cho bạn...'},
+            ],
+          },
+          'generationComplete': true,
+        },
+      });
+      await Future<void>.delayed(Duration.zero);
+
+      final toolEvt = emitted.whereType<LiveToolCallEvent>().single;
+      expect(toolEvt.calls.single.id, 'call_mt_1');
+      expect(toolEvt.calls.single.name, 'progressive_search');
+      expect(toolEvt.calls.single.args['limit'], 3);
+
+      final turnEvt = emitted.whereType<LiveTurnCompleteEvent>().single;
+      expect(turnEvt.interactionStatus, 'IN_PROGRESS');
+      expect(turnEvt.isGenerationOnly, isTrue);
+
+      await sub.cancel();
+      await client.dispose();
+    });
   });
 
   group('HongguoAssistantController handshake, testConnection & no blink loop', () {
@@ -624,6 +790,174 @@ void main() {
 
       controller.dispose();
     });
+
+    test('keeps poster cards attached across NON_BLOCKING intermediate IN_PROGRESS turns', () async {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      SharedPreferences.setMockInitialValues({});
+      final secureStore = <String, String>{};
+      const channel = MethodChannel('plugins.it_nomads.com/flutter_secure_storage');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            final args = (call.arguments as Map?) ?? const {};
+            final key = args['key']?.toString() ?? '';
+            if (call.method == 'read') return secureStore[key];
+            if (call.method == 'write') {
+              secureStore[key] = args['value']?.toString() ?? '';
+            }
+            return null;
+          });
+
+      final dio = Dio();
+      dio.httpClientAdapter = _MockAdapter((options) async {
+        // Độ trễ 60ms để mô phỏng NON_BLOCKING turnComplete đến TRƯỚC khi tìm xong
+        await Future<void>.delayed(const Duration(milliseconds: 60));
+        if (options.uri.path.contains('/api/search/result')) {
+          return ResponseBody.fromString(
+            jsonEncode({
+              'searchList': [
+                {
+                  'video_data': {
+                    'series_id': '7688352674999157001',
+                    'series_title': '甜宠校花',
+                    'series_cover': 'https://p6-novel.byteimg.com/novel-pic/nonblocking_cover.jpeg',
+                    'episode_cnt': 55,
+                    'tags': ['校园', '甜宠'],
+                  },
+                },
+              ],
+              'pageNum': 1,
+              'totalPages': 1,
+            }),
+            200,
+            headers: {
+              Headers.contentTypeHeader: ['application/json'],
+            },
+          );
+        }
+        return ResponseBody.fromString(
+          '<script>window._ROUTER_DATA = {"loaderData":{"routes/page":{"dramaList":[]}}};</script>',
+          200,
+          headers: {
+            Headers.contentTypeHeader: ['text/html; charset=utf-8'],
+          },
+        );
+      });
+
+      final fakeClient = _FakeGeminiLiveClient();
+      final controller = HongguoAssistantController(
+        resolver: HongguoResolver(dio: dio),
+        liveClient: fakeClient,
+        audioOutput: _NoopAudioOutput(),
+      );
+      await controller.initialize();
+      await controller.saveQuickGeminiKeys('AIzaSyFakeKeyForNonBlockingTest');
+      await controller.sendTextMessage('Tìm phim học đường ngọt');
+
+      // 1. Server gọi tool (NON_BLOCKING) nhưng gửi ngay generationComplete + IN_PROGRESS trước khi tool xong
+      fakeClient.emitEvent(
+        const LiveToolCallEvent([
+          LiveFunctionCall(
+            id: 'nb_1',
+            name: 'progressive_search',
+            args: {'queries_narrow_to_broad': ['校园'], 'limit': 3},
+          ),
+        ]),
+      );
+      fakeClient.emitEvent(const LiveOutputTranscriptEvent('Để mình tìm nhanh...', finished: true));
+      fakeClient.emitEvent(
+        const LiveTurnCompleteEvent(interactionStatus: 'IN_PROGRESS', isGenerationOnly: false),
+      );
+
+      // Chờ HTTP xong và tool response gửi ngược lại
+      await Future<void>.delayed(const Duration(milliseconds: 140));
+      expect(fakeClient.sentToolResponses.length, 1);
+
+      // Server trả kết luận IDLE cuối cùng
+      fakeClient.emitEvent(const LiveOutputTranscriptEvent('\n#1 甜宠校花 rất hợp mô tả!', finished: true));
+      fakeClient.emitEvent(const LiveTurnCompleteEvent(interactionStatus: 'IDLE'));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      final assistantMsgs = controller.messages.where((m) => !m.isUser && !m.isSystemNotice).toList();
+      expect(assistantMsgs.length, 1);
+      expect(assistantMsgs.single.searchReport, isNotNull);
+      expect(assistantMsgs.single.searchReport!.candidates.single.item.cover, contains('nonblocking_cover.jpeg'));
+      expect(assistantMsgs.single.isStreaming, isFalse);
+
+      controller.dispose();
+    });
+
+    test('attaches Hongguo poster cards automatically if Gemini responds text without invoking tools', () async {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      SharedPreferences.setMockInitialValues({});
+      final secureStore = <String, String>{};
+      const channel = MethodChannel('plugins.it_nomads.com/flutter_secure_storage');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            final args = (call.arguments as Map?) ?? const {};
+            final key = args['key']?.toString() ?? '';
+            if (call.method == 'read') return secureStore[key];
+            if (call.method == 'write') {
+              secureStore[key] = args['value']?.toString() ?? '';
+            }
+            return null;
+          });
+
+      final dio = Dio();
+      dio.httpClientAdapter = _MockAdapter((options) async {
+        if (options.uri.path.contains('/api/search/result')) {
+          return ResponseBody.fromString(
+            jsonEncode({
+              'searchList': [
+                {
+                  'video_data': {
+                    'series_id': '7688352674999157002',
+                    'series_title': '古装甜宠王妃',
+                    'series_cover': 'https://p6-novel.byteimg.com/novel-pic/autosafety_cover.jpeg',
+                    'episode_cnt': 80,
+                    'tags': ['古装', '甜宠'],
+                  },
+                },
+              ],
+              'pageNum': 1,
+              'totalPages': 1,
+            }),
+            200,
+            headers: {
+              Headers.contentTypeHeader: ['application/json'],
+            },
+          );
+        }
+        return ResponseBody.fromString(
+          '<script>window._ROUTER_DATA = {"loaderData":{"routes/page":{"dramaList":[]}}};</script>',
+          200,
+          headers: {
+            Headers.contentTypeHeader: ['text/html; charset=utf-8'],
+          },
+        );
+      });
+
+      final fakeClient = _FakeGeminiLiveClient();
+      final controller = HongguoAssistantController(
+        resolver: HongguoResolver(dio: dio),
+        liveClient: fakeClient,
+        audioOutput: _NoopAudioOutput(),
+      );
+      await controller.initialize();
+      await controller.saveQuickGeminiKeys('AIzaSyFakeKeyForAutoFallbackTest');
+      await controller.sendTextMessage('Gợi ý cho mình phim cổ trang ngọt sủng');
+
+      // Model trả lời chay text tên phim + tóm tắt, KHÔNG gọi LiveToolCallEvent nào
+      fakeClient.emitEvent(const LiveOutputTextEvent('1. Phim cổ trang hay với cốt truyện ngọt ngào...'));
+      fakeClient.emitEvent(const LiveTurnCompleteEvent(interactionStatus: 'IDLE'));
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+
+      final assistantMsgs = controller.messages.where((m) => !m.isUser && !m.isSystemNotice).toList();
+      expect(assistantMsgs.length, 1);
+      expect(assistantMsgs.single.searchReport, isNotNull);
+      expect(assistantMsgs.single.searchReport!.candidates.single.item.cover, contains('autosafety_cover.jpeg'));
+
+      controller.dispose();
+    });
   });
 }
 
@@ -639,6 +973,9 @@ class _FakeGeminiLiveClient extends GeminiLiveClient {
   final String _fakeVersion = 'v1beta';
   LiveConnectionDiagnostics? _fakeDiag;
   final List<String> sentClientTexts = [];
+  final List<List<LiveFunctionResponse>> sentToolResponses = [];
+
+  void emitEvent(GeminiLiveEvent event) => _fakeEvents.add(event);
 
   @override
   Stream<GeminiLiveEvent> get events => _fakeEvents.stream;
@@ -717,6 +1054,11 @@ class _FakeGeminiLiveClient extends GeminiLiveClient {
   @override
   void sendClientText(String text, {bool turnComplete = true}) {
     sentClientTexts.add(text);
+  }
+
+  @override
+  void sendToolResponses(List<LiveFunctionResponse> responses) {
+    sentToolResponses.add(responses);
   }
 
   @override

@@ -273,7 +273,7 @@ class HongguoAssistantEngine {
 
     return '''Bạn là **Trợ lý AI Tìm Phim Ngắn Hồng Quả** thông minh nói Tiếng Việt tự nhiên.
 NGUYÊN TẮC BẮT BUỘC:
-1. KHÔNG BAO GIỜ tự bịa tên phim, số tập hay link ngoài dữ liệu thật. Mọi lần tìm phim hoặc xem BXH BẮT BUỘC phải gọi tool trước rồi mới trả lời.
+1. KHÔNG BAO GIỜ tự bịa tên phim, mô tả hay link ngoài dữ liệu thật. ỨNG DỤNG CHỈ HIỂN THỊ ĐƯỢC ẢNH BÌA VÀ THẺ PHIM KHI BẠN GỌI TOOL (`progressive_search`, `browse_by_category`, `get_rankings`) — vì vậy với MỌI yêu cầu tìm phim, gợi ý phim, hỏi BXH hay đổi chủ đề phim mới, BẮT BUỘC phải gọi tool trước khi trả lời chữ/thoại.
 2. LUÔN dùng đúng các mã danh mục / thể loại / BXH thực tế của app dưới đây (KHÔNG tự chế slug):
    - Loại nguồn (`source_type`): `all` (Tất cả), `real-drama` (Người thật), `comic-drama` (Hoạt hình), `ai-drama` (Phim AI).
    - Thể loại của `real-drama` (24 loại): $realList
@@ -284,14 +284,14 @@ NGUYÊN TẮC BẮT BUỘC:
    - Khi người dùng mô tả phim bằng Tiếng Việt (vd: "học đường thanh xuân, nữ chính mạnh mẽ, tình yêu ngọt ngào"), hãy gọi `progressive_search` với:
      * `queries_narrow_to_broad`: mảng 3–5 từ khóa tiếng Trung sắp từ HẸP nhất đến RỘNG dần (Lớp 1 ghép ý chính vd `["校园 甜宠", "青春 女强"]`, Lớp 2 cặp ý/gần nghĩa vd `["校园甜宠", "大女主 甜宠"]`, Lớp 3 ý đơn cốt lõi vd `["校园", "甜宠", "女强"]`).
      * `target_zh_keywords`: các từ khóa cốt lõi (`["校园", "青春", "甜宠", "女强", "大女主"]`) để app tự đối chiếu tag và cốt truyện.
-     * Nếu người dùng yêu cầu loại phim (`real-drama`, `comic-drama`, `ai-drama`) mà thể loại họ mô tả KHÔNG có trong enum của loại đó (vd `ai-drama` không có `youth` hay `romance`), ĐỪNG bịa slug; hãy để `genre_slug` rỗng (hoặc chọn slug gần nhất như `drama`) kết hợp với `progressive_search`!
+     * Nếu người dùng yêu cầu loại phim (`real-drama`, `comic-drama`, `ai-drama`) mà thể loại họ mô tả KHÔNG có trong enum của loại đó (vd `ai-drama` không có `youth` hay `romance`), ĐỪNG bịa slug; hãy BỎ QUA hoàn toàn tham số `genre_slug` (không truyền key này) hoặc chọn slug gần nhất như `drama` kết hợp với `progressive_search`!
 4. SỐ LƯỢNG GỢI Ý (`limit`): Mặc định $defaultCount phim trừ khi người dùng nêu rõ số lượng (vd "gợi ý 3 phim", "tìm 12 bộ") hoặc UI đã khóa số lượng.
 5. BẢNG XẾP HẠNG: Khi người dùng hỏi phim hot, phổ biến, mới ra, điểm cao, nhiều người xem/theo dõi/đặt lịch, hãy gọi `get_rankings` đúng bảng tương ứng (`new-drama`, `prestige-drama`, `followed-drama`, `must-watch-drama`, `hot-search-drama`, `hot-real-drama`, `hot-comic-drama`, `hot-ai-drama`, `subscribe-drama`, `hot-drama`).
 6. TỔNG HỢP CỐT TRUYỆN & THAM CHIẾU PHIM:
    - Khi người dùng hỏi về **phim số N** (vd "phim số 2", "#3"), nói tên tiếng Việt trên thẻ, hoặc ghim `seriesId` ở phần `[BỐI CẢNH ĐANG CHỌN]`, hãy ánh xạ chính xác `seriesId` đó.
    - Khi người dùng yêu cầu **"tổng hợp tất cả cốt truyện trong danh sách / chọn cái sát mô tả nhất / tóm tắt"**, hãy gọi ngay `analyze_candidate_plots`, đối chiếu từng tiêu chí của họ với toàn bộ `intro` nhận được, chỉ rõ phim khớp nhất + mức độ khớp + tóm tắt cốt truyện súc tích bằng Tiếng Việt.
 7. PHONG CÁCH TRẢ LỜI:
-   - Trả lời hoàn toàn bằng Tiếng Việt. Khi giới thiệu danh sách phim, luôn kèm **#1, #2, #3... + Tên Tiếng Việt** để người dùng dễ đọc hoặc nói lại số thứ tự.
+   - Trả lời hoàn toàn bằng Tiếng Việt. Sau khi tool trả kết quả, app đã tự hiển thị thẻ ảnh bìa (#1, #2...) trên màn hình; trong câu trả lời hãy luôn kèm **#1, #2, #3... + Tên Tiếng Việt** và tuyệt đối không kể thêm tên phim ngoài kết quả tool.
    - ${compactVoiceStyle ? 'Chế độ thoại đang bật: nói súc tích, tự nhiên, tránh đọc nguyên chuỗi ID hay ký tự tiếng Trung dài ngoằng.' : 'Trình bày rõ ràng, súc tích, nêu ngắn gọn lý do từng phim khớp mô tả (tag/nguồn/chỉ số).'}''';
   }
 
@@ -822,25 +822,72 @@ NGUYÊN TẮC BẮT BUỘC:
       targetKeywords: targetKeywords.toList(),
     );
 
-    final topPool = rankedPool.take(math.max(limit * 2, 20)).toList();
+    // Fallback: nếu toàn bộ tìm kiếm từ khóa trả về rỗng (vd từ khóa quá hẹp), lấy kho nổi bật đúng nguồn
+    var effectiveRankedPool = rankedPool;
+    var usedFallbackBrowse = false;
+    if (effectiveRankedPool.isEmpty) {
+      final fallbackCategory = expectedSource.isNotEmpty
+          ? expectedSource
+          : 'rank/hot-drama';
+      var fbItems = <HongguoDramaItem>[];
+      try {
+        final fbRes = await resolver.browseList(
+          category: fallbackCategory,
+          genre: guard.validSlug,
+          page: 1,
+        );
+        fbItems = fbRes.items;
+        if (fbItems.isEmpty && guard.validSlug.isNotEmpty) {
+          final fbResWide = await resolver.browseList(
+            category: fallbackCategory,
+            page: 1,
+          );
+          fbItems = fbResWide.items;
+        }
+      } catch (_) {}
+      if (fbItems.isNotEmpty) {
+        usedFallbackBrowse = true;
+        effectiveRankedPool = [
+          for (var i = 0; i < fbItems.length; i++)
+            HongguoAssistantCandidate(
+              displayIndex: i + 1,
+              item: fbItems[i],
+              viTitle: fbItems[i].title,
+              matchReason: fbItems[i].tags.isNotEmpty
+                  ? 'Gợi ý nổi bật · ${fbItems[i].tags.take(3).join(" · ")}'
+                  : 'Gợi ý phổ biến từ kho Hồng Quả',
+              sourceBadge: fbItems[i].sourceCategory.isNotEmpty
+                  ? _labelForSource(fbItems[i].sourceCategory)
+                  : _labelForSource(expectedSource),
+              sourceConfidence: HongguoSourceConfidence.confirmed,
+              score: 50.0 - i,
+            ),
+        ];
+      }
+    }
+
+    final topPool = effectiveRankedPool.take(math.max(limit * 2, 20)).toList();
     final selected = topPool.take(limit).toList();
 
-    // Dịch tiêu đề Top hiển thị sang Tiếng Việt và cache cả Top pool mở rộng
+    // Chỉ dịch nhanh nhóm phim hiển thị (timeout an toàn 1.8s/tên) để thẻ ảnh bìa hiện lên ngay
     onProgress?.call('Đang dịch tiêu đề & chuẩn bị ${selected.length} phim...');
-    final translatedPool = await _translateCandidates(topPool);
-    final displayed = translatedPool.take(selected.length).toList();
-    _savePoolToCache(translatedPool, displayed);
+    final displayed = await _translateCandidates(selected);
+    final mergedPool = [
+      ...displayed,
+      ...topPool.skip(displayed.length),
+    ];
+    _savePoolToCache(mergedPool, displayed);
 
     final sourceText = _labelForSource(expectedSource);
     final trace =
-        'Nguồn: $sourceText · Hẹp→Rộng [${queries.take(3).join(" → ")}] · Chọn Top ${displayed.length}/${rankedPool.length} phim';
+        'Nguồn: $sourceText · Hẹp→Rộng [${queries.take(3).join(" → ")}]${usedFallbackBrowse ? " (Mở rộng kho)" : ""} · Chọn Top ${displayed.length}/${effectiveRankedPool.length} phim';
 
     final report = HongguoSearchReport(
       traceSummary: trace,
       executedQueries: queries,
       sourceLabel: sourceText,
       modeLabel: 'Tìm Hẹp → Rộng${guard.validSlug.isNotEmpty ? " + Tag ${guard.validSlug}" : ""}',
-      totalPoolCount: rankedPool.length,
+      totalPoolCount: effectiveRankedPool.length,
       candidates: displayed,
     );
     _lastSearchReport = report;
@@ -850,7 +897,7 @@ NGUYÊN TẮC BẮT BUỘC:
       if (guard.guardNote != null) 'guardNote': guard.guardNote,
       'searchTrace': trace,
       'sourceFilter': sourceText,
-      'totalPoolMatched': rankedPool.length,
+      'totalPoolMatched': effectiveRankedPool.length,
       'returnedCount': displayed.length,
       'results': displayed.map(_serializeCompactCandidate).toList(),
     };
@@ -1102,11 +1149,20 @@ NGUYÊN TẮC BẮT BUỘC:
     }
 
     onProgress?.call('Đang tải danh mục ${_labelForSource(expectedSource)}...');
-    final res = await resolver.browseList(
+    var res = await resolver.browseList(
       category: expectedSource,
       genre: guard.validSlug,
       page: page,
     );
+    if (res.items.isEmpty && guard.validSlug.isNotEmpty) {
+      try {
+        res = await resolver.browseList(
+          category: expectedSource,
+          genre: '',
+          page: 1,
+        );
+      } catch (_) {}
+    }
 
     final pool = res.items.take(math.max(limit * 2, 20)).toList();
     final rawCandidates = [
@@ -1124,9 +1180,14 @@ NGUYÊN TẮC BẮT BUỘC:
         ),
     ];
 
-    final translatedPool = await _translateCandidates(rawCandidates);
-    final displayed = translatedPool.take(limit).toList();
-    _savePoolToCache(translatedPool, displayed);
+    final displayed = await _translateCandidates(
+      rawCandidates.take(limit).toList(),
+    );
+    final mergedPool = [
+      ...displayed,
+      ...rawCandidates.skip(displayed.length),
+    ];
+    _savePoolToCache(mergedPool, displayed);
 
     final trace =
         'Danh mục: ${_labelForSource(expectedSource)}${guard.validSlug.isNotEmpty ? " · Thể loại ${guard.validSlug}" : ""} (Trang $page) · Chọn ${displayed.length} phim';
@@ -1211,9 +1272,14 @@ NGUYÊN TẮC BẮT BUỘC:
         ),
     ];
 
-    final translatedPool = await _translateCandidates(rawCandidates);
-    final displayed = translatedPool.take(limit).toList();
-    _savePoolToCache(translatedPool, displayed);
+    final displayed = await _translateCandidates(
+      rawCandidates.take(limit).toList(),
+    );
+    final mergedPool = [
+      ...displayed,
+      ...rawCandidates.skip(displayed.length),
+    ];
+    _savePoolToCache(mergedPool, displayed);
 
     final trace = '$boardLabel · Top ${displayed.length} phim';
     final report = HongguoSearchReport(
@@ -1340,7 +1406,9 @@ NGUYÊN TẮC BẮT BUỘC:
           if (cached != null && cached.trim().isNotEmpty) {
             return cand.copyWith(viTitle: cached.trim());
           }
-          final translated = await _translateTitle(cand.item.title);
+          final translated = await _translateTitle(
+            cand.item.title,
+          ).timeout(const Duration(milliseconds: 1800), onTimeout: () => '');
           if (translated.trim().isNotEmpty) {
             return cand.copyWith(viTitle: translated.trim());
           }
@@ -1421,11 +1489,212 @@ NGUYÊN TẮC BẮT BUỘC:
     return '[NGỮ CẢNH UI: ${notes.join(" | ")}]';
   }
 
+  /// Nhận diện câu hỏi tìm kiếm / gợi ý / BXH phim để nhắc model gọi tool hoặc tự khôi phục thẻ ảnh bìa nếu model quên gọi tool.
+  static bool looksLikeMovieDiscoveryQuery(String rawInput) {
+    final q = rawInput.trim().toLowerCase();
+    if (q.isEmpty) return false;
+
+    final hasDiscoveryVerb = RegExp(
+      r'(tìm|kiếm|gợi ý|đề xuất|muốn xem|cho\s+(?:mình|tôi|em)|bxh|bảng xếp hạng|xếp hạng|top\s*\d*)',
+    ).hasMatch(q);
+
+    final asksExistingSelection = RegExp(
+      r'(?:#\d+|phim\s*(?:số|thứ)\s*\d+|phim\s*(?:này|đó|trên)|tổng hợp.*cốt truyện|trong danh sách|vừa tìm|vừa rồi|ở trên)',
+    ).hasMatch(q);
+    if (asksExistingSelection && !hasDiscoveryVerb) return false;
+    if (hasDiscoveryVerb) return true;
+
+    const genreOrCatalogHints = [
+      'phim',
+      'hot',
+      'nổi bật',
+      'phổ biến',
+      'mới nhất',
+      'xem nhiều',
+      'người thật',
+      'hoạt hình',
+      'phim ai',
+      'ngôn tình',
+      'ngọt sủng',
+      'học đường',
+      'thanh xuân',
+      'tổng tài',
+      'hào môn',
+      'cổ trang',
+      'xuyên không',
+      'huyền huyễn',
+      'tu tiên',
+      'nữ cường',
+      'trả thù',
+      'nghịch tập',
+      'đô thị',
+      'kinh dị',
+      'trinh thám',
+      'hài',
+      'gia đình',
+    ];
+    return genreOrCatalogHints.any(q.contains);
+  }
+
   /// Đóng gói prompt gửi cho Gemini kèm ngữ cảnh Phim đang ghim và Ràng buộc từ UI.
   String decorateUserInput(String rawInput) {
+    final clean = rawInput.trim();
     final header = buildUiContextHeader();
-    if (header.isEmpty) return rawInput.trim();
-    return '$header\n${rawInput.trim()}';
+    final parts = <String>[
+      if (header.isNotEmpty) header,
+      if (looksLikeMovieDiscoveryQuery(clean))
+        '[LỆNH HỆ THỐNG: Bắt buộc gọi tool (`progressive_search`, `browse_by_category` hoặc `get_rankings`) để app tải ảnh bìa và thẻ phim thật trước khi trả lời.]',
+      clean,
+    ];
+    return parts.join('\n');
+  }
+
+  /// Phương án an toàn: nếu model Live trả lời text/thoại mà quên gọi tool ở câu hỏi tìm phim,
+  /// tự phân tích từ khóa Tiếng Việt -> Trung / BXH để tải thẻ ảnh bìa thật từ Hồng Quả.
+  Future<HongguoSearchReport?> autoSearchFallbackFromPrompt(
+    String rawPrompt, {
+    void Function(String statusText)? onProgress,
+    void Function(HongguoSearchReport report)? onSearchResultsUpdated,
+  }) async {
+    final clean = rawPrompt.trim();
+    if (!looksLikeMovieDiscoveryQuery(clean)) return null;
+    final lower = clean.toLowerCase();
+
+    // 1. Trích số lượng nếu user ghi rõ ("3 phim", "top 8")
+    int? parsedLimit;
+    final countMatch = RegExp(
+      r'(?:top\s*|gợi ý\s*|tìm\s*|chọn\s*)?(\d{1,2})\s*(?:phim|bộ|truyện)\b',
+    ).firstMatch(lower);
+    if (countMatch != null) {
+      final n = int.tryParse(countMatch.group(1) ?? '');
+      if (n != null && n >= 1 && n <= 15) parsedLimit = n;
+    }
+    final topMatch = RegExp(r'\btop\s*(\d{1,2})\b').firstMatch(lower);
+    if (parsedLimit == null && topMatch != null) {
+      final n = int.tryParse(topMatch.group(1) ?? '');
+      if (n != null && n >= 1 && n <= 15) parsedLimit = n;
+    }
+    final limit = _resolveEffectiveLimit(parsedLimit);
+
+    // 2. Xác định nguồn ưu tiên
+    var sourceType = _currentLocks.sourceCategory.replaceFirst('category/', '');
+    if (lower.contains('hoạt hình') || lower.contains('anime')) {
+      sourceType = 'comic-drama';
+    } else if (lower.contains('phim ai') ||
+        lower.contains('nguồn ai') ||
+        lower.contains('do ai') ||
+        lower.contains('bằng ai') ||
+        lower.contains('ai-drama')) {
+      sourceType = 'ai-drama';
+    } else if (lower.contains('người thật')) {
+      sourceType = 'real-drama';
+    }
+
+    // 3. Nếu hỏi BXH / Hot / Mới / Phổ biến -> gọi get_rankings
+    final asksRanking = RegExp(
+      r'(bxh|bảng xếp hạng|xếp hạng|phổ biến|nổi bật|đang hot|\bhot\b|xem nhiều|mới nhất|mới ra|điểm cao|đánh giá|tìm nhiều|\btop\b)',
+    ).hasMatch(lower);
+    if (asksRanking) {
+      var board = 'hot-drama';
+      if (lower.contains('mới')) {
+        board = 'new-drama';
+      } else if (lower.contains('điểm cao') || lower.contains('đánh giá')) {
+        board = 'prestige-drama';
+      } else if (lower.contains('tìm nhiều') || lower.contains('tìm kiếm')) {
+        board = 'hot-search-drama';
+      } else if (lower.contains('theo dõi') || lower.contains('lưu')) {
+        board = 'followed-drama';
+      } else if (sourceType == 'comic-drama') {
+        board = 'hot-comic-drama';
+      } else if (sourceType == 'ai-drama') {
+        board = 'hot-ai-drama';
+      } else if (sourceType == 'real-drama') {
+        board = 'hot-real-drama';
+      }
+      await _handleGetRankings(
+        {'board': board, 'limit': limit},
+        onProgress: onProgress,
+        onSearchResultsUpdated: onSearchResultsUpdated,
+      );
+      return _lastSearchReport;
+    }
+
+    // 4. Ánh xạ mô tả Tiếng Việt -> từ khóa Tiếng Trung + slug chuẩn
+    const viPhraseToZh = <(String, String, String?)>[
+      ('học đường', '校园', 'youth'),
+      ('thanh xuân', '青春', 'youth'),
+      ('ngọt sủng', '甜宠', 'romance'),
+      ('ngôn tình', '甜宠', 'romance'),
+      ('tình cảm', '爱情', 'romance'),
+      ('lãng mạn', '浪漫', 'romance'),
+      ('nữ cường', '女强', null),
+      ('mạnh mẽ', '女强', null),
+      ('tổng tài', '总裁', 'clan'),
+      ('hào môn', '豪门', 'clan'),
+      ('cổ trang', '古装', 'costume'),
+      ('xuyên không', '穿越', 'fantasy'),
+      ('trọng sinh', '重生', 'comeback'),
+      ('trùng sinh', '重生', 'comeback'),
+      ('trả thù', '复仇', 'comeback'),
+      ('báo thù', '复仇', 'comeback'),
+      ('nghịch tập', '逆袭', 'comeback'),
+      ('hệ thống', '系统', 'creative'),
+      ('huyền huyễn', '玄幻', 'fantasy'),
+      ('tu tiên', '修仙', 'fantasy'),
+      ('đô thị', '都市', 'urban'),
+      ('gia đình', '家庭', 'family'),
+      ('manh bảo', '萌宝', 'cute-kids'),
+      ('kinh dị', '恐怖', 'horror'),
+      ('trinh thám', '悬疑', 'suspense'),
+      ('hài hước', '喜剧', 'comedy'),
+      ('hài', '喜剧', 'comedy'),
+      ('mạt thế', '末世', 'apocalypse'),
+      ('khoa huyễn', '科幻', 'sci-fi'),
+    ];
+
+    final zhKeywords = <String>[];
+    String matchedSlug = '';
+    for (final (vi, zh, slug) in viPhraseToZh) {
+      if (lower.contains(vi)) {
+        if (!zhKeywords.contains(zh)) zhKeywords.add(zh);
+        if (matchedSlug.isEmpty && slug != null) matchedSlug = slug;
+      }
+    }
+    // Bắt thêm chữ Hán nếu user nhập trực tiếp tiếng Trung
+    for (final m in RegExp(r'[\u4e00-\u9fff]{2,}').allMatches(clean)) {
+      final token = m.group(0)!;
+      if (!zhKeywords.contains(token)) zhKeywords.add(token);
+    }
+
+    if (zhKeywords.isEmpty && matchedSlug.isEmpty) {
+      await _handleGetRankings(
+        {'board': 'hot-drama', 'limit': limit},
+        onProgress: onProgress,
+        onSearchResultsUpdated: onSearchResultsUpdated,
+      );
+      return _lastSearchReport;
+    }
+
+    final narrowToBroad = <String>[];
+    if (zhKeywords.length >= 2) {
+      narrowToBroad.add('${zhKeywords[0]} ${zhKeywords[1]}');
+    }
+    for (final kw in zhKeywords) {
+      if (!narrowToBroad.contains(kw)) narrowToBroad.add(kw);
+    }
+
+    await _handleProgressiveSearch(
+      {
+        if (sourceType.isNotEmpty) 'source_type': sourceType,
+        if (matchedSlug.isNotEmpty) 'genre_slug': matchedSlug,
+        'queries_narrow_to_broad': narrowToBroad,
+        'target_zh_keywords': zhKeywords,
+        'limit': limit,
+      },
+      onProgress: onProgress,
+      onSearchResultsUpdated: onSearchResultsUpdated,
+    );
+    return _lastSearchReport;
   }
 
   /// Tạo gói `clientContent` nén (~400-800 token) để giữ nguyên trí nhớ khi chuyển Model hoặc mở phiên mới.
