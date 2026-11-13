@@ -83,7 +83,6 @@ class HongguoAssistantController extends ChangeNotifier {
   String _maskedActiveKey = '';
   String _resolvedApiVersion = 'v1beta';
   LiveConnectionDiagnostics? _lastDiagnostics;
-  bool _isTestingConnection = false;
   bool _hasEstablishedSessionOnce = false;
   Future<bool>? _connectInFlight;
   bool _autoReconnectInFlight = false;
@@ -135,7 +134,6 @@ class HongguoAssistantController extends ChangeNotifier {
   int get apiKeyCount => _apiKeyCount;
   String get maskedActiveKey => _maskedActiveKey;
   LiveConnectionDiagnostics? get lastDiagnostics => _lastDiagnostics;
-  bool get isTestingConnection => _isTestingConnection;
   bool get hasEstablishedSessionOnce => _hasEstablishedSessionOnce;
   bool get isConnected => _liveClient.isConnected;
 
@@ -339,7 +337,7 @@ class HongguoAssistantController extends ChangeNotifier {
     _syncKeyMetadata(apiKeys);
     if (apiKeys.isEmpty) {
       const msg =
-          'Chưa có Gemini API Key. Hãy thêm key trong Cài đặt ➔ Gemini hoặc bấm Test phiên để dán nhanh key.';
+          'Chưa có Gemini API Key. Hãy thêm key trong Cài đặt ➔ Gemini hoặc bấm Nhập Key để dán nhanh.';
       _errorBanner = msg;
       _connectionState = AssistantConnectionState.error;
       _lastDiagnostics = LiveConnectionDiagnostics(
@@ -415,58 +413,6 @@ class HongguoAssistantController extends ChangeNotifier {
     }
   }
 
-  /// Kiểm tra kết nối trực tiếp tới phiên Gemini Live (và giữ phiên sẵn sàng nếu thành công).
-  Future<LiveConnectionDiagnostics> testConnection() async {
-    if (_isTestingConnection && _connectInFlight != null) {
-      await _connectInFlight;
-      if (_lastDiagnostics != null) {
-        return _lastDiagnostics!;
-      }
-    }
-
-    _isTestingConnection = true;
-    _errorBanner = null;
-    if (!_disposed) notifyListeners();
-
-    try {
-      await stopMic();
-      await _audioOutput.interrupt();
-      _liveClient.clearResumptionHandle();
-      await _liveClient.disconnect(intentional: true);
-      _hasEstablishedSessionOnce = false;
-
-      final ok = await ensureConnected(
-        seedContextSnapshot:
-            _messages.isNotEmpty || engine.lastDisplayedCandidates.isNotEmpty,
-        forceFreshSession: true,
-        forceRefreshModelDiscovery: true,
-      );
-
-      final diag = _lastDiagnostics ??
-          LiveConnectionDiagnostics(
-            success: ok,
-            requestedModelId: _selectedModelId,
-            resolvedModelId: _resolvedServerModelId,
-            apiVersion: _resolvedApiVersion,
-            setupProfile: null,
-            maskedKey: _maskedActiveKey,
-            apiKeyCount: _apiKeyCount,
-            latencyMs: 0,
-            availableBidiModels: const [],
-            summaryMessage: ok
-                ? 'Đã kết nối thành công với phiên Gemini Live.'
-                : (_errorBanner ?? 'Không thể kết nối tới Gemini Live.'),
-            attemptLogs: const [],
-            checkedAt: DateTime.now(),
-          );
-      _lastDiagnostics = diag;
-      return diag;
-    } finally {
-      _isTestingConnection = false;
-      if (!_disposed) notifyListeners();
-    }
-  }
-
   /// Chuyển đổi giữa 3 model Live API mà vẫn giữ nguyên toàn bộ đoạn chat & danh sách phim.
   Future<void> switchModel(String newModelId) async {
     if (_selectedModelId == newModelId && _liveClient.isConnected) return;
@@ -535,7 +481,6 @@ class HongguoAssistantController extends ChangeNotifier {
     _inFlightToolCount = 0;
     _lastUserPrompt = '';
     _isAssistantBusy = false;
-    _isTestingConnection = false;
     _hasEstablishedSessionOnce = false;
     _autoReconnectInFlight = false;
     _resolvedServerModelId = '';

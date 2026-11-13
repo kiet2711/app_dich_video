@@ -508,11 +508,8 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
   }
 
   Future<void> _showSessionDiagnosticsSheet(
-    HongguoAssistantController c, {
-    bool runTestOnOpen = false,
-  }) async {
-    bool startedAutoTest = false;
-
+    HongguoAssistantController c,
+  ) async {
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.transparent,
@@ -520,17 +517,11 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
       builder: (sheetCtx) {
         return StatefulBuilder(
           builder: (ctx, setModalState) {
-            if (runTestOnOpen && !startedAutoTest) {
-              startedAutoTest = true;
-              unawaited(() async {
-                await c.testConnection();
-                if (ctx.mounted) setModalState(() {});
-              }());
-            }
-
             final diag = c.lastDiagnostics;
             final isOk = c.isConnected;
-            final isTesting = c.isTestingConnection;
+            final isConnecting =
+                c.connectionState == AssistantConnectionState.connecting ||
+                c.connectionState == AssistantConnectionState.reconnecting;
 
             return Container(
               constraints: BoxConstraints(
@@ -566,12 +557,12 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
                     Row(
                       children: [
                         Icon(
-                          isTesting
+                          isConnecting
                               ? Icons.sync_rounded
                               : (isOk
                                     ? Icons.verified_rounded
                                     : Icons.hub_outlined),
-                          color: isTesting
+                          color: isConnecting
                               ? Colors.amber
                               : (isOk
                                     ? AppColors.primaryEmerald
@@ -582,7 +573,7 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
                         const SizedBox(width: 8),
                         const Expanded(
                           child: Text(
-                            'Kiểm tra phiên Gemini Live & API Key',
+                            'Thông tin phiên Gemini Live & API Key',
                             style: TextStyle(
                               color: AppColors.textPrimary,
                               fontSize: 16,
@@ -631,7 +622,7 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
                                 children: [
                                   Row(
                                     children: [
-                                      if (isTesting)
+                                      if (isConnecting)
                                         const SizedBox(
                                           width: 14,
                                           height: 14,
@@ -656,12 +647,12 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
                                       const SizedBox(width: 8),
                                       Expanded(
                                         child: Text(
-                                          isTesting
-                                              ? 'Đang bắt tay WebSocket tới Gemini Live...'
+                                          isConnecting
+                                              ? 'Đang kết nối tới Gemini Live...'
                                               : (isOk
                                                     ? 'Phiên Live đang hoạt động & sẵn sàng chat'
                                                     : (c.errorBanner ??
-                                                          'Chưa kết nối phiên Live. Bấm Test bên dưới để kiểm tra.')),
+                                                          'Chưa mở phiên Live (sẽ tự kết nối khi bạn gửi tin nhắn).')),
                                           style: const TextStyle(
                                             color: AppColors.textPrimary,
                                             fontSize: 13,
@@ -844,13 +835,19 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
                             borderRadius: BorderRadius.circular(14),
                           ),
                         ),
-                        onPressed: isTesting
+                        onPressed: isConnecting
                             ? null
                             : () async {
-                                await c.testConnection();
+                                await c.ensureConnected(
+                                  seedContextSnapshot:
+                                      c.messages.isNotEmpty ||
+                                      c.engine.lastDisplayedCandidates.isNotEmpty,
+                                  forceFreshSession: true,
+                                  forceRefreshModelDiscovery: true,
+                                );
                                 if (ctx.mounted) setModalState(() {});
                               },
-                        icon: isTesting
+                        icon: isConnecting
                             ? const SizedBox(
                                 width: 16,
                                 height: 16,
@@ -859,11 +856,11 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
                                   color: Colors.white,
                                 ),
                               )
-                            : const Icon(Icons.bolt_rounded, size: 19),
+                            : const Icon(Icons.refresh_rounded, size: 19),
                         label: Text(
-                          isTesting
-                              ? 'Đang kiểm tra kết nối...'
-                              : 'Test kết nối phiên Live ngay',
+                          isConnecting
+                              ? 'Đang kết nối...'
+                              : (isOk ? 'Làm mới phiên Live' : 'Kết nối lại'),
                           style: const TextStyle(fontWeight: FontWeight.w700),
                         ),
                       ),
@@ -947,7 +944,6 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
     final shortModel = _shortModelLabel(c.selectedModelId);
     final isLive = c.isConnected;
     final isConnecting =
-        c.isTestingConnection ||
         c.connectionState == AssistantConnectionState.connecting ||
         c.connectionState == AssistantConnectionState.reconnecting;
 
@@ -1132,7 +1128,6 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
   Widget _buildSessionAndFilterStrip(HongguoAssistantController c) {
     final diag = c.lastDiagnostics;
     final isTesting =
-        c.isTestingConnection ||
         c.connectionState == AssistantConnectionState.connecting ||
         c.connectionState == AssistantConnectionState.reconnecting;
     final isConnected = c.isConnected;
@@ -1228,43 +1223,6 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
                       color: AppColors.textSecondary,
                       fontSize: 11.5,
                       fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(width: 6),
-          // Nút Test phiên Live 1 chạm
-          InkWell(
-            onTap: () => _showSessionDiagnosticsSheet(c, runTestOnOpen: true),
-            borderRadius: BorderRadius.circular(18),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: _geminiBlue.withValues(alpha: 0.14),
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(
-                  color: _geminiBlue.withValues(alpha: 0.45),
-                ),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    isConnected
-                        ? Icons.verified_outlined
-                        : Icons.bolt_rounded,
-                    size: 13.5,
-                    color: Colors.lightBlueAccent,
-                  ),
-                  const SizedBox(width: 4),
-                  const Text(
-                    'Test phiên',
-                    style: TextStyle(
-                      color: Colors.lightBlueAccent,
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w700,
                     ),
                   ),
                 ],
@@ -1439,7 +1397,7 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
             ),
             onPressed: needsKey
                 ? _openQuickKeyDialog
-                : () => _showSessionDiagnosticsSheet(c, runTestOnOpen: true),
+                : () => _showSessionDiagnosticsSheet(c),
             child: Text(
               needsKey ? 'Nhập Key' : 'Chi tiết',
               style: const TextStyle(
@@ -1491,14 +1449,6 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
         prompt:
             'Lấy giúp mình Top ${c.preferredCount ?? 5} phim trong BXH Điểm cao uy tín và tóm tắt nhanh từng bộ.',
       ),
-      (
-        icon: Icons.bolt_rounded,
-        color: Colors.lightBlueAccent,
-        title: 'Kiểm tra kết nối & model trên Key trước khi chat',
-        subtitle:
-            'Xem key đang nạp (${c.apiKeyCount} key), endpoint & test phiên Live',
-        prompt: null,
-      ),
     ];
 
     return ListView(
@@ -1520,7 +1470,7 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
         ),
         const SizedBox(height: 6),
         const Text(
-          'Hỏi mình bất cứ gu phim nào trên Hồng Quả bằng tiếng Việt — hoặc chạm "Test phiên" bên trên để kiểm tra API key trước.',
+          'Hỏi mình bất cứ gu phim nào trên Hồng Quả bằng tiếng Việt.',
           style: TextStyle(
             color: AppColors.textSecondary,
             fontSize: 13.5,
@@ -1532,9 +1482,7 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
           Padding(
             padding: const EdgeInsets.only(bottom: 10),
             child: InkWell(
-              onTap: p.prompt != null
-                  ? () => _submitText(p.prompt)
-                  : () => _showSessionDiagnosticsSheet(c, runTestOnOpen: true),
+              onTap: () => _submitText(p.prompt),
               borderRadius: BorderRadius.circular(18),
               child: Container(
                 padding: const EdgeInsets.symmetric(

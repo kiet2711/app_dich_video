@@ -751,8 +751,8 @@ Số 4: Ngọt Sủng Trường Học — Câu chuyện thanh xuân nhẹ nhàng
     });
   });
 
-  group('HongguoAssistantController handshake, testConnection & no blink loop', () {
-    test('handles missing keys, testConnection, quick key save, and single non-looping reconnect on drop', () async {
+  group('HongguoAssistantController handshake & no blink loop', () {
+    test('handles missing keys, quick key save, ensureConnected, and single non-looping reconnect on drop', () async {
       TestWidgetsFlutterBinding.ensureInitialized();
       SharedPreferences.setMockInitialValues({});
       final secureStore = <String, String>{};
@@ -782,20 +782,20 @@ Số 4: Ngọt Sủng Trường Học — Câu chuyện thanh xuân nhẹ nhàng
       );
       await controller.initialize();
 
-      // 1. Không có key -> testConnection báo lỗi sạch, không gọi connect()
-      final noKeyDiag = await controller.testConnection();
-      expect(noKeyDiag.success, isFalse);
+      // 1. Không có key -> ensureConnected báo lỗi sạch, không gọi connect()
+      final noKeyOk = await controller.ensureConnected();
+      expect(noKeyOk, isFalse);
       expect(controller.connectionState, AssistantConnectionState.error);
       expect(fakeClient.connectCalls, 0);
 
-      // 2. Lưu key nhanh -> testConnection thành công & giữ trạng thái Live
+      // 2. Lưu key nhanh -> ensureConnected thành công & giữ trạng thái Live
       await controller.saveQuickGeminiKeys('AIzaSyFakeKeyForTest9876');
       expect(controller.hasApiKeys, isTrue);
       expect(controller.apiKeyCount, 1);
       expect(controller.maskedActiveKey, 'AIzaSy...9876');
 
-      final okDiag = await controller.testConnection();
-      expect(okDiag.success, isTrue);
+      final ok = await controller.ensureConnected();
+      expect(ok, isTrue);
       expect(fakeClient.connectCalls, 1);
       expect(controller.connectionState, AssistantConnectionState.ready);
       expect(controller.isConnected, isTrue);
