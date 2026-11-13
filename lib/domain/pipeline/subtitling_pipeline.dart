@@ -19,6 +19,7 @@ import '../ai/translation_checkpoint_manager.dart';
 import '../media/audio_chunker.dart';
 import '../media/audio_extractor.dart';
 import '../media/bilibili_resolver.dart';
+import '../media/douyin_resolver.dart';
 import '../media/hongguo_resolver.dart';
 import '../media/video_cache_manager.dart';
 
@@ -79,6 +80,7 @@ class SubtitlingPipeline {
     File? outputSrtFile,
     bool? downloadBilibiliVideo,
     String? bilibiliQuality,
+    String? douyinQuality,
     String? seriesId,
     int? episodeIndex,
   }) async {
@@ -105,6 +107,7 @@ class SubtitlingPipeline {
       var extractionPath = videoPath;
       SubtitleDocument? sourceDocument;
       BilibiliVideoDetails? bilibiliDetails;
+      DouyinVideoDetails? douyinDetails;
 
       String canonicalIdentifier = videoPath;
       if (!isLocalFile && BilibiliResolver.isBilibiliPageUrl(videoPath)) {
@@ -126,6 +129,19 @@ class SubtitlingPipeline {
         // Đảm bảo mỗi tập/part và cid có không gian checkpoint độc lập hoàn toàn:
         canonicalIdentifier =
             'bilibili_${bilibiliDetails.bvid}_p${bilibiliDetails.selectedPageIndex}_cid${bilibiliDetails.cid}';
+      } else if (!isLocalFile && DouyinResolver.isDouyinPageUrl(videoPath)) {
+        final resolver = DouyinResolver();
+        _emit(
+          const ProcessProgress(
+            stage: ProcessStage.extractingAudio,
+            progress: 0.02,
+            message: 'Đang phân tích link Douyin...',
+          ),
+        );
+        douyinDetails = await resolver.resolveVideo(videoPath);
+        lastResolvedTitle = douyinDetails.title;
+        lastResolvedCover = douyinDetails.coverUrl;
+        canonicalIdentifier = 'douyin_${douyinDetails.awemeId}';
       } else if (seriesId != null && seriesId.isNotEmpty && episodeIndex != null) {
         canonicalIdentifier = 'hongguo_${seriesId}_ep$episodeIndex';
       }
@@ -439,6 +455,84 @@ class SubtitlingPipeline {
           }
         } catch (_) {
           extractionPath = cachedVideo.path;
+        }
+      } else if (sourceDocument == null && douyinDetails != null) {
+        final shouldDownloadVideo =
+            downloadBilibiliVideo ?? settings.downloadBilibiliVideo;
+        final cachedExisting = await VideoCacheManager.findCachedFile(
+          url: douyinDetails.canonicalUrl,
+        );
+        if (cachedExisting != null && await cachedExisting.exists()) {
+          extractionPath = cachedExisting.path;
+          lastLocalVideoPath = cachedExisting.path;
+        } else {
+          final targetFile = shouldDownloadVideo
+              ? await VideoCacheManager.getCachedVideoFile(
+                  url: douyinDetails.canonicalUrl,
+                )
+              : File(
+                  '${sessionDir.path}${Platform.pathSeparator}douyin_${douyinDetails.awemeId}.mp4',
+                );
+          final partFile = File('${targetFile.path}.part');
+          final candidateUrls = douyinDetails.urlsForQuality(
+            douyinQuality ?? 'auto',
+          );
+          final headers = DouyinResolver.cdnHeaders();
+          _emit(
+            const ProcessProgress(
+              stage: ProcessStage.extractingAudio,
+              progress: 0.04,
+              message: 'Đang tải luồng video Douyin không logo...',
+            ),
+          );
+          var downloaded = false;
+          Object? lastDlErr;
+          for (final url in candidateUrls) {
+            try {
+              if (await partFile.exists()) await partFile.delete();
+              await MultiThreadDownloader.downloadFile(
+                url: url,
+                outputFile: partFile,
+                headers: headers,
+                concurrency: settings.downloadThreadCount,
+                progressCallback: (pct, msg) {
+                  _emit(
+                    ProcessProgress(
+                      stage: ProcessStage.extractingAudio,
+                      progress: (0.04 + pct * 0.06).clamp(0.04, 0.10),
+                      message: msg,
+                    ),
+                  );
+                },
+              );
+              if (await partFile.exists() &&
+                  await partFile.length() > 1024 * 20) {
+                if (await targetFile.exists()) await targetFile.delete();
+                try {
+                  await partFile.rename(targetFile.path);
+                } catch (_) {
+                  await partFile.copy(targetFile.path);
+                  try {
+                    await partFile.delete();
+                  } catch (_) {}
+                }
+                downloaded = true;
+                break;
+              }
+            } catch (e) {
+              lastDlErr = e;
+            }
+          }
+          if (!downloaded) {
+            throw StateError(
+              'Không thể tải luồng video Douyin (${douyinDetails.awemeId}): $lastDlErr',
+            );
+          }
+          extractionPath = targetFile.path;
+          if (shouldDownloadVideo) {
+            lastLocalVideoPath = targetFile.path;
+            unawaited(VideoCacheManager.pruneCacheIfNeeded());
+          }
         }
       }
 

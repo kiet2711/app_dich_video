@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../../domain/media/audio_extractor.dart';
 import '../../domain/media/bilibili_resolver.dart';
+import '../../domain/media/douyin_resolver.dart';
 import '../../domain/media/media_storage.dart';
 import '../../domain/media/network_header_helper.dart';
 import '../../domain/media/video_cache_manager.dart';
@@ -250,6 +251,8 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
           withoutExt == 'video import' ||
           withoutExt.startsWith('video online') ||
           withoutExt.startsWith('bili_') ||
+          withoutExt.startsWith('dy_') ||
+          withoutExt.startsWith('douyin') ||
           withoutExt.startsWith('video_') ||
           withoutExt.startsWith('hg_');
     }
@@ -287,6 +290,37 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
             } catch (_) {}
           }
         } catch (_) {}
+      } else if (DouyinResolver.isDouyinPageUrl(path) ||
+          DouyinResolver.isDouyinPageUrl(effectivePath)) {
+        try {
+          final rawDouyin = path.startsWith('http') ? path : effectivePath;
+          final details = await DouyinResolver().resolveVideo(rawDouyin);
+          if (details.title.isNotEmpty) {
+            name = details.title;
+          }
+          if (durationMs <= 0 && details.durationMs > 0) {
+            durationMs = details.durationMs;
+          }
+          if (details.coverUrl != null && details.coverUrl!.isNotEmpty) {
+            try {
+              final repo = await HistoryRepository.getInstance();
+              await repo.updateCoverForVideo(path, details.coverUrl!);
+              await repo.updateCoverForVideo(
+                details.canonicalUrl,
+                details.coverUrl!,
+              );
+            } catch (_) {}
+          }
+          if (mounted && _videoPath == path) {
+            setState(() {
+              _videoPath = details.canonicalUrl;
+              _videoFileName = name.trim().isNotEmpty ? name : 'video.mp4';
+              _videoDurationMs = durationMs;
+              _videoSizeLabel = sizeLabel;
+            });
+            return;
+          }
+        } catch (_) {}
       }
     } catch (_) {}
 
@@ -303,6 +337,11 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
     final controller = TextEditingController(
       text: _videoPath?.startsWith('http') == true ? _videoPath : '',
     );
+    var selectedSource = DouyinResolver.isDouyinPageUrl(_videoPath)
+        ? 'douyin'
+        : (BilibiliResolver.isBilibiliPageUrl(_videoPath ?? '')
+              ? 'bilibili'
+              : 'auto');
     String? errorText;
 
     showDialog(
@@ -331,16 +370,57 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'Dán link video trực tiếp (Bilibili, Douyin, MP4, M3U8...):',
-                style: TextStyle(color: Colors.grey, fontSize: 13),
+              Text(
+                switch (selectedSource) {
+                  'douyin' =>
+                    'Dán link Douyin (v.douyin.com/..., douyin.com/video/...) hoặc đoạn chia sẻ:',
+                  'bilibili' =>
+                    'Dán link Bilibili (bilibili.com/video/BV..., b23.tv/...):',
+                  _ =>
+                    'Dán link video trực tiếp (Douyin, Bilibili, MP4, M3U8...):',
+                },
+                style: const TextStyle(color: Colors.grey, fontSize: 13),
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: const [
+                  MapEntry('auto', '🌐 Tự động'),
+                  MapEntry('douyin', '🎵 Douyin'),
+                  MapEntry('bilibili', '📺 Bilibili'),
+                ].map((src) {
+                  final isSel = selectedSource == src.key;
+                  return ChoiceChip(
+                    label: Text(
+                      src.value,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: isSel ? FontWeight.bold : FontWeight.normal,
+                        color: isSel ? Colors.black : Colors.white70,
+                      ),
+                    ),
+                    selected: isSel,
+                    selectedColor: AppColors.primaryEmerald,
+                    backgroundColor: const Color(0xFF14151B),
+                    onSelected: (selected) {
+                      if (selected) {
+                        setDialogState(() => selectedSource = src.key);
+                      }
+                    },
+                  );
+                }).toList(),
               ),
               const SizedBox(height: 10),
               TextField(
                 controller: controller,
                 style: const TextStyle(color: Colors.white, fontSize: 13),
                 decoration: InputDecoration(
-                  hintText: 'https://.../video.mp4 hoặc link Bilibili',
+                  hintText: switch (selectedSource) {
+                    'douyin' => 'https://v.douyin.com/... hoặc đoạn chia sẻ',
+                    'bilibili' => 'https://www.bilibili.com/video/BV...',
+                    _ => 'https://v.douyin.com/... hoặc link Bilibili/MP4',
+                  },
                   hintStyle: const TextStyle(color: Colors.grey, fontSize: 12),
                   filled: true,
                   fillColor: const Color(0xFF14151B),
@@ -353,10 +433,15 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                     borderSide: const BorderSide(color: AppColors.cardBorder),
                   ),
                 ),
-                onChanged: (_) {
-                  if (errorText != null) {
-                    setDialogState(() => errorText = null);
-                  }
+                onChanged: (val) {
+                  setDialogState(() {
+                    errorText = null;
+                    if (DouyinResolver.isDouyinPageUrl(val)) {
+                      selectedSource = 'douyin';
+                    } else if (BilibiliResolver.isBilibiliPageUrl(val)) {
+                      selectedSource = 'bilibili';
+                    }
+                  });
                 },
               ),
               const SizedBox(height: 8),
@@ -369,7 +454,14 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                       final text = data?.text?.trim() ?? '';
                       if (text.isNotEmpty) {
                         controller.text = text;
-                        setDialogState(() => errorText = null);
+                        setDialogState(() {
+                          errorText = null;
+                          if (DouyinResolver.isDouyinPageUrl(text)) {
+                            selectedSource = 'douyin';
+                          } else if (BilibiliResolver.isBilibiliPageUrl(text)) {
+                            selectedSource = 'bilibili';
+                          }
+                        });
                       }
                     },
                     icon: const Icon(
@@ -428,7 +520,8 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                 );
                 if (clean.isEmpty || !NetworkHeaderHelper.isRemoteUrl(clean)) {
                   setDialogState(() {
-                    errorText = 'Vui lòng nhập link hợp lệ (http://, https:// hoặc link Bilibili/b23.tv)';
+                    errorText =
+                        'Vui lòng nhập link hợp lệ (http://, https://, Douyin v.douyin.com hoặc Bilibili/b23.tv)';
                   });
                   return;
                 }

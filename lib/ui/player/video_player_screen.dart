@@ -13,6 +13,7 @@ import '../../data/repository/watch_later_repository.dart';
 import '../../domain/ai/offline_mlkit_translator.dart';
 import '../../domain/ai/title_translator.dart';
 import '../../domain/media/bilibili_resolver.dart';
+import '../../domain/media/douyin_resolver.dart';
 import '../../domain/media/hongguo_prefetch_manager.dart';
 import '../../domain/media/hongguo_resolver.dart';
 import '../../domain/media/video_cache_manager.dart';
@@ -1071,6 +1072,45 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         unawaited(_loadRelatedVideos(details.bvid));
         unawaited(_loadBilibiliUploaderInfo(details));
         unawaited(_loadBilibiliComments(details.aid, reset: true));
+      } else if (DouyinResolver.isDouyinPageUrl(targetPath)) {
+        final cached = await VideoCacheManager.findCachedFile(url: targetPath);
+        if (cached != null &&
+            await cached.exists() &&
+            await cached.length() > 1024 * 50) {
+          targetPath = cached.path;
+          playableUrls = [cached.path];
+          await _prepareControllerForMedia(file: cached);
+        } else {
+          final details = await DouyinResolver().resolveVideo(targetPath);
+          if (_originalTitle == null ||
+              _originalTitle!.isEmpty ||
+              _isGenericTitle(_originalTitle)) {
+            _originalTitle = details.title;
+          }
+          if (_currentTitle.isEmpty || _isGenericTitle(_currentTitle)) {
+            _currentTitle = _showTranslatedTitle && _translatedTitle != null
+                ? _translatedTitle!
+                : details.title;
+            if (mounted) setState(() {});
+          }
+          try {
+            final history = await HistoryRepository.getInstance();
+            await history.updateTitleForVideo(_sourceVideoUrl, details.title);
+            await history.updateTitleForVideo(targetPath, details.title);
+            if (details.coverUrl != null && details.coverUrl!.isNotEmpty) {
+              await history.updateCoverForVideo(_sourceVideoUrl, details.coverUrl!);
+              await history.updateCoverForVideo(targetPath, details.coverUrl!);
+            }
+          } catch (_) {}
+
+          playableUrls = details.playUrls;
+          targetPath = playableUrls.first;
+          httpHeaders = DouyinResolver.cdnHeaders();
+          await _prepareControllerForMedia(
+            networkUrls: playableUrls,
+            httpHeaders: httpHeaders,
+          );
+        }
       } else if (widget.dramaDetail != null) {
         _bilibiliDetails = null;
         // Ưu tiên nạp video từ cache nếu đã tải về máy trước đó
@@ -4990,19 +5030,53 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           }
         }
       } else {
-        // Video MP4/HTTP thông thường
+        // Video Douyin hoặc MP4/HTTP thông thường
+        final isDouyinSource = DouyinResolver.isDouyinPageUrl(_sourceVideoUrl);
         final cachedVideo = await VideoCacheManager.getCachedVideoFile(
           url: _sourceVideoUrl,
         );
         final partFile = File('${cachedVideo.path}.part');
-        final downloadUrl = _currentVideoPath.startsWith('http') ? _currentVideoPath : _sourceVideoUrl;
-        await MultiThreadDownloader.downloadFile(
-          url: downloadUrl,
-          outputFile: partFile,
-          headers: NetworkHeaderHelper.getHeadersForUri(downloadUrl),
-          concurrency: _settings.downloadThreadCount,
-          progressCallback: onDownloadProgress,
+        var candidateUrls = <String>[
+          _currentVideoPath.startsWith('http')
+              ? _currentVideoPath
+              : _sourceVideoUrl,
+        ];
+        var downloadHeaders = NetworkHeaderHelper.getHeadersForUri(
+          candidateUrls.first,
         );
+        if (isDouyinSource) {
+          try {
+            final details = await DouyinResolver().resolveVideo(_sourceVideoUrl);
+            if (details.playUrls.isNotEmpty) {
+              candidateUrls = details.playUrls;
+              downloadHeaders = DouyinResolver.cdnHeaders();
+            }
+          } catch (_) {}
+        }
+        Object? lastDownloadError;
+        var downloaded = false;
+        for (final downloadUrl in candidateUrls) {
+          try {
+            if (await partFile.exists()) await partFile.delete();
+            await MultiThreadDownloader.downloadFile(
+              url: downloadUrl,
+              outputFile: partFile,
+              headers: downloadHeaders,
+              concurrency: _settings.downloadThreadCount,
+              progressCallback: onDownloadProgress,
+            );
+            if (await partFile.exists() &&
+                await partFile.length() > 1024 * 100) {
+              downloaded = true;
+              break;
+            }
+          } catch (e) {
+            lastDownloadError = e;
+          }
+        }
+        if (!downloaded && lastDownloadError != null) {
+          throw lastDownloadError;
+        }
         if (await partFile.exists() && await partFile.length() > 1024 * 100) {
           if (await cachedVideo.exists()) {
             try {

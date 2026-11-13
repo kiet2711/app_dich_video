@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'bilibili_resolver.dart';
+import 'douyin_resolver.dart';
 import 'hongguo_cenc_decryptor.dart';
 
 
@@ -52,6 +53,12 @@ class VideoCacheManager {
       final pMatch = RegExp(r'[?&]p=(\d+)').firstMatch(url);
       final p = pMatch?.group(1) ?? '1';
       return 'bili_${bvidFromUrl}_p$p.mp4';
+    }
+
+    // Tự động nhận diện nếu url là liên kết Douyin đã có awemeId
+    final douyinId = DouyinResolver.extractAwemeId(url);
+    if (douyinId != null && douyinId.isNotEmpty) {
+      return 'dy_$douyinId.mp4';
     }
 
     final cleanUrl = url.split('?').first.trim();
@@ -214,6 +221,22 @@ class VideoCacheManager {
             if (await fileResolved.exists() && await fileResolved.length() > 1024 * 50) {
               return fileResolved;
             }
+          }
+        } catch (_) {}
+      }
+
+      // 5. Nếu url là link rút gọn Douyin (v.douyin.com), giải ra awemeId để khớp cache dy_<id>.mp4
+      if (url.isNotEmpty &&
+          DouyinResolver.isDouyinPageUrl(url) &&
+          DouyinResolver.extractAwemeId(url) == null) {
+        try {
+          final target = await DouyinResolver().resolveTarget(url);
+          final fileResolved = await getCachedVideoFile(
+            url: target.canonicalUrl,
+          );
+          final validDouyin = await validateFile(fileResolved);
+          if (validDouyin != null) {
+            return validDouyin;
           }
         } catch (_) {}
       }

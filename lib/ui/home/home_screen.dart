@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../data/model/history_item.dart';
@@ -16,7 +17,9 @@ import '../../domain/ai/ai_model_registry.dart';
 import '../../domain/ai/translation_checkpoint_manager.dart';
 import '../../domain/media/audio_extractor.dart';
 import '../../domain/media/bilibili_resolver.dart';
+import '../../domain/media/douyin_resolver.dart';
 import '../../domain/media/media_storage.dart';
+import '../../domain/media/multi_thread_downloader.dart';
 import '../../domain/media/network_header_helper.dart';
 import '../../domain/media/video_cache_manager.dart';
 import '../../domain/pipeline/subtitling_pipeline.dart';
@@ -70,6 +73,13 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   List<BilibiliPageInfo> _bilibiliPages = [];
   int _selectedBilibiliPage = 1;
   BilibiliVideoDetails? _bilibiliDetails;
+  String _linkSourceType = 'auto'; // 'auto' | 'douyin' | 'bilibili'
+  DouyinVideoDetails? _douyinDetails;
+  String _selectedDouyinQuality = 'auto';
+  String? _douyinCachedPath;
+  bool _isDownloadingDouyin = false;
+  double _douyinDownloadProgress = 0.0;
+  String? _douyinDownloadMessage;
 
   String _selectedSourceLang = 'zh-CN';
   String _selectedEngine = 'capcut';
@@ -270,8 +280,7 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ? '${(picked.sizeBytes / (1024 * 1024)).toStringAsFixed(1)} MB'
             : 'Không rõ';
         _fileDurationMs = durationMs;
-        _bilibiliPages = [];
-        _selectedBilibiliPage = 1;
+        _resetOnlineMetadataFields();
         _probeStatusMessage = '✅ Đã đọc media: ${_formatDuration(durationMs)}';
       });
     } catch (e) {
@@ -299,30 +308,154 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
+  void _resetOnlineMetadataFields() {
+    _bilibiliPages = [];
+    _selectedBilibiliPage = 1;
+    _bilibiliDetails = null;
+    _douyinDetails = null;
+    _selectedDouyinQuality = 'auto';
+    _douyinCachedPath = null;
+    _isDownloadingDouyin = false;
+    _douyinDownloadProgress = 0.0;
+    _douyinDownloadMessage = null;
+  }
+
+  Future<void> _downloadDouyinToCache() async {
+    final details = _douyinDetails;
+    if (details == null || _isDownloadingDouyin) return;
+
+    setState(() {
+      _isDownloadingDouyin = true;
+      _douyinDownloadProgress = 0.02;
+      _douyinDownloadMessage = 'Đang kết nối CDN Douyin...';
+    });
+
+    try {
+      final existing = await VideoCacheManager.findCachedFile(
+        url: details.canonicalUrl,
+      );
+      if (existing != null && await existing.exists()) {
+        if (!mounted) return;
+        setState(() {
+          _isDownloadingDouyin = false;
+          _douyinCachedPath = existing.path;
+          _douyinDownloadProgress = 1.0;
+          _douyinDownloadMessage = '✅ Video đã sẵn sàng offline!';
+        });
+        return;
+      }
+
+      final cachedFile = await VideoCacheManager.getCachedVideoFile(
+        url: details.canonicalUrl,
+      );
+      final partFile = File('${cachedFile.path}.part');
+      final freshDetails = await DouyinResolver().resolveVideo(
+        details.canonicalUrl,
+      );
+      final urls = freshDetails.urlsForQuality(_selectedDouyinQuality);
+      final headers = DouyinResolver.cdnHeaders();
+      final concurrency = _settings?.downloadThreadCount ?? 4;
+
+      var downloaded = false;
+      Object? lastErr;
+      for (final url in urls) {
+        try {
+          if (await partFile.exists()) await partFile.delete();
+          await MultiThreadDownloader.downloadFile(
+            url: url,
+            outputFile: partFile,
+            headers: headers,
+            concurrency: concurrency,
+            progressCallback: (pct, msg) {
+              if (!mounted) return;
+              setState(() {
+                _douyinDownloadProgress = pct.clamp(0.02, 0.99);
+                _douyinDownloadMessage = msg;
+              });
+            },
+          );
+          if (await partFile.exists() && await partFile.length() > 1024 * 20) {
+            if (await cachedFile.exists()) await cachedFile.delete();
+            try {
+              await partFile.rename(cachedFile.path);
+            } catch (_) {
+              await partFile.copy(cachedFile.path);
+              try {
+                await partFile.delete();
+              } catch (_) {}
+            }
+            downloaded = true;
+            break;
+          }
+        } catch (e) {
+          lastErr = e;
+        }
+      }
+
+      if (!downloaded) {
+        throw StateError('Không tải được video Douyin: $lastErr');
+      }
+      unawaited(VideoCacheManager.pruneCacheIfNeeded());
+
+      final sizeMb = (await cachedFile.length() / (1024 * 1024))
+          .toStringAsFixed(1);
+      if (!mounted) return;
+      setState(() {
+        _isDownloadingDouyin = false;
+        _douyinCachedPath = cachedFile.path;
+        _douyinDownloadProgress = 1.0;
+        _douyinDownloadMessage = '✅ Đã tải xong MP4 không logo ($sizeMb MB)!';
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('✅ Đã tải xong video Douyin ($sizeMb MB)!'),
+          backgroundColor: AppColors.primaryEmerald,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isDownloadingDouyin = false;
+        _douyinDownloadProgress = 0.0;
+        _douyinDownloadMessage = '❌ Lỗi tải video Douyin: $e';
+      });
+    }
+  }
+
   Future<void> _probeUrl(String rawUrl, {String? suggestedTitle}) async {
     final clean = NetworkHeaderHelper.extractCleanUrl(rawUrl);
     if (clean.isEmpty || !NetworkHeaderHelper.isRemoteUrl(clean)) {
       setState(() {
-        _probeStatusMessage = '⚠️ Vui lòng nhập đường link hợp lệ (http://, https:// hoặc link Bilibili/b23.tv)';
+        _probeStatusMessage =
+            '⚠️ Vui lòng nhập đường link hợp lệ (http://, https://, Douyin v.douyin.com hoặc Bilibili/b23.tv)';
       });
       return;
     }
 
+    final isDouyinLink = DouyinResolver.isDouyinPageUrl(clean);
+    final isBiliLink = BilibiliResolver.isBilibiliPageUrl(clean);
+
     setState(() {
       _urlController.text = clean;
       _isProbingUrl = true;
-      _probeStatusMessage = '⏳ Đang kết nối và phân tích thông tin video...';
+      _probeStatusMessage = isDouyinLink
+          ? '⏳ Đang phân giải link Douyin & lấy luồng MP4 không logo...'
+          : '⏳ Đang kết nối và phân tích thông tin video...';
     });
 
     try {
       var durationMs = 0;
       var resolvedName = (suggestedTitle != null && suggestedTitle.isNotEmpty)
-          ? (suggestedTitle.endsWith('.mp4') ? suggestedTitle : '$suggestedTitle.mp4')
+          ? (suggestedTitle.endsWith('.mp4')
+                ? suggestedTitle
+                : '$suggestedTitle.mp4')
           : NetworkHeaderHelper.getSuggestedTitle(clean);
       List<BilibiliPageInfo> pages = [];
       var selectedPage = 1;
+      DouyinVideoDetails? resolvedDouyin;
+      String? douyinCache;
 
-      if (BilibiliResolver.isBilibiliPageUrl(clean)) {
+      if (isBiliLink) {
         final resolver = BilibiliResolver();
         final target = await resolver.resolveUrl(clean);
         final details = await resolver.getVideoDetails(
@@ -330,6 +463,7 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           _settings?.bilibiliSessData ?? '',
         );
         _bilibiliDetails = details;
+        _douyinDetails = null;
         durationMs = details.durationSeconds * 1000;
         resolvedName = '${details.title}.mp4';
         pages = details.pages;
@@ -360,27 +494,62 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           _probeStatusMessage =
               '✅ Đã tìm thấy audio DASH Bilibili (~30-50MB). Sẵn sàng tạo sub!';
         }
+      } else if (isDouyinLink) {
+        final resolver = DouyinResolver();
+        final details = await resolver.resolveVideo(rawUrl);
+        resolvedDouyin = details;
+        _douyinDetails = details;
+        _bilibiliDetails = null;
+        durationMs = details.durationMs;
+        if (durationMs <= 0 && details.playUrls.isNotEmpty) {
+          try {
+            durationMs = await AudioExtractor.probeDuration(
+              details.playUrls.first,
+            );
+          } catch (_) {}
+        }
+        resolvedName = '${details.title}.mp4';
+        final cached = await VideoCacheManager.findCachedFile(
+          url: details.canonicalUrl,
+        );
+        douyinCache = cached?.path;
+        final authorTag = details.author.isNotEmpty
+            ? ' (@${details.author})'
+            : '';
+        _probeStatusMessage =
+            '✅ Đã lấy video Douyin$authorTag không logo! Sẵn sàng tải MP4 hoặc tạo phụ đề.';
       } else {
         durationMs = await AudioExtractor.probeDuration(clean);
         _probeStatusMessage = '✅ Video online đã sẵn sàng!';
         _bilibiliDetails = null;
+        _douyinDetails = null;
       }
 
       if (!mounted) return;
-      final canonicalUrl = (_bilibiliDetails != null && _bilibiliDetails!.bvid.isNotEmpty)
+      final canonicalUrl =
+          (_bilibiliDetails != null && _bilibiliDetails!.bvid.isNotEmpty)
           ? 'https://www.bilibili.com/video/${_bilibiliDetails!.bvid}?p=$selectedPage'
-          : clean;
+          : (resolvedDouyin != null ? resolvedDouyin.canonicalUrl : clean);
+
+      final draftIdentifier = resolvedDouyin != null
+          ? 'douyin_${resolvedDouyin.awemeId}'
+          : canonicalUrl;
 
       String? draftMsg;
       try {
         final draftSessionKey = TranslationCheckpointManager.generateSessionKey(
           document: SubtitleDocument(),
           targetLanguage: _selectedTargetLang,
-          identifier: canonicalUrl,
+          identifier: draftIdentifier,
         );
-        final draftForUrl = await TranslationCheckpointManager.loadDraft(draftSessionKey);
-        if (draftForUrl != null && draftForUrl.totalItems > 0 && draftForUrl.translatedCount < draftForUrl.totalItems) {
-          draftMsg = '⚡ Đã lưu bản dịch dang dở (${draftForUrl.translatedCount}/${draftForUrl.totalItems} câu - ${draftForUrl.progressPercent}%)! Bấm bắt đầu để tiếp tục ngay mà không cần tải hay nhận diện lại.';
+        final draftForUrl = await TranslationCheckpointManager.loadDraft(
+          draftSessionKey,
+        );
+        if (draftForUrl != null &&
+            draftForUrl.totalItems > 0 &&
+            draftForUrl.translatedCount < draftForUrl.totalItems) {
+          draftMsg =
+              '⚡ Đã lưu bản dịch dang dở (${draftForUrl.translatedCount}/${draftForUrl.totalItems} câu - ${draftForUrl.progressPercent}%)! Bấm bắt đầu để tiếp tục ngay mà không cần tải hay nhận diện lại.';
         }
       } catch (_) {}
 
@@ -390,17 +559,41 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _urlController.text = canonicalUrl;
         _fileDurationMs = durationMs;
         _fileName = resolvedName.isNotEmpty ? resolvedName : 'video_online.mp4';
-        _fileSizeMb = 'Trực tuyến';
+        _fileSizeMb = douyinCache != null ? 'Đã tải offline' : 'Trực tuyến';
         _bilibiliPages = pages;
         _selectedBilibiliPage = selectedPage;
+        _douyinDetails = resolvedDouyin;
+        _selectedDouyinQuality = 'auto';
+        _douyinCachedPath = douyinCache;
+        _douyinDownloadProgress = douyinCache != null ? 1.0 : 0.0;
+        _douyinDownloadMessage = null;
+        if (resolvedDouyin != null) {
+          _linkSourceType = 'douyin';
+        } else if (_bilibiliDetails != null) {
+          _linkSourceType = 'bilibili';
+        }
         if (draftMsg != null) {
           _probeStatusMessage = draftMsg;
         }
       });
     } catch (e) {
       if (!mounted) return;
+      if (isDouyinLink) {
+        setState(() {
+          _isProbingUrl = false;
+          _selectedVideoPath = null;
+          _fileDurationMs = 0;
+          _fileName = '';
+          _fileSizeMb = '';
+          _resetOnlineMetadataFields();
+          _probeStatusMessage = '⚠️ Không phân giải được link Douyin: $e';
+        });
+        return;
+      }
       final defaultName = (suggestedTitle != null && suggestedTitle.isNotEmpty)
-          ? (suggestedTitle.endsWith('.mp4') ? suggestedTitle : '$suggestedTitle.mp4')
+          ? (suggestedTitle.endsWith('.mp4')
+                ? suggestedTitle
+                : '$suggestedTitle.mp4')
           : NetworkHeaderHelper.getSuggestedTitle(clean);
       setState(() {
         _isProbingUrl = false;
@@ -408,9 +601,7 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _fileDurationMs = 0;
         _fileName = defaultName;
         _fileSizeMb = 'Trực tuyến';
-        _bilibiliPages = [];
-        _selectedBilibiliPage = 1;
-        _bilibiliDetails = null;
+        _resetOnlineMetadataFields();
         _probeStatusMessage = '✅ Đã nhận link (sẵn sàng tạo sub & xem)';
       });
     }
@@ -665,6 +856,7 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         outputSrtFile: srtFile,
         downloadBilibiliVideo: _downloadBilibiliVideo,
         bilibiliQuality: _selectedVideoQuality,
+        douyinQuality: _selectedDouyinQuality,
       );
 
       String finalPlayableVideo;
@@ -699,7 +891,10 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       }
       if (effectiveTitle.isEmpty) effectiveTitle = 'Video';
 
-      final coverToSave = _bilibiliDetails?.coverUrl ?? pipeline.lastResolvedCover;
+      final coverToSave =
+          _bilibiliDetails?.coverUrl ??
+          _douyinDetails?.coverUrl ??
+          pipeline.lastResolvedCover;
 
       await history.addItem(
         HistoryItem(
@@ -723,7 +918,9 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final finishedSessionKey = TranslationCheckpointManager.generateSessionKey(
         document: SubtitleDocument(),
         targetLanguage: _selectedTargetLang,
-        identifier: _selectedVideoPath!,
+        identifier: _douyinDetails != null
+            ? 'douyin_${_douyinDetails!.awemeId}'
+            : _selectedVideoPath!,
       );
       await TranslationCheckpointManager.clearCheckpoint(finishedSessionKey);
       await _checkPendingDraft();
@@ -922,6 +1119,279 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
+  Widget _buildOfflineDownloadToggle() {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E202A),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: _downloadBilibiliVideo
+              ? AppColors.primaryEmerald.withValues(alpha: 0.6)
+              : const Color(0xFF2C3E32),
+        ),
+      ),
+      child: SwitchListTile(
+        dense: true,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+        title: const Row(
+          children: [
+            Icon(
+              Icons.download_for_offline,
+              size: 16,
+              color: AppColors.primaryEmerald,
+            ),
+            SizedBox(width: 8),
+            Text(
+              'Tải video về máy để xem offline',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
+          ],
+        ),
+        subtitle: const Text(
+          'Lưu vào cache máy để phát mượt mà 100%, không bị xoay vòng hoặc giật lag mạng.',
+          style: TextStyle(fontSize: 11, color: Colors.white60),
+        ),
+        value: _downloadBilibiliVideo,
+        activeTrackColor: AppColors.primaryEmerald,
+        onChanged: (val) {
+          setState(() {
+            _downloadBilibiliVideo = val;
+            _settings?.downloadBilibiliVideo = val;
+          });
+        },
+      ),
+    );
+  }
+
+  Widget _buildDouyinDetailsCard(DouyinVideoDetails details) {
+    final resText = (details.width > 0 && details.height > 0)
+        ? '${details.width}x${details.height}'
+        : 'MP4';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1E202A),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: const Color(0xFF2C3E32)),
+              ),
+              child: Text(
+                '🎵 Douyin • Không watermark',
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.primaryEmerald,
+                ),
+              ),
+            ),
+            if (details.author.isNotEmpty)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1E202A),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: const Color(0xFF2C3E32)),
+                ),
+                child: Text(
+                  '@${details.author}',
+                  style: const TextStyle(fontSize: 11, color: Colors.white70),
+                ),
+              ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1E202A),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: const Color(0xFF2C3E32)),
+              ),
+              child: Text(
+                '$resText • ID: ${details.awemeId}',
+                style: const TextStyle(fontSize: 11, color: Colors.white70),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        _buildOfflineDownloadToggle(),
+        if (details.qualityOptions.length > 1) ...[
+          const SizedBox(height: 10),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1E202A),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFF2C3E32)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(
+                  children: [
+                    Icon(
+                      Icons.high_quality,
+                      size: 16,
+                      color: AppColors.primaryEmerald,
+                    ),
+                    SizedBox(width: 8),
+                    Text(
+                      'Chất lượng MP4 Douyin:',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    ChoiceChip(
+                      label: Text(
+                        'Tự động (Nét nhất)',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: _selectedDouyinQuality == 'auto'
+                              ? FontWeight.bold
+                              : FontWeight.normal,
+                          color: _selectedDouyinQuality == 'auto'
+                              ? Colors.black
+                              : Colors.white70,
+                        ),
+                      ),
+                      selected: _selectedDouyinQuality == 'auto',
+                      selectedColor: AppColors.primaryEmerald,
+                      backgroundColor: const Color(0xFF14151B),
+                      onSelected: (selected) {
+                        if (selected) {
+                          setState(() => _selectedDouyinQuality = 'auto');
+                        }
+                      },
+                    ),
+                    ...details.qualityOptions.take(4).map((q) {
+                      final isSel = _selectedDouyinQuality == q.id;
+                      return ChoiceChip(
+                        label: Text(
+                          q.label,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: isSel
+                                ? FontWeight.bold
+                                : FontWeight.normal,
+                            color: isSel ? Colors.black : Colors.white70,
+                          ),
+                        ),
+                        selected: isSel,
+                        selectedColor: AppColors.primaryEmerald,
+                        backgroundColor: const Color(0xFF14151B),
+                        onSelected: (selected) {
+                          if (selected) {
+                            setState(() => _selectedDouyinQuality = q.id);
+                          }
+                        },
+                      );
+                    }),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+        const SizedBox(height: 10),
+        if (_isDownloadingDouyin) ...[
+          LinearProgressIndicator(
+            value: _douyinDownloadProgress > 0 ? _douyinDownloadProgress : null,
+            backgroundColor: const Color(0xFF1E202A),
+            valueColor: const AlwaysStoppedAnimation<Color>(
+              AppColors.primaryEmerald,
+            ),
+            minHeight: 6,
+          ),
+          if (_douyinDownloadMessage != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              _douyinDownloadMessage!,
+              style: const TextStyle(fontSize: 11, color: Colors.white70),
+            ),
+          ],
+        ] else
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.primaryEmerald,
+                    side: BorderSide(
+                      color: AppColors.primaryEmerald.withValues(alpha: 0.6),
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                  ),
+                  onPressed: _douyinCachedPath != null
+                      ? () {
+                          final cached = File(_douyinCachedPath!);
+                          if (cached.existsSync()) {
+                            SharePlus.instance.share(
+                              ShareParams(
+                                files: [XFile(cached.path)],
+                                text: details.title,
+                              ),
+                            );
+                          } else {
+                            _downloadDouyinToCache();
+                          }
+                        }
+                      : _downloadDouyinToCache,
+                  icon: Icon(
+                    _douyinCachedPath != null
+                        ? Icons.ios_share
+                        : Icons.download_rounded,
+                    size: 16,
+                  ),
+                  label: Text(
+                    _douyinCachedPath != null
+                        ? 'Đã tải MP4 • Lưu / Chia sẻ tệp'
+                        : 'Tải MP4 không logo về máy',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        if (!_isDownloadingDouyin && _douyinDownloadMessage != null) ...[
+          const SizedBox(height: 6),
+          Text(
+            _douyinDownloadMessage!,
+            style: TextStyle(
+              fontSize: 11,
+              color: _douyinDownloadMessage!.startsWith('❌')
+                  ? const Color(0xFFFFB74D)
+                  : AppColors.primaryEmerald,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -997,9 +1467,7 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             _fileName = '';
                             _fileDurationMs = 0;
                             _fileSizeMb = '';
-                            _bilibiliPages = [];
-                            _selectedBilibiliPage = 1;
-                            _bilibiliDetails = null;
+                            _resetOnlineMetadataFields();
                             _probeStatusMessage = null;
                           }
                         });
@@ -1052,9 +1520,7 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             _fileName = '';
                             _fileDurationMs = 0;
                             _fileSizeMb = '';
-                            _bilibiliPages = [];
-                            _selectedBilibiliPage = 1;
-                            _bilibiliDetails = null;
+                            _resetOnlineMetadataFields();
                             _probeStatusMessage = null;
                           }
                         });
@@ -1175,21 +1641,71 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       ],
                     ),
                     const SizedBox(height: 6),
-                    const Text(
-                      'Hỗ trợ link Bilibili, Douyin, MP4, M3U8... (Tự động vượt chặn 403)',
-                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                    Text(
+                      switch (_linkSourceType) {
+                        'douyin' =>
+                          'Nguồn Douyin: Hỗ trợ link v.douyin.com/..., douyin.com/video/... hoặc dán nguyên đoạn chia sẻ — tự động lấy MP4 không logo.',
+                        'bilibili' =>
+                          'Nguồn Bilibili: Hỗ trợ link bilibili.com/video/BV..., b23.tv/... (hỗ trợ chọn tập & phụ đề có sẵn).',
+                        _ =>
+                          'Hỗ trợ link Douyin, Bilibili, MP4, M3U8... (Tự động nhận diện nguồn & vượt chặn)',
+                      },
+                      style: const TextStyle(fontSize: 12, color: Colors.grey),
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 6,
+                      children: const [
+                        MapEntry('auto', '🌐 Tự động / MP4'),
+                        MapEntry('douyin', '🎵 Douyin'),
+                        MapEntry('bilibili', '📺 Bilibili'),
+                      ].map((src) {
+                        final isSelected = _linkSourceType == src.key;
+                        return ChoiceChip(
+                          label: Text(
+                            src.value,
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: isSelected
+                                  ? FontWeight.bold
+                                  : FontWeight.normal,
+                              color: isSelected ? Colors.black : Colors.white70,
+                            ),
+                          ),
+                          selected: isSelected,
+                          selectedColor: AppColors.primaryEmerald,
+                          backgroundColor: const Color(0xFF1E202A),
+                          onSelected: (selected) {
+                            if (selected) {
+                              setState(() => _linkSourceType = src.key);
+                            }
+                          },
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 10),
                     TextField(
                       controller: _urlController,
                       style: const TextStyle(color: Colors.white, fontSize: 13),
                       onChanged: (val) {
                         setState(() {
                           _probeStatusMessage = null;
+                          if (DouyinResolver.isDouyinPageUrl(val)) {
+                            _linkSourceType = 'douyin';
+                          } else if (BilibiliResolver.isBilibiliPageUrl(val)) {
+                            _linkSourceType = 'bilibili';
+                          }
                         });
                       },
                       decoration: InputDecoration(
-                        hintText: 'https://.../video.mp4',
+                        hintText: switch (_linkSourceType) {
+                          'douyin' =>
+                            'https://v.douyin.com/... hoặc đoạn chia sẻ Douyin',
+                          'bilibili' =>
+                            'https://www.bilibili.com/video/BV... hoặc b23.tv/...',
+                          _ => 'https://v.douyin.com/... hoặc link video bất kỳ',
+                        },
                         hintStyle: const TextStyle(
                           color: Colors.grey,
                           fontSize: 13,
@@ -1220,19 +1736,17 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                   Icons.clear,
                                   color: Colors.grey,
                                 ),
-                                onPressed: () {
-                                  setState(() {
-                                    _urlController.clear();
-                                    _selectedVideoPath = null;
-                                    _fileName = '';
-                                    _fileDurationMs = 0;
-                                    _fileSizeMb = '';
-                                    _bilibiliPages = [];
-                                    _selectedBilibiliPage = 1;
-                                    _bilibiliDetails = null;
-                                    _probeStatusMessage = null;
-                                  });
-                                },
+                                  onPressed: () {
+                                    setState(() {
+                                      _urlController.clear();
+                                      _selectedVideoPath = null;
+                                      _fileName = '';
+                                      _fileDurationMs = 0;
+                                      _fileSizeMb = '';
+                                      _resetOnlineMetadataFields();
+                                      _probeStatusMessage = null;
+                                    });
+                                  },
                               )
                             : null,
                       ),
@@ -1448,57 +1962,7 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             ],
                             if (_bilibiliDetails != null) ...[
                               const SizedBox(height: 10),
-                              Container(
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFF1E202A),
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(
-                                    color: _downloadBilibiliVideo
-                                        ? AppColors.primaryEmerald.withValues(alpha: 0.6)
-                                        : const Color(0xFF2C3E32),
-                                  ),
-                                ),
-                                child: SwitchListTile(
-                                  dense: true,
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 0,
-                                  ),
-                                  title: const Row(
-                                    children: [
-                                      Icon(
-                                        Icons.download_for_offline,
-                                        size: 16,
-                                        color: AppColors.primaryEmerald,
-                                      ),
-                                      SizedBox(width: 8),
-                                      Text(
-                                        'Tải video về máy để xem offline',
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.bold,
-                                          color: Colors.white,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  subtitle: const Text(
-                                    'Lưu vào cache máy để phát mượt mà 100%, không bị xoay vòng hoặc giật lag mạng.',
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      color: Colors.white60,
-                                    ),
-                                  ),
-                                  value: _downloadBilibiliVideo,
-                                  activeTrackColor: AppColors.primaryEmerald,
-                                  onChanged: (val) {
-                                    setState(() {
-                                      _downloadBilibiliVideo = val;
-                                      _settings?.downloadBilibiliVideo = val;
-                                    });
-                                  },
-                                ),
-                              ),
+                              _buildOfflineDownloadToggle(),
                               const SizedBox(height: 10),
                               Container(
                                 padding: const EdgeInsets.all(12),
@@ -1576,6 +2040,10 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                   ],
                                 ),
                               ),
+                            ],
+                            if (_douyinDetails != null) ...[
+                              const SizedBox(height: 10),
+                              _buildDouyinDetailsCard(_douyinDetails!),
                             ],
                           ],
                         ),

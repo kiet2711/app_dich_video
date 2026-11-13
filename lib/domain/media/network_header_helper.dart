@@ -1,3 +1,5 @@
+import 'douyin_resolver.dart';
+
 class NetworkHeaderHelper {
   static const String defaultUserAgent =
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
@@ -17,6 +19,13 @@ class NetworkHeaderHelper {
     final trimmed = input.trim();
 
     // 1. Tìm URL dạng https://... hoặc http://...
+    if (input.toLowerCase().contains('douyin.com')) {
+      final douyinUrl = DouyinResolver.extractDouyinUrl(input);
+      if (douyinUrl.startsWith('http://') || douyinUrl.startsWith('https://')) {
+        return douyinUrl;
+      }
+    }
+
     final httpRegex = RegExp(r'https?://[^\s]+');
     final httpMatch = httpRegex.firstMatch(trimmed);
     if (httpMatch != null) {
@@ -87,7 +96,11 @@ class NetworkHeaderHelper {
       headers['Referer'] = 'https://novelquickapp.com/';
     } else if (lower.contains('douyin.com') ||
         lower.contains('douyinvod.com') ||
-        lower.contains('iesdouyin.com')) {
+        lower.contains('iesdouyin.com') ||
+        lower.contains('amemv.com') ||
+        lower.contains('zjcdn.com') ||
+        lower.contains('bytevcloud.com') ||
+        lower.contains('douyinpic.com')) {
       headers['Referer'] = 'https://www.douyin.com/';
       headers['Origin'] = 'https://www.douyin.com';
     } else if (lower.contains('tiktok.com') || lower.contains('tiktokv.com')) {
@@ -110,7 +123,9 @@ class NetworkHeaderHelper {
       final sourceTag = switch (host) {
         _ when host.contains('bilivideo') || host.contains('bilibili') => 'Bilibili',
         _ when host.contains('hongguo') || host.contains('qznovel') || host.contains('novelquickapp') => 'Hồng Quả',
-        _ when host.contains('douyin') => 'Douyin',
+        _ when host.contains('douyin') ||
+            host.contains('amemv') ||
+            host.contains('zjcdn') => 'Douyin',
         _ when host.contains('tiktok') => 'TikTok',
         _ when host.contains('kuaishou') => 'Kuaishou',
         _ when host.contains('youtube') || host.contains('googlevideo') => 'YouTube',
