@@ -82,6 +82,8 @@ class HongguoSixgodSigner {
     required dynamic body,
     String? deviceId,
     String? installId,
+    String? deviceToken,
+    bool includeHelios = false,
   }) {
     final bodyJsonStr = jsonEncode(body);
     final bodyBytes = utf8.encode(bodyJsonStr);
@@ -143,7 +145,9 @@ class HongguoSixgodSigner {
       xgRand: xgRand,
     );
 
-    final helios = HongguoHelios.encryptHelios(khronos: khronos);
+    final helios = includeHelios
+        ? HongguoHelios.encryptHelios(khronos: khronos)
+        : null;
 
     final medusa = HongguoMedusa.genMedusa(
       query: encodedQuery,
@@ -178,10 +182,10 @@ class HongguoSixgodSigner {
       'x-khronos': khronos.toString(),
       'x-argus': argus,
       'x-gorgon': gorgon,
-      'x-helios': helios,
+      'x-helios': ?helios,
       'x-medusa': medusa,
       if (stub.isNotEmpty) 'x-ss-stub': stub,
-      'x-tt-dt': '',
+      'x-tt-dt': deviceToken ?? '',
     };
 
     return SignedRequestResult(

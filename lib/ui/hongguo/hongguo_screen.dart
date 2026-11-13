@@ -46,6 +46,7 @@ class _HongguoScreenState extends State<HongguoScreen> {
   String? _errorMessage;
   List<HongguoDramaItem> _dramas = [];
   bool _isSearchMode = false;
+  String _currentSearchQuery = '';
   bool _isTranslationEnabled = true;
 
   @override
@@ -237,6 +238,7 @@ class _HongguoScreenState extends State<HongguoScreen> {
 
   Future<void> _performSearch([String? query]) async {
     final text = (query ?? _searchController.text).trim();
+    FocusScope.of(context).unfocus();
     if (text.isEmpty) {
       _loadDramas();
       return;
@@ -295,15 +297,32 @@ class _HongguoScreenState extends State<HongguoScreen> {
       }
     }
 
+    _currentSearchQuery = queryToSearch;
+    await _loadSearchPage(1);
+  }
+
+  Future<void> _loadSearchPage(int page) async {
+    if (_currentSearchQuery.isEmpty) return;
+    if (!_isLoading && mounted) {
+      setState(() {
+        _isLoading = true;
+        _errorMessage = null;
+        _isSearchMode = true;
+      });
+    }
+
     try {
-      final results = await _resolver.search(queryToSearch);
+      final res = await _resolver.searchList(_currentSearchQuery, page: page);
       if (!mounted) return;
       setState(() {
-        _dramas = results;
+        _dramas = res.items;
         _isLoading = false;
-        _currentPage = 1;
-        _totalPages = 1;
+        _currentPage = res.currentPage;
+        _totalPages = res.totalPages > 0 ? res.totalPages : 1;
       });
+      if (_scrollController.hasClients) {
+        _scrollController.jumpTo(0);
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -438,7 +457,11 @@ class _HongguoScreenState extends State<HongguoScreen> {
     setState(() {
       _currentPage = page;
     });
-    _loadDramas();
+    if (_isSearchMode) {
+      _loadSearchPage(page);
+    } else {
+      _loadDramas();
+    }
   }
 
   Future<void> _openDramaDetail(HongguoDramaItem item) async {
@@ -676,6 +699,7 @@ class _HongguoScreenState extends State<HongguoScreen> {
                 child: TextField(
                   controller: _searchController,
                   textInputAction: TextInputAction.search,
+                  onChanged: (_) => setState(() {}),
                   onSubmitted: _performSearch,
                   style: const TextStyle(
                     color: AppColors.textPrimary,
@@ -687,16 +711,25 @@ class _HongguoScreenState extends State<HongguoScreen> {
                       color: AppColors.textMuted,
                       fontSize: 13,
                     ),
-                    prefixIcon: const Icon(
-                      Icons.search_rounded,
-                      color: AppColors.textSecondary,
-                      size: 20,
+                    prefixIcon: IconButton(
+                      icon: const Icon(
+                        Icons.search_rounded,
+                        color: AppColors.textSecondary,
+                        size: 20,
+                      ),
+                      tooltip: 'Tìm kiếm',
+                      onPressed: () => _performSearch(),
                     ),
                     suffixIcon: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        if (_searchController.text.isNotEmpty)
+                        if (_searchController.text.isNotEmpty) ...[
                           IconButton(
+                            visualDensity: VisualDensity.compact,
+                            constraints: const BoxConstraints(
+                              minWidth: 32,
+                              minHeight: 32,
+                            ),
                             icon: const Icon(
                               Icons.close_rounded,
                               size: 18,
@@ -707,7 +740,38 @@ class _HongguoScreenState extends State<HongguoScreen> {
                               _loadDramas();
                             },
                           ),
+                          Padding(
+                            padding: const EdgeInsets.only(right: 4),
+                            child: InkWell(
+                              onTap: () => _performSearch(),
+                              borderRadius: BorderRadius.circular(8),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 6,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: AppColors.primaryEmerald,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Text(
+                                  'Tìm',
+                                  style: TextStyle(
+                                    color: Colors.black,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                         IconButton(
+                          visualDensity: VisualDensity.compact,
+                          constraints: const BoxConstraints(
+                            minWidth: 36,
+                            minHeight: 36,
+                          ),
                           icon: const Icon(
                             Icons.paste_rounded,
                             size: 18,
@@ -1082,7 +1146,9 @@ class _HongguoScreenState extends State<HongguoScreen> {
                         Flexible(
                           child: Text(
                             _isSearchMode
-                                ? 'Kết quả tìm kiếm (${_dramas.length})'
+                                ? (_totalPages > 1
+                                    ? 'Kết quả tìm kiếm (Trang $_currentPage/$_totalPages)'
+                                    : 'Kết quả tìm kiếm (${_dramas.length})')
                                 : (_currentCategorySlug == 'discover'
                                     ? (_currentGenreSlug.isNotEmpty
                                         ? 'Đề xuất ${_getGenreLabel(_currentGenreSlug)} (${_dramas.length})'
@@ -1174,14 +1240,15 @@ class _HongguoScreenState extends State<HongguoScreen> {
               child: RefreshIndicator(
                 color: AppColors.primaryEmerald,
                 backgroundColor: AppColors.darkSurface,
-                onRefresh: _loadDramas,
+                onRefresh: _isSearchMode && _currentSearchQuery.isNotEmpty
+                    ? () => _loadSearchPage(_currentPage)
+                    : _loadDramas,
                 child: _buildBody(),
               ),
             ),
 
             // 5. THANH PHÂN TRANG (PAGINATION HOẶC ĐỔI PHIM MỚI)
-            if (!_isSearchMode &&
-                _currentCategorySlug != 'discover' &&
+            if ((_isSearchMode || _currentCategorySlug != 'discover') &&
                 _totalPages > 1)
               _buildPaginationBar(),
             if (!_isSearchMode && _currentCategorySlug == 'discover')
@@ -1263,7 +1330,9 @@ class _HongguoScreenState extends State<HongguoScreen> {
                       foregroundColor: AppColors.primaryEmerald,
                       side: const BorderSide(color: AppColors.cardBorder),
                     ),
-                    onPressed: _loadDramas,
+                    onPressed: _isSearchMode && _currentSearchQuery.isNotEmpty
+                        ? () => _loadSearchPage(_currentPage)
+                        : _loadDramas,
                   ),
                   const SizedBox(width: 10),
                   ElevatedButton.icon(

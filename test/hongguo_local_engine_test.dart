@@ -39,5 +39,13 @@ void main() {
       expect(info.contentKeyHex, hasLength(32));
       expect(info.isDrmProtected, isTrue);
     });
+
+    test('resolveVideoInfo resolves episode 4 video from reported failure', () async {
+      const videoId = '7694371800209165336';
+      final info = await HongguoLocalEngine.resolveVideoInfo(videoId);
+      expect(info.realMainUrl, startsWith('http'));
+      expect(info.contentKeyHex, hasLength(32));
+      expect(info.isDrmProtected, isTrue);
+    });
   });
 }

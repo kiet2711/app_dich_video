@@ -397,16 +397,86 @@ class HongguoResolver {
     return browseList(category: 'category/real-drama', page: 1);
   }
 
+  /// Tìm kiếm phim theo từ khóa (có phân trang từ API mới `/api/search/result`)
+  Future<HongguoBrowseResult> searchList(
+    String keyword, {
+    int page = 1,
+  }) async {
+    final cleanKw = keyword.trim();
+    if (cleanKw.isEmpty) {
+      return const HongguoBrowseResult(items: []);
+    }
+
+    final safePage = page < 1 ? 1 : page;
+    final refererUrl = '$siteOrigin/search/${Uri.encodeComponent(cleanKw)}';
+
+    try {
+      final apiRes = await dio.get<dynamic>(
+        '$siteOrigin/api/search/result',
+        queryParameters: {
+          'query': cleanKw,
+          if (safePage > 1) 'page': safePage,
+        },
+        options: Options(
+          headers: {
+            'Accept': 'application/json, text/plain, */*',
+            'Referer': refererUrl,
+          },
+          validateStatus: (status) => status != null && status < 500,
+        ),
+      );
+
+      final apiMap = _decodeJsonMap(apiRes.data);
+      if (apiRes.statusCode == 200 &&
+          apiMap != null &&
+          apiMap.containsKey('searchList')) {
+        return parseSearchApiJson(apiMap, requestedPage: safePage);
+      }
+    } catch (_) {}
+
+    // Fallback 1: API gợi ý tìm kiếm (cũng trả về video_data chi tiết, ít bị chặn verify)
+    if (safePage == 1) {
+      try {
+        final sugRes = await dio.get<dynamic>(
+          '$siteOrigin/api/search/suggestion',
+          queryParameters: {'query': cleanKw},
+          options: Options(
+            headers: {
+              'Accept': 'application/json, text/plain, */*',
+              'Referer': refererUrl,
+            },
+            validateStatus: (status) => status != null && status < 500,
+          ),
+        );
+
+        final sugMap = _decodeJsonMap(sugRes.data);
+        if (sugRes.statusCode == 200 && sugMap != null) {
+          final parsedSug = parseSearchApiJson(
+            {'searchList': sugMap['suggestionList']},
+            requestedPage: 1,
+          );
+          if (parsedSug.items.isNotEmpty) {
+            return parsedSug;
+          }
+        }
+      } catch (_) {}
+    }
+
+    // Fallback 2: SSR HTML cũ (nếu site khôi phục SSR)
+    final url = safePage > 1 ? '$refererUrl?page=$safePage' : refererUrl;
+    final res = await dio.get<String>(
+      url,
+      options: Options(
+        validateStatus: (status) => status != null && status < 500,
+      ),
+    );
+    final html = res.data ?? '';
+    return _parseDramaList(html, safePage);
+  }
+
   /// Tìm kiếm phim theo từ khóa
   Future<List<HongguoDramaItem>> search(String keyword) async {
-    final cleanKw = keyword.trim();
-    if (cleanKw.isEmpty) return [];
-
-    final url = '$siteOrigin/search/${Uri.encodeComponent(cleanKw)}';
-    final res = await dio.get<String>(url);
-    final html = res.data ?? '';
-
-    final result = _parseDramaList(html, 1);
+    final result = await searchList(keyword);
     return result.items;
   }
 
@@ -1014,62 +1084,10 @@ class HongguoResolver {
               if (list is! List) return;
               for (final raw in list) {
                 if (raw is! Map<String, dynamic>) continue;
-                final sid = (raw['series_id'] ?? '').toString().trim();
-                if (sid.isEmpty || !seen.add(sid)) continue;
-
-                var title = _cleanDramaTitle(
-                  (raw['series_name'] ?? raw['title'] ?? '').toString(),
-                );
-                if (title.isEmpty) continue;
-
-                var cover = _normalizeImageUrl(
-                  (raw['series_cover'] ?? raw['cover'] ?? raw['image'] ?? '')
-                      .toString(),
-                );
-
-                final epCount =
-                    int.tryParse(
-                      (raw['episode_cnt'] ?? raw['episodeCount'] ?? 0)
-                          .toString(),
-                    ) ??
-                    0;
-                final intro = _cleanJsonString(
-                  (raw['series_intro'] ?? raw['intro'] ?? '').toString(),
-                );
-
-                final tags = <String>[];
-                final rawTags = raw['tags'];
-                if (rawTags is List) {
-                  tags.addAll(
-                    rawTags
-                        .map((e) => _cleanJsonString(e.toString()))
-                        .where((s) => s.isNotEmpty),
-                  );
+                final item = _parseDramaItemMap(raw, seen);
+                if (item != null) {
+                  items.add(item);
                 }
-
-                final vidList = <String>[];
-                final rawVids = raw['vid_list'];
-                if (rawVids is List) {
-                  vidList.addAll(
-                    rawVids
-                        .map((e) => e.toString().trim())
-                        .where(
-                          (s) => s.isNotEmpty && RegExp(r'^\d+$').hasMatch(s),
-                        ),
-                  );
-                }
-
-                items.add(
-                  HongguoDramaItem(
-                    seriesId: sid,
-                    title: title,
-                    cover: cover,
-                    episodeCount: epCount,
-                    tags: tags,
-                    intro: intro,
-                    vidList: vidList,
-                  ),
-                );
               }
             }
 
@@ -1187,6 +1205,158 @@ class HongguoResolver {
       currentPage: pageNum,
       totalPages: totalPages > 0 ? totalPages : 1,
       totalItems: totalItems,
+    );
+  }
+
+  /// Parse dữ liệu JSON từ API `/api/search/result` (hoặc `/api/search/suggestion`)
+  static HongguoBrowseResult parseSearchApiJson(
+    Map<String, dynamic> data, {
+    int requestedPage = 1,
+  }) {
+    final items = <HongguoDramaItem>[];
+    final seen = <String>{};
+
+    final rawList = data['searchList'];
+    if (rawList is List) {
+      for (final raw in rawList) {
+        if (raw is! Map) continue;
+        final entry = Map<String, dynamic>.from(raw);
+
+        final videoData = entry['video_data'];
+        if (videoData is Map) {
+          final parsed = _parseDramaItemMap(
+            Map<String, dynamic>.from(videoData),
+            seen,
+            fallbackTitle: (entry['name'] ?? '').toString(),
+          );
+          if (parsed != null) items.add(parsed);
+        } else if (entry['series_id'] != null) {
+          final parsed = _parseDramaItemMap(entry, seen);
+          if (parsed != null) items.add(parsed);
+        }
+
+        // Kết quả diễn viên (doc_type == 46) trả danh sách phim trong video_list
+        final videoList = entry['video_list'];
+        if (videoList is List) {
+          for (final sub in videoList) {
+            if (sub is! Map) continue;
+            final parsed = _parseDramaItemMap(
+              Map<String, dynamic>.from(sub),
+              seen,
+            );
+            if (parsed != null) items.add(parsed);
+          }
+        }
+      }
+    }
+
+    final pageNum =
+        int.tryParse((data['pageNum'] ?? requestedPage).toString()) ??
+        requestedPage;
+    var totalPages = int.tryParse((data['totalPages'] ?? 1).toString()) ?? 1;
+    final hasMore = data['hasMore'] == true;
+    if (totalPages <= 1 && hasMore) {
+      totalPages = pageNum + 1;
+    }
+    final totalItems =
+        int.tryParse((data['totalCount'] ?? items.length).toString()) ??
+        items.length;
+
+    return HongguoBrowseResult(
+      items: items,
+      currentPage: pageNum > 0 ? pageNum : requestedPage,
+      totalPages: totalPages > 0 ? totalPages : 1,
+      totalItems: totalItems,
+    );
+  }
+
+  static Map<String, dynamic>? _decodeJsonMap(dynamic rawData) {
+    if (rawData is Map<String, dynamic>) return rawData;
+    if (rawData is Map) return Map<String, dynamic>.from(rawData);
+    if (rawData is String) {
+      final trimmed = rawData.trim();
+      if (!trimmed.startsWith('{')) return null;
+      try {
+        final decoded = jsonDecode(trimmed);
+        if (decoded is Map<String, dynamic>) return decoded;
+        if (decoded is Map) return Map<String, dynamic>.from(decoded);
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  static HongguoDramaItem? _parseDramaItemMap(
+    Map<String, dynamic> raw,
+    Set<String> seen, {
+    String fallbackTitle = '',
+  }) {
+    final sid = (raw['series_id'] ?? '').toString().trim();
+    if (sid.isEmpty || !seen.add(sid)) return null;
+
+    final rawTitle =
+        (raw['series_name'] ??
+                raw['series_title'] ??
+                raw['title'] ??
+                raw['name'] ??
+                fallbackTitle)
+            .toString();
+    final title = _cleanDramaTitle(rawTitle);
+    if (title.isEmpty) return null;
+
+    final cover = _normalizeImageUrl(
+      (raw['series_cover'] ?? raw['cover'] ?? raw['image'] ?? '').toString(),
+    );
+
+    final epCount =
+        int.tryParse(
+          (raw['episode_cnt'] ?? raw['episodeCount'] ?? 0).toString(),
+        ) ??
+        0;
+    final intro = _cleanJsonString(
+      (raw['series_intro'] ?? raw['intro'] ?? '').toString(),
+    );
+
+    final tags = <String>[];
+    final seenTags = <String>{};
+    final rawTags = raw['tags'];
+    if (rawTags is List) {
+      for (final t in rawTags) {
+        final clean = _cleanJsonString(t.toString());
+        if (clean.isNotEmpty && seenTags.add(clean)) {
+          tags.add(clean);
+        }
+      }
+    }
+    final rawCats = raw['category_list'];
+    if (rawCats is List) {
+      for (final c in rawCats) {
+        if (c is Map) {
+          final clean = _cleanJsonString((c['name'] ?? '').toString());
+          if (clean.isNotEmpty && seenTags.add(clean)) {
+            tags.add(clean);
+          }
+        }
+      }
+    }
+
+    final vidList = <String>[];
+    final rawVids = raw['vid_list'];
+    if (rawVids is List) {
+      vidList.addAll(
+        rawVids
+            .map((e) => e.toString().trim())
+            .where((s) => s.isNotEmpty && RegExp(r'^\d+$').hasMatch(s)),
+      );
+    }
+
+    return HongguoDramaItem(
+      seriesId: sid,
+      title: title,
+      cover: cover,
+      episodeCount: epCount,
+      tags: tags,
+      intro: intro,
+      vidList: vidList,
     );
   }
 
