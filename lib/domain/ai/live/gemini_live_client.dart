@@ -1089,6 +1089,99 @@ class GeminiLiveClient {
     });
   }
 
+  /// Dùng chính model Gemini Live (một phiên phụ ngắn hạn, không dùng REST model thường hay MLKit)
+  /// để hoàn thành nhanh một lượt hỏi-đáp một lần (vd dịch tên phim Hán Việt còn thiếu).
+  Future<String> runOneShotLivePrompt({
+    required List<String> apiKeys,
+    required String modelId,
+    required String systemPrompt,
+    required String userPrompt,
+    Duration timeout = const Duration(seconds: 12),
+  }) async {
+    final orderedKeys = <String>[
+      if (isConnected && _activeApiKey.trim().isNotEmpty) _activeApiKey.trim(),
+      for (final k in apiKeys)
+        if (k.trim().isNotEmpty && k.trim() != _activeApiKey.trim()) k.trim(),
+    ];
+    if (orderedKeys.isEmpty) return '';
+
+    final effectiveModel =
+        (isConnected && _activeModelId.trim().isNotEmpty)
+            ? _activeModelId.trim()
+            : modelId.trim();
+
+    final helper = GeminiLiveClient(dio: _dio);
+    final transcriptBuf = StringBuffer();
+    final textBuf = StringBuffer();
+    var receivedTranscript = false;
+    final done = Completer<String>();
+    StreamSubscription<GeminiLiveEvent>? sub;
+
+    try {
+      await helper.connect(
+        apiKeys: orderedKeys,
+        modelId: effectiveModel,
+        systemPrompt: systemPrompt,
+        functionDeclarations: const [],
+        forceRefreshModelDiscovery: false,
+      );
+
+      sub = helper.events.listen((event) {
+        if (done.isCompleted) return;
+        switch (event) {
+          case LiveOutputTranscriptEvent(:final text):
+            receivedTranscript = true;
+            transcriptBuf.write(text);
+          case LiveOutputTextEvent(:final text):
+            if (!receivedTranscript) {
+              textBuf.write(text);
+            }
+          case LiveTurnCompleteEvent(
+            :final interactionStatus,
+            :final isGenerationOnly,
+          ):
+            if (!isGenerationOnly && interactionStatus != 'IN_PROGRESS') {
+              final res = receivedTranscript
+                  ? transcriptBuf.toString()
+                  : textBuf.toString();
+              done.complete(res.trim());
+            }
+          case LiveErrorEvent():
+            final res = receivedTranscript
+                ? transcriptBuf.toString()
+                : textBuf.toString();
+            done.complete(res.trim());
+          case LiveConnectionClosedEvent(:final intentional):
+            if (!intentional) {
+              final res = receivedTranscript
+                  ? transcriptBuf.toString()
+                  : textBuf.toString();
+              done.complete(res.trim());
+            }
+          default:
+            break;
+        }
+      });
+
+      helper.sendClientText(userPrompt, turnComplete: true);
+      return await done.future.timeout(
+        timeout,
+        onTimeout: () => (receivedTranscript
+                ? transcriptBuf.toString()
+                : textBuf.toString())
+            .trim(),
+      );
+    } catch (_) {
+      return (receivedTranscript
+              ? transcriptBuf.toString()
+              : textBuf.toString())
+          .trim();
+    } finally {
+      await sub?.cancel();
+      await helper.dispose();
+    }
+  }
+
   /// Trả kết quả hàm về cho Gemini Live tiếp tục tổng hợp câu trả lời.
   void sendToolResponses(List<LiveFunctionResponse> responses) {
     if (responses.isEmpty) return;

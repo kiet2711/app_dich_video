@@ -575,6 +575,37 @@ void main() {
       expect(report.candidates.single.viTitle, 'Yêu Ngọt Học Đường');
       expect(report.candidates.single.item.cover, contains('fb_search_cover.jpeg'));
     });
+
+    test('extractAiTitlesFromLiveReply parses #N Hán Việt titles cleanly and enforces Hán Việt prompt rules', () {
+      final prompt = HongguoAssistantEngine.buildSystemPrompt();
+      expect(prompt, contains('HÁN VIỆT'));
+      expect(prompt, contains('CẤM'));
+      expect(prompt.toLowerCase(), contains('pinyin'));
+
+      const sampleReply = '''
+Đây là 4 phim khớp nhất:
+#1. Hoa Khôi Học Đường Bá Đạo (Tên gốc: 校园最强甜宠) — Cô nàng Lâm Vãn âm thầm bảo vệ bạn thân.
+**#2: Tổng Tài Thẩm Yến Xin Tự Trọng** — Cuộc hôn nhân hợp đồng giữa Cố Thanh và Thẩm Yến.
+Phim số ba: Trọng Sinh Báo Thù Nhà Họ Lục — Tô Khê quay lại lật ngược ván cờ.
+Số 4: Ngọt Sủng Trường Học — Câu chuyện thanh xuân nhẹ nhàng.
+''';
+      final extracted = HongguoAssistantEngine.extractAiTitlesFromLiveReply(
+        sampleReply,
+        isFinal: true,
+      );
+      expect(extracted[1], 'Hoa Khôi Học Đường Bá Đạo');
+      expect(extracted[2], 'Tổng Tài Thẩm Yến Xin Tự Trọng');
+      expect(extracted[3], 'Trọng Sinh Báo Thù Nhà Họ Lục');
+      expect(extracted[4], 'Ngọt Sủng Trường Học');
+
+      // Khi đang stream dở chưa có dấu ngắt câu/dấu gạch ngang thì không vội chốt #5 cụt
+      final streamingPartial = HongguoAssistantEngine.extractAiTitlesFromLiveReply(
+        '#1. Hoa Khôi Học Đường — hay\n#5. Đang gõ dở',
+        isFinal: false,
+      );
+      expect(streamingPartial[1], 'Hoa Khôi Học Đường');
+      expect(streamingPartial.containsKey(5), isFalse);
+    });
   });
 
   group('GeminiLiveClient setup profiles, URLs & pre-setup guard', () {
@@ -872,16 +903,23 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 140));
       expect(fakeClient.sentToolResponses.length, 1);
 
-      // Server trả kết luận IDLE cuối cùng
-      fakeClient.emitEvent(const LiveOutputTranscriptEvent('\n#1 甜宠校花 rất hợp mô tả!', finished: true));
+      // Server trả kết luận IDLE cuối cùng kèm định dạng #1 Hán Việt -> tự cập nhật tên thẻ không cần MLKit hay one-shot
+      fakeClient.emitEvent(
+        const LiveOutputTranscriptEvent(
+          '\n#1. Hoa Khôi Học Đường Ngọt Sủng — Phim kể về Lâm Phàm và Thẩm Nhu.',
+          finished: true,
+        ),
+      );
       fakeClient.emitEvent(const LiveTurnCompleteEvent(interactionStatus: 'IDLE'));
       await Future<void>.delayed(const Duration(milliseconds: 20));
 
       final assistantMsgs = controller.messages.where((m) => !m.isUser && !m.isSystemNotice).toList();
       expect(assistantMsgs.length, 1);
       expect(assistantMsgs.single.searchReport, isNotNull);
+      expect(assistantMsgs.single.searchReport!.candidates.single.viTitle, 'Hoa Khôi Học Đường Ngọt Sủng');
       expect(assistantMsgs.single.searchReport!.candidates.single.item.cover, contains('nonblocking_cover.jpeg'));
       expect(assistantMsgs.single.isStreaming, isFalse);
+      expect(fakeClient.oneShotLiveCalls, 0);
 
       controller.dispose();
     });
@@ -947,14 +985,19 @@ void main() {
       await controller.sendTextMessage('Gợi ý cho mình phim cổ trang ngọt sủng');
 
       // Model trả lời chay text tên phim + tóm tắt, KHÔNG gọi LiveToolCallEvent nào
+      fakeClient.nextOneShotReply =
+          '#1. Vương Phi Cổ Trang Ngọt Sủng — Câu chuyện về cô nàng Thẩm Nhu xuyên không gả cho vương gia Lục Thần.';
       fakeClient.emitEvent(const LiveOutputTextEvent('1. Phim cổ trang hay với cốt truyện ngọt ngào...'));
       fakeClient.emitEvent(const LiveTurnCompleteEvent(interactionStatus: 'IDLE'));
-      await Future<void>.delayed(const Duration(milliseconds: 120));
+      await Future<void>.delayed(const Duration(milliseconds: 140));
 
       final assistantMsgs = controller.messages.where((m) => !m.isUser && !m.isSystemNotice).toList();
       expect(assistantMsgs.length, 1);
       expect(assistantMsgs.single.searchReport, isNotNull);
+      expect(assistantMsgs.single.searchReport!.candidates.single.viTitle, 'Vương Phi Cổ Trang Ngọt Sủng');
       expect(assistantMsgs.single.searchReport!.candidates.single.item.cover, contains('autosafety_cover.jpeg'));
+      expect(assistantMsgs.single.text, contains('Vương Phi Cổ Trang Ngọt Sủng'));
+      expect(fakeClient.oneShotLiveCalls, 1);
 
       controller.dispose();
     });
@@ -974,6 +1017,8 @@ class _FakeGeminiLiveClient extends GeminiLiveClient {
   LiveConnectionDiagnostics? _fakeDiag;
   final List<String> sentClientTexts = [];
   final List<List<LiveFunctionResponse>> sentToolResponses = [];
+  int oneShotLiveCalls = 0;
+  String nextOneShotReply = '';
 
   void emitEvent(GeminiLiveEvent event) => _fakeEvents.add(event);
 
@@ -1066,6 +1111,18 @@ class _FakeGeminiLiveClient extends GeminiLiveClient {
     List<Map<String, dynamic>> turns, {
     bool turnComplete = false,
   }) {}
+
+  @override
+  Future<String> runOneShotLivePrompt({
+    required List<String> apiKeys,
+    required String modelId,
+    required String systemPrompt,
+    required String userPrompt,
+    Duration timeout = const Duration(seconds: 12),
+  }) async {
+    oneShotLiveCalls++;
+    return nextOneShotReply;
+  }
 
   void simulateUnexpectedDrop(String reason) {
     _fakeConnected = false;

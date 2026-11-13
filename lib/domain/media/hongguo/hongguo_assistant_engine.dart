@@ -4,7 +4,6 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 
 import '../../ai/live/gemini_live_client.dart';
-import '../../ai/offline_mlkit_translator.dart';
 import '../hongguo_resolver.dart';
 
 typedef HongguoTitleTranslator = Future<String> Function(String zhTitle);
@@ -77,6 +76,24 @@ class HongguoSearchReport {
     required this.totalPoolCount,
     required this.candidates,
   });
+
+  HongguoSearchReport copyWith({
+    String? traceSummary,
+    List<String>? executedQueries,
+    String? sourceLabel,
+    String? modeLabel,
+    int? totalPoolCount,
+    List<HongguoAssistantCandidate>? candidates,
+  }) {
+    return HongguoSearchReport(
+      traceSummary: traceSummary ?? this.traceSummary,
+      executedQueries: executedQueries ?? this.executedQueries,
+      sourceLabel: sourceLabel ?? this.sourceLabel,
+      modeLabel: modeLabel ?? this.modeLabel,
+      totalPoolCount: totalPoolCount ?? this.totalPoolCount,
+      candidates: candidates ?? this.candidates,
+    );
+  }
 }
 
 class HongguoUiLocks {
@@ -112,19 +129,18 @@ class _RawCandidateAccumulator {
 /// Chấm điểm cục bộ, Ghim/Đánh số `#STT` và Tổng hợp cốt truyện cho Trợ lý Hồng Quả.
 class HongguoAssistantEngine {
   final HongguoResolver resolver;
-  final HongguoTitleTranslator _translateTitle;
+  final HongguoTitleTranslator? translateTitle;
 
   final List<HongguoAssistantCandidate> _lastDisplayed = [];
   final Map<String, HongguoAssistantCandidate> _candidateCache = {};
+  final Map<String, String> _aiViTitleCache = {};
   HongguoSearchReport? _lastSearchReport;
   HongguoUiLocks _currentLocks = const HongguoUiLocks();
 
   HongguoAssistantEngine({
     HongguoResolver? resolver,
-    HongguoTitleTranslator? translateTitle,
-  }) : resolver = resolver ?? HongguoResolver(),
-       _translateTitle =
-           translateTitle ?? OfflineMlKitTranslator.translateHongguoTitle;
+    this.translateTitle,
+  }) : resolver = resolver ?? HongguoResolver();
 
   List<HongguoAssistantCandidate> get lastDisplayedCandidates =>
       List.unmodifiable(_lastDisplayed);
@@ -289,10 +305,17 @@ NGUYÊN TẮC BẮT BUỘC:
 5. BẢNG XẾP HẠNG: Khi người dùng hỏi phim hot, phổ biến, mới ra, điểm cao, nhiều người xem/theo dõi/đặt lịch, hãy gọi `get_rankings` đúng bảng tương ứng (`new-drama`, `prestige-drama`, `followed-drama`, `must-watch-drama`, `hot-search-drama`, `hot-real-drama`, `hot-comic-drama`, `hot-ai-drama`, `subscribe-drama`, `hot-drama`).
 6. TỔNG HỢP CỐT TRUYỆN & THAM CHIẾU PHIM:
    - Khi người dùng hỏi về **phim số N** (vd "phim số 2", "#3"), nói tên tiếng Việt trên thẻ, hoặc ghim `seriesId` ở phần `[BỐI CẢNH ĐANG CHỌN]`, hãy ánh xạ chính xác `seriesId` đó.
-   - Khi người dùng yêu cầu **"tổng hợp tất cả cốt truyện trong danh sách / chọn cái sát mô tả nhất / tóm tắt"**, hãy gọi ngay `analyze_candidate_plots`, đối chiếu từng tiêu chí của họ với toàn bộ `intro` nhận được, chỉ rõ phim khớp nhất + mức độ khớp + tóm tắt cốt truyện súc tích bằng Tiếng Việt.
-7. PHONG CÁCH TRẢ LỜI:
-   - Trả lời hoàn toàn bằng Tiếng Việt. Sau khi tool trả kết quả, app đã tự hiển thị thẻ ảnh bìa (#1, #2...) trên màn hình; trong câu trả lời hãy luôn kèm **#1, #2, #3... + Tên Tiếng Việt** và tuyệt đối không kể thêm tên phim ngoài kết quả tool.
-   - ${compactVoiceStyle ? 'Chế độ thoại đang bật: nói súc tích, tự nhiên, tránh đọc nguyên chuỗi ID hay ký tự tiếng Trung dài ngoằng.' : 'Trình bày rõ ràng, súc tích, nêu ngắn gọn lý do từng phim khớp mô tả (tag/nguồn/chỉ số).'}''';
+   - Khi người dùng yêu cầu **"tổng hợp tất cả cốt truyện trong danh sách / chọn cái sát mô tả nhất / tóm tắt"**, hãy gọi ngay `analyze_candidate_plots`, đối chiếu từng tiêu chí của họ với toàn bộ `intro` nhận được, chỉ rõ phim khớp nhất + mức độ khớp + tóm tắt cốt truyện bằng Tiếng Việt.
+7. QUY TẮC DỊCH CẢ TÊN PHIM & TÓM TẮT BẰNG HÁN VIỆT (TUYỆT ĐỐI CẤM PINYIN):
+   - Tool chỉ trả về tên gốc tiếng Trung (`zhTitle`) và cốt truyện gốc (`intro` / `introSnippet`). CHÍNH BẠN (Gemini Live) phải tự dịch CẢ **Tên phim** lẫn **Tóm tắt** sang Tiếng Việt mượt mà, tự nhiên theo văn phong phim ngắn Trung Quốc (không dịch word-by-word khô cứng).
+   - MỌI tên nhân vật, họ tên, địa danh, chức tước, môn phái và danh từ riêng Hán Việt trong cả Tên phim lẫn Tóm tắt BẮT BUỘC chuyển sang **âm Hán Việt có dấu Tiếng Việt**. **TUYỆT ĐỐI CẤM** dùng phiên âm Pinyin tiếng Anh (`Lin Fan`, `Shen Yan`, `Gu Qing`, `Xiao`, `Ye`, `Lu`, `Su`, `Jiang`, `Mu`, `Tang`, `Huo`, `Fu`, `Si`, `Bai`...).
+   - Bảng chuẩn Hán Việt tham khảo nhanh: 林→Lâm, 沈→Thẩm, 顾→Cố, 萧→Tiêu, 叶→Diệp, 陆→Lục, 苏→Tô, 江→Giang, 白→Bạch, 慕→Mộ, 唐→Đường, 楚→Sở, 秦→Tần, 裴→Bùi, 霍→Hoắc, 傅→Phó, 薄→Bạc, 厉→Lệ, 司→Tư, 温→Ôn, 陈→Trần, 赵→Triệu, 许→Hứa, 周→Chu, 程→Trình, 谢→Tạ, 季→Quý, 乔→Kiều, 姜→Khương, 阮→Nguyễn, 夏→Hạ, 宁→Ninh, 墨→Mặc, 夜→Dạ, 凡→Phàm, 宴→Yến, 柔→Nhu, 晚→Vãn.
+8. ĐỊNH DẠNG ĐỒNG BỘ TÊN LÊN THẺ BÌA & PHONG CÁCH TRẢ LỜI:
+   - Trả lời hoàn toàn bằng Tiếng Việt. Sau khi tool trả kết quả, app đã tự hiển thị thẻ ảnh bìa (#1, #2...) trên màn hình nhưng phần tên cần lấy từ bản dịch của bạn; vì vậy với MỖI phim trả về hãy mở đầu dòng bằng đúng cấu trúc:
+     `#1. <Tên phim Tiếng Việt dùng Hán Việt> — <Tóm tắt cốt truyện ngắn gọn bằng Tiếng Việt (dùng Hán Việt, không Pinyin)>`
+     `#2. <Tên phim Tiếng Việt dùng Hán Việt> — <...>`
+   - Tuyệt đối không kể thêm phim ngoài kết quả tool.
+   - ${compactVoiceStyle ? 'Chế độ thoại đang bật: vẫn đọc đủ từng phim "#1. Tên phim Hán Việt — tóm tắt 1 câu ngắn" súc tích, tránh đọc chuỗi ID hay chữ Hán dài.' : 'Trình bày rõ ràng từng phim #1..#N kèm tên Hán Việt mượt mà, tóm tắt ngắn gọn và lý do khớp mô tả.'}''';
   }
 
   /// Khai báo Function Calling Declarations chuẩn Gemini Live API.
@@ -899,6 +922,7 @@ NGUYÊN TẮC BẮT BUỘC:
       'sourceFilter': sourceText,
       'totalPoolMatched': effectiveRankedPool.length,
       'returnedCount': displayed.length,
+      'instruction': _liveTranslationInstruction,
       'results': displayed.map(_serializeCompactCandidate).toList(),
     };
   }
@@ -1207,6 +1231,7 @@ NGUYÊN TẮC BẮT BUỘC:
       'searchTrace': trace,
       'returnedCount': displayed.length,
       'totalPages': res.totalPages,
+      'instruction': _liveTranslationInstruction,
       'results': displayed.map(_serializeCompactCandidate).toList(),
     };
   }
@@ -1297,6 +1322,7 @@ NGUYÊN TẮC BẮT BUỘC:
       'searchTrace': trace,
       'board': rankRoute,
       'returnedCount': displayed.length,
+      'instruction': _liveTranslationInstruction,
       'results': displayed.map(_serializeCompactCandidate).toList(),
     };
   }
@@ -1375,16 +1401,16 @@ NGUYÊN TẮC BẮT BUỘC:
       'userCriteria': criteria,
       'analyzedCount': enriched.length,
       'instruction':
-          'Hãy đối chiếu từng tiêu chí của người dùng với cốt truyện (intro) của toàn bộ ${enriched.length} phim dưới đây, xếp hạng các phim khớp sát nhất (nêu #STT + Tên Tiếng Việt) và tóm tắt cốt truyện tiếng Việt cho lựa chọn tốt nhất.',
+          'Hãy dịch mượt mà cả TÊN PHIM (`zhTitle`) lẫn TÓM TẮT CỐT TRUYỆN (`intro`) sang Tiếng Việt dùng âm HÁN VIỆT chuẩn cho mọi tên riêng/nhân vật/địa danh (TUYỆT ĐỐI CẤM dùng Pinyin như Lin Fan, Shen Yan, Xiao...). Với mỗi phim hãy ghi "#STT. <Tên phim Hán Việt> — <Tóm tắt>", đối chiếu tiêu chí người dùng và chỉ ra lựa chọn sát nhất.',
       'candidates': enriched.map((c) {
         final trimmedIntro = c.item.intro.trim();
-        final safeIntro = trimmedIntro.length > 260
-            ? '${trimmedIntro.substring(0, 260)}...'
+        final safeIntro = trimmedIntro.length > 280
+            ? '${trimmedIntro.substring(0, 280)}...'
             : trimmedIntro;
         return {
           'index': c.displayIndex,
           'seriesId': c.seriesId,
-          'viTitle': c.viTitle,
+          if (c.viTitle != c.item.title) 'viTitle': c.viTitle,
           'zhTitle': c.item.title,
           'tags': c.item.tags,
           'episodeCount': c.item.episodeCount,
@@ -1396,26 +1422,231 @@ NGUYÊN TẮC BẮT BUỘC:
     };
   }
 
+  static const String _liveTranslationInstruction =
+      'TỰ DỊCH bằng khả năng Tiếng Việt của bạn (dùng HÁN VIỆT cho mọi tên người/địa danh/thuật ngữ, TUYỆT ĐỐI CẤM Pinyin như Lin/Shen/Xiao). Luôn trình bày đủ từng phim theo mẫu "#1. <Tên phim Hán Việt mượt mà> — <Tóm tắt ngắn gọn Tiếng Việt>" để ứng dụng đồng bộ tên lên thẻ ảnh bìa.';
+
   Future<List<HongguoAssistantCandidate>> _translateCandidates(
     List<HongguoAssistantCandidate> items,
   ) async {
     return Future.wait(
       items.map((cand) async {
-        try {
-          final cached = OfflineMlKitTranslator.getCachedTitle(cand.item.title);
-          if (cached != null && cached.trim().isNotEmpty) {
-            return cand.copyWith(viTitle: cached.trim());
-          }
-          final translated = await _translateTitle(
-            cand.item.title,
-          ).timeout(const Duration(milliseconds: 1800), onTimeout: () => '');
-          if (translated.trim().isNotEmpty) {
-            return cand.copyWith(viTitle: translated.trim());
-          }
-        } catch (_) {}
+        final cleanZh = cand.item.title.trim();
+        final cachedAi = _aiViTitleCache[cleanZh];
+        if (cachedAi != null && cachedAi.isNotEmpty) {
+          return cand.copyWith(viTitle: cachedAi);
+        }
+        // Không dùng MLKit mặc định: chỉ chạy translateTitle nếu được inject (ví dụ trong unit test)
+        final customTranslator = translateTitle;
+        if (customTranslator != null) {
+          try {
+            final translated = await customTranslator(
+              cand.item.title,
+            ).timeout(const Duration(milliseconds: 1800), onTimeout: () => '');
+            if (translated.trim().isNotEmpty) {
+              return cand.copyWith(viTitle: translated.trim());
+            }
+          } catch (_) {}
+        }
         return cand;
       }),
     );
+  }
+
+  /// Kiểm tra xem thẻ phim có đang còn nguyên tên tiếng Trung (chưa được AI Live dịch) hay không.
+  static bool isUntranslatedTitle(HongguoAssistantCandidate c) {
+    final vi = c.viTitle.trim();
+    final zh = c.item.title.trim();
+    if (vi.isEmpty || vi == zh) return true;
+    return RegExp(r'[\u4e00-\u9fff]{2,}').hasMatch(vi);
+  }
+
+  /// Trích xuất ánh xạ `#STT -> Tên phim Tiếng Việt (Hán Việt)` trực tiếp từ lời đáp của Gemini Live.
+  /// Khi `isFinal == false` (đang stream), chỉ chốt tiêu đề đã có dấu ngắt câu/tóm tắt theo sau để tránh giật chữ dở.
+  static Map<int, String> extractAiTitlesFromLiveReply(
+    String text, {
+    int maxIndex = 20,
+    bool isFinal = true,
+  }) {
+    final result = <int, String>{};
+    if (text.trim().isEmpty) return result;
+
+    var normalized = text
+        .replaceAll(RegExp(r'\*\*|__|`|“|”|「|」|『|』'), '')
+        .replaceAll('\r\n', '\n');
+
+    const wordNums = {
+      'một': '1',
+      'hai': '2',
+      'ba': '3',
+      'bốn': '4',
+      'tư': '4',
+      'năm': '5',
+      'sáu': '6',
+      'bảy': '7',
+      'tám': '8',
+      'chín': '9',
+      'mười': '10',
+    };
+    for (final e in wordNums.entries) {
+      normalized = normalized.replaceAllMapped(
+        RegExp(
+          '(?:phim\\s+)?(?:số|thứ)\\s+${e.key}\\b',
+          caseSensitive: false,
+        ),
+        (_) => '#${e.value}',
+      );
+    }
+    normalized = normalized.replaceAllMapped(
+      RegExp(r'(?:phim\s+)?(?:số|thứ)\s+(\d{1,2})\b', caseSensitive: false),
+      (m) => '#${m.group(1)}',
+    );
+
+    final markerPattern = RegExp(
+      r'(?:^|\n)\s*(?:[-*•]\s*)?(?:#(\d{1,2})|(\d{1,2})\.)\s*[:.)\-–—]?\s*(.+)|'
+      r'#(\d{1,2})\s*(?:[:.\-–—]|\s+(?:là|tên|–|—))\s*(.+)',
+      multiLine: true,
+    );
+
+    for (final match in markerPattern.allMatches(normalized)) {
+      final idxStr = match.group(1) ?? match.group(2) ?? match.group(4);
+      final rawLine = (match.group(3) ?? match.group(5) ?? '').trim();
+      final idx = int.tryParse(idxStr ?? '');
+      if (idx == null || idx < 1 || idx > maxIndex || rawLine.isEmpty) continue;
+
+      final matchEnd = match.end;
+      final hasLineEnded =
+          isFinal || (matchEnd < normalized.length && normalized[matchEnd] == '\n');
+      final hasInlineSeparator = RegExp(
+        r'\s+[—–]\s+|\s+-\s+|:\s+|\.\s+',
+      ).hasMatch(rawLine);
+      if (!hasLineEnded && !hasInlineSeparator) {
+        continue;
+      }
+
+      final cleaned = _cleanExtractedTitleSegment(rawLine);
+      if (cleaned != null && cleaned.isNotEmpty) {
+        final existing = result[idx];
+        if (existing == null || cleaned.length >= existing.length) {
+          result[idx] = cleaned;
+        }
+      }
+    }
+    return result;
+  }
+
+  static String? _cleanExtractedTitleSegment(String rawLine) {
+    var seg = rawLine.trim();
+    // Ưu tiên tách tại em-dash / en-dash trước (giữ lại dấu hai chấm hợp lệ nếu nằm trong tên phim)
+    final dashSplit = RegExp(r'\s+[—–]\s+|\s+-\s+').firstMatch(seg);
+    if (dashSplit != null) {
+      seg = seg.substring(0, dashSplit.start).trim();
+    } else {
+      final colonOrDotSplit = RegExp(r':\s+|\.\s+').firstMatch(seg);
+      if (colonOrDotSplit != null) {
+        seg = seg.substring(0, colonOrDotSplit.start).trim();
+      }
+    }
+
+    // Bỏ phần chú thích tên gốc tiếng Trung trong ngoặc ở cuối nếu có
+    seg = seg
+        .replaceAll(
+          RegExp(r'\s*\([^)]*(?:tên\s*gốc|gốc|[\u4e00-\u9fff])[^)]*\)\s*$', caseSensitive: false),
+          '',
+        )
+        .trim();
+
+    seg = seg
+        .replaceAll(RegExp(r'^[\s"«<\[\x27:.\-–—]+'), '')
+        .replaceAll(RegExp(r'[\s"»>\]\x27:.,\-–—]+$'), '')
+        .trim();
+
+    if (seg.length < 2 || seg.length > 85) return null;
+    if (!RegExp(r'[A-Za-zÀ-ỹ]').hasMatch(seg)) return null;
+    if (RegExp(r'[\u4e00-\u9fff]{2,}').hasMatch(seg)) return null;
+
+    final lower = seg.toLowerCase();
+    if (lower.startsWith('đây là ') ||
+        lower.startsWith('dưới đây là ') ||
+        lower.startsWith('tổng hợp')) {
+      return null;
+    }
+    return seg;
+  }
+
+  /// Đồng bộ tên phim Hán Việt do Gemini Live dịch vào `report`, bộ nhớ đệm và danh sách hiển thị hiện tại.
+  /// Trả về `HongguoSearchReport` mới nếu có ít nhất 1 phim được cập nhật, ngược lại trả `null`.
+  HongguoSearchReport? applyAiTranslatedTitlesToReport(
+    HongguoSearchReport report,
+    Map<int, String> indexToViTitle,
+  ) {
+    if (indexToViTitle.isEmpty || report.candidates.isEmpty) return null;
+    var changed = false;
+    final updatedCandidates = <HongguoAssistantCandidate>[];
+    for (final cand in report.candidates) {
+      final nextVi = indexToViTitle[cand.displayIndex]?.trim();
+      if (nextVi != null &&
+          nextVi.isNotEmpty &&
+          nextVi != cand.viTitle &&
+          !RegExp(r'[\u4e00-\u9fff]{2,}').hasMatch(nextVi)) {
+        changed = true;
+        _aiViTitleCache[cand.item.title.trim()] = nextVi;
+        final updatedCand = cand.copyWith(viTitle: nextVi);
+        _candidateCache[updatedCand.seriesId] = updatedCand;
+        updatedCandidates.add(updatedCand);
+      } else {
+        updatedCandidates.add(cand);
+      }
+    }
+    if (!changed) return null;
+
+    final updatedReport = report.copyWith(candidates: updatedCandidates);
+    if (_lastSearchReport?.traceSummary == report.traceSummary &&
+        _lastSearchReport?.candidates.length == report.candidates.length) {
+      _lastSearchReport = updatedReport;
+      for (var i = 0; i < _lastDisplayed.length; i++) {
+        final match = updatedCandidates
+            .where((c) => c.seriesId == _lastDisplayed[i].seriesId)
+            .firstOrNull;
+        if (match != null) {
+          _lastDisplayed[i] = match;
+        }
+      }
+    }
+    return updatedReport;
+  }
+
+  /// Tạo prompt ngắn gọn cho model Gemini Live dịch nốt tên phim (và tóm tắt nếu cần) bằng Hán Việt chuẩn.
+  static String buildLiveTitleTranslationPrompt(
+    List<HongguoAssistantCandidate> targets, {
+    bool includeShortSummary = false,
+  }) {
+    final buf = StringBuffer();
+    buf.writeln(
+      includeShortSummary
+          ? 'Dịch TÊN PHIM và TÓM TẮT NGẮN GỌN (1 câu) các phim Hồng Quả sau sang Tiếng Việt theo văn phong phim ngắn dùng âm HÁN VIỆT chuẩn cho mọi tên riêng/nhân vật/địa danh.'
+          : 'Dịch TÊN PHIM các phim Hồng Quả sau sang Tiếng Việt mượt mà theo văn phong phim ngắn, dùng âm HÁN VIỆT chuẩn cho mọi tên riêng/nhân vật.',
+    );
+    buf.writeln(
+      'QUY TẮC CỨNG: TUYỆT ĐỐI CẤM dùng Pinyin (Lin Fan, Shen Yan, Xiao, Gu, Ye, Lu...). Mọi tên riêng phải viết bằng Hán Việt có dấu (Lâm Phàm, Thẩm Yến, Tiêu, Cố, Diệp, Lục...).',
+    );
+    buf.writeln(
+      includeShortSummary
+          ? 'Định dạng trả về duy nhất từng dòng:\n#STT. <Tên phim Hán Việt> — <Tóm tắt 1 câu Tiếng Việt Hán Việt>'
+          : 'Định dạng trả về duy nhất từng dòng:\n#STT. <Tên phim Hán Việt>',
+    );
+    for (final c in targets) {
+      final intro = c.item.intro.trim();
+      final shortIntro = intro.length > 140 ? '${intro.substring(0, 140)}...' : intro;
+      buf.write('#${c.displayIndex} | Tên gốc: ${c.item.title}');
+      if (c.item.tags.isNotEmpty) {
+        buf.write(' | Tag: ${c.item.tags.take(4).join(", ")}');
+      }
+      if (includeShortSummary && shortIntro.isNotEmpty) {
+        buf.write(' | Cốt truyện: $shortIntro');
+      }
+      buf.writeln();
+    }
+    return buf.toString();
   }
 
   void _savePoolToCache(
@@ -1434,11 +1665,13 @@ NGUYÊN TẮC BẮT BUỘC:
     HongguoAssistantCandidate c,
   ) {
     final intro = c.item.intro.trim();
-    final snippet = intro.length > 55 ? '${intro.substring(0, 55)}...' : intro;
+    final snippet = intro.length > 160 ? '${intro.substring(0, 160)}...' : intro;
+    final hasTranslatedVi =
+        c.viTitle.trim().isNotEmpty && c.viTitle.trim() != c.item.title.trim();
     return {
       'index': c.displayIndex,
       'seriesId': c.seriesId,
-      'viTitle': c.viTitle,
+      if (hasTranslatedVi) 'viTitle': c.viTitle,
       'zhTitle': c.item.title,
       'tags': c.item.tags.take(5).toList(),
       'episodeCount': c.item.episodeCount,

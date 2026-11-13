@@ -1782,7 +1782,7 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
               label: 'Tổng hợp cốt truyện & chọn phim sát nhất',
               accent: AppColors.accentGold,
               onTap: () => _submitText(
-                'Hãy tổng hợp và so sánh hết cốt truyện của toàn bộ danh sách phim vừa rồi, chỉ ra phim sát mô tả của mình nhất và tóm tắt chi tiết bằng tiếng Việt.',
+                'Hãy tổng hợp và so sánh hết cốt truyện của toàn bộ danh sách phim vừa rồi, dùng tên Hán Việt tự nhiên (tuyệt đối không dùng Pinyin), chỉ ra phim sát mô tả của mình nhất và tóm tắt chi tiết bằng tiếng Việt.',
               ),
             ),
             _ActionPillButton(

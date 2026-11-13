@@ -885,10 +885,27 @@ class HongguoAssistantController extends ChangeNotifier {
     final idx = _messages.indexWhere((m) => m.id == _activeAssistantMsgId);
     if (idx != -1) {
       final cur = _messages[idx];
+      final nextText = '${cur.text}$delta';
+      var nextReport = _pendingTurnReport ?? cur.searchReport;
+      if (nextReport != null) {
+        final parsed = HongguoAssistantEngine.extractAiTitlesFromLiveReply(
+          nextText,
+          maxIndex: nextReport.candidates.length,
+          isFinal: markDone,
+        );
+        final updated = engine.applyAiTranslatedTitlesToReport(
+          nextReport,
+          parsed,
+        );
+        if (updated != null) {
+          nextReport = updated;
+          _pendingTurnReport = updated;
+        }
+      }
       _messages[idx] = cur.copyWith(
-        text: '${cur.text}$delta',
+        text: nextText,
         isStreaming: !markDone,
-        searchReport: _pendingTurnReport ?? cur.searchReport,
+        searchReport: nextReport,
       );
       notifyListeners();
     }
@@ -919,16 +936,30 @@ class HongguoAssistantController extends ChangeNotifier {
     final finishedMsgId = _activeAssistantMsgId;
     final pendingPrompt = _lastUserPrompt;
     final executedToolThisTurn = _turnExecutedTool;
-    var hasAttachedReport = _pendingTurnReport != null;
+    HongguoSearchReport? finalReport;
     var hasNonEmptyReplyText = false;
 
     if (finishedMsgId != null) {
       final idx = _messages.indexWhere((m) => m.id == finishedMsgId);
       if (idx != -1) {
         final cur = _messages[idx];
-        final effectiveReport = _pendingTurnReport ?? cur.searchReport;
-        hasAttachedReport = effectiveReport != null;
+        var effectiveReport = _pendingTurnReport ?? cur.searchReport;
         hasNonEmptyReplyText = cur.text.trim().isNotEmpty;
+        if (effectiveReport != null && hasNonEmptyReplyText) {
+          final parsed = HongguoAssistantEngine.extractAiTitlesFromLiveReply(
+            cur.text,
+            maxIndex: effectiveReport.candidates.length,
+            isFinal: true,
+          );
+          final updated = engine.applyAiTranslatedTitlesToReport(
+            effectiveReport,
+            parsed,
+          );
+          if (updated != null) {
+            effectiveReport = updated;
+          }
+        }
+        finalReport = effectiveReport;
         if (!hasNonEmptyReplyText && effectiveReport == null) {
           _messages.removeAt(idx);
         } else {
@@ -943,16 +974,20 @@ class HongguoAssistantController extends ChangeNotifier {
       _turnReceivedTranscript = false;
     }
 
-    // Safety net: nếu Gemini Live bỏ qua tool calling và chỉ trả lời text tên phim + tóm tắt,
-    // tự động lấy danh sách phim thật kèm ảnh bìa Hồng Quả đính vào ngay dưới câu trả lời.
+    // Safety net: nếu Gemini Live bỏ qua tool calling ở câu tìm phim -> tự lấy thẻ thật rồi nhờ model Live dịch Hán Việt + tóm tắt
     if (finishedMsgId != null &&
         !executedToolThisTurn &&
-        !hasAttachedReport &&
+        finalReport == null &&
         hasNonEmptyReplyText &&
         pendingPrompt.isNotEmpty &&
         HongguoAssistantEngine.looksLikeMovieDiscoveryQuery(pendingPrompt)) {
       _lastUserPrompt = '';
       unawaited(_attachAutoFallbackCardsIfNeeded(finishedMsgId, pendingPrompt));
+    } else if (finishedMsgId != null &&
+        finalReport != null &&
+        finalReport.candidates.any(HongguoAssistantEngine.isUntranslatedTitle)) {
+      // Nếu Gemini chỉ đọc/ghi vài phim đầu mà thẻ sau vẫn còn tiếng Trung -> nhờ chính model Live dịch nốt tên Hán Việt
+      unawaited(_translateMissingTitlesWithLiveModel(finishedMsgId, finalReport));
     }
 
     notifyListeners();
@@ -971,9 +1006,81 @@ class HongguoAssistantController extends ChangeNotifier {
           }
         },
       );
-      if (!_disposed && report != null && report.candidates.isNotEmpty) {
-        _attachReportToMessageId(msgId, report);
+      if (_disposed || report == null || report.candidates.isEmpty) return;
+      _attachReportToMessageId(msgId, report);
+
+      await _translateMissingTitlesWithLiveModel(
+        msgId,
+        report,
+        includeShortSummaryInMessage: true,
+      );
+
+      if (!_disposed && _liveClient.isConnected) {
+        try {
+          _liveClient.sendHistoryTurns(
+            engine.buildCompressedSnapshotTurns(const []),
+            turnComplete: false,
+          );
+        } catch (_) {}
       }
+    } catch (_) {}
+  }
+
+  Future<void> _translateMissingTitlesWithLiveModel(
+    String msgId,
+    HongguoSearchReport report, {
+    bool includeShortSummaryInMessage = false,
+  }) async {
+    if (_disposed) return;
+    final missing = report.candidates
+        .where(HongguoAssistantEngine.isUntranslatedTitle)
+        .toList();
+    if (missing.isEmpty) return;
+
+    try {
+      final settings = await SettingsRepository.getInstance();
+      final keys = settings.geminiApiKeys;
+      if (keys.isEmpty && _liveClient.activeApiKey.trim().isEmpty) return;
+
+      final liveReply = await _liveClient.runOneShotLivePrompt(
+        apiKeys: keys,
+        modelId: _selectedModelId,
+        systemPrompt:
+            'Bạn là chuyên gia dịch tên phim & cốt truyện phim ngắn Hoa ngữ sang Tiếng Việt mượt mà dùng âm Hán Việt chuẩn, TUYỆT ĐỐI CẤM Pinyin.',
+        userPrompt: HongguoAssistantEngine.buildLiveTitleTranslationPrompt(
+          missing,
+          includeShortSummary: includeShortSummaryInMessage,
+        ),
+      );
+      if (_disposed || liveReply.trim().isEmpty) return;
+
+      final maxIdx = report.candidates.fold<int>(
+        report.candidates.length,
+        (m, c) => c.displayIndex > m ? c.displayIndex : m,
+      );
+      final parsed = HongguoAssistantEngine.extractAiTitlesFromLiveReply(
+        liveReply,
+        maxIndex: maxIdx,
+        isFinal: true,
+      );
+
+      final idx = _messages.indexWhere((m) => m.id == msgId);
+      if (idx == -1) return;
+      final curMsg = _messages[idx];
+      final currentReport = curMsg.searchReport ?? report;
+      final updatedReport =
+          engine.applyAiTranslatedTitlesToReport(currentReport, parsed) ??
+              currentReport;
+
+      final nextText = includeShortSummaryInMessage
+          ? '${curMsg.text}\n\n📌 **Danh sách thật từ kho Hồng Quả:**\n$liveReply'
+          : curMsg.text;
+
+      _messages[idx] = curMsg.copyWith(
+        text: nextText,
+        searchReport: updatedReport,
+      );
+      notifyListeners();
     } catch (_) {}
   }
 
