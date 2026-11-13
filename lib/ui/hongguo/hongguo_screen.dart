@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -12,6 +14,8 @@ import '../../data/model/watch_later_item.dart';
 import '../../data/repository/watch_later_repository.dart';
 import '../theme/app_theme.dart';
 import 'feed/hongguo_feed_screen.dart';
+import 'hongguo_assistant_controller.dart';
+import 'hongguo_assistant_sheet.dart';
 import 'hongguo_settings_sheet.dart';
 
 class HongguoScreen extends StatefulWidget {
@@ -47,11 +51,16 @@ class _HongguoScreenState extends State<HongguoScreen> {
   List<HongguoDramaItem> _dramas = [];
   bool _isSearchMode = false;
   String _currentSearchQuery = '';
+  bool _isAiResultMode = false;
+  String _aiResultLabel = '';
   bool _isTranslationEnabled = true;
+  late final HongguoAssistantController _assistantController;
 
   @override
   void initState() {
     super.initState();
+    _assistantController = HongguoAssistantController(resolver: _resolver);
+    unawaited(_assistantController.initialize());
     _loadTranslationSetting();
     _loadDramas();
   }
@@ -111,6 +120,7 @@ class _HongguoScreenState extends State<HongguoScreen> {
 
   @override
   void dispose() {
+    _assistantController.dispose();
     _searchController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -121,6 +131,8 @@ class _HongguoScreenState extends State<HongguoScreen> {
       _isLoading = true;
       _errorMessage = null;
       _isSearchMode = false;
+      _isAiResultMode = false;
+      _aiResultLabel = '';
     });
 
     try {
@@ -158,9 +170,11 @@ class _HongguoScreenState extends State<HongguoScreen> {
       _isLoading = true;
       _errorMessage = null;
       _isSearchMode = false;
+      _isAiResultMode = false;
+      _aiResultLabel = '';
       _searchController.clear();
-      // Nếu đang ở BXH Hot, chuyển sang tab Đề Xuất để nạp phim phong phú ngoài BXH
-      if (_currentCategorySlug == 'rank/hot-drama') {
+      // Nếu đang ở BXH, chuyển sang tab Đề Xuất để nạp phim phong phú ngoài BXH
+      if (_currentCategorySlug.startsWith('rank/')) {
         _currentCategorySlug = 'discover';
       }
     });
@@ -254,6 +268,8 @@ class _HongguoScreenState extends State<HongguoScreen> {
       _isLoading = true;
       _errorMessage = null;
       _isSearchMode = true;
+      _isAiResultMode = false;
+      _aiResultLabel = '';
     });
 
     var queryToSearch = text;
@@ -308,6 +324,8 @@ class _HongguoScreenState extends State<HongguoScreen> {
         _isLoading = true;
         _errorMessage = null;
         _isSearchMode = true;
+        _isAiResultMode = false;
+        _aiResultLabel = '';
       });
     }
 
@@ -372,35 +390,43 @@ class _HongguoScreenState extends State<HongguoScreen> {
   }
 
   void _onSelectCategory(String slug) {
-    if (_currentCategorySlug == slug && !_isSearchMode) return;
+    if (_currentCategorySlug == slug && !_isSearchMode && !_isAiResultMode) {
+      return;
+    }
     HapticFeedback.selectionClick();
     setState(() {
       _currentCategorySlug = slug;
       _currentGenreSlug = '';
       _currentPage = 1;
+      _isAiResultMode = false;
+      _aiResultLabel = '';
       _searchController.clear();
     });
     _loadDramas();
   }
 
   void _onSelectGenre(String slug) {
-    if (_currentGenreSlug == slug && !_isSearchMode) return;
+    if (_currentGenreSlug == slug && !_isSearchMode && !_isAiResultMode) return;
     HapticFeedback.selectionClick();
     setState(() {
       _currentGenreSlug = slug;
       _currentPage = 1;
+      _isAiResultMode = false;
+      _aiResultLabel = '';
       _searchController.clear();
     });
     _loadDramas();
   }
 
   void _onSelectDiscoverSource(String source) {
-    if (_discoverSource == source && !_isSearchMode) return;
+    if (_discoverSource == source && !_isSearchMode && !_isAiResultMode) return;
     HapticFeedback.selectionClick();
     setState(() {
       _discoverSource = source;
       _currentGenreSlug = '';
       _currentPage = 1;
+      _isAiResultMode = false;
+      _aiResultLabel = '';
       _searchController.clear();
     });
     _loadDramas();
@@ -430,7 +456,16 @@ class _HongguoScreenState extends State<HongguoScreen> {
     final match = HongguoResolver.categories
         .cast<HongguoCategory?>()
         .firstWhere((c) => c?.slug == slug, orElse: () => null);
-    return match?.label.replaceAll(RegExp(r'^[^\w\s]+\s*'), '') ?? slug;
+    if (match != null) {
+      return match.label.replaceAll(RegExp(r'^[^\w\s]+\s*'), '');
+    }
+    final rankMatch = HongguoResolver.rankBoards
+        .cast<HongguoCategory?>()
+        .firstWhere((c) => c?.slug == slug, orElse: () => null);
+    if (rankMatch != null) {
+      return rankMatch.label.replaceAll(RegExp(r'^[^\w\s]+\s*'), '');
+    }
+    return slug;
   }
 
   String _getGenreLabel(String slug) {
@@ -456,12 +491,49 @@ class _HongguoScreenState extends State<HongguoScreen> {
     HapticFeedback.lightImpact();
     setState(() {
       _currentPage = page;
+      _isAiResultMode = false;
+      _aiResultLabel = '';
     });
     if (_isSearchMode) {
       _loadSearchPage(page);
     } else {
       _loadDramas();
     }
+  }
+
+  void _applyAssistantResults(List<HongguoDramaItem> items, String label) {
+    if (!mounted || items.isEmpty) return;
+    HapticFeedback.mediumImpact();
+    setState(() {
+      _dramas = items;
+      _isLoading = false;
+      _errorMessage = null;
+      _isSearchMode = false;
+      _isAiResultMode = true;
+      _aiResultLabel = label;
+      _currentPage = 1;
+      _totalPages = 1;
+    });
+    if (_scrollController.hasClients) {
+      _scrollController.jumpTo(0);
+    }
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Đã đưa ${items.length} phim gợi ý từ Trợ lý AI ra lưới.'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  void _openAssistantSheet() {
+    HapticFeedback.lightImpact();
+    HongguoAssistantSheet.show(
+      context,
+      controller: _assistantController,
+      onOpenDrama: _openDramaDetail,
+      onApplyToMainGrid: _applyAssistantResults,
+    );
   }
 
   Future<void> _openDramaDetail(HongguoDramaItem item) async {
@@ -652,6 +724,14 @@ class _HongguoScreenState extends State<HongguoScreen> {
         actions: [
           IconButton(
             icon: const Icon(
+              Icons.auto_awesome_rounded,
+              color: AppColors.primaryEmerald,
+            ),
+            tooltip: 'Trợ lý AI tìm phim (Gemini Live)',
+            onPressed: _openAssistantSheet,
+          ),
+          IconButton(
+            icon: const Icon(
               Icons.swipe_vertical_rounded,
               color: Colors.amberAccent,
             ),
@@ -803,8 +883,11 @@ class _HongguoScreenState extends State<HongguoScreen> {
                 separatorBuilder: (ctx, i) => const SizedBox(width: 8),
                 itemBuilder: (ctx, i) {
                   final cat = HongguoResolver.categories[i];
-                  final isSelected =
-                      !_isSearchMode && _currentCategorySlug == cat.slug;
+                  final isRankGroup = cat.slug == 'rank/hot-drama' &&
+                      _currentCategorySlug.startsWith('rank/');
+                  final isSelected = !_isSearchMode &&
+                      !_isAiResultMode &&
+                      (_currentCategorySlug == cat.slug || isRankGroup);
                   return ChoiceChip(
                     label: Text(
                       cat.label,
@@ -832,7 +915,9 @@ class _HongguoScreenState extends State<HongguoScreen> {
             ),
 
             // 2.5 HỘP BỘ LỌC CON DÀNH CHO TAB ĐỀ XUẤT (PHÂN CẤP RÕ RÀNG VỚI DANH MỤC CHÍNH)
-            if (_currentCategorySlug == 'discover' && !_isSearchMode)
+            if (_currentCategorySlug == 'discover' &&
+                !_isSearchMode &&
+                !_isAiResultMode)
               Container(
                 margin: const EdgeInsets.fromLTRB(14, 6, 14, 2),
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
@@ -1025,10 +1110,101 @@ class _HongguoScreenState extends State<HongguoScreen> {
                 ),
               ),
 
+            // 2.8 THANH CHỌN 10 BẢNG XẾP HẠNG HỒNG QUẢ (KHI Ở TAB 🔥 BXH)
+            if (_currentCategorySlug.startsWith('rank/') &&
+                !_isSearchMode &&
+                !_isAiResultMode)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 6, 14, 0),
+                child: SizedBox(
+                  height: 32,
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 7,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.redAccent.withValues(alpha: 0.16),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.leaderboard_rounded,
+                              size: 11,
+                              color: Colors.redAccent,
+                            ),
+                            SizedBox(width: 4),
+                            Text(
+                              'BXH',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.redAccent,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: ListView.separated(
+                          physics: const BouncingScrollPhysics(),
+                          scrollDirection: Axis.horizontal,
+                          itemCount: HongguoResolver.rankBoards.length,
+                          separatorBuilder: (ctx, i) =>
+                              const SizedBox(width: 6),
+                          itemBuilder: (ctx, i) {
+                            final board = HongguoResolver.rankBoards[i];
+                            final isSelected =
+                                _currentCategorySlug == board.slug;
+                            return ActionChip(
+                              visualDensity: VisualDensity.compact,
+                              materialTapTargetSize:
+                                  MaterialTapTargetSize.shrinkWrap,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 0,
+                              ),
+                              label: Text(
+                                board.label,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: isSelected
+                                      ? Colors.redAccent
+                                      : AppColors.textMuted,
+                                  fontWeight: isSelected
+                                      ? FontWeight.bold
+                                      : FontWeight.normal,
+                                ),
+                              ),
+                              backgroundColor: isSelected
+                                  ? Colors.redAccent.withValues(alpha: 0.14)
+                                  : Colors.transparent,
+                              side: BorderSide(
+                                color: isSelected
+                                    ? Colors.redAccent.withValues(alpha: 0.75)
+                                    : AppColors.cardBorder
+                                        .withValues(alpha: 0.5),
+                              ),
+                              onPressed: () => _onSelectCategory(board.slug),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
             // 3. THỂ LOẠI CON (KHI Ở KHO NGƯỜI THẬT HOẶC PHIM AI)
             if (_currentCategorySlug != 'discover' &&
                 availableGenres.isNotEmpty &&
-                !_isSearchMode)
+                !_isSearchMode &&
+                !_isAiResultMode)
               Padding(
                 padding: const EdgeInsets.fromLTRB(14, 4, 14, 0),
                 child: SizedBox(
@@ -1128,36 +1304,42 @@ class _HongguoScreenState extends State<HongguoScreen> {
                     child: Row(
                       children: [
                         Icon(
-                          _isSearchMode
-                              ? Icons.search_rounded
-                              : (_currentCategorySlug == 'discover'
-                                  ? Icons.auto_awesome
-                                  : (_currentCategorySlug.contains('rank')
-                                      ? Icons.local_fire_department_rounded
-                                      : Icons.movie_filter_rounded)),
+                          _isAiResultMode
+                              ? Icons.auto_awesome_rounded
+                              : (_isSearchMode
+                                  ? Icons.search_rounded
+                                  : (_currentCategorySlug == 'discover'
+                                      ? Icons.auto_awesome
+                                      : (_currentCategorySlug.contains('rank')
+                                          ? Icons.local_fire_department_rounded
+                                          : Icons.movie_filter_rounded))),
                           size: 15,
-                          color: _currentCategorySlug == 'discover'
-                              ? AppColors.accentGold
-                              : (_currentCategorySlug.contains('rank')
-                                  ? Colors.redAccent
-                                  : AppColors.primaryEmerald),
+                          color: _isAiResultMode
+                              ? AppColors.primaryEmerald
+                              : (_currentCategorySlug == 'discover'
+                                  ? AppColors.accentGold
+                                  : (_currentCategorySlug.contains('rank')
+                                      ? Colors.redAccent
+                                      : AppColors.primaryEmerald)),
                         ),
                         const SizedBox(width: 6),
                         Flexible(
                           child: Text(
-                            _isSearchMode
-                                ? (_totalPages > 1
-                                    ? 'Kết quả tìm kiếm (Trang $_currentPage/$_totalPages)'
-                                    : 'Kết quả tìm kiếm (${_dramas.length})')
-                                : (_currentCategorySlug == 'discover'
-                                    ? (_currentGenreSlug.isNotEmpty
-                                        ? 'Đề xuất ${_getGenreLabel(_currentGenreSlug)} (${_dramas.length})'
-                                        : (_discoverSource == 'all'
-                                            ? 'Phim đề xuất ngẫu nhiên (${_dramas.length})'
-                                            : 'Đề xuất ${_getCategoryLabel(_discoverSource)} (${_dramas.length})'))
-                                    : (_currentCategorySlug.contains('rank')
-                                        ? 'Bảng Xếp Hạng Hot (Trang $_currentPage/$_totalPages)'
-                                        : 'Kho ${_getCategoryLabel(_currentCategorySlug)} (Trang $_currentPage/$_totalPages)')),
+                            _isAiResultMode
+                                ? '${_aiResultLabel.isNotEmpty ? _aiResultLabel : "Gợi ý từ Trợ lý AI"} (${_dramas.length})'
+                                : (_isSearchMode
+                                    ? (_totalPages > 1
+                                        ? 'Kết quả tìm kiếm (Trang $_currentPage/$_totalPages)'
+                                        : 'Kết quả tìm kiếm (${_dramas.length})')
+                                    : (_currentCategorySlug == 'discover'
+                                        ? (_currentGenreSlug.isNotEmpty
+                                            ? 'Đề xuất ${_getGenreLabel(_currentGenreSlug)} (${_dramas.length})'
+                                            : (_discoverSource == 'all'
+                                                ? 'Phim đề xuất ngẫu nhiên (${_dramas.length})'
+                                                : 'Đề xuất ${_getCategoryLabel(_discoverSource)} (${_dramas.length})'))
+                                        : (_currentCategorySlug.contains('rank')
+                                            ? 'BXH ${_getCategoryLabel(_currentCategorySlug)} (Trang $_currentPage/$_totalPages)'
+                                            : 'Kho ${_getCategoryLabel(_currentCategorySlug)} (Trang $_currentPage/$_totalPages)'))),
                             style: const TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w600,
@@ -1171,8 +1353,45 @@ class _HongguoScreenState extends State<HongguoScreen> {
                     ),
                   ),
                   const SizedBox(width: 8),
+                  if (_isAiResultMode)
+                    InkWell(
+                      onTap: _loadDramas,
+                      borderRadius: BorderRadius.circular(20),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 5,
+                        ),
+                        decoration: BoxDecoration(
+                          color: AppColors.darkSurfaceVariant,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: AppColors.cardBorder,
+                          ),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.close_rounded,
+                              size: 13,
+                              color: AppColors.textSecondary,
+                            ),
+                            SizedBox(width: 4),
+                            Text(
+                              'Thoát lọc AI',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                   // Nút hành động Subheader (Đổi phim ngẫu nhiên khi ở Đề Xuất, hoặc Làm mới khi ở BXH/Thể loại)
-                  if (!_isSearchMode)
+                  if (!_isSearchMode && !_isAiResultMode)
                     InkWell(
                       onTap: _isLoading
                           ? null
@@ -1235,23 +1454,35 @@ class _HongguoScreenState extends State<HongguoScreen> {
               ),
             ),
 
-            // 4. LƯỚI PHIM VỚI PULL-TO-REFRESH
+            // 4. LƯỚI PHIM VỚI PULL-TO-REFRESH + NÚT TRỢ LÝ AI NỔI
             Expanded(
-              child: RefreshIndicator(
-                color: AppColors.primaryEmerald,
-                backgroundColor: AppColors.darkSurface,
-                onRefresh: _isSearchMode && _currentSearchQuery.isNotEmpty
-                    ? () => _loadSearchPage(_currentPage)
-                    : _loadDramas,
-                child: _buildBody(),
+              child: Stack(
+                children: [
+                  RefreshIndicator(
+                    color: AppColors.primaryEmerald,
+                    backgroundColor: AppColors.darkSurface,
+                    onRefresh: _isSearchMode && _currentSearchQuery.isNotEmpty
+                        ? () => _loadSearchPage(_currentPage)
+                        : _loadDramas,
+                    child: _buildBody(),
+                  ),
+                  Positioned(
+                    right: 14,
+                    bottom: 12,
+                    child: _buildAssistantFloatingButton(),
+                  ),
+                ],
               ),
             ),
 
             // 5. THANH PHÂN TRANG (PAGINATION HOẶC ĐỔI PHIM MỚI)
-            if ((_isSearchMode || _currentCategorySlug != 'discover') &&
+            if (!_isAiResultMode &&
+                (_isSearchMode || _currentCategorySlug != 'discover') &&
                 _totalPages > 1)
               _buildPaginationBar(),
-            if (!_isSearchMode && _currentCategorySlug == 'discover')
+            if (!_isAiResultMode &&
+                !_isSearchMode &&
+                _currentCategorySlug == 'discover')
               Container(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -1390,7 +1621,7 @@ class _HongguoScreenState extends State<HongguoScreen> {
           physics: const AlwaysScrollableScrollPhysics(
             parent: BouncingScrollPhysics(),
           ),
-          padding: const EdgeInsets.fromLTRB(14, 4, 14, 16),
+          padding: const EdgeInsets.fromLTRB(14, 4, 14, 72),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: 2,
             childAspectRatio: aspectRatio,
@@ -1403,12 +1634,83 @@ class _HongguoScreenState extends State<HongguoScreen> {
             return _DramaCard(
               drama: drama,
               index: i + 1,
-              isRankCategory: _currentCategorySlug.contains('rank'),
+              isRankCategory:
+                  !_isAiResultMode && _currentCategorySlug.contains('rank'),
               isTranslationEnabled: _isTranslationEnabled,
               onTap: () => _openDramaDetail(drama),
               onLongPress: () => _showDramaQuickMenu(drama),
             );
           },
+        );
+      },
+    );
+  }
+
+  Widget _buildAssistantFloatingButton() {
+    return ListenableBuilder(
+      listenable: _assistantController,
+      builder: (context, _) {
+        final isReady = _assistantController.connectionState ==
+            AssistantConnectionState.ready;
+        final isBusy = _assistantController.isAssistantBusy ||
+            _assistantController.isMicActive;
+        return Material(
+          color: Colors.transparent,
+          elevation: 8,
+          shadowColor: AppColors.primaryEmerald.withValues(alpha: 0.35),
+          borderRadius: BorderRadius.circular(28),
+          child: InkWell(
+            onTap: _openAssistantSheet,
+            borderRadius: BorderRadius.circular(28),
+            child: Ink(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    AppColors.primaryEmerald,
+                    AppColors.primaryEmerald.withValues(alpha: 0.85),
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(28),
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.25),
+                  width: 1,
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    isBusy
+                        ? Icons.graphic_eq_rounded
+                        : Icons.auto_awesome_rounded,
+                    color: Colors.black,
+                    size: 18,
+                  ),
+                  const SizedBox(width: 6),
+                  const Text(
+                    'Trợ lý AI',
+                    style: TextStyle(
+                      color: Colors.black,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 13,
+                    ),
+                  ),
+                  if (isReady) ...[
+                    const SizedBox(width: 6),
+                    Container(
+                      width: 7,
+                      height: 7,
+                      decoration: const BoxDecoration(
+                        color: Colors.black87,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
         );
       },
     );

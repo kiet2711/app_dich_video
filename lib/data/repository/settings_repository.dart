@@ -453,4 +453,23 @@ class SettingsRepository {
       prefs.getString('comment_translation_engine') ?? 'local';
   set commentTranslationEngine(String v) =>
       prefs.setString('comment_translation_engine', v);
+
+  // ===== CẤU HÌNH TRỢ LÝ AI HỒNG QUẢ (GEMINI LIVE API) =====
+  /// Model Live API mặc định của Trợ lý Hồng Quả
+  String get hongguoAssistantModel =>
+      prefs.getString('hongguo_assistant_model') ?? 'gemini-3.8-live';
+  set hongguoAssistantModel(String v) =>
+      prefs.setString('hongguo_assistant_model', v.trim());
+
+  /// Chế độ đầu ra của Trợ lý: false = Chỉ chữ (im lặng), true = Lời nói + chữ
+  bool get hongguoAssistantOutputAudio =>
+      prefs.getBool('hongguo_assistant_output_audio') ?? false;
+  set hongguoAssistantOutputAudio(bool v) =>
+      prefs.setBool('hongguo_assistant_output_audio', v);
+
+  /// Số lượng phim gợi ý mặc định của Trợ lý (1..20)
+  int get hongguoAssistantDefaultCount =>
+      (prefs.getInt('hongguo_assistant_default_count') ?? 5).clamp(1, 20);
+  set hongguoAssistantDefaultCount(int v) =>
+      prefs.setInt('hongguo_assistant_default_count', v.clamp(1, 20));
 }

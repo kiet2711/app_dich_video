@@ -17,6 +17,10 @@ class HongguoDramaItem {
   final List<String> tags;
   final String intro;
   final List<String> vidList;
+  final String metricText;
+  final int? rank;
+  final List<String> statusTags;
+  final String sourceCategory;
 
   const HongguoDramaItem({
     required this.seriesId,
@@ -26,7 +30,39 @@ class HongguoDramaItem {
     this.tags = const [],
     this.intro = '',
     this.vidList = const [],
+    this.metricText = '',
+    this.rank,
+    this.statusTags = const [],
+    this.sourceCategory = '',
   });
+
+  HongguoDramaItem copyWith({
+    String? seriesId,
+    String? title,
+    String? cover,
+    int? episodeCount,
+    List<String>? tags,
+    String? intro,
+    List<String>? vidList,
+    String? metricText,
+    int? rank,
+    List<String>? statusTags,
+    String? sourceCategory,
+  }) {
+    return HongguoDramaItem(
+      seriesId: seriesId ?? this.seriesId,
+      title: title ?? this.title,
+      cover: cover ?? this.cover,
+      episodeCount: episodeCount ?? this.episodeCount,
+      tags: tags ?? this.tags,
+      intro: intro ?? this.intro,
+      vidList: vidList ?? this.vidList,
+      metricText: metricText ?? this.metricText,
+      rank: rank ?? this.rank,
+      statusTags: statusTags ?? this.statusTags,
+      sourceCategory: sourceCategory ?? this.sourceCategory,
+    );
+  }
 }
 
 class HongguoEpisodeItem {
@@ -119,38 +155,60 @@ class HongguoResolver {
 
   static const List<HongguoCategory> categories = [
     HongguoCategory(slug: 'discover', label: '✨ Đề Xuất'),
-    HongguoCategory(slug: 'rank/hot-drama', label: '🔥 Hot Nhất'),
+    HongguoCategory(slug: 'rank/hot-drama', label: '🔥 BXH'),
     HongguoCategory(slug: 'category/real-drama', label: '🎬 Người Thật'),
     HongguoCategory(slug: 'category/comic-drama', label: '🎨 Hoạt Hình'),
     HongguoCategory(slug: 'category/ai-drama', label: '🤖 Phim AI'),
   ];
 
+  /// Toàn bộ 10 Bảng Xếp Hạng thực tế trên hongguoduanju.com
+  static const List<HongguoCategory> rankBoards = [
+    HongguoCategory(slug: 'rank/hot-drama', label: '🔥 Hot Tổng Hợp'),
+    HongguoCategory(slug: 'rank/hot-real-drama', label: '🎬 Hot Người Thật'),
+    HongguoCategory(slug: 'rank/hot-comic-drama', label: '🎨 Hot Hoạt Hình'),
+    HongguoCategory(slug: 'rank/hot-ai-drama', label: '🤖 Hot Phim AI'),
+    HongguoCategory(slug: 'rank/hot-search-drama', label: '🔍 Hot Tìm Kiếm'),
+    HongguoCategory(slug: 'rank/must-watch-drama', label: '⭐ Phải Xem'),
+    HongguoCategory(slug: 'rank/new-drama', label: '🆕 Phim Mới'),
+    HongguoCategory(slug: 'rank/prestige-drama', label: '🏅 Điểm Cao / Uy Tín'),
+    HongguoCategory(slug: 'rank/followed-drama', label: '❤️ Sưu Tầm Nhiều'),
+    HongguoCategory(slug: 'rank/subscribe-drama', label: '📅 Hóng / Đặt Lịch'),
+  ];
+
   static const List<HongguoGenre> realDramaGenres = [
     HongguoGenre(slug: '', label: 'Tất cả'),
-    HongguoGenre(slug: 'fantasy', label: 'Tu tiên / Huyền huyễn (修仙)'),
-    HongguoGenre(slug: 'youth', label: 'Học đường / Thanh xuân (校园)'),
+    HongguoGenre(slug: 'fantasy', label: 'Tu tiên / Huyền huyễn (玄幻)'),
+    HongguoGenre(slug: 'youth', label: 'Học đường / Thanh xuân (青春)'),
     HongguoGenre(slug: 'romance', label: 'Tình cảm (爱情)'),
-    HongguoGenre(slug: 'clan', label: 'Hào môn / Tổng tài (豪门)'),
+    HongguoGenre(slug: 'clan', label: 'Hào môn / Gia tộc (家族)'),
     HongguoGenre(slug: 'comeback', label: 'Nghịch tập (逆袭)'),
     HongguoGenre(slug: 'urban', label: 'Đô thị (都市)'),
     HongguoGenre(slug: 'costume', label: 'Cổ trang (古装)'),
     HongguoGenre(slug: 'sci-fi', label: 'Khoa huyễn (科幻)'),
-    HongguoGenre(slug: 'action-adventure', label: 'Hành động (动作)'),
-    HongguoGenre(slug: 'supernatural', label: 'Linh dị (灵异)'),
+    HongguoGenre(slug: 'wonder', label: 'Kỳ ảo (奇幻)'),
+    HongguoGenre(slug: 'drama', label: 'Chính kịch / Tâm lý (剧情)'),
+    HongguoGenre(slug: 'action-adventure', label: 'Hành động / Phiêu lưu (动作冒险)'),
+    HongguoGenre(slug: 'supernatural', label: 'Linh dị / Chí quái (志怪)'),
     HongguoGenre(slug: 'cute-kids', label: 'Manh bảo (萌宝)'),
     HongguoGenre(slug: 'growth', label: 'Trưởng thành (成长)'),
     HongguoGenre(slug: 'family', label: 'Gia đình (家庭)'),
     HongguoGenre(slug: 'period', label: 'Niên đại (年代)'),
-    HongguoGenre(slug: 'suspense', label: 'Hồi hộp (悬疑)'),
+    HongguoGenre(slug: 'suspense', label: 'Hồi hộp / Trinh thám (悬疑)'),
+    HongguoGenre(slug: 'thriller', label: 'Giật gân (惊悚)'),
+    HongguoGenre(slug: 'horror', label: 'Kinh dị (恐怖)'),
+    HongguoGenre(slug: 'legend', label: 'Kỳ truyện / Giang hồ (传奇)'),
+    HongguoGenre(slug: 'disaster', label: 'Thảm họa / Sinh tồn (灾难)'),
+    HongguoGenre(slug: 'war', label: 'Chiến tranh / Dân quốc (战争)'),
     HongguoGenre(slug: 'comedy', label: 'Hài hước (喜剧)'),
+    HongguoGenre(slug: 'variety', label: 'Giải trí / Show (综艺)'),
   ];
 
   static const List<HongguoGenre> comicDramaGenres = [
     HongguoGenre(slug: '', label: 'Tất cả Hoạt Hình'),
-    HongguoGenre(slug: 'fantasy', label: 'Tu tiên / Huyền huyễn (修仙)'),
-    HongguoGenre(slug: 'creative', label: 'Hệ thống / Xuyên không (系统)'),
-    HongguoGenre(slug: 'drama', label: 'Tình cảm / Học đường (剧情)'),
-    HongguoGenre(slug: 'adventure', label: 'Nhiệt huyết / Phiêu lưu (热血)'),
+    HongguoGenre(slug: 'fantasy', label: 'Tu tiên / Huyền huyễn (玄幻)'),
+    HongguoGenre(slug: 'creative', label: 'Não động / Hệ thống (脑洞)'),
+    HongguoGenre(slug: 'drama', label: 'Chính kịch / Tình cảm (剧情)'),
+    HongguoGenre(slug: 'adventure', label: 'Nhiệt huyết / Phiêu lưu (冒险)'),
     HongguoGenre(slug: 'wonder', label: 'Kỳ ảo / Dị giới (奇幻)'),
     HongguoGenre(slug: 'wealthy-family', label: 'Hào môn / Đô thị (豪门)'),
     HongguoGenre(slug: 'apocalypse', label: 'Mạt thế / Sinh tồn (末世)'),
@@ -164,9 +222,34 @@ class HongguoResolver {
     HongguoGenre(slug: 'wealthy-family', label: 'Hào môn / Tổng tài (豪门)'),
     HongguoGenre(slug: 'apocalypse', label: 'Mạt thế / Sinh tồn (末世)'),
     HongguoGenre(slug: 'creative', label: 'Ý tưởng sáng tạo (脑洞)'),
+    HongguoGenre(slug: 'drama', label: 'Chính kịch / Đời thường (剧情)'),
     HongguoGenre(slug: 'wonder', label: 'Kỳ ảo (奇幻)'),
     HongguoGenre(slug: 'adventure', label: 'Phiêu lưu (冒险)'),
   ];
+
+  static String inferSourceCategoryFromRoute(String categoryOrRankSlug) {
+    final lower = categoryOrRankSlug.trim().toLowerCase();
+    if (lower.contains('real-drama')) return 'category/real-drama';
+    if (lower.contains('comic-drama') || lower == 'category/comic') {
+      return 'category/comic-drama';
+    }
+    if (lower.contains('ai-drama')) return 'category/ai-drama';
+    return '';
+  }
+
+  static List<HongguoGenre> genresForCategory(String categorySlug) {
+    final lower = categorySlug.trim().toLowerCase();
+    if (lower == 'category/comic-drama' || lower == 'comic-drama') {
+      return comicDramaGenres;
+    }
+    if (lower == 'category/ai-drama' || lower == 'ai-drama') {
+      return aiDramaGenres;
+    }
+    if (lower == 'category/real-drama' || lower == 'real-drama') {
+      return realDramaGenres;
+    }
+    return const [];
+  }
 
   static bool isHongguoUrl(String input) {
     final lower = input.trim().toLowerCase();
@@ -250,7 +333,11 @@ class HongguoResolver {
     );
     final html = res.data ?? '';
 
-    return _parseDramaList(html, page);
+    return parseDramaListHtml(
+      html,
+      page,
+      inferredSourceCategory: inferSourceCategoryFromRoute(category),
+    );
   }
 
   /// Lấy danh sách phim đề xuất mới ngẫu nhiên (Load phim mới)
@@ -263,7 +350,7 @@ class HongguoResolver {
     // 1. Nếu có chỉ định danh mục cụ thể (vd: Người Thật, Phim AI, Hoạt Hình)
     if (preferredCategory != null &&
         preferredCategory.isNotEmpty &&
-        preferredCategory != 'rank/hot-drama' &&
+        !preferredCategory.startsWith('rank/') &&
         preferredCategory != 'discover') {
       final maxRand = (genre != null && genre.isNotEmpty) ? 4 : 5;
       final randomPage = rng.nextInt(maxRand) + 1;
@@ -294,29 +381,18 @@ class HongguoResolver {
 
     // 2. Nếu ở chế độ Tất cả nhưng có chọn thể loại:
     if (genre != null && genre.isNotEmpty) {
-      final candidateCats = <String>['category/real-drama'];
-      if ([
-        'fantasy',
-        'sci-fi',
-        'creative',
-        'apocalypse',
-        'wealthy-family',
-        'wonder',
-        'adventure',
-        'drama',
-      ].contains(genre)) {
+      final candidateCats = <String>[];
+      if (realDramaGenres.any((g) => g.slug == genre)) {
+        candidateCats.add('category/real-drama');
+      }
+      if (comicDramaGenres.any((g) => g.slug == genre)) {
         candidateCats.add('category/comic-drama');
       }
-      if ([
-        'fantasy',
-        'sci-fi',
-        'wealthy-family',
-        'apocalypse',
-        'creative',
-        'wonder',
-        'adventure',
-      ].contains(genre)) {
+      if (aiDramaGenres.any((g) => g.slug == genre)) {
         candidateCats.add('category/ai-drama');
+      }
+      if (candidateCats.isEmpty) {
+        candidateCats.add('category/real-drama');
       }
       final pickedCat = candidateCats[rng.nextInt(candidateCats.length)];
       final randomPage = rng.nextInt(4) + 1;
@@ -352,24 +428,15 @@ class HongguoResolver {
     ];
     final selectedCat = pool[rng.nextInt(pool.length)];
     final maxPage = selectedCat.startsWith('rank/')
-        ? 3
-        : (selectedCat == 'category/real-drama' ? 20 : 10);
+        ? 1
+        : (selectedCat == 'category/real-drama' ? 15 : 8);
     final randomPage = rng.nextInt(maxPage) + 1;
     String pickedGenre = '';
     if (selectedCat == 'category/real-drama') {
-      final genres = [
-        'wealthy-family',
-        'sweet-love',
-        'rebirth',
-        'counter-attack',
-        'urban',
-        'fantasy',
-        'historical',
-        'suspense',
-        'war-god',
-        'time-travel',
-        '',
-      ];
+      final genres = realDramaGenres
+          .where((g) => g.slug != 'variety')
+          .map((g) => g.slug)
+          .toList();
       pickedGenre = genres[rng.nextInt(genres.length)];
     }
 
@@ -1032,13 +1099,22 @@ class HongguoResolver {
   }
 
   HongguoBrowseResult _parseDramaList(String html, int requestedPage) {
+    return parseDramaListHtml(html, requestedPage);
+  }
+
+  /// Parse HTML trang danh mục / thể loại / bảng xếp hạng (`_ROUTER_DATA` và DOM fallback).
+  static HongguoBrowseResult parseDramaListHtml(
+    String html,
+    int requestedPage, {
+    String inferredSourceCategory = '',
+  }) {
     final items = <HongguoDramaItem>[];
     final seen = <String>{};
     var pageNum = requestedPage;
     var totalPages = 1;
     var totalItems = 0;
 
-    // Cách 1: Parse từ _ROUTER_DATA JSON nhúng trong SSR HTML (chứa series_name, cover HD, vid_list, tags...)
+    // Cách 1: Parse từ _ROUTER_DATA JSON nhúng trong SSR HTML (chứa series_name, cover HD, vid_list, tags, rank...)
     final routerIdx = html.indexOf('_ROUTER_DATA');
     if (routerIdx != -1) {
       try {
@@ -1083,8 +1159,12 @@ class HongguoResolver {
             void processList(dynamic list) {
               if (list is! List) return;
               for (final raw in list) {
-                if (raw is! Map<String, dynamic>) continue;
-                final item = _parseDramaItemMap(raw, seen);
+                if (raw is! Map) continue;
+                final item = _parseDramaItemMap(
+                  Map<String, dynamic>.from(raw),
+                  seen,
+                  inferredSourceCategory: inferredSourceCategory,
+                );
                 if (item != null) {
                   items.add(item);
                 }
@@ -1168,6 +1248,7 @@ class HongguoResolver {
               title: title,
               cover: cover,
               episodeCount: epCount,
+              sourceCategory: inferredSourceCategory,
             ),
           );
         }
@@ -1289,13 +1370,22 @@ class HongguoResolver {
     Map<String, dynamic> raw,
     Set<String> seen, {
     String fallbackTitle = '',
+    String inferredSourceCategory = '',
   }) {
-    final sid = (raw['series_id'] ?? '').toString().trim();
+    var sid = (raw['series_id'] ?? raw['seriesId'] ?? '').toString().trim();
+    if (sid.isEmpty) {
+      final rawId = (raw['id'] ?? '').toString().trim();
+      if (RegExp(r'^\d{6,}$').hasMatch(rawId)) {
+        sid = rawId;
+      }
+    }
     if (sid.isEmpty || !seen.add(sid)) return null;
 
     final rawTitle =
         (raw['series_name'] ??
+                raw['seriesName'] ??
                 raw['series_title'] ??
+                raw['seriesTitle'] ??
                 raw['title'] ??
                 raw['name'] ??
                 fallbackTitle)
@@ -1304,7 +1394,12 @@ class HongguoResolver {
     if (title.isEmpty) return null;
 
     final cover = _normalizeImageUrl(
-      (raw['series_cover'] ?? raw['cover'] ?? raw['image'] ?? '').toString(),
+      (raw['series_cover'] ??
+              raw['seriesCover'] ??
+              raw['cover'] ??
+              raw['image'] ??
+              '')
+          .toString(),
     );
 
     final epCount =
@@ -1313,7 +1408,8 @@ class HongguoResolver {
         ) ??
         0;
     final intro = _cleanJsonString(
-      (raw['series_intro'] ?? raw['intro'] ?? '').toString(),
+      (raw['series_intro'] ?? raw['intro'] ?? raw['description'] ?? '')
+          .toString(),
     );
 
     final tags = <String>[];
@@ -1339,14 +1435,47 @@ class HongguoResolver {
       }
     }
 
+    final statusTags = <String>[];
+    final rawStatusTags = raw['statusTags'];
+    if (rawStatusTags is List) {
+      for (final st in rawStatusTags) {
+        final clean = _cleanJsonString(st.toString());
+        if (clean.isNotEmpty) statusTags.add(clean);
+      }
+    }
+
     final vidList = <String>[];
-    final rawVids = raw['vid_list'];
+    final rawVids = raw['vid_list'] ?? raw['episodeVids'];
     if (rawVids is List) {
       vidList.addAll(
         rawVids
             .map((e) => e.toString().trim())
             .where((s) => s.isNotEmpty && RegExp(r'^\d+$').hasMatch(s)),
       );
+    }
+
+    final metricText = _cleanJsonString(
+      (raw['primaryMetricText'] ??
+              raw['heatText'] ??
+              raw['scoreText'] ??
+              raw['favorite_text'] ??
+              raw['favoriteText'] ??
+              raw['like_text'] ??
+              raw['likeText'] ??
+              '')
+          .toString(),
+    );
+    final rankVal = int.tryParse((raw['rank'] ?? '').toString());
+
+    var resolvedSource = inferredSourceCategory;
+    if (resolvedSource.isEmpty) {
+      if (tags.contains('真人剧')) {
+        resolvedSource = 'category/real-drama';
+      } else if (tags.contains('漫剧')) {
+        resolvedSource = 'category/comic-drama';
+      } else if (tags.contains('AI剧')) {
+        resolvedSource = 'category/ai-drama';
+      }
     }
 
     return HongguoDramaItem(
@@ -1357,6 +1486,10 @@ class HongguoResolver {
       tags: tags,
       intro: intro,
       vidList: vidList,
+      metricText: metricText,
+      rank: rankVal,
+      statusTags: statusTags,
+      sourceCategory: resolvedSource,
     );
   }
 

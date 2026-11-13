@@ -61,6 +61,48 @@ class AiModelRegistry {
     ),
   ];
 
+  /// 3 model Gemini Live API (WebSocket BidiGenerateContent) dùng cho Trợ lý Hồng Quả.
+  static const List<AiModelInfo> geminiLiveModels = [
+    AiModelInfo(
+      id: 'gemini-3.8-live',
+      displayName: 'Gemini 3.8 Live',
+      shortDescription: 'Nhanh, ổn định nhất cho hỏi đáp & gọi hàm tìm phim',
+      provider: AiProvider.gemini,
+      isRecommended: true,
+    ),
+    AiModelInfo(
+      id: 'gemini-3.8-live-extended-thinking',
+      displayName: 'Gemini 3.8 Live Extended Thinking',
+      shortDescription: 'Suy luận sâu, đối chiếu cốt truyện danh sách phức tạp',
+      provider: AiProvider.gemini,
+    ),
+    AiModelInfo(
+      id: 'gemini-3.1-flash-live-preview',
+      displayName: 'Gemini 3 Flash Live',
+      shortDescription: 'Siêu nhẹ, phản hồi nhanh cho tìm kiếm & thoại liên tục',
+      provider: AiProvider.gemini,
+    ),
+  ];
+
+  /// Thứ tự alias dự phòng khi dò tên model thật trong `/v1beta/models`.
+  static const Map<String, List<String>> liveModelCandidateIds = {
+    'gemini-3.8-live': [
+      'gemini-3.8-live',
+      'gemini-3.8-live-preview',
+    ],
+    'gemini-3.8-live-extended-thinking': [
+      'gemini-3.8-live-extended-thinking',
+      'gemini-3.8-live-extended-thinking-preview',
+      'gemini-3.8-live',
+    ],
+    'gemini-3.1-flash-live-preview': [
+      'gemini-3-flash-live',
+      'gemini-3-flash-live-preview',
+      'gemini-3.1-flash-live-preview',
+      'gemini-3.0-flash-live-preview',
+    ],
+  };
+
   static AiProvider detectProvider(String modelId) {
     final clean = modelId.trim().toLowerCase();
     if (clean == 'capcut') return AiProvider.capcut;

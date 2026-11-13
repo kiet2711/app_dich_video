@@ -45,5 +45,24 @@ void main() {
       expect(ids, contains('openai/gpt-oss-20b'));
       expect(ids, contains('qwen/qwen3.8-27b'));
     });
+
+    test('geminiLiveModels contains all 3 Live API models and candidate mappings', () {
+      final names = AiModelRegistry.geminiLiveModels
+          .map((m) => m.displayName)
+          .toList();
+      expect(names, [
+        'Gemini 3.8 Live',
+        'Gemini 3.8 Live Extended Thinking',
+        'Gemini 3 Flash Live',
+      ]);
+
+      for (final model in AiModelRegistry.geminiLiveModels) {
+        expect(model.provider, AiProvider.gemini);
+        expect(AiModelRegistry.detectProvider(model.id), AiProvider.gemini);
+        final candidates = AiModelRegistry.liveModelCandidateIds[model.id];
+        expect(candidates, isNotNull);
+        expect(candidates, isNotEmpty);
+      }
+    });
   });
 }
