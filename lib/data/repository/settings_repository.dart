@@ -491,4 +491,23 @@ class SettingsRepository {
       (prefs.getInt('hongguo_assistant_default_count') ?? 5).clamp(1, 20);
   set hongguoAssistantDefaultCount(int v) =>
       prefs.setInt('hongguo_assistant_default_count', v.clamp(1, 20));
+
+  // ===== CẤU HÌNH TRỢ LÝ AI BILIBILI (GEMINI LIVE API) =====
+  /// Model Live API mặc định của Trợ lý Bilibili
+  String get bilibiliAssistantModel =>
+      prefs.getString('bilibili_assistant_model') ?? hongguoAssistantModel;
+  set bilibiliAssistantModel(String v) =>
+      prefs.setString('bilibili_assistant_model', v.trim());
+
+  /// Chế độ đầu ra của Trợ lý Bilibili: false = Chỉ chữ, true = Lời nói + chữ
+  bool get bilibiliAssistantOutputAudio =>
+      prefs.getBool('bilibili_assistant_output_audio') ?? false;
+  set bilibiliAssistantOutputAudio(bool v) =>
+      prefs.setBool('bilibili_assistant_output_audio', v);
+
+  /// Số lượng kết quả gợi ý mặc định của Trợ lý Bilibili (1..20)
+  int get bilibiliAssistantDefaultCount =>
+      (prefs.getInt('bilibili_assistant_default_count') ?? 5).clamp(1, 20);
+  set bilibiliAssistantDefaultCount(int v) =>
+      prefs.setInt('bilibili_assistant_default_count', v.clamp(1, 20));
 }

@@ -171,6 +171,8 @@ class BilibiliAnimeItem {
   final String upFace;
   final String danmakuText;
   final String likeCountText;
+  final int pubdate;
+  final int typeId;
 
   const BilibiliAnimeItem({
     required this.title,
@@ -191,7 +193,29 @@ class BilibiliAnimeItem {
     this.upFace = '',
     this.danmakuText = '',
     this.likeCountText = '',
+    this.pubdate = 0,
+    this.typeId = 0,
   });
+
+  String get publishedAtText => formatPubdate(pubdate);
+
+  static String formatPubdate(int pubdateSec) {
+    if (pubdateSec <= 0) return '';
+    final dt = DateTime.fromMillisecondsSinceEpoch(pubdateSec * 1000);
+    final now = DateTime.now();
+    final diff = now.difference(dt);
+    if (diff.isNegative || diff.inMinutes < 60) {
+      final mins = diff.inMinutes <= 0 ? 1 : diff.inMinutes;
+      return '$mins phút trước';
+    }
+    if (diff.inHours < 24) {
+      return '${diff.inHours} giờ trước';
+    }
+    if (diff.inDays < 30) {
+      return '${diff.inDays} ngày trước';
+    }
+    return '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year}';
+  }
 
   static String formatDuration(int seconds) {
     if (seconds <= 0) return '';
@@ -349,6 +373,378 @@ class BilibiliQrPollResult {
   bool get isSuccess => code == 0 && sessData != null && sessData!.isNotEmpty;
   bool get isPending => code == 86101 || code == 86090;
   bool get isExpired => code == 86038;
+}
+
+class BilibiliPartition {
+  final int tid;
+  final String zhName;
+  final String viLabel;
+  final List<String> aliases;
+
+  const BilibiliPartition({
+    required this.tid,
+    required this.zhName,
+    required this.viLabel,
+    this.aliases = const [],
+  });
+
+  static const List<BilibiliPartition> catalog = [
+    BilibiliPartition(tid: 0, zhName: '全区', viLabel: 'Tất cả', aliases: ['all', 'tat ca']),
+    BilibiliPartition(tid: 36, zhName: '知识', viLabel: 'Kiến thức / Học tập', aliases: ['knowledge', 'kien thuc', 'hoc tap', 'giao duc', 'khoa hoc']),
+    BilibiliPartition(tid: 188, zhName: '科技', viLabel: 'Công nghệ / Đồ số', aliases: ['tech', 'cong nghe', 'so', 'ai', 'pc', 'dien thoai', 'digital']),
+    BilibiliPartition(tid: 4, zhName: '游戏', viLabel: 'Game', aliases: ['game', 'gaming', 'tro choi']),
+    BilibiliPartition(tid: 160, zhName: '生活', viLabel: 'Đời sống / Vlog / Mẹo hay', aliases: ['life', 'doi song', 'vlog']),
+    BilibiliPartition(tid: 3, zhName: '音乐', viLabel: 'Âm nhạc', aliases: ['music', 'am nhac', 'nhac']),
+    BilibiliPartition(tid: 181, zhName: '影视', viLabel: 'Phim ảnh / Review phim', aliases: ['film', 'phim anh', 'review phim']),
+    BilibiliPartition(tid: 1, zhName: '动画', viLabel: 'Hoạt hình / AMV', aliases: ['animation', 'hoat hinh', 'amv', 'mad']),
+    BilibiliPartition(tid: 167, zhName: '国创', viLabel: 'Quốc sáng / Donghua', aliases: ['guochuang', 'donghua', 'hoat hinh trung']),
+    BilibiliPartition(tid: 13, zhName: '番剧', viLabel: 'Anime / Phiên kịch', aliases: ['anime', 'bangumi', 'nhat']),
+    BilibiliPartition(tid: 177, zhName: '纪录片', viLabel: 'Phim tài liệu', aliases: ['documentary', 'tai lieu']),
+    BilibiliPartition(tid: 23, zhName: '电影', viLabel: 'Phim điện ảnh', aliases: ['movie', 'dien anh', 'chieu rap']),
+    BilibiliPartition(tid: 11, zhName: '电视剧', viLabel: 'Phim truyền hình', aliases: ['tv', 'truyen hinh', 'phim bo']),
+    BilibiliPartition(tid: 211, zhName: '美食', viLabel: 'Ẩm thực / Nấu ăn', aliases: ['food', 'am thuc', 'nau an']),
+    BilibiliPartition(tid: 217, zhName: '动物圈', viLabel: 'Động vật / Thú cưng', aliases: ['animal', 'dong vat', 'thu cung']),
+    BilibiliPartition(tid: 234, zhName: '运动', viLabel: 'Thể thao', aliases: ['sport', 'the thao', 'gym']),
+    BilibiliPartition(tid: 119, zhName: '鬼畜', viLabel: 'Quỷ súc / Chế hài', aliases: ['kichiku', 'quy suc']),
+    BilibiliPartition(tid: 129, zhName: '舞蹈', viLabel: 'Vũ đạo / Nhảy', aliases: ['dance', 'vu dao', 'nhay']),
+    BilibiliPartition(tid: 155, zhName: '时尚', viLabel: 'Thời trang / Làm đẹp', aliases: ['fashion', 'thoi trang', 'lam dep']),
+    BilibiliPartition(tid: 5, zhName: '娱乐', viLabel: 'Giải trí / Showbiz', aliases: ['entertainment', 'giai tri']),
+    BilibiliPartition(tid: 202, zhName: '资讯', viLabel: 'Tin tức / Thời sự', aliases: ['news', 'tin tuc', 'thoi su']),
+  ];
+
+  static BilibiliPartition? byTid(int tid) {
+    for (final p in catalog) {
+      if (p.tid == tid) return p;
+    }
+    return null;
+  }
+
+  static BilibiliPartition resolve(dynamic rawTidOrName) {
+    if (rawTidOrName is int) {
+      return byTid(rawTidOrName) ?? catalog.first;
+    }
+    final text = (rawTidOrName ?? '').toString().trim().toLowerCase();
+    final asInt = int.tryParse(text);
+    if (asInt != null) {
+      return byTid(asInt) ?? catalog.first;
+    }
+    if (text.isEmpty) return catalog.first;
+    // Pass 1: exact match trước để tránh từ ngắn ('ai', 'so', 'tv') khớp nhầm chuỗi dài ('tai lieu')
+    for (final p in catalog) {
+      if (p.zhName == text ||
+          p.viLabel.toLowerCase() == text ||
+          p.aliases.contains(text)) {
+        return p;
+      }
+    }
+    // Pass 2: khớp nhãn tiếng Việt hoặc khớp theo ranh giới từ đối với alias
+    for (final p in catalog) {
+      if (text.length >= 2 && p.viLabel.toLowerCase().contains(text)) {
+        return p;
+      }
+      if (p.aliases.any(
+        (a) => RegExp(
+          '(?:^|[^a-z0-9])${RegExp.escape(a)}(?:\$|[^a-z0-9])',
+        ).hasMatch(text),
+      )) {
+        return p;
+      }
+    }
+    return catalog.first;
+  }
+}
+
+/// Bộ phân loại nội dung giúp tách **Phim hoạt hình AI / AI漫剧 xem trực tiếp**
+/// khỏi các kết quả nhiễu thường gặp trên Bilibili:
+/// - Video kiến thức / dạy làm AI / bán khóa học / công cụ (`教程`, `全流程`, `ComfyUI`, ...)
+/// - Tiểu thuyết audio / nghe truyện / kịch truyền thanh (`有声小说`, `听书`, `广播剧`, `小说推文`)
+/// - Phim người thật đóng / AI người thật (`真人`, `实拍`, `真人短剧`, ...)
+class BilibiliContentClassifier {
+  const BilibiliContentClassifier._();
+
+  static const Set<int> animationTypeIds = {
+    1,
+    24,
+    25,
+    27,
+    47,
+    167,
+    153,
+    168,
+    195,
+    13,
+    32,
+    33,
+  };
+
+  static const Set<String> animationTypenames = {
+    '动画',
+    '短片·手书',
+    '短片·手书·配音',
+    'MAD·AMV',
+    'MMD·3D',
+    '同人·手书',
+    '综合',
+    '国创',
+    '国产动画',
+    '国产原创相关',
+    '番剧',
+    '完结动画',
+    '连载动画',
+    '动态漫·广播剧',
+  };
+
+  static const Set<String> nonAnimationTypenames = {
+    '科技',
+    '数码',
+    '人工智能',
+    '电脑技术',
+    '软件应用',
+    '计算机技术',
+    '机械',
+    '电子',
+    '知识',
+    '科学科普',
+    '社科·法律·心理',
+    '人文历史',
+    '财经商业',
+    '校园学习',
+    '职业职场',
+    '野生技术协会',
+    '生活',
+    '日常',
+    '搞笑',
+    '家居房产',
+    '手工',
+    '绘画',
+    '出行',
+    '娱乐',
+    '明星',
+    '综艺',
+    '短剧',
+    '小剧场',
+    '影视杂谈',
+    '影视剪辑',
+    '预告·资讯',
+    '资讯',
+    '热点',
+    '环球',
+    '社会',
+    '美食',
+    '时尚',
+    '运动',
+    '汽车',
+    '三农',
+    '音乐',
+    '有声书',
+  };
+
+  static const Set<String> knowledgeTechTypenames = {
+    '科技',
+    '数码',
+    '人工智能',
+    '电脑技术',
+    '软件应用',
+    '计算机技术',
+    '知识',
+    '科学科普',
+    '校园学习',
+    '职业职场',
+    '野生技术协会',
+    '财经商业',
+    '人文历史',
+  };
+
+  static final RegExp _tutorialRegex = RegExp(
+    r'(教程|教学|全流程|保姆级|喂饭|手把手|零基础|从零开始|从零|变现|月入|副业|起号|接单|提示词|prompt|comfyui|工作流|workflow|怎么制作|怎么做|如何制作|如何用ai|实操|参数|源码|赚钱|带货|拆解|教程向|教学向|评测|对比评测|软件|工具推荐|模型部署|本地部署|开源模型)',
+    caseSensitive: false,
+  );
+
+  static final RegExp _aiToolOnlyRegex = RegExp(
+    r'(即梦|可灵|runway|midjourney|stable\s*diffusion|seedance|liblib|libtv|vidu|pika)',
+    caseSensitive: false,
+  );
+
+  static final RegExp _audioNovelRegex = RegExp(
+    r'(有声小说|有声书|听书|广播剧|小说推文|推文|纯音频|睡前听|有声读物|有声剧|全本有声|有声播讲|多人有声|评书|相声|电台|助眠|播客|配音秀|有声漫)',
+    caseSensitive: false,
+  );
+
+  static final RegExp _liveActionCompoundRegex = RegExp(
+    r'(真人短剧|真人版|真人ai|ai真人|实拍|微电影|写实真人|实景拍摄|探店|采访|日常vlog|演员演技)',
+    caseSensitive: false,
+  );
+
+  static final RegExp _pureAnimeTitleRegex = RegExp(
+    r'(ai动画|ai动漫|动态漫|动态漫画|沙雕动画|国产动画|国漫)',
+    caseSensitive: false,
+  );
+
+  static final RegExp _watchableEpisodeRegex = RegExp(
+    r'(一口气看完|漫剧合集|动画合集|全集|合集|完整版|第[0-9一二三四五六七八九十]+集|番外|连载)',
+    caseSensitive: false,
+  );
+
+  static String _textBlob(BilibiliAnimeItem item, {bool includeDesc = true}) {
+    final tags = item.styles.join(' ');
+    if (!includeDesc) return '${item.title} $tags ${item.badge}'.toLowerCase();
+    return '${item.title} $tags ${item.badge} ${item.desc}'.toLowerCase();
+  }
+
+  static bool isTutorialOrCourse(BilibiliAnimeItem item) {
+    final titleTags = _textBlob(item, includeDesc: false);
+    if (_tutorialRegex.hasMatch(titleTags)) return true;
+
+    final b = item.badge.trim();
+    if (knowledgeTechTypenames.contains(b)) {
+      // Video nằm thẳng trong phân khu Kiến thức/Công nghệ/AI Tool nhưng lại thiếu dấu hiệu phim hoạt hình thuần -> coi là kiến thức/hướng dẫn
+      if (!_pureAnimeTitleRegex.hasMatch(titleTags) ||
+          _aiToolOnlyRegex.hasMatch(titleTags)) {
+        return true;
+      }
+    }
+    if (_aiToolOnlyRegex.hasMatch(item.title) &&
+        !_pureAnimeTitleRegex.hasMatch(item.title) &&
+        !_watchableEpisodeRegex.hasMatch(item.title)) {
+      return true;
+    }
+    return false;
+  }
+
+  static bool isAudioNovelOrPodcast(BilibiliAnimeItem item) {
+    final blob = _textBlob(item);
+    final b = item.badge.trim();
+    if (b == '有声书') return true;
+    // Phân khu '动态漫·广播剧' có cả Động thái mạn lẫn Kịch truyền thanh -> chỉ loại nếu tiêu đề/tag/mô tả nhắc audio/radio/thính thư
+    if (b == '动态漫·广播剧') {
+      final nonBadge = '${item.title} ${item.styles.join(" ")} ${item.desc}'.toLowerCase();
+      return _audioNovelRegex.hasMatch(nonBadge);
+    }
+    return _audioNovelRegex.hasMatch(blob);
+  }
+
+  static bool isLiveAction(BilibiliAnimeItem item) {
+    final b = item.badge.trim();
+    if (const {'短剧', '小剧场', '明星', '综艺', '生活', '日常', '美食', '时尚', '汽车', '三农', '运动'}.contains(b)) {
+      return true;
+    }
+    final titleTags = _textBlob(item, includeDesc: false);
+    if (_liveActionCompoundRegex.hasMatch(titleTags)) return true;
+    for (final m in RegExp('真人').allMatches(titleTags)) {
+      final before = m.start >= 2
+          ? titleTags.substring(m.start - 2, m.start)
+          : titleTags.substring(0, m.start);
+      if (!before.endsWith('非') && !before.endsWith('不是')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// Trả về `true` nếu [item] là **phim hoạt hình / AI漫剧 / AI动画** để XEM,
+  /// không phải kiến thức/dạy làm AI, không phải người thật và không phải tiểu thuyết audio.
+  static bool isCleanWatchableAiAnime(BilibiliAnimeItem item) {
+    if (isTutorialOrCourse(item)) return false;
+    if (isAudioNovelOrPodcast(item)) return false;
+    if (isLiveAction(item)) return false;
+
+    final b = item.badge.trim();
+    if (b.isNotEmpty && nonAnimationTypenames.contains(b)) {
+      // Cho qua rất chặt chỉ khi tiêu đề đích thị ghi AI动画/AI动漫/动态漫 (không kèm nhiễu đã lọc ở trên)
+      return _pureAnimeTitleRegex.hasMatch(item.title);
+    }
+    return true;
+  }
+
+  /// Chấm điểm ưu tiên cho kết quả thuộc thể loại phim hoạt hình AI xem trực tiếp.
+  static double scoreWatchableAiAnime(BilibiliAnimeItem item) {
+    if (!isCleanWatchableAiAnime(item)) return -500.0;
+    double score = 0;
+    final b = item.badge.trim();
+    if (animationTypenames.contains(b) ||
+        animationTypeIds.contains(item.typeId)) {
+      score += 32.0;
+    }
+    final titleTags = _textBlob(item, includeDesc: false);
+    if (RegExp(r'(ai动画|ai动漫)').hasMatch(titleTags)) score += 26.0;
+    if (RegExp(r'(动态漫|动态漫画|ai漫剧|ai短片|沙雕动画)').hasMatch(titleTags)) {
+      score += 18.0;
+    }
+    if (_watchableEpisodeRegex.hasMatch(titleTags)) score += 14.0;
+    return score;
+  }
+}
+
+class BilibiliUserSearchResult {
+  final int mid;
+  final String uname;
+  final String upic;
+  final String usign;
+  final int fans;
+  final String fansText;
+  final int videos;
+  final bool isOfficial;
+  final String officialDesc;
+
+  const BilibiliUserSearchResult({
+    required this.mid,
+    required this.uname,
+    this.upic = '',
+    this.usign = '',
+    this.fans = 0,
+    this.fansText = '',
+    this.videos = 0,
+    this.isOfficial = false,
+    this.officialDesc = '',
+  });
+}
+
+class BilibiliPgcSearchResult {
+  final int seasonId;
+  final int mediaId;
+  final int? firstEpId;
+  final String title;
+  final String cover;
+  final String badge;
+  final String areas;
+  final String styles;
+  final String indexShow;
+  final String score;
+  final String desc;
+  final int seasonType;
+
+  const BilibiliPgcSearchResult({
+    required this.seasonId,
+    this.mediaId = 0,
+    this.firstEpId,
+    required this.title,
+    this.cover = '',
+    this.badge = '',
+    this.areas = '',
+    this.styles = '',
+    this.indexShow = '',
+    this.score = '',
+    this.desc = '',
+    this.seasonType = 0,
+  });
+
+  BilibiliAnimeItem toAnimeItem() {
+    return BilibiliAnimeItem(
+      title: title,
+      cover: cover,
+      seasonId: seasonId > 0 ? seasonId : null,
+      epId: (firstEpId != null && firstEpId! > 0) ? firstEpId : null,
+      badge: badge,
+      desc: desc,
+      ratingText: score,
+      indexShow: indexShow,
+      styles: styles
+          .split(RegExp(r'[/,\s·]+'))
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .toList(),
+    );
+  }
 }
 
 class BilibiliResolver {
@@ -1404,6 +1800,22 @@ class BilibiliResolver {
     );
   }
 
+  /// Lấy danh sách PGC theo `seasonType`:
+  /// `1` = Anime Nhật, `2` = Điện ảnh, `3` = Phim tài liệu, `4` = Quốc sáng, `5` = Phim truyền hình, `7` = Giải trí
+  Future<List<BilibiliAnimeItem>> getPgcCatalog({
+    required int seasonType,
+    int page = 1,
+    int pageSize = 20,
+    int order = 2,
+    String cookie = '',
+  }) => _getPgcSeasonList(
+    seasonType: seasonType,
+    page: page,
+    pageSize: pageSize,
+    order: order,
+    cookie: cookie,
+  );
+
   Future<List<BilibiliAnimeItem>> _getPgcSeasonList({
     required int seasonType,
     int page = 1,
@@ -1591,6 +2003,7 @@ class BilibiliResolver {
         final views = stat?['view'];
         final danmaku = stat?['danmaku'];
         final likes = stat?['like'];
+        final pubdate = _parseUnixSec(item['pubdate']);
 
         return BilibiliAnimeItem(
           title: title,
@@ -1603,6 +2016,7 @@ class BilibiliResolver {
           viewCountText: views != null ? _formatCount(views) : '',
           danmakuText: danmaku != null ? _formatCount(danmaku) : '',
           likeCountText: likes != null ? _formatCount(likes) : '',
+          pubdate: pubdate,
         );
       }).where((it) => it.bvid != null && it.bvid!.isNotEmpty).toList();
     } catch (_) {
@@ -1642,6 +2056,7 @@ class BilibiliResolver {
         final views = stat?['view'];
         final danmaku = stat?['danmaku'];
         final likes = stat?['like'];
+        final pubdate = _parseUnixSec(item['pubdate']);
 
         return BilibiliAnimeItem(
           title: title,
@@ -1654,6 +2069,7 @@ class BilibiliResolver {
           viewCountText: views != null ? _formatCount(views) : '',
           danmakuText: danmaku != null ? _formatCount(danmaku) : '',
           likeCountText: likes != null ? _formatCount(likes) : '',
+          pubdate: pubdate,
         );
       }).where((it) => it.bvid != null && it.bvid!.isNotEmpty).toList();
     } catch (_) {
@@ -1661,58 +2077,177 @@ class BilibiliResolver {
     }
   }
 
-  /// Lấy danh sách phim AI / AI漫剧 / AI短剧
+  static int _parseUnixSec(dynamic raw) {
+    if (raw is num) return raw.toInt();
+    return int.tryParse((raw ?? '').toString()) ?? 0;
+  }
+
+  /// Lấy lịch sử xem tài khoản Bilibili (yêu cầu đã đăng nhập `SESSDATA`, nếu chưa trả rỗng).
+  Future<List<BilibiliAnimeItem>> getWatchHistory({
+    int pageSize = 20,
+    String cookie = '',
+  }) async {
+    if (cookie.trim().isEmpty) return const [];
+    try {
+      final response = await dio.get<Map<String, dynamic>>(
+        'https://api.bilibili.com/x/web-interface/history/cursor',
+        queryParameters: {
+          'ps': '$pageSize',
+          'type': 'archive',
+        },
+        options: Options(headers: requestHeaders(cookie)),
+      );
+      final json = response.data ?? const <String, dynamic>{};
+      if ((json['code'] as num?)?.toInt() != 0) return const [];
+      final list = json['data']?['list'] as List<dynamic>? ?? const [];
+      final results = <BilibiliAnimeItem>[];
+      for (final raw in list) {
+        if (raw is! Map) continue;
+        final item = Map<String, dynamic>.from(raw);
+        final history = item['history'] as Map?;
+        final bvid = (history?['bvid'] ?? item['bvid'])?.toString() ?? '';
+        final title = _stripHtml(item['title']?.toString() ?? '');
+        if (title.isEmpty) continue;
+        final durationSec = _parseUnixSec(item['duration']);
+        results.add(
+          BilibiliAnimeItem(
+            title: title,
+            cover: _normalizeCoverUrl(item['cover']?.toString() ?? ''),
+            bvid: bvid.isNotEmpty ? bvid : null,
+            author: item['author_name']?.toString() ?? '',
+            upFace: _normalizeCoverUrl(item['author_face']?.toString() ?? ''),
+            badge: item['tag_name']?.toString() ?? '',
+            durationSeconds: durationSec,
+            durationText: durationSec > 0 ? BilibiliAnimeItem.formatDuration(durationSec) : '',
+            pubdate: _parseUnixSec(item['view_at']),
+          ),
+        );
+      }
+      return results;
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// Lấy danh sách phim hoạt hình AI / AI漫剧 / AI动画 (tự lọc bỏ video hướng dẫn làm AI, người thật & tiểu thuyết audio).
   Future<List<BilibiliAnimeItem>> getAiManhuaVideos({
     String keyword = 'AI漫剧',
     int page = 1,
     int pageSize = 20,
     String order = 'totalrank', // totalrank, click (xem nhiều), pubdate (mới nhất)
+    int tid = 0,
+    bool cleanAiAnimeOnly = true,
     String cookie = '',
   }) async {
-    return searchVideos(
-      keyword,
+    final cleanKw = keyword.trim();
+    final isPureAnimeTab =
+        cleanKw == 'AI漫剧' ||
+        cleanKw == 'AI动画' ||
+        cleanKw == 'AI动漫' ||
+        cleanKw == '动态漫';
+
+    if (!cleanAiAnimeOnly) {
+      return searchVideos(
+        cleanKw,
+        page: page,
+        pageSize: pageSize,
+        order: order,
+        tid: tid,
+        cookie: cookie,
+      );
+    }
+
+    final effectiveTid = tid > 0 ? tid : (isPureAnimeTab ? 1 : 0);
+    final rawPrimary = await searchVideos(
+      cleanKw == 'AI漫剧' ? 'AI动画' : cleanKw,
       page: page,
       pageSize: pageSize,
       order: order,
+      tid: effectiveTid,
       cookie: cookie,
     );
+
+    bool allowItem(BilibiliAnimeItem item) {
+      if (isPureAnimeTab) {
+        return BilibiliContentClassifier.isCleanWatchableAiAnime(item);
+      }
+      return !BilibiliContentClassifier.isTutorialOrCourse(item) &&
+          !BilibiliContentClassifier.isAudioNovelOrPodcast(item);
+    }
+
+    final out = <BilibiliAnimeItem>[];
+    final seen = <String>{};
+    void appendClean(List<BilibiliAnimeItem> batch) {
+      for (final item in batch) {
+        if (!allowItem(item)) continue;
+        final key = item.bvid?.isNotEmpty == true ? item.bvid! : item.title;
+        if (seen.add(key)) out.add(item);
+      }
+    }
+
+    appendClean(rawPrimary);
+
+    if (out.length < pageSize) {
+      final secondary = await searchVideos(
+        cleanKw == 'AI漫剧' ? 'AI漫剧 一口气看完' : cleanKw,
+        page: page,
+        pageSize: pageSize,
+        order: order,
+        tid: isPureAnimeTab ? 167 : tid,
+        cookie: cookie,
+      );
+      appendClean(secondary);
+    }
+
+    out.sort(
+      (a, b) => BilibiliContentClassifier.scoreWatchableAiAnime(b).compareTo(
+        BilibiliContentClassifier.scoreWatchableAiAnime(a),
+      ),
+    );
+    return out.take(pageSize).toList();
   }
 
-  /// Tìm kiếm video trên Bilibili
+  /// Tìm kiếm video trên Bilibili (hỗ trợ lọc Phân khu `tid`, Thời lượng `duration`, và khoảng thời gian đăng `pubtimeBeginSec..pubtimeEndSec`).
   Future<List<BilibiliAnimeItem>> searchVideos(
     String keyword, {
     int page = 1,
     int pageSize = 20,
     String order = 'totalrank',
+    int tid = 0,
+    int duration = 0,
+    int? pubtimeBeginSec,
+    int? pubtimeEndSec,
     String cookie = '',
   }) async {
     final cleanKeyword = keyword.trim();
     if (cleanKeyword.isEmpty) return const [];
 
+    final queryParams = <String, String>{
+      'search_type': 'video',
+      'keyword': cleanKeyword,
+      'page': '$page',
+      'page_size': '$pageSize',
+      'order': order,
+      if (tid > 0) 'tids': '$tid',
+      if (duration > 0) 'duration': '$duration',
+      if (pubtimeBeginSec != null && pubtimeBeginSec > 0)
+        'pubtime_begin_s': '$pubtimeBeginSec',
+      if (pubtimeEndSec != null && pubtimeEndSec > 0)
+        'pubtime_end_s': '$pubtimeEndSec',
+    };
+
     Map<String, dynamic>? data;
     try {
       data = await _getWbiJson(
         'https://api.bilibili.com/x/web-interface/wbi/search/type',
-        {
-          'search_type': 'video',
-          'keyword': cleanKeyword,
-          'page': '$page',
-          'page_size': '$pageSize',
-          'order': order,
-        },
+        queryParams,
         cookie,
       );
     } catch (_) {
       // Fallback sang search thông thường nếu WBI fail
       final response = await dio.get<Map<String, dynamic>>(
         'https://api.bilibili.com/x/web-interface/search/type',
-        queryParameters: {
-          'search_type': 'video',
-          'keyword': cleanKeyword,
-          'page': '$page',
-          'page_size': '$pageSize',
-          'order': order,
-        },
+        queryParameters: queryParams,
         options: Options(headers: requestHeaders(cookie)),
       );
       data = response.data?['data'] as Map<String, dynamic>?;
@@ -1731,6 +2266,22 @@ class BilibiliResolver {
       final play = item['play'];
       final danmaku = item['danmaku'];
       final desc = _stripHtml(item['description']?.toString() ?? '');
+      final rawTags = item['tag'];
+      final parsedTags = switch (rawTags) {
+        List list => list
+            .map((e) => _stripHtml(e.toString()).trim())
+            .where((e) => e.isNotEmpty)
+            .toList(),
+        String s => s
+            .split(RegExp(r'[,，]'))
+            .map((e) => _stripHtml(e).trim())
+            .where((e) => e.isNotEmpty)
+            .toList(),
+        _ => const <String>[],
+      };
+      final typeId = int.tryParse(item['typeid']?.toString() ?? '') ??
+          (item['typeid'] as num?)?.toInt() ??
+          0;
 
       String durationText = rawDuration;
       int durationSeconds = 0;
@@ -1763,13 +2314,218 @@ class BilibiliResolver {
         author: author,
         upFace: upFace,
         desc: desc,
-        badge: '',
+        badge: item['typename']?.toString() ?? '',
+        styles: parsedTags,
+        typeId: typeId,
         durationSeconds: durationSeconds,
         durationText: durationText,
         viewCountText: play != null ? _formatCount(play) : '',
         danmakuText: danmaku != null ? _formatCount(danmaku) : '',
+        pubdate: _parseUnixSec(item['pubdate']),
       );
     }).toList();
+  }
+
+  /// Tìm kiếm kênh UP chủ / Creator trên Bilibili (`search_type: bili_user`)
+  Future<List<BilibiliUserSearchResult>> searchUsers(
+    String keyword, {
+    int page = 1,
+    int pageSize = 15,
+    String order = 'fans', // 'fans' hoặc '' mặc định
+    String cookie = '',
+  }) async {
+    final cleanKeyword = keyword.trim();
+    if (cleanKeyword.isEmpty) return const [];
+
+    final params = <String, String>{
+      'search_type': 'bili_user',
+      'keyword': cleanKeyword,
+      'page': '$page',
+      'page_size': '$pageSize',
+      if (order.isNotEmpty) 'order': order,
+    };
+
+    Map<String, dynamic>? data;
+    try {
+      data = await _getWbiJson(
+        'https://api.bilibili.com/x/web-interface/wbi/search/type',
+        params,
+        cookie,
+      );
+    } catch (_) {
+      final response = await dio.get<Map<String, dynamic>>(
+        'https://api.bilibili.com/x/web-interface/search/type',
+        queryParameters: params,
+        options: Options(headers: requestHeaders(cookie)),
+      );
+      data = response.data?['data'] as Map<String, dynamic>?;
+    }
+
+    final resultList = data?['result'] as List<dynamic>? ?? const [];
+    final results = <BilibiliUserSearchResult>[];
+    for (final raw in resultList) {
+      if (raw is! Map) continue;
+      final item = Map<String, dynamic>.from(raw);
+      final mid = (item['mid'] as num?)?.toInt() ?? 0;
+      if (mid <= 0) continue;
+      final fans = (item['fans'] as num?)?.toInt() ?? 0;
+      final official = item['official_verify'] as Map?;
+      final officialType = (official?['type'] as num?)?.toInt() ?? -1;
+      results.add(
+        BilibiliUserSearchResult(
+          mid: mid,
+          uname: _stripHtml(item['uname']?.toString() ?? ''),
+          upic: _normalizeCoverUrl(item['upic']?.toString() ?? ''),
+          usign: _stripHtml(item['usign']?.toString() ?? ''),
+          fans: fans,
+          fansText: _formatCount(fans),
+          videos: (item['videos'] as num?)?.toInt() ?? 0,
+          isOfficial: officialType >= 0,
+          officialDesc: official?['desc']?.toString() ?? '',
+        ),
+      );
+    }
+    return results;
+  }
+
+  /// Tìm kiếm Phim tài liệu, Điện ảnh, Anime chính thống (`media_ft` hoặc `media_bangumi`)
+  Future<List<BilibiliPgcSearchResult>> searchPgc(
+    String keyword, {
+    String searchType = 'media_ft',
+    int page = 1,
+    int pageSize = 15,
+    String cookie = '',
+  }) async {
+    final cleanKeyword = keyword.trim();
+    if (cleanKeyword.isEmpty) return const [];
+
+    final effectiveType =
+        searchType == 'media_bangumi' ? 'media_bangumi' : 'media_ft';
+    final params = <String, String>{
+      'search_type': effectiveType,
+      'keyword': cleanKeyword,
+      'page': '$page',
+      'page_size': '$pageSize',
+    };
+
+    Map<String, dynamic>? data;
+    try {
+      data = await _getWbiJson(
+        'https://api.bilibili.com/x/web-interface/wbi/search/type',
+        params,
+        cookie,
+      );
+    } catch (_) {
+      final response = await dio.get<Map<String, dynamic>>(
+        'https://api.bilibili.com/x/web-interface/search/type',
+        queryParameters: params,
+        options: Options(headers: requestHeaders(cookie)),
+      );
+      data = response.data?['data'] as Map<String, dynamic>?;
+    }
+
+    final resultList = data?['result'] as List<dynamic>? ?? const [];
+    final results = <BilibiliPgcSearchResult>[];
+    for (final raw in resultList) {
+      if (raw is! Map) continue;
+      final item = Map<String, dynamic>.from(raw);
+      final seasonId = (item['season_id'] as num?)?.toInt() ?? 0;
+      if (seasonId <= 0) continue;
+      final eps = item['eps'] as List<dynamic>? ?? const [];
+      int? firstEp;
+      if (eps.isNotEmpty && eps.first is Map) {
+        firstEp = ((eps.first as Map)['id'] as num?)?.toInt();
+      }
+      final mediaScore = item['media_score'] as Map?;
+      final scoreVal = mediaScore?['score']?.toString() ?? '';
+      String badge = '';
+      if (item['display_info'] is List && (item['display_info'] as List).isNotEmpty) {
+        final firstBadge = (item['display_info'] as List).first;
+        if (firstBadge is Map) {
+          badge = firstBadge['text']?.toString() ?? '';
+        }
+      } else {
+        badge = item['season_type_name']?.toString() ?? '';
+      }
+
+      results.add(
+        BilibiliPgcSearchResult(
+          seasonId: seasonId,
+          mediaId: (item['media_id'] as num?)?.toInt() ?? 0,
+          firstEpId: firstEp,
+          title: _stripHtml(item['title']?.toString() ?? ''),
+          cover: _normalizeCoverUrl(item['cover']?.toString() ?? ''),
+          badge: badge,
+          areas: item['areas']?.toString() ?? '',
+          styles: item['styles']?.toString() ?? '',
+          indexShow: item['index_show']?.toString() ?? '',
+          score: scoreVal,
+          desc: _stripHtml(item['desc']?.toString() ?? ''),
+          seasonType: (item['season_type'] as num?)?.toInt() ?? 0,
+        ),
+      );
+    }
+    return results;
+  }
+
+  /// Lấy Bảng xếp hạng tổng hợp hoặc theo từng phân khu (`/x/web-interface/ranking/v2`)
+  Future<List<BilibiliAnimeItem>> getZoneRanking({
+    int rid = 0,
+    String type = 'all',
+    String cookie = '',
+  }) async {
+    Future<List<BilibiliAnimeItem>> fetchRid(int targetRid) async {
+      final response = await dio.get<Map<String, dynamic>>(
+        'https://api.bilibili.com/x/web-interface/ranking/v2',
+        queryParameters: {'rid': '$targetRid', 'type': type},
+        options: Options(headers: requestHeaders(cookie)),
+      );
+      final json = response.data ?? const <String, dynamic>{};
+      if ((json['code'] as num?)?.toInt() != 0) return const [];
+      final data = json['data'] as Map<String, dynamic>?;
+      final list = data?['list'] as List<dynamic>? ?? const [];
+      return list
+          .whereType<Map>()
+          .map((raw) {
+            final item = Map<String, dynamic>.from(raw);
+            final bvid = item['bvid']?.toString() ?? '';
+            final title = _stripHtml(item['title']?.toString() ?? '');
+            final cover = _normalizeCoverUrl(item['pic']?.toString() ?? '');
+            final durationSec = (item['duration'] as num?)?.toInt() ?? 0;
+            final owner = item['owner'] as Map?;
+            final author = owner?['name']?.toString() ?? '';
+            final upFace = _normalizeCoverUrl(owner?['face']?.toString() ?? '');
+            final stat = item['stat'] as Map?;
+            final views = stat?['view'];
+            final danmaku = stat?['danmaku'];
+            final likes = stat?['like'];
+            return BilibiliAnimeItem(
+              title: title,
+              cover: cover,
+              bvid: bvid,
+              author: author,
+              upFace: upFace,
+              badge: item['tname']?.toString() ?? '',
+              desc: _stripHtml(item['desc']?.toString() ?? ''),
+              durationSeconds: durationSec,
+              durationText: durationSec > 0 ? BilibiliAnimeItem.formatDuration(durationSec) : '',
+              viewCountText: views != null ? _formatCount(views) : '',
+              danmakuText: danmaku != null ? _formatCount(danmaku) : '',
+              likeCountText: likes != null ? _formatCount(likes) : '',
+              pubdate: _parseUnixSec(item['pubdate']),
+            );
+          })
+          .where((it) => it.bvid != null && it.bvid!.isNotEmpty)
+          .toList();
+    }
+
+    try {
+      final list = await fetchRid(rid);
+      if (list.isNotEmpty || rid == 0) return list;
+      return await fetchRid(0);
+    } catch (_) {
+      return const [];
+    }
   }
 
   /// Lấy danh sách từ khóa tìm kiếm thịnh hành
@@ -1835,6 +2591,7 @@ class BilibiliResolver {
             durationText: BilibiliAnimeItem.formatDuration(duration),
             viewCountText: view != null ? _formatCount(view) : '',
             danmakuText: danmaku != null ? _formatCount(danmaku) : '',
+            pubdate: _parseUnixSec(item['pubdate']),
           ),
         );
       }
@@ -2065,6 +2822,7 @@ class BilibiliResolver {
             durationText: lengthStr,
             viewCountText: play != null ? _formatCount(play) : '',
             danmakuText: danmaku != null ? _formatCount(danmaku) : '',
+            pubdate: _parseUnixSec(raw['created']),
           ),
         );
       }

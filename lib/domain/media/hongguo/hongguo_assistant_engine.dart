@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 
 import '../../ai/live/gemini_live_client.dart';
+import '../../ai/live/live_reply_title_sync.dart';
 import '../hongguo_resolver.dart';
 
 typedef HongguoTitleTranslator = Future<String> Function(String zhTitle);
@@ -1453,12 +1454,8 @@ NGUYÊN TẮC BẮT BUỘC:
   }
 
   /// Kiểm tra xem thẻ phim có đang còn nguyên tên tiếng Trung (chưa được AI Live dịch) hay không.
-  static bool isUntranslatedTitle(HongguoAssistantCandidate c) {
-    final vi = c.viTitle.trim();
-    final zh = c.item.title.trim();
-    if (vi.isEmpty || vi == zh) return true;
-    return RegExp(r'[\u4e00-\u9fff]{2,}').hasMatch(vi);
-  }
+  static bool isUntranslatedTitle(HongguoAssistantCandidate c) =>
+      LiveReplyTitleSync.isUntranslatedTitle(c.viTitle, c.item.title);
 
   /// Trích xuất ánh xạ `#STT -> Tên phim Tiếng Việt (Hán Việt)` trực tiếp từ lời đáp của Gemini Live.
   /// Khi `isFinal == false` (đang stream), chỉ chốt tiêu đề đã có dấu ngắt câu/tóm tắt theo sau để tránh giật chữ dở.
@@ -1466,112 +1463,11 @@ NGUYÊN TẮC BẮT BUỘC:
     String text, {
     int maxIndex = 20,
     bool isFinal = true,
-  }) {
-    final result = <int, String>{};
-    if (text.trim().isEmpty) return result;
-
-    var normalized = text
-        .replaceAll(RegExp(r'\*\*|__|`|“|”|「|」|『|』'), '')
-        .replaceAll('\r\n', '\n');
-
-    const wordNums = {
-      'một': '1',
-      'hai': '2',
-      'ba': '3',
-      'bốn': '4',
-      'tư': '4',
-      'năm': '5',
-      'sáu': '6',
-      'bảy': '7',
-      'tám': '8',
-      'chín': '9',
-      'mười': '10',
-    };
-    for (final e in wordNums.entries) {
-      normalized = normalized.replaceAllMapped(
-        RegExp(
-          '(?:phim\\s+)?(?:số|thứ)\\s+${e.key}\\b',
-          caseSensitive: false,
-        ),
-        (_) => '#${e.value}',
-      );
-    }
-    normalized = normalized.replaceAllMapped(
-      RegExp(r'(?:phim\s+)?(?:số|thứ)\s+(\d{1,2})\b', caseSensitive: false),
-      (m) => '#${m.group(1)}',
-    );
-
-    final markerPattern = RegExp(
-      r'(?:^|\n)\s*(?:[-*•]\s*)?(?:#(\d{1,2})|(\d{1,2})\.)\s*[:.)\-–—]?\s*(.+)|'
-      r'#(\d{1,2})\s*(?:[:.\-–—]|\s+(?:là|tên|–|—))\s*(.+)',
-      multiLine: true,
-    );
-
-    for (final match in markerPattern.allMatches(normalized)) {
-      final idxStr = match.group(1) ?? match.group(2) ?? match.group(4);
-      final rawLine = (match.group(3) ?? match.group(5) ?? '').trim();
-      final idx = int.tryParse(idxStr ?? '');
-      if (idx == null || idx < 1 || idx > maxIndex || rawLine.isEmpty) continue;
-
-      final matchEnd = match.end;
-      final hasLineEnded =
-          isFinal || (matchEnd < normalized.length && normalized[matchEnd] == '\n');
-      final hasInlineSeparator = RegExp(
-        r'\s+[—–]\s+|\s+-\s+|:\s+|\.\s+',
-      ).hasMatch(rawLine);
-      if (!hasLineEnded && !hasInlineSeparator) {
-        continue;
-      }
-
-      final cleaned = _cleanExtractedTitleSegment(rawLine);
-      if (cleaned != null && cleaned.isNotEmpty) {
-        final existing = result[idx];
-        if (existing == null || cleaned.length >= existing.length) {
-          result[idx] = cleaned;
-        }
-      }
-    }
-    return result;
-  }
-
-  static String? _cleanExtractedTitleSegment(String rawLine) {
-    var seg = rawLine.trim();
-    // Ưu tiên tách tại em-dash / en-dash trước (giữ lại dấu hai chấm hợp lệ nếu nằm trong tên phim)
-    final dashSplit = RegExp(r'\s+[—–]\s+|\s+-\s+').firstMatch(seg);
-    if (dashSplit != null) {
-      seg = seg.substring(0, dashSplit.start).trim();
-    } else {
-      final colonOrDotSplit = RegExp(r':\s+|\.\s+').firstMatch(seg);
-      if (colonOrDotSplit != null) {
-        seg = seg.substring(0, colonOrDotSplit.start).trim();
-      }
-    }
-
-    // Bỏ phần chú thích tên gốc tiếng Trung trong ngoặc ở cuối nếu có
-    seg = seg
-        .replaceAll(
-          RegExp(r'\s*\([^)]*(?:tên\s*gốc|gốc|[\u4e00-\u9fff])[^)]*\)\s*$', caseSensitive: false),
-          '',
-        )
-        .trim();
-
-    seg = seg
-        .replaceAll(RegExp(r'^[\s"«<\[\x27:.\-–—]+'), '')
-        .replaceAll(RegExp(r'[\s"»>\]\x27:.,\-–—]+$'), '')
-        .trim();
-
-    if (seg.length < 2 || seg.length > 85) return null;
-    if (!RegExp(r'[A-Za-zÀ-ỹ]').hasMatch(seg)) return null;
-    if (RegExp(r'[\u4e00-\u9fff]{2,}').hasMatch(seg)) return null;
-
-    final lower = seg.toLowerCase();
-    if (lower.startsWith('đây là ') ||
-        lower.startsWith('dưới đây là ') ||
-        lower.startsWith('tổng hợp')) {
-      return null;
-    }
-    return seg;
-  }
+  }) => LiveReplyTitleSync.extractAiTitlesFromLiveReply(
+    text,
+    maxIndex: maxIndex,
+    isFinal: isFinal,
+  );
 
   /// Đồng bộ tên phim Hán Việt do Gemini Live dịch vào `report`, bộ nhớ đệm và danh sách hiển thị hiện tại.
   /// Trả về `HongguoSearchReport` mới nếu có ít nhất 1 phim được cập nhật, ngược lại trả `null`.

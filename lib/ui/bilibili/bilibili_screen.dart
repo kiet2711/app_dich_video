@@ -1,15 +1,20 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../data/repository/history_repository.dart';
 import '../../data/repository/settings_repository.dart';
+import '../../domain/ai/live/live_reply_title_sync.dart';
 import '../../domain/ai/offline_mlkit_translator.dart';
 import '../../domain/media/bilibili_resolver.dart';
 import '../../player/global_player_manager.dart';
 import '../../data/model/watch_later_item.dart';
 import '../../data/repository/watch_later_repository.dart';
 import '../theme/app_theme.dart';
+import 'bilibili_assistant_controller.dart';
+import 'bilibili_assistant_sheet.dart';
 import 'bilibili_settings_sheet.dart';
 
 class BilibiliScreen extends StatefulWidget {
@@ -24,6 +29,7 @@ class BilibiliScreen extends StatefulWidget {
 class _BilibiliScreenState extends State<BilibiliScreen>
     with SingleTickerProviderStateMixin {
   final BilibiliResolver _resolver = BilibiliResolver();
+  late final BilibiliAssistantController _assistantController;
   late TabController _tabController;
 
   bool _isTranslateEnabled = true;
@@ -120,6 +126,8 @@ class _BilibiliScreenState extends State<BilibiliScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
+    _assistantController = BilibiliAssistantController(resolver: _resolver);
+    unawaited(_assistantController.initialize());
     _loadInitialState();
   }
 
@@ -128,6 +136,7 @@ class _BilibiliScreenState extends State<BilibiliScreen>
     final settings = await SettingsRepository.getInstance();
     if (!mounted) return;
     final cookie = settings.bilibiliSessData;
+    _assistantController.updateCookie(cookie);
     setState(() {
       _isTranslateEnabled = sp.getBool('bilibili_translate_enabled') ?? true;
       _bilibiliCookie = cookie;
@@ -243,7 +252,7 @@ class _BilibiliScreenState extends State<BilibiliScreen>
         } else {
           _aiList.addAll(items);
         }
-        _hasMoreAi = items.length >= 20;
+        _hasMoreAi = items.length >= 5;
         _isLoadingAi = false;
         _isLoadingMoreAi = false;
       });
@@ -586,16 +595,137 @@ class _BilibiliScreenState extends State<BilibiliScreen>
 
   @override
   void dispose() {
+    _assistantController.dispose();
     _tabController.dispose();
     _searchController.dispose();
     _searchFocusNode.dispose();
     super.dispose();
   }
 
+  void _applyAssistantResults(List<BilibiliAnimeItem> items, String label) {
+    if (!mounted) return;
+    setState(() {
+      _hasSearched = true;
+      _isLoadingSearch = false;
+      _lastSearchKeyword = label.trim().isEmpty ? 'Trợ lý AI' : label.trim();
+      _searchController.text = _lastSearchKeyword;
+      _searchResults = items;
+    });
+  }
+
+  void _openAssistantSheet() {
+    var sheetOpen = true;
+    BilibiliAssistantSheet.show(
+      context,
+      controller: _assistantController,
+      onOpenVideo: (item) {
+        if (sheetOpen && mounted) {
+          sheetOpen = false;
+          Navigator.of(context).pop();
+        }
+        unawaited(_playVideo(item));
+      },
+      onApplyToMainGrid: _applyAssistantResults,
+    ).whenComplete(() {
+      sheetOpen = false;
+    });
+  }
+
+  Widget _buildAssistantFloatingButton() {
+    return AnimatedBuilder(
+      animation: _assistantController,
+      builder: (context, _) {
+        final state = _assistantController.connectionState;
+        final isBusy = _assistantController.isAssistantBusy;
+        final isMic = _assistantController.isMicActive;
+        final Color statusColor;
+        if (isMic) {
+          statusColor = const Color(0xFFEF4444);
+        } else if (state == AssistantConnectionState.ready) {
+          statusColor = AppColors.primaryEmerald;
+        } else if (state == AssistantConnectionState.connecting) {
+          statusColor = AppColors.accentGold;
+        } else if (state == AssistantConnectionState.error) {
+          statusColor = const Color(0xFFEF4444);
+        } else {
+          statusColor = Colors.white54;
+        }
+
+        return Material(
+          color: Colors.transparent,
+          elevation: 8,
+          borderRadius: BorderRadius.circular(28),
+          child: InkWell(
+            onTap: _openAssistantSheet,
+            borderRadius: BorderRadius.circular(28),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFFFB7299), Color(0xFF00AEEC)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(28),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFFFB7299).withValues(alpha: 0.32),
+                    blurRadius: 14,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (isBusy)
+                    const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                      ),
+                    )
+                  else
+                    Icon(
+                      isMic ? Icons.mic_rounded : Icons.auto_awesome_rounded,
+                      color: Colors.white,
+                      size: 20,
+                    ),
+                  const SizedBox(width: 8),
+                  Text(
+                    isMic ? 'Đang nghe...' : 'Trợ lý AI',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13.5,
+                    ),
+                  ),
+                  const SizedBox(width: 7),
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: statusColor,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 1.2),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF121318),
+      floatingActionButton: _buildAssistantFloatingButton(),
       body: SafeArea(
         child: Column(
           children: [
@@ -650,6 +780,7 @@ class _BilibiliScreenState extends State<BilibiliScreen>
                     setState(() {
                       _bilibiliCookie = settings.bilibiliSessData;
                     });
+                    _assistantController.updateCookie(_bilibiliCookie);
                     if (_bilibiliCookie.isNotEmpty) {
                       _fetchProfile(_bilibiliCookie);
                     }
@@ -751,6 +882,44 @@ class _BilibiliScreenState extends State<BilibiliScreen>
                 ),
               ),
               const SizedBox(width: 8),
+
+              // Bilibili AI Assistant shortcut button
+              AnimatedBuilder(
+                animation: _assistantController,
+                builder: (context, _) {
+                  final connected = _assistantController.connectionState ==
+                      AssistantConnectionState.ready;
+                  return IconButton(
+                    onPressed: _openAssistantSheet,
+                    tooltip: 'Trợ lý AI Bilibili',
+                    icon: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        Icon(
+                          Icons.auto_awesome_rounded,
+                          color: connected
+                              ? const Color(0xFF00AEEC)
+                              : Colors.white70,
+                          size: 22,
+                        ),
+                        if (connected)
+                          Positioned(
+                            right: -2,
+                            top: -2,
+                            child: Container(
+                              width: 7,
+                              height: 7,
+                              decoration: const BoxDecoration(
+                                color: AppColors.primaryEmerald,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  );
+                },
+              ),
 
               // Translation toggle button
               IconButton(

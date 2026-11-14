@@ -7,16 +7,12 @@ import '../../data/repository/settings_repository.dart';
 import '../../domain/ai/ai_model_registry.dart';
 import '../../domain/ai/live/gemini_live_client.dart';
 import '../../domain/ai/live/live_audio_io.dart';
+import '../../domain/ai/live/live_reply_title_sync.dart';
 import '../../domain/media/hongguo/hongguo_assistant_engine.dart';
 import '../../domain/media/hongguo_resolver.dart';
 
-enum AssistantConnectionState {
-  disconnected,
-  connecting,
-  ready,
-  reconnecting,
-  error,
-}
+export '../../domain/ai/live/live_reply_title_sync.dart'
+    show AssistantConnectionState;
 
 class AssistantChatMessage {
   final String id;
