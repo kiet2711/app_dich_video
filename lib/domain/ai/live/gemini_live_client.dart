@@ -367,6 +367,10 @@ class GeminiLiveClient {
     String voiceName = 'Aoede',
     String? resumptionHandle,
     bool enableCompression = true,
+    int compressionTriggerTokens = 32768,
+    int compressionTargetTokens = 16384,
+    String? translationTargetLanguageCode,
+    bool echoTargetLanguage = false,
     LiveSetupProfile profile = LiveSetupProfile.full,
     bool includeNonBlockingBehavior = false,
   }) {
@@ -374,6 +378,11 @@ class GeminiLiveClient {
         ? modelId
         : 'models/$modelId';
     final isExtendedThinking = modelId.toLowerCase().contains('extended-thinking');
+    final targetLang = translationTargetLanguageCode?.trim() ?? '';
+    final isLiveTranslate =
+        modelId.toLowerCase().contains('live-translate') ||
+        targetLang.isNotEmpty;
+    final effectiveTargetLang = targetLang.isNotEmpty ? targetLang : 'vi';
 
     final preparedDecls = functionDeclarations.map((decl) {
       final copy = Map<String, dynamic>.from(decl);
@@ -387,7 +396,9 @@ class GeminiLiveClient {
 
     final generationConfig = <String, dynamic>{
       'responseModalities': ['AUDIO'],
-      if (profile == LiveSetupProfile.full && voiceName.trim().isNotEmpty)
+      if (!isLiveTranslate &&
+          profile == LiveSetupProfile.full &&
+          voiceName.trim().isNotEmpty)
         'speechConfig': {
           'voiceConfig': {
             'prebuiltVoiceConfig': {'voiceName': voiceName.trim()},
@@ -398,12 +409,18 @@ class GeminiLiveClient {
     final setupMap = <String, dynamic>{
       'model': cleanModel,
       'generationConfig': generationConfig,
-      'systemInstruction': {
-        'parts': [
-          {'text': systemPrompt},
-        ],
-      },
-      if (preparedDecls.isNotEmpty)
+      if (!isLiveTranslate || systemPrompt.trim().isNotEmpty)
+        'systemInstruction': {
+          'parts': [
+            {'text': systemPrompt},
+          ],
+        },
+      if (isLiveTranslate)
+        'translationConfig': {
+          'targetLanguageCode': effectiveTargetLang,
+          if (echoTargetLanguage) 'echoTargetLanguage': true,
+        },
+      if (!isLiveTranslate && preparedDecls.isNotEmpty)
         'tools': [
           {'functionDeclarations': preparedDecls},
         ],
@@ -412,10 +429,12 @@ class GeminiLiveClient {
     if (profile == LiveSetupProfile.full || profile == LiveSetupProfile.compatible) {
       setupMap['inputAudioTranscription'] = <String, dynamic>{};
       setupMap['outputAudioTranscription'] = <String, dynamic>{};
-      if (resumptionHandle != null && resumptionHandle.trim().isNotEmpty) {
-        setupMap['sessionResumption'] = {'handle': resumptionHandle.trim()};
-      } else {
-        setupMap['sessionResumption'] = <String, dynamic>{};
+      if (!isLiveTranslate || profile == LiveSetupProfile.full) {
+        if (resumptionHandle != null && resumptionHandle.trim().isNotEmpty) {
+          setupMap['sessionResumption'] = {'handle': resumptionHandle.trim()};
+        } else {
+          setupMap['sessionResumption'] = <String, dynamic>{};
+        }
       }
     }
 
@@ -425,8 +444,8 @@ class GeminiLiveClient {
       }
       if (enableCompression) {
         setupMap['contextWindowCompression'] = {
-          'triggerTokens': 32768,
-          'slidingWindow': {'targetTokens': 16384},
+          'triggerTokens': compressionTriggerTokens,
+          'slidingWindow': {'targetTokens': compressionTargetTokens},
         };
       }
     }
@@ -442,6 +461,11 @@ class GeminiLiveClient {
     required List<Map<String, dynamic>> functionDeclarations,
     String? resumptionHandle,
     String voiceName = 'Aoede',
+    bool enableCompression = true,
+    int compressionTriggerTokens = 32768,
+    int compressionTargetTokens = 16384,
+    String? translationTargetLanguageCode,
+    bool echoTargetLanguage = false,
     bool forceRefreshModelDiscovery = false,
   }) async {
     final validKeys = apiKeys
@@ -512,7 +536,12 @@ class GeminiLiveClient {
         continue;
       }
 
-      for (final apiVersion in versionOrder) {
+      for (final apiVersion in _prioritizeVersions(
+        versionOrder: versionOrder,
+        requestedModelId: modelId,
+        betaModels: betaDiscovery.models,
+        alphaModels: alphaDiscovery.models,
+      )) {
         final discoveredForVer = apiVersion == 'v1alpha'
             ? (alphaDiscovery.models.isNotEmpty
                   ? alphaDiscovery.models
@@ -583,6 +612,11 @@ class GeminiLiveClient {
                   resumptionHandle: handle,
                   profile: profile,
                   includeNonBlockingBehavior: includeNonBlocking,
+                  enableCompression: enableCompression,
+                  compressionTriggerTokens: compressionTriggerTokens,
+                  compressionTargetTokens: compressionTargetTokens,
+                  translationTargetLanguageCode: translationTargetLanguageCode,
+                  echoTargetLanguage: echoTargetLanguage,
                 );
                 sw.stop();
                 _activeApiKey = apiKey;
@@ -707,6 +741,21 @@ class GeminiLiveClient {
     return 'Không kết nối được $modelId (Key $maskedKey): $lastDetail';
   }
 
+  static List<String> _prioritizeVersions({
+    required List<String> versionOrder,
+    required String requestedModelId,
+    required List<String> betaModels,
+    required List<String> alphaModels,
+  }) {
+    final cleanReq = requestedModelId.trim().replaceFirst(RegExp(r'^models/'), '');
+    final aliases = AiModelRegistry.liveModelCandidateIds[cleanReq] ?? [cleanReq];
+    final inBeta = aliases.any((a) => betaModels.contains(a));
+    final inAlpha = aliases.any((a) => alphaModels.contains(a));
+    if (inAlpha && !inBeta) return const ['v1alpha', 'v1beta'];
+    if (inBeta && !inAlpha) return const ['v1beta', 'v1alpha'];
+    return versionOrder;
+  }
+
   Future<void> _connectSingleSocket({
     required String apiKey,
     required String apiVersion,
@@ -716,6 +765,11 @@ class GeminiLiveClient {
     required String voiceName,
     required LiveSetupProfile profile,
     required bool includeNonBlockingBehavior,
+    bool enableCompression = true,
+    int compressionTriggerTokens = 32768,
+    int compressionTargetTokens = 16384,
+    String? translationTargetLanguageCode,
+    bool echoTargetLanguage = false,
     String? resumptionHandle,
   }) async {
     final baseUrl = wsUrlForVersion(apiVersion);
@@ -790,6 +844,11 @@ class GeminiLiveClient {
       functionDeclarations: functionDeclarations,
       voiceName: voiceName,
       resumptionHandle: resumptionHandle,
+      enableCompression: enableCompression,
+      compressionTriggerTokens: compressionTriggerTokens,
+      compressionTargetTokens: compressionTargetTokens,
+      translationTargetLanguageCode: translationTargetLanguageCode,
+      echoTargetLanguage: echoTargetLanguage,
       profile: profile,
       includeNonBlockingBehavior: includeNonBlockingBehavior,
     );

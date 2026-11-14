@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.res.Configuration
 import android.graphics.drawable.Icon
+import android.media.AudioFormat
 import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
@@ -24,8 +25,12 @@ import android.util.Rational
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 
 class MainActivity : FlutterActivity() {
@@ -33,6 +38,8 @@ class MainActivity : FlutterActivity() {
     private val FOREGROUND_CHANNEL = "com.capcut.capsub/foreground_service"
     private val PIP_CHANNEL = "com.capcut.capsub/pip"
     private val mediaExecutor = Executors.newSingleThreadExecutor()
+    private val pcmExecutor = Executors.newCachedThreadPool()
+    private val pcmReaders = ConcurrentHashMap<String, PcmStreamReader>()
     private val mainHandler = Handler(Looper.getMainLooper())
     private var pendingMediaPickResult: MethodChannel.Result? = null
     private var pipMethodChannel: MethodChannel? = null
@@ -204,6 +211,88 @@ class MainActivity : FlutterActivity() {
                             mainHandler.post { result.error("EXTRACT_ERROR", e.message, null) }
                         }
                     }
+                }
+                "openPcmStream" -> {
+                    val mediaPath = call.argument<String>("mediaPath") ?: ""
+                    val rawHeaders = call.argument<Map<String, Any?>>("headers") ?: emptyMap()
+                    val customHeaders = rawHeaders.mapNotNull { (k, v) ->
+                        val valStr = v?.toString()?.trim()
+                        if (valStr.isNullOrEmpty()) null else k to valStr
+                    }.toMap()
+                    val startMs = (call.argument<Number>("startMs")?.toLong()) ?: 0L
+                    pcmExecutor.execute {
+                        try {
+                            val streamId = UUID.randomUUID().toString()
+                            val reader = PcmStreamReader(applicationContext)
+                            val durationMs = reader.open(
+                                mediaPath = mediaPath,
+                                passedHeaders = customHeaders,
+                                defaultHeadersFn = { url -> networkHeaders(url) },
+                                startMs = startMs,
+                            )
+                            pcmReaders[streamId] = reader
+                            mainHandler.post {
+                                result.success(
+                                    mapOf(
+                                        "streamId" to streamId,
+                                        "durationMs" to durationMs,
+                                    ),
+                                )
+                            }
+                        } catch (e: Exception) {
+                            mainHandler.post {
+                                result.error("PCM_OPEN_ERROR", e.message ?: "Không mở được luồng âm thanh PCM", null)
+                            }
+                        }
+                    }
+                }
+                "readPcmChunk" -> {
+                    val streamId = call.argument<String>("streamId") ?: ""
+                    val durationMs = ((call.argument<Number>("durationMs")?.toInt()) ?: 250).coerceIn(40, 5000)
+                    val reader = pcmReaders[streamId]
+                    if (reader == null) {
+                        result.error("PCM_NOT_FOUND", "Phiên PCM không tồn tại hoặc đã đóng", null)
+                        return@setMethodCallHandler
+                    }
+                    pcmExecutor.execute {
+                        try {
+                            val chunk = reader.readChunk(durationMs)
+                            mainHandler.post { result.success(chunk) }
+                        } catch (e: Exception) {
+                            mainHandler.post {
+                                result.error("PCM_READ_ERROR", e.message ?: "Lỗi đọc PCM", null)
+                            }
+                        }
+                    }
+                }
+                "seekPcmStream" -> {
+                    val streamId = call.argument<String>("streamId") ?: ""
+                    val positionMs = (call.argument<Number>("positionMs")?.toLong()) ?: 0L
+                    val reader = pcmReaders[streamId]
+                    if (reader == null) {
+                        result.success(positionMs)
+                        return@setMethodCallHandler
+                    }
+                    pcmExecutor.execute {
+                        try {
+                            val actualPos = reader.seekTo(positionMs)
+                            mainHandler.post { result.success(actualPos) }
+                        } catch (e: Exception) {
+                            mainHandler.post {
+                                result.error("PCM_SEEK_ERROR", e.message ?: "Lỗi tua luồng PCM", null)
+                            }
+                        }
+                    }
+                }
+                "closePcmStream" -> {
+                    val streamId = call.argument<String>("streamId") ?: ""
+                    val reader = pcmReaders.remove(streamId)
+                    if (reader != null) {
+                        pcmExecutor.execute {
+                            reader.close()
+                        }
+                    }
+                    result.success(true)
                 }
                 "moveToBack" -> {
                     moveTaskToBack(true)
@@ -399,6 +488,13 @@ class MainActivity : FlutterActivity() {
             null,
         )
         pendingMediaPickResult = null
+        for ((_, reader) in pcmReaders) {
+            try {
+                reader.close()
+            } catch (_: Exception) {}
+        }
+        pcmReaders.clear()
+        pcmExecutor.shutdownNow()
         mediaExecutor.shutdownNow()
         super.onDestroy()
     }
@@ -611,6 +707,346 @@ class MainActivity : FlutterActivity() {
             )
         } else {
             mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        }
+    }
+
+    private class PcmStreamReader(private val appContext: Context) {
+        private val lock = Any()
+        private var extractor: MediaExtractor? = null
+        private var codec: MediaCodec? = null
+        private var inputDone = false
+        private var outputDone = false
+        private var sampleRate = 44100
+        private var channelCount = 1
+        private var pcmEncoding = AudioFormat.ENCODING_PCM_16BIT
+        private var durationMs = 0L
+
+        private var anchorTimeMs = 0L
+        private var emitted16kSamples = 0L
+        private var seekTargetUs = -1L
+
+        private var hasPrevSample = false
+        private var prevMonoSample = 0.0
+        private var resamplePhase = 0.0
+
+        private var leftoverPcm = ByteArray(0)
+        private var leftoverOffset = 0
+
+        @Volatile
+        private var closed = false
+
+        fun open(
+            mediaPath: String,
+            passedHeaders: Map<String, String>,
+            defaultHeadersFn: (String) -> Map<String, String>,
+            startMs: Long,
+        ): Long = synchronized(lock) {
+            require(mediaPath.isNotBlank()) { "Đường dẫn media trống" }
+            val ext = MediaExtractor()
+            val mediaUri = if (mediaPath.startsWith("content://") ||
+                mediaPath.startsWith("http://") ||
+                mediaPath.startsWith("https://")
+            ) {
+                Uri.parse(mediaPath)
+            } else {
+                Uri.fromFile(File(mediaPath))
+            }
+
+            val isHttp = mediaPath.startsWith("http://") || mediaPath.startsWith("https://")
+            val mergedHeaders = if (isHttp) {
+                val base = defaultHeadersFn(mediaPath).toMutableMap()
+                for ((k, v) in passedHeaders) {
+                    if (v.isNotBlank()) base[k] = v
+                }
+                base
+            } else null
+
+            ext.setDataSource(appContext, mediaUri, mergedHeaders)
+
+            var audioIndex = -1
+            var trackFormat: MediaFormat? = null
+            for (i in 0 until ext.trackCount) {
+                val fmt = ext.getTrackFormat(i)
+                val mime = fmt.getString(MediaFormat.KEY_MIME) ?: ""
+                if (mime.startsWith("audio/")) {
+                    audioIndex = i
+                    trackFormat = fmt
+                    break
+                }
+            }
+            if (audioIndex == -1 || trackFormat == null) {
+                ext.release()
+                throw IllegalStateException("Không tìm thấy track âm thanh trong nguồn này")
+            }
+
+            ext.selectTrack(audioIndex)
+            durationMs = if (trackFormat.containsKey(MediaFormat.KEY_DURATION)) {
+                (trackFormat.getLong(MediaFormat.KEY_DURATION) / 1000L).coerceAtLeast(0L)
+            } else {
+                0L
+            }
+            if (trackFormat.containsKey(MediaFormat.KEY_SAMPLE_RATE)) {
+                sampleRate = trackFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE).coerceAtLeast(8000)
+            }
+            if (trackFormat.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) {
+                channelCount = trackFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT).coerceAtLeast(1)
+            }
+
+            val mime = trackFormat.getString(MediaFormat.KEY_MIME)
+                ?: throw IllegalStateException("Thiếu MIME audio")
+            val decoder = MediaCodec.createDecoderByType(mime)
+            decoder.configure(trackFormat, null, null, 0)
+            decoder.start()
+
+            extractor = ext
+            codec = decoder
+
+            if (startMs > 0) {
+                seekInternal(startMs)
+            } else {
+                anchorTimeMs = 0L
+                emitted16kSamples = 0L
+                seekTargetUs = -1L
+            }
+            return durationMs
+        }
+
+        fun seekTo(positionMs: Long): Long = synchronized(lock) {
+            if (closed) return positionMs
+            return seekInternal(positionMs)
+        }
+
+        private fun seekInternal(positionMs: Long): Long {
+            val safeMs = positionMs.coerceAtLeast(0L)
+            val ext = extractor ?: return safeMs
+            val dec = codec ?: return safeMs
+            val targetUs = safeMs * 1000L
+            try {
+                dec.flush()
+            } catch (_: Exception) {}
+            ext.seekTo(targetUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+            inputDone = false
+            outputDone = false
+            hasPrevSample = false
+            prevMonoSample = 0.0
+            resamplePhase = 0.0
+            leftoverPcm = ByteArray(0)
+            leftoverOffset = 0
+            seekTargetUs = targetUs
+            anchorTimeMs = safeMs
+            emitted16kSamples = 0L
+            return safeMs
+        }
+
+        fun readChunk(requestedDurationMs: Int): Map<String, Any> = synchronized(lock) {
+            if (closed) {
+                return mapOf(
+                    "pcm" to ByteArray(0),
+                    "startMs" to anchorTimeMs,
+                    "endMs" to anchorTimeMs,
+                    "eof" to true,
+                )
+            }
+            val ext = extractor
+            val dec = codec
+            if (ext == null || dec == null) {
+                return mapOf(
+                    "pcm" to ByteArray(0),
+                    "startMs" to anchorTimeMs,
+                    "endMs" to anchorTimeMs,
+                    "eof" to true,
+                )
+            }
+
+            val targetSamples = (requestedDurationMs * 16000L / 1000L).toInt().coerceAtLeast(160)
+            val targetBytes = targetSamples * 2
+            val out = ByteArrayOutputStream(targetBytes)
+
+            val chunkStartMs = anchorTimeMs + (emitted16kSamples * 1000L / 16000L)
+
+            if (leftoverOffset < leftoverPcm.size) {
+                val avail = leftoverPcm.size - leftoverOffset
+                val take = minOf(avail, targetBytes)
+                out.write(leftoverPcm, leftoverOffset, take)
+                leftoverOffset += take
+                if (leftoverOffset >= leftoverPcm.size) {
+                    leftoverPcm = ByteArray(0)
+                    leftoverOffset = 0
+                }
+            }
+
+            val bufferInfo = MediaCodec.BufferInfo()
+            val startWallMs = System.currentTimeMillis()
+
+            while (out.size() < targetBytes && !outputDone && !closed) {
+                if (System.currentTimeMillis() - startWallMs > 6000L) {
+                    break
+                }
+
+                if (!inputDone) {
+                    val inIdx = dec.dequeueInputBuffer(5_000L)
+                    if (inIdx >= 0) {
+                        val inBuf = dec.getInputBuffer(inIdx)
+                        if (inBuf != null) {
+                            inBuf.clear()
+                            val sampleSize = ext.readSampleData(inBuf, 0)
+                            if (sampleSize < 0) {
+                                dec.queueInputBuffer(
+                                    inIdx,
+                                    0,
+                                    0,
+                                    0L,
+                                    MediaCodec.BUFFER_FLAG_END_OF_STREAM,
+                                )
+                                inputDone = true
+                            } else {
+                                val ptsUs = ext.sampleTime.coerceAtLeast(0L)
+                                dec.queueInputBuffer(inIdx, 0, sampleSize, ptsUs, 0)
+                                ext.advance()
+                            }
+                        }
+                    }
+                }
+
+                val outIdx = dec.dequeueOutputBuffer(bufferInfo, 5_000L)
+                when {
+                    outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                        val fmt = dec.outputFormat
+                        if (fmt.containsKey(MediaFormat.KEY_SAMPLE_RATE)) {
+                            sampleRate = fmt.getInteger(MediaFormat.KEY_SAMPLE_RATE).coerceAtLeast(8000)
+                        }
+                        if (fmt.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) {
+                            channelCount = fmt.getInteger(MediaFormat.KEY_CHANNEL_COUNT).coerceAtLeast(1)
+                        }
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N &&
+                            fmt.containsKey(MediaFormat.KEY_PCM_ENCODING)
+                        ) {
+                            pcmEncoding = fmt.getInteger(MediaFormat.KEY_PCM_ENCODING)
+                        }
+                    }
+                    outIdx >= 0 -> {
+                        val outBuf = dec.getOutputBuffer(outIdx)
+                        if (outBuf != null && bufferInfo.size > 0) {
+                            outBuf.position(bufferInfo.offset)
+                            outBuf.limit(bufferInfo.offset + bufferInfo.size)
+                            val converted = convertBufferToPcm16kMono(outBuf, bufferInfo.presentationTimeUs)
+                            if (converted.isNotEmpty()) {
+                                val needed = targetBytes - out.size()
+                                if (converted.size <= needed) {
+                                    out.write(converted)
+                                } else {
+                                    out.write(converted, 0, needed)
+                                    val remain = converted.size - needed
+                                    leftoverPcm = ByteArray(remain)
+                                    System.arraycopy(converted, needed, leftoverPcm, 0, remain)
+                                    leftoverOffset = 0
+                                }
+                            }
+                        }
+                        dec.releaseOutputBuffer(outIdx, false)
+                        if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                            outputDone = true
+                        }
+                    }
+                }
+            }
+
+            val emittedBytes = out.toByteArray()
+            val newSamples = emittedBytes.size / 2L
+            emitted16kSamples += newSamples
+            val chunkEndMs = anchorTimeMs + (emitted16kSamples * 1000L / 16000L)
+            val isEof = outputDone && leftoverOffset >= leftoverPcm.size
+
+            return mapOf(
+                "pcm" to emittedBytes,
+                "startMs" to chunkStartMs,
+                "endMs" to chunkEndMs,
+                "eof" to isEof,
+            )
+        }
+
+        private fun convertBufferToPcm16kMono(buffer: ByteBuffer, ptsUs: Long): ByteArray {
+            val ch = channelCount.coerceAtLeast(1)
+            val isFloat = pcmEncoding == AudioFormat.ENCODING_PCM_FLOAT
+            val bytesPerSample = if (isFloat) 4 else 2
+            val bytesPerFrame = ch * bytesPerSample
+            val totalFrames = buffer.remaining() / bytesPerFrame
+            if (totalFrames <= 0) return ByteArray(0)
+
+            var skipFrames = 0
+            if (seekTargetUs > 0 && ptsUs < seekTargetUs) {
+                val frameEndUs = ptsUs + (totalFrames.toLong() * 1_000_000L / sampleRate.toLong())
+                if (frameEndUs <= seekTargetUs) {
+                    return ByteArray(0)
+                }
+                skipFrames = (((seekTargetUs - ptsUs) * sampleRate.toLong()) / 1_000_000L)
+                    .toInt()
+                    .coerceIn(0, totalFrames)
+                seekTargetUs = -1L
+            } else if (seekTargetUs >= 0) {
+                seekTargetUs = -1L
+            }
+
+            val keptFrames = totalFrames - skipFrames
+            if (keptFrames <= 0) return ByteArray(0)
+
+            buffer.order(ByteOrder.LITTLE_ENDIAN)
+            if (skipFrames > 0) {
+                buffer.position(buffer.position() + skipFrames * bytesPerFrame)
+            }
+
+            val ratio = sampleRate.toDouble() / 16000.0
+            val estimatedOut = ((keptFrames / ratio) + 4).toInt().coerceAtLeast(4)
+            val pcmOut = ByteArrayOutputStream(estimatedOut * 2)
+
+            for (i in 0 until keptFrames) {
+                var sum = 0.0
+                for (c in 0 until ch) {
+                    val sample = if (isFloat) {
+                        (buffer.getFloat() * 32767.0).coerceIn(-32768.0, 32767.0)
+                    } else {
+                        buffer.getShort().toDouble()
+                    }
+                    sum += sample
+                }
+                val mono = sum / ch
+
+                if (!hasPrevSample) {
+                    prevMonoSample = mono
+                    hasPrevSample = true
+                }
+
+                while (resamplePhase < 1.0) {
+                    val interp = prevMonoSample + (mono - prevMonoSample) * resamplePhase
+                    val intSample = interp.toInt().coerceIn(-32768, 32767)
+                    pcmOut.write(intSample and 0xFF)
+                    pcmOut.write((intSample shr 8) and 0xFF)
+                    resamplePhase += ratio
+                }
+                resamplePhase -= 1.0
+                prevMonoSample = mono
+            }
+
+            return pcmOut.toByteArray()
+        }
+
+        fun close() {
+            closed = true
+            synchronized(lock) {
+                try {
+                    codec?.stop()
+                } catch (_: Exception) {}
+                try {
+                    codec?.release()
+                } catch (_: Exception) {}
+                try {
+                    extractor?.release()
+                } catch (_: Exception) {}
+                codec = null
+                extractor = null
+                leftoverPcm = ByteArray(0)
+                leftoverOffset = 0
+            }
         }
     }
 }

@@ -32,8 +32,12 @@ import '../../domain/tts/tts_generation_manager.dart';
 import '../bilibili/bilibili_settings_sheet.dart';
 import '../bilibili/bilibili_uploader_sheet.dart';
 import '../bilibili/bilibili_season_sheet.dart';
+import '../../domain/ai/live/live_pcm_stream_extractor.dart';
+import '../../domain/ai/live/live_stream_translator.dart';
 import '../theme/app_theme.dart';
+import '../settings/settings_screen.dart';
 import 'dual_volume_sheet.dart';
+import 'live_translate_sheet.dart';
 import 'subtitle_control_sheet.dart';
 import 'subtitle_overlay.dart';
 import '../hongguo/hongguo_settings_sheet.dart';
@@ -115,6 +119,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
   AppPlayerController? _controller;
   late TtsAudioScheduler _ttsScheduler;
+  LiveStreamTranslator? _liveTranslator;
+  LiveAudioSource? _currentLiveAudioSource;
+  bool _waitingLiveWarmupResume = false;
+  Timer? _liveWarmupTimeoutTimer;
   late SettingsRepository _settings;
   bool _isInitialized = false;
   bool _showControls = true;
@@ -431,6 +439,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           TtsGenerationManager.isPronounceable(item.translatedText),
     ).toList();
 
+    if (_settings.isTtsPlaybackEnabled && (_liveTranslator?.isEnabled ?? false)) {
+      _cancelLiveWarmupPause(finishTranslatorWarmup: true);
+      unawaited(_liveTranslator!.stop());
+    }
     if (unlinked.isEmpty) {
       // Toàn bộ các câu đã có sẵn file âm thanh
       setState(() {
@@ -773,6 +785,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
   Future<void> _initSettingsAndPlayer() async {
     _settings = await SettingsRepository.getInstance();
+    _liveTranslator?.dispose();
+    _liveTranslator = _createLiveTranslator(_settings);
     _settings.backgroundPlayEnabled = true; // Luôn tự động bật phát âm thanh nền
     if (widget.initialTtsEnabled != null) {
       _settings.isTtsPlaybackEnabled = widget.initialTtsEnabled!;
@@ -905,6 +919,16 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             headers: httpHeaders,
           );
         }
+        _setCurrentLiveAudioSource(
+          _buildLiveAudioSource(
+            dashVideoUrl: dashVideoUrl,
+            dashAudioUrl: dashAudioUrl,
+            file: file,
+            contentUri: contentUri,
+            networkUrls: networkUrls,
+            headers: httpHeaders,
+          ),
+        );
         return;
       } catch (e) {
         debugPrint('[Player] Lỗi tái sử dụng controller (switchMedia): $e. Fallback tạo mới.');
@@ -924,20 +948,37 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       );
       await c.initialize();
       _controller = c;
+      _setCurrentLiveAudioSource(
+        _buildLiveAudioSource(
+          dashVideoUrl: dashVideoUrl,
+          dashAudioUrl: dashAudioUrl,
+          headers: httpHeaders,
+        ),
+      );
     } else if (file != null) {
       final c = _createPlayerController();
       await c.openFile(file);
       await c.initialize();
       _controller = c;
+      _setCurrentLiveAudioSource(_buildLiveAudioSource(file: file));
     } else if (contentUri != null) {
       final c = _createPlayerController();
       await c.openContentUri(contentUri);
       await c.initialize();
       _controller = c;
+      _setCurrentLiveAudioSource(_buildLiveAudioSource(contentUri: contentUri));
     } else if (networkUrls.isNotEmpty) {
+      String? winningUrl;
       _controller = await _initializeNetworkController(
         networkUrls,
         httpHeaders,
+        onResolvedUrl: (url) => winningUrl = url,
+      );
+      _setCurrentLiveAudioSource(
+        _buildLiveAudioSource(
+          networkUrls: winningUrl != null ? [winningUrl!] : networkUrls,
+          headers: httpHeaders,
+        ),
       );
     }
   }
@@ -1317,8 +1358,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
   Future<AppPlayerController> _initializeNetworkController(
     List<String> urls,
-    Map<String, String> headers,
-  ) async {
+    Map<String, String> headers, {
+    void Function(String resolvedUrl)? onResolvedUrl,
+  }) async {
     Object? lastError;
     final candidates = urls
         .map((url) => url.trim())
@@ -1333,6 +1375,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       try {
         await controller.openNetwork(candidateUrl, headers: headers);
         await controller.initialize(timeout: const Duration(seconds: 8));
+        onResolvedUrl?.call(candidateUrl);
         return controller;
       } catch (error) {
         lastError = error;
@@ -2363,6 +2406,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           await newController.setPlaybackSpeed(_playbackSpeed);
         } catch (_) {}
       }
+      final prevPath = _currentVideoPath;
       _settings.preferredVideoQuality = newQuality;
       setState(() {
         _controller = newController;
@@ -2370,6 +2414,16 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         _currentQualityKey = newQuality;
         _isSwitchingQuality = false;
       });
+      if (_currentLiveAudioSource == null ||
+          _currentLiveAudioSource!.mediaPath == prevPath) {
+        _setCurrentLiveAudioSource(
+          LiveAudioSource(
+            mediaPath: newUrl,
+            headers: BilibiliResolver.streamHeaders(_settings.bilibiliSessData),
+            sourceLabel: _currentTitle,
+          ),
+        );
+      }
 
       _controller!.addListener(_onPlayerUpdate);
       _syncTtsWithVideo();
@@ -5155,6 +5209,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     _controller?.removeListener(_onPlayerUpdate);
     _controller?.dispose();
     _ttsScheduler.dispose();
+    _liveWarmupTimeoutTimer?.cancel();
+    _liveTranslator?.dispose();
     super.dispose();
   }
 
@@ -5292,17 +5348,252 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     }
   }
 
+  LiveStreamTranslator _createLiveTranslator(SettingsRepository settings) {
+    final translator = LiveStreamTranslator(settings: settings);
+    translator.onFirstOutputArrived = _handleLiveTranslatorFirstOutput;
+    return translator;
+  }
+
+  LiveAudioSource? _buildLiveAudioSource({
+    String? dashVideoUrl,
+    String? dashAudioUrl,
+    File? file,
+    Uri? contentUri,
+    List<String> networkUrls = const [],
+    Map<String, String> headers = const {},
+  }) {
+    final cleanDashAudio = (dashAudioUrl ?? '').trim();
+    if ((dashVideoUrl ?? '').trim().isNotEmpty && cleanDashAudio.isNotEmpty) {
+      return LiveAudioSource(
+        mediaPath: cleanDashAudio,
+        headers: headers,
+        sourceLabel: _currentTitle,
+      );
+    }
+    if (file != null && file.path.isNotEmpty) {
+      return LiveAudioSource(
+        mediaPath: file.path,
+        sourceLabel: _currentTitle,
+      );
+    }
+    if (contentUri != null) {
+      return LiveAudioSource(
+        mediaPath: contentUri.toString(),
+        sourceLabel: _currentTitle,
+      );
+    }
+    final firstNet = networkUrls
+        .map((u) => u.trim())
+        .firstWhere((u) => u.isNotEmpty, orElse: () => '');
+    if (firstNet.isNotEmpty) {
+      return LiveAudioSource(
+        mediaPath: firstNet,
+        headers: headers,
+        sourceLabel: _currentTitle,
+      );
+    }
+    return null;
+  }
+
+  LiveAudioSource? _fallbackLiveAudioSource() {
+    final path = _currentVideoPath.trim();
+    if (path.isEmpty) return null;
+    if (path.startsWith('http://') || path.startsWith('https://')) {
+      return LiveAudioSource(
+        mediaPath: path,
+        headers: NetworkHeaderHelper.getHeadersForUrl(
+          path,
+          _settings.bilibiliSessData,
+        ),
+        sourceLabel: _currentTitle,
+      );
+    }
+    return LiveAudioSource(mediaPath: path, sourceLabel: _currentTitle);
+  }
+
+  void _setCurrentLiveAudioSource(LiveAudioSource? source) {
+    if (source == null || !source.isValid) return;
+    _currentLiveAudioSource = source;
+    final translator = _liveTranslator;
+    if (translator != null && translator.isEnabled) {
+      final posMs = _controller?.value.position.inMilliseconds ?? _currentPosMs;
+      unawaited(
+        translator.updateSource(
+          source: source,
+          positionMs: posMs,
+          apiKeys: _settings.geminiApiKeys,
+          playbackSpeed: _playbackSpeed,
+        ),
+      );
+    }
+  }
+
+  void _handleLiveTranslatorFirstOutput() {
+    if (!mounted) return;
+    _liveWarmupTimeoutTimer?.cancel();
+    _liveWarmupTimeoutTimer = null;
+    if (!_waitingLiveWarmupResume) return;
+    _waitingLiveWarmupResume = false;
+    _liveTranslator?.finishWarmup();
+    final controller = _controller;
+    if (controller != null &&
+        controller.value.isInitialized &&
+        !controller.value.isPlaying) {
+      unawaited(controller.play());
+    }
+    setState(() {});
+  }
+
+  void _cancelLiveWarmupPause({bool finishTranslatorWarmup = false}) {
+    _liveWarmupTimeoutTimer?.cancel();
+    _liveWarmupTimeoutTimer = null;
+    _waitingLiveWarmupResume = false;
+    if (finishTranslatorWarmup) {
+      _liveTranslator?.finishWarmup();
+    }
+  }
+
+  Future<bool> _beginLiveWarmupPauseIfNeeded() async {
+    final controller = _controller;
+    final translator = _liveTranslator;
+    if (!mounted ||
+        controller == null ||
+        !controller.value.isInitialized ||
+        !controller.value.isPlaying ||
+        translator == null ||
+        !translator.pauseVideoOnWarmup) {
+      return false;
+    }
+    _waitingLiveWarmupResume = true;
+    _liveWarmupTimeoutTimer?.cancel();
+    _liveWarmupTimeoutTimer = Timer(
+      const Duration(milliseconds: 2800),
+      _handleLiveTranslatorFirstOutput,
+    );
+    await controller.pause();
+    return true;
+  }
+
+  Future<void> _toggleLiveTranslate(bool enabled) async {
+    final translator = _liveTranslator ?? _createLiveTranslator(_settings);
+    _liveTranslator = translator;
+
+    if (!enabled) {
+      _cancelLiveWarmupPause(finishTranslatorWarmup: true);
+      await translator.stop();
+      await _applyAudioVolumes();
+      if (mounted) setState(() {});
+      return;
+    }
+
+    if (_settings.geminiApiKeys.isEmpty) {
+      await translator.start(
+        source: _currentLiveAudioSource ?? const LiveAudioSource(mediaPath: ''),
+        apiKeys: const [],
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+              'Chưa có Gemini API Key. Hãy thêm key trong Cài đặt để bật Nghe Dịch Live.',
+            ),
+            backgroundColor: Colors.orangeAccent.shade700,
+          ),
+        );
+        setState(() {});
+      }
+      return;
+    }
+
+    final source = _currentLiveAudioSource ?? _fallbackLiveAudioSource();
+    if (source == null || !source.isValid) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Chưa sẵn sàng luồng âm thanh để nghe dịch live.'),
+            backgroundColor: Colors.orangeAccent,
+          ),
+        );
+      }
+      return;
+    }
+
+    // Không phát chồng chéo với lồng tiếng TTS tạo sẵn
+    if (_settings.isTtsPlaybackEnabled) {
+      setState(() => _settings.isTtsPlaybackEnabled = false);
+      await _ttsScheduler.stop();
+      await _ttsScheduler.setEnabled(false);
+    }
+
+    final controller = _controller;
+    final posMs = controller?.value.position.inMilliseconds ?? _currentPosMs;
+    final wasPlaying = controller?.value.isPlaying ?? false;
+    if (wasPlaying) {
+      await _beginLiveWarmupPauseIfNeeded();
+    }
+
+    await translator.start(
+      source: source,
+      apiKeys: _settings.geminiApiKeys,
+      initialPositionMs: posMs,
+      playbackSpeed: _playbackSpeed,
+      isPlaying: wasPlaying,
+    );
+    await _applyAudioVolumes();
+    if (mounted) setState(() {});
+  }
+
+  void _openLiveTranslateSheet() {
+    final translator = _liveTranslator ?? _createLiveTranslator(_settings);
+    _liveTranslator = translator;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) => LiveTranslateSheet(
+        translator: translator,
+        settings: _settings,
+        originalVideoVolume: _settings.originalVideoVolume,
+        hasGeminiKeys: _settings.geminiApiKeys.isNotEmpty,
+        onOriginalVideoVolumeChanged: (val) async {
+          setState(() => _settings.originalVideoVolume = val);
+          await _applyAudioVolumes();
+        },
+        onToggleEnabled: _toggleLiveTranslate,
+        onOpenGeminiSettings: () async {
+          await Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const SettingsScreen()),
+          );
+          if (mounted) setState(() {});
+        },
+      ),
+    );
+  }
+
   void _syncTtsWithVideo() {
     final controller = _controller;
     if (controller == null || !controller.value.isInitialized) return;
+    if (_waitingLiveWarmupResume && controller.value.isPlaying) {
+      _cancelLiveWarmupPause(finishTranslatorWarmup: true);
+    }
+    final posMs = controller.value.position.inMilliseconds;
+    final playing = controller.value.isPlaying;
+    final speed = controller.value.playbackSpeed;
     unawaited(
       _ttsScheduler.onVideoStateUpdate(
-        positionMs: controller.value.position.inMilliseconds,
-        isPlaying: controller.value.isPlaying,
+        positionMs: posMs,
+        isPlaying: playing,
         isBuffering: _isPlaybackStalled,
         isScrubbing: _isScrubbing,
-        playbackSpeed: controller.value.playbackSpeed,
+        playbackSpeed: speed,
       ),
+    );
+    _liveTranslator?.onVideoStateUpdate(
+      positionMs: posMs,
+      isPlaying: _waitingLiveWarmupResume ? true : playing,
+      isBuffering: _isPlaybackStalled,
+      isScrubbing: _isScrubbing,
+      playbackSpeed: speed,
     );
   }
 
@@ -5396,14 +5687,23 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     if (controller == null || !controller.value.isInitialized) return;
     final durationMs = controller.value.duration.inMilliseconds;
     final clampedMs = positionMs.clamp(0, durationMs);
+    final wasPlaying = controller.value.isPlaying || _waitingLiveWarmupResume;
     setState(() {
       _currentPosMs = clampedMs;
       _lastObservedPositionMs = clampedMs;
       _lastPositionAdvanceAt = DateTime.now();
       _isScrubbing = false;
     });
+    if (_liveTranslator?.isEnabled == true &&
+        wasPlaying &&
+        (_liveTranslator?.pauseVideoOnWarmup ?? false)) {
+      await _beginLiveWarmupPauseIfNeeded();
+    }
     await controller.seekTo(Duration(milliseconds: clampedMs));
     await _ttsScheduler.onSeek(clampedMs);
+    if (_liveTranslator?.isEnabled == true) {
+      unawaited(_liveTranslator!.onSeek(clampedMs));
+    }
     _syncTtsWithVideo();
   }
 
@@ -5551,9 +5851,15 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           item.audioFilePath != null && File(item.audioFilePath!).existsSync(),
     );
     final useTts = hasTts && _settings.isTtsPlaybackEnabled;
-    await _controller?.setVolume(useTts ? _settings.originalVideoVolume : 1.0);
+    final useLive = _liveTranslator?.isEnabled ?? false;
+    await _controller?.setVolume(
+      (useTts || useLive) ? _settings.originalVideoVolume : 1.0,
+    );
     await _ttsScheduler.setVolume(_settings.ttsVolume);
     await _ttsScheduler.setEnabled(useTts);
+    if (_liveTranslator != null) {
+      await _liveTranslator!.setVolume(_settings.ttsVolume);
+    }
   }
 
   Future<void> _calibratePlaybackSpeeds() async {
@@ -5970,7 +6276,28 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
               ),
             ),
 
-              // 2. Lớp Hộp Đen (BlackBox) và Phụ đề nổi
+              // 2. Lớp Phụ đề Live Translate tạm thời + Hộp Đen / Phụ đề nổi
+              if (_liveTranslator != null)
+                Positioned(
+                  left: isLandscape ? 48 : 14,
+                  right: isLandscape ? 48 : 14,
+                  bottom:
+                      (isLandscape
+                          ? (_showControls ? 64.0 : 16.0)
+                          : (_showControls ? 86.0 : 22.0)) +
+                      (_currentDocument.isNotEmpty &&
+                              _settings.subtitleMode != 'none'
+                          ? 54.0
+                          : 0.0),
+                  child: Center(
+                    child: LiveTranslateCaptionBanner(
+                      translator: _liveTranslator!,
+                      onTap: _openLiveTranslateSheet,
+                    ),
+                  ),
+                ),
+
+              // 2b. Lớp Hộp Đen (BlackBox) và Phụ đề nổi
               SubtitleOverlay(
                 document: _currentDocument,
                 currentPositionMs: _currentPosMs,
@@ -6792,9 +7119,18 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                       ? 'Đang bật lồng tiếng AI (Chạm để tắt)'
                                       : 'Đang tắt lồng tiếng AI (Chạm để bật)',
                                   onPressed: () async {
+                                    final nextEnabled =
+                                        !_settings.isTtsPlaybackEnabled;
+                                    if (nextEnabled &&
+                                        (_liveTranslator?.isEnabled ?? false)) {
+                                      _cancelLiveWarmupPause(
+                                        finishTranslatorWarmup: true,
+                                      );
+                                      await _liveTranslator!.stop();
+                                    }
                                     setState(() {
                                       _settings.isTtsPlaybackEnabled =
-                                          !_settings.isTtsPlaybackEnabled;
+                                          nextEnabled;
                                     });
                                     await _applyAudioVolumes();
                                     if (_settings.isTtsPlaybackEnabled) {
@@ -6807,6 +7143,22 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                       _syncTtsWithVideo();
                                     }
                                   },
+                                ),
+
+                                // 4b. Nút Nghe Dịch Trực Tiếp (Gemini 3.5 Live)
+                                _buildTopBarIconButton(
+                                  icon: Icons.spatial_audio_rounded,
+                                  iconColor:
+                                      (_liveTranslator?.isEnabled ?? false)
+                                          ? const Color(0xFF64B5F6)
+                                          : Colors.white70,
+                                  isActive:
+                                      _liveTranslator?.isEnabled ?? false,
+                                  tooltip:
+                                      (_liveTranslator?.isEnabled ?? false)
+                                          ? 'Nghe Dịch Trực Tiếp (+${_liveTranslator!.leadSeconds.toStringAsFixed(1)}s)'
+                                          : 'Nghe Dịch Trực Tiếp (Gemini 3.5 Live)',
+                                  onPressed: _openLiveTranslateSheet,
                                 ),
 
                                 // 5. Chỉnh âm lượng độc lập (Âm lượng kép)
@@ -6827,7 +7179,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                               setState(() {
                                                 _settings.originalVideoVolume = val;
                                               });
-                                              await _controller?.setVolume(val);
+                                              await _applyAudioVolumes();
                                               setSheetState(() {});
                                             },
                                             onAiVolumeChanged: (val) async {
@@ -6835,6 +7187,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                                 _settings.ttsVolume = val;
                                               });
                                               await _ttsScheduler.setVolume(val);
+                                              await _liveTranslator?.setVolume(val);
                                               setSheetState(() {});
                                             },
                                           );
@@ -7226,8 +7579,22 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                               Duration(milliseconds: targetMs),
                             );
                             await _ttsScheduler.onSeek(targetMs);
+                            if (_liveTranslator?.isEnabled == true) {
+                              unawaited(_liveTranslator!.onSeek(targetMs));
+                            }
                             if (_wasPlayingBeforeScrub) {
-                              await controller.play();
+                              if (_liveTranslator?.isEnabled == true &&
+                                  (_liveTranslator?.pauseVideoOnWarmup ??
+                                      false)) {
+                                _waitingLiveWarmupResume = true;
+                                _liveWarmupTimeoutTimer?.cancel();
+                                _liveWarmupTimeoutTimer = Timer(
+                                  const Duration(milliseconds: 2800),
+                                  _handleLiveTranslatorFirstOutput,
+                                );
+                              } else {
+                                await controller.play();
+                              }
                             }
                             _syncTtsWithVideo();
                           },

@@ -510,4 +510,52 @@ class SettingsRepository {
       (prefs.getInt('bilibili_assistant_default_count') ?? 5).clamp(1, 20);
   set bilibiliAssistantDefaultCount(int v) =>
       prefs.setInt('bilibili_assistant_default_count', v.clamp(1, 20));
+
+  // ===== CẤU HÌNH NGHE DỊCH TRỰC TIẾP (GEMINI 3.5 LIVE TRANSLATE) =====
+  /// Độ trễ bù (AI nghe trước luồng đang phát) tính bằng mili-giây (0..8000ms, mặc định 2000ms).
+  int get liveTranslateLeadMs =>
+      (prefs.getInt('live_translate_lead_ms') ?? 2000).clamp(0, 8000);
+  set liveTranslateLeadMs(int v) =>
+      prefs.setInt('live_translate_lead_ms', v.clamp(0, 8000));
+
+  /// Ngôn ngữ đích cho Live Translate (BCP-47, mặc định 'vi').
+  String get liveTranslateTargetLanguage =>
+      prefs.getString('live_translate_target_language') ?? 'vi';
+  set liveTranslateTargetLanguage(String v) => prefs.setString(
+    'live_translate_target_language',
+    v.trim().isEmpty ? 'vi' : v.trim(),
+  );
+
+  /// Có lặp lại câu đã nói bằng ngôn ngữ đích hay không (mặc định false).
+  bool get liveTranslateEchoTargetLanguage =>
+      prefs.getBool('live_translate_echo_target_language') ?? false;
+  set liveTranslateEchoTargetLanguage(bool v) =>
+      prefs.setBool('live_translate_echo_target_language', v);
+
+  /// Hiển thị dòng chữ phụ đề live tạm trên video khi nghe dịch trực tiếp.
+  bool get liveTranslateShowLiveCaptions =>
+      prefs.getBool('live_translate_show_live_captions') ?? true;
+  set liveTranslateShowLiveCaptions(bool v) =>
+      prefs.setBool('live_translate_show_live_captions', v);
+
+  /// Chờ ngắn (~1.5-2s) lúc mới bật/tua để câu dịch đầu tiên kịp đổ về trước khi chạy video.
+  bool get liveTranslatePauseVideoOnWarmup =>
+      prefs.getBool('live_translate_pause_video_on_warmup') ?? true;
+  set liveTranslatePauseVideoOnWarmup(bool v) =>
+      prefs.setBool('live_translate_pause_video_on_warmup', v);
+
+  /// Lọc đoạn im lặng ở máy trước khi gửi lên Live API nhằm tiết kiệm hạn mức 20k TPM.
+  bool get liveTranslateVadFilterEnabled =>
+      prefs.getBool('live_translate_vad_filter_enabled') ?? true;
+  set liveTranslateVadFilterEnabled(bool v) =>
+      prefs.setBool('live_translate_vad_filter_enabled', v);
+
+  /// Model dùng cho Nghe Dịch Trực Tiếp.
+  String get liveTranslateModel =>
+      prefs.getString('live_translate_model') ??
+      'gemini-3.5-live-translate-preview';
+  set liveTranslateModel(String v) => prefs.setString(
+    'live_translate_model',
+    v.trim().isEmpty ? 'gemini-3.5-live-translate-preview' : v.trim(),
+  );
 }

@@ -2378,6 +2378,11 @@ class _EventFakeBiliLiveClient extends _FakeLiveClient {
     String? resumptionHandle,
     String voiceName = 'Aoede',
     bool forceRefreshModelDiscovery = false,
+    String? translationTargetLanguageCode,
+    bool echoTargetLanguage = false,
+    bool enableCompression = true,
+    int compressionTriggerTokens = 16384,
+    int compressionTargetTokens = 8192,
   }) async {
     connected = true;
     final diag = LiveConnectionDiagnostics(

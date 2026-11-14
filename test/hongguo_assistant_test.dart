@@ -1218,6 +1218,11 @@ class _FakeGeminiLiveClient extends GeminiLiveClient {
     String? resumptionHandle,
     String voiceName = 'Aoede',
     bool forceRefreshModelDiscovery = false,
+    String? translationTargetLanguageCode,
+    bool echoTargetLanguage = false,
+    bool enableCompression = true,
+    int compressionTriggerTokens = 16384,
+    int compressionTargetTokens = 8192,
   }) async {
     connectCalls++;
     _fakeModel = modelId;
@@ -1306,6 +1311,13 @@ class _FakeGeminiLiveClient extends GeminiLiveClient {
 
 class _NoopAudioOutput implements LivePcmAudioOutput {
   bool _enabled = false;
+  bool _paused = false;
+  double _volume = 1.0;
+  double _rate = 1.0;
+  @override
+  int get firstSegmentBytes => 19200;
+  @override
+  int get normalSegmentBytes => 57600;
   @override
   VoidCallback? onPlaybackStateChanged;
   @override
@@ -1313,7 +1325,19 @@ class _NoopAudioOutput implements LivePcmAudioOutput {
   @override
   bool get isPlaying => false;
   @override
+  bool get isPaused => _paused;
+  @override
+  double get volume => _volume;
+  @override
+  double get playbackRate => _rate;
+  @override
   void setEnabled(bool enabled) => _enabled = enabled;
+  @override
+  Future<void> setVolume(double volume) async => _volume = volume;
+  @override
+  Future<void> setPlaybackRate(double rate) async => _rate = rate;
+  @override
+  Future<void> setPaused(bool paused) async => _paused = paused;
   @override
   Future<void> enqueuePcmChunk(Uint8List pcmBytes) async {}
   @override

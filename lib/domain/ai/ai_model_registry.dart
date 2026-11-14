@@ -61,6 +61,10 @@ class AiModelRegistry {
     ),
   ];
 
+  /// Model chuyên dụng Live Translate (dịch giọng nói sang giọng nói thời gian thực).
+  static const String geminiLiveTranslateModel =
+      'gemini-3.5-live-translate-preview';
+
   /// 3 model Gemini Live API (WebSocket BidiGenerateContent) dùng cho Trợ lý Hồng Quả.
   static const List<AiModelInfo> geminiLiveModels = [
     AiModelInfo(
@@ -102,6 +106,10 @@ class AiModelRegistry {
       'gemini-3.0-flash-live-preview',
       'gemini-live-2.5-flash-preview',
       'gemini-2.5-flash-native-audio-preview-12-2025',
+    ],
+    'gemini-3.5-live-translate-preview': [
+      'gemini-3.5-live-translate-preview',
+      'gemini-3.5-live-translate',
     ],
   };
 

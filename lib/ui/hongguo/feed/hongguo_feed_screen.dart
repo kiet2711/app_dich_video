@@ -18,10 +18,13 @@ import '../../../data/model/watch_later_item.dart';
 import '../../../data/repository/history_repository.dart';
 import '../../../data/repository/settings_repository.dart';
 import '../../../data/repository/watch_later_repository.dart';
+import '../../../domain/ai/live/live_pcm_stream_extractor.dart';
+import '../../../domain/ai/live/live_stream_translator.dart';
 import '../../../domain/ai/offline_mlkit_translator.dart';
 import '../../../domain/media/audio_extractor.dart';
 import '../../../domain/media/hongguo/hongguo_local_engine.dart';
 import '../../../domain/media/hongguo/hongguo_similar_engine.dart';
+import '../../../domain/media/hongguo/hongguo_stream_proxy_server.dart';
 import '../../../domain/media/hongguo_cenc_decryptor.dart';
 import '../../../domain/media/hongguo_resolver.dart';
 import '../../../domain/media/multi_thread_downloader.dart';
@@ -35,8 +38,10 @@ import '../../../player/app_player_controller.dart';
 import '../../../player/global_player_manager.dart';
 import '../../../player/tts_audio_scheduler.dart';
 import '../../player/dual_volume_sheet.dart';
+import '../../player/live_translate_sheet.dart';
 import '../../player/subtitle_control_sheet.dart';
 import '../../player/subtitle_overlay.dart';
+import '../../settings/settings_screen.dart';
 import '../../theme/app_theme.dart';
 
 /// Dữ liệu của một trang trong Feed
@@ -57,11 +62,19 @@ class _FeedPlaybackSource {
   final String url;
   final String? decryptionKey;
   final Map<String, String> headers;
+  final HongguoVideoInfo? videoInfo;
+  final String vid;
+  final String seriesId;
+  final int episodeIndex;
 
   const _FeedPlaybackSource({
     required this.url,
     this.decryptionKey,
     this.headers = const {},
+    this.videoInfo,
+    this.vid = '',
+    this.seriesId = '',
+    this.episodeIndex = 1,
   });
 }
 
@@ -500,6 +513,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
   bool _showSubtitles = true;
   bool _isTtsActive = false;
   TtsAudioScheduler? _ttsScheduler;
+  LiveStreamTranslator? _liveTranslator;
+  bool _waitingLiveWarmupResume = false;
+  Timer? _liveWarmupTimeoutTimer;
 
   // Trạng thái dịch trực tiếp của tập hiện tại
   bool _isTranslatingCurrent = false;
@@ -582,6 +598,8 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
     setState(() {
       _settings = settings;
+      _liveTranslator?.dispose();
+      _liveTranslator = _createLiveTranslator(settings);
       _isAutoNextEpisode = settings.hongguoAutoNextEpisode;
       _preTranslateCount = settings.hongguoPreTranslateCount;
       _preTranslateMode = settings.hongguoPreTranslateMode;
@@ -757,6 +775,22 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
             playbackSpeed: _playbackSpeed,
           );
         }
+        if (_liveTranslator != null &&
+            _liveTranslator!.isEnabled &&
+            _activeController != null) {
+          final isPlaying =
+              _activeController!.value.isPlaying && !_isManuallyPaused;
+          if (_waitingLiveWarmupResume && isPlaying) {
+            _cancelLiveWarmupPause(finishTranslatorWarmup: true);
+          }
+          _liveTranslator!.onVideoStateUpdate(
+            positionMs: pos.inMilliseconds,
+            isPlaying: _waitingLiveWarmupResume ? true : isPlaying,
+            isBuffering: _isPlayerBuffering,
+            isScrubbing: _isScrubbing,
+            playbackSpeed: _playbackSpeed,
+          );
+        }
       }
     });
 
@@ -775,6 +809,19 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         _ttsScheduler!.onVideoStateUpdate(
           positionMs: _currentPos.inMilliseconds,
           isPlaying: _activeController!.value.isPlaying && !_isManuallyPaused,
+          isBuffering: buffering,
+          isScrubbing: _isScrubbing,
+          playbackSpeed: _playbackSpeed,
+        );
+      }
+      if (_liveTranslator != null &&
+          _liveTranslator!.isEnabled &&
+          _activeController != null) {
+        _liveTranslator!.onVideoStateUpdate(
+          positionMs: _currentPos.inMilliseconds,
+          isPlaying: _waitingLiveWarmupResume
+              ? true
+              : (_activeController!.value.isPlaying && !_isManuallyPaused),
           isBuffering: buffering,
           isScrubbing: _isScrubbing,
           playbackSpeed: _playbackSpeed,
@@ -800,11 +847,14 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     _completedSub?.cancel();
     _stallWatchdog?.cancel();
     _loadingIndicatorTimer?.cancel();
+    _liveWarmupTimeoutTimer?.cancel();
     _posSub?.cancel();
     _bufferingSub?.cancel();
     _pageController.dispose();
     _ttsScheduler?.dispose();
     _ttsScheduler = null;
+    _liveTranslator?.dispose();
+    _liveTranslator = null;
     final standbyController = _standbyController;
     _standbyController = null;
     if (standbyController != null &&
@@ -867,6 +917,18 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
     if (!_isDramaEpisodeMode && index >= 0 && index < _feedItems.length) {
       _settings?.addHongguoSeenSeriesId(_feedItems[index].detail.seriesId);
+    }
+
+    if (_liveTranslator?.isEnabled == true) {
+      final startMs = _pendingInitialSeekMs ?? _currentPos.inMilliseconds;
+      unawaited(
+        _syncLiveTranslatorForIndex(index, startPosMs: startMs),
+      );
+      unawaited(
+        _activeController?.setVolume(
+          _settings?.originalVideoVolume ?? 0.25,
+        ),
+      );
     }
 
     _maintainFeedWindow(index);
@@ -1176,6 +1238,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
               Duration(milliseconds: seekMs),
             );
             _ttsScheduler?.onSeek(seekMs);
+            if (_liveTranslator?.isEnabled == true) {
+              unawaited(_liveTranslator!.onSeek(seekMs));
+            }
           } catch (e) {
             debugPrint('[HongguoFeedScreen] initial seek error: $e');
           }
@@ -1257,7 +1322,12 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       if (cached != null &&
           cached.existsSync() &&
           cached.lengthSync() > 1024 * 50) {
-        return _FeedPlaybackSource(url: cached.path);
+        return _FeedPlaybackSource(
+          url: cached.path,
+          vid: item.vid,
+          seriesId: item.detail.seriesId,
+          episodeIndex: item.episodeIndex,
+        );
       }
     } catch (_) {}
 
@@ -1265,9 +1335,36 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     try {
       final info = await HongguoLocalEngine.resolveVideoInfo(item.vid);
       if (info.realMainUrl.isNotEmpty) {
+        if (info.isDrmProtected) {
+          HongguoStreamProxyServer.instance.registerVideoInfo(
+            vid: item.vid,
+            info: info,
+            seriesId: item.detail.seriesId,
+            episodeIndex: item.episodeIndex,
+          );
+          if (_liveTranslator?.isEnabled == true) {
+            await HongguoStreamProxyServer.instance.ensureStarted();
+            final proxyUrl = HongguoStreamProxyServer.instance.getStreamUrl(
+              vid: item.vid,
+              seriesId: item.detail.seriesId,
+              episodeIndex: item.episodeIndex,
+            );
+            return _FeedPlaybackSource(
+              url: proxyUrl,
+              videoInfo: info,
+              vid: item.vid,
+              seriesId: item.detail.seriesId,
+              episodeIndex: item.episodeIndex,
+            );
+          }
+        }
         return _FeedPlaybackSource(
           url: info.realMainUrl,
           decryptionKey: info.isDrmProtected ? info.contentKeyHex : null,
+          videoInfo: info,
+          vid: item.vid,
+          seriesId: item.detail.seriesId,
+          episodeIndex: item.episodeIndex,
           headers: const {
             'User-Agent':
                 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
@@ -1290,7 +1387,12 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
           episodeIndex: item.episodeIndex,
         );
         if (publicUrl != null && publicUrl.isNotEmpty) {
-          return _FeedPlaybackSource(url: publicUrl);
+          return _FeedPlaybackSource(
+            url: publicUrl,
+            vid: item.vid,
+            seriesId: item.detail.seriesId,
+            episodeIndex: item.episodeIndex,
+          );
         }
       } catch (_) {}
     }
@@ -2365,15 +2467,31 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     HapticFeedback.lightImpact();
     if (_activeController == null) return;
     if (_activeController!.value.isPlaying) {
+      _cancelLiveWarmupPause(finishTranslatorWarmup: false);
       _activeController!.player.pause();
       _ttsScheduler?.pause();
+      _liveTranslator?.onVideoStateUpdate(
+        positionMs: _currentPos.inMilliseconds,
+        isPlaying: false,
+        isBuffering: _isPlayerBuffering,
+        isScrubbing: _isScrubbing,
+        playbackSpeed: _playbackSpeed,
+      );
       setState(() {
         _isManuallyPaused = true;
         _showPlayPauseAnim = true;
       });
     } else {
+      _cancelLiveWarmupPause(finishTranslatorWarmup: true);
       _activeController!.player.play();
       _ttsScheduler?.resume();
+      _liveTranslator?.onVideoStateUpdate(
+        positionMs: _currentPos.inMilliseconds,
+        isPlaying: true,
+        isBuffering: _isPlayerBuffering,
+        isScrubbing: _isScrubbing,
+        playbackSpeed: _playbackSpeed,
+      );
       setState(() {
         _isManuallyPaused = false;
         _showPlayPauseAnim = true;
@@ -2409,6 +2527,16 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       _playbackSpeed = nextSpeed;
     });
     _activeController?.player.setRate(nextSpeed);
+    _liveTranslator?.onVideoStateUpdate(
+      positionMs: _currentPos.inMilliseconds,
+      isPlaying: _waitingLiveWarmupResume
+          ? true
+          : ((_activeController?.value.isPlaying ?? false) &&
+              !_isManuallyPaused),
+      isBuffering: _isPlayerBuffering,
+      isScrubbing: _isScrubbing,
+      playbackSpeed: nextSpeed,
+    );
   }
 
   /// Xoay toàn màn hình ngang (Landscape Fullscreen)
@@ -2696,6 +2824,21 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
                         ),
                       ],
                     ),
+                  ),
+                ),
+              ),
+
+            // 5b. Phụ đề Live Translate tạm thời trên Feed
+            if (_liveTranslator != null && !_isCleanMode)
+              Positioned(
+                left: 14,
+                right: 76,
+                bottom: MediaQuery.of(context).padding.bottom + 148,
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: LiveTranslateCaptionBanner(
+                    translator: _liveTranslator!,
+                    onTap: _openLiveTranslateSheet,
                   ),
                 ),
               ),
@@ -3660,6 +3803,11 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
                   const SizedBox(height: 14),
 
+                  // 2b. Nút Nghe Dịch Trực Tiếp (Gemini 3.5 Live)
+                  _buildLiveTranslateButton(item),
+
+                  const SizedBox(height: 14),
+
                   // 3. Nút Tự động chuyển tập (kèm Dịch & Lồng tiếng trước trong nền)
                   _buildAutoNextEpisodeButton(item),
 
@@ -3866,6 +4014,13 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
           behavior: HitTestBehavior.opaque,
           onHorizontalDragStart: (details) {
             _ttsScheduler?.pause();
+            _liveTranslator?.onVideoStateUpdate(
+              positionMs: _currentPos.inMilliseconds,
+              isPlaying: false,
+              isBuffering: _isPlayerBuffering,
+              isScrubbing: true,
+              playbackSpeed: _playbackSpeed,
+            );
             setState(() {
               _isScrubbing = true;
               _scrubValue = (details.localPosition.dx / totalWidth).clamp(
@@ -3887,8 +4042,18 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
               final targetPos = Duration(
                 milliseconds: (_scrubValue * durMs).toInt(),
               );
+              final wasPlaying =
+                  (_activeController!.value.isPlaying && !_isManuallyPaused) ||
+                  _waitingLiveWarmupResume;
               _activeController!.player.seek(targetPos);
               _ttsScheduler?.onSeek(targetPos.inMilliseconds);
+              if (_liveTranslator?.isEnabled == true) {
+                if (wasPlaying &&
+                    (_liveTranslator?.pauseVideoOnWarmup ?? false)) {
+                  unawaited(_beginLiveWarmupPauseIfNeeded());
+                }
+                unawaited(_liveTranslator!.onSeek(targetPos.inMilliseconds));
+              }
             }
             setState(() {
               _isScrubbing = false;
@@ -4129,6 +4294,307 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
           ),
         ],
       ),
+    );
+  }
+
+  LiveStreamTranslator _createLiveTranslator(SettingsRepository settings) {
+    final translator = LiveStreamTranslator(settings: settings);
+    translator.onFirstOutputArrived = _handleLiveTranslatorFirstOutput;
+    return translator;
+  }
+
+  void _cancelLiveWarmupPause({bool finishTranslatorWarmup = false}) {
+    _liveWarmupTimeoutTimer?.cancel();
+    _liveWarmupTimeoutTimer = null;
+    _waitingLiveWarmupResume = false;
+    if (finishTranslatorWarmup) {
+      _liveTranslator?.finishWarmup();
+    }
+  }
+
+  void _handleLiveTranslatorFirstOutput() {
+    if (!mounted) return;
+    _liveWarmupTimeoutTimer?.cancel();
+    _liveWarmupTimeoutTimer = null;
+    if (!_waitingLiveWarmupResume) return;
+    _waitingLiveWarmupResume = false;
+    _liveTranslator?.finishWarmup();
+    if (!_isManuallyPaused &&
+        _activeController != null &&
+        !_activeController!.value.isPlaying) {
+      unawaited(_activeController!.player.play());
+    }
+    setState(() {});
+  }
+
+  Future<bool> _beginLiveWarmupPauseIfNeeded() async {
+    final controller = _activeController;
+    final translator = _liveTranslator;
+    if (!mounted ||
+        controller == null ||
+        _isManuallyPaused ||
+        !controller.value.isPlaying ||
+        translator == null ||
+        !translator.pauseVideoOnWarmup) {
+      return false;
+    }
+    _waitingLiveWarmupResume = true;
+    _liveWarmupTimeoutTimer?.cancel();
+    _liveWarmupTimeoutTimer = Timer(
+      const Duration(milliseconds: 2800),
+      _handleLiveTranslatorFirstOutput,
+    );
+    await controller.player.pause();
+    return true;
+  }
+
+  Future<LiveAudioSource?> _resolveLiveAudioSourceForIndex(int index) async {
+    if (index < 0 || index >= _feedItems.length) return null;
+    final item = _feedItems[index];
+    final label = '${item.detail.title} - Tập ${item.episodeIndex}';
+
+    try {
+      final cached = await VideoCacheManager.findCachedFile(
+        url: '',
+        seriesId: item.detail.seriesId,
+        episodeIndex: item.episodeIndex,
+      );
+      if (cached != null &&
+          cached.existsSync() &&
+          cached.lengthSync() > 1024 * 50) {
+        return LiveAudioSource(mediaPath: cached.path, sourceLabel: label);
+      }
+    } catch (_) {}
+
+    final mediaKey = _mediaKey(item);
+    var source = _preloadedSources[mediaKey];
+    if (source == null || source.url.isEmpty) {
+      try {
+        source = await _resolveEpisodeStreamSource(item);
+        _preloadedSources[mediaKey] = source;
+      } catch (e) {
+        debugPrint('[HongguoFeed] Không phân giải được luồng live audio: $e');
+        return null;
+      }
+    }
+
+    // Video Hồng Quả có CENC DRM -> đẩy qua HongguoStreamProxyServer (giải mã sạch trên RAM + dùng chung cache)
+    if (source.decryptionKey != null && source.decryptionKey!.isNotEmpty) {
+      await HongguoStreamProxyServer.instance.ensureStarted();
+      final resolvedVid = source.vid.isNotEmpty ? source.vid : item.vid;
+      if (source.videoInfo != null) {
+        HongguoStreamProxyServer.instance.registerVideoInfo(
+          vid: resolvedVid,
+          info: source.videoInfo!,
+          seriesId: item.detail.seriesId,
+          episodeIndex: item.episodeIndex,
+        );
+      }
+      final proxyUrl = HongguoStreamProxyServer.instance.getStreamUrl(
+        vid: resolvedVid,
+        seriesId: item.detail.seriesId,
+        episodeIndex: item.episodeIndex,
+      );
+      return LiveAudioSource(mediaPath: proxyUrl, sourceLabel: label);
+    }
+
+    return LiveAudioSource(
+      mediaPath: source.url,
+      headers: source.headers,
+      sourceLabel: label,
+    );
+  }
+
+  Future<void> _syncLiveTranslatorForIndex(
+    int index, {
+    int startPosMs = 0,
+  }) async {
+    final translator = _liveTranslator;
+    final settings = _settings;
+    if (translator == null || !translator.isEnabled || settings == null) {
+      return;
+    }
+    _cancelLiveWarmupPause(finishTranslatorWarmup: false);
+    final liveSource = await _resolveLiveAudioSourceForIndex(index);
+    if (!mounted ||
+        index != _currentIndex ||
+        !translator.isEnabled ||
+        liveSource == null ||
+        !liveSource.isValid) {
+      return;
+    }
+    await translator.updateSource(
+      source: liveSource,
+      positionMs: startPosMs,
+      apiKeys: settings.geminiApiKeys,
+      playbackSpeed: _playbackSpeed,
+    );
+  }
+
+  Future<void> _toggleLiveTranslate(bool enabled) async {
+    final settings = _settings ?? await SettingsRepository.getInstance();
+    _settings = settings;
+    final translator = _liveTranslator ?? _createLiveTranslator(settings);
+    _liveTranslator = translator;
+
+    if (!enabled) {
+      _cancelLiveWarmupPause(finishTranslatorWarmup: true);
+      await translator.stop();
+      if (!_isTtsActive) {
+        await _activeController?.setVolume(1.0);
+      }
+      if (mounted) setState(() {});
+      return;
+    }
+
+    if (settings.geminiApiKeys.isEmpty) {
+      await translator.start(
+        source: const LiveAudioSource(mediaPath: ''),
+        apiKeys: const [],
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+              'Chưa có Gemini API Key. Hãy thêm key trong Cài đặt để bật Nghe Dịch Live.',
+            ),
+            backgroundColor: Colors.orangeAccent.shade700,
+          ),
+        );
+        setState(() {});
+      }
+      return;
+    }
+
+    final liveSource = await _resolveLiveAudioSourceForIndex(_currentIndex);
+    if (liveSource == null || !liveSource.isValid) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Chưa sẵn sàng luồng âm thanh để nghe dịch live.'),
+            backgroundColor: Colors.orangeAccent,
+          ),
+        );
+      }
+      return;
+    }
+
+    if (_isTtsActive) {
+      await _stopTtsPlayback();
+    }
+
+    final wasPlaying =
+        (_activeController?.value.isPlaying ?? false) && !_isManuallyPaused;
+    final posMs = _currentPos.inMilliseconds;
+    if (wasPlaying) {
+      await _beginLiveWarmupPauseIfNeeded();
+    }
+
+    await translator.start(
+      source: liveSource,
+      apiKeys: settings.geminiApiKeys,
+      initialPositionMs: posMs,
+      playbackSpeed: _playbackSpeed,
+      isPlaying: wasPlaying,
+    );
+    await _activeController?.setVolume(settings.originalVideoVolume);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _openLiveTranslateSheet() async {
+    final settings = _settings ?? await SettingsRepository.getInstance();
+    _settings = settings;
+    final translator = _liveTranslator ?? _createLiveTranslator(settings);
+    _liveTranslator = translator;
+    if (!mounted) return;
+    await showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) => LiveTranslateSheet(
+        translator: translator,
+        settings: settings,
+        originalVideoVolume: settings.originalVideoVolume,
+        hasGeminiKeys: settings.geminiApiKeys.isNotEmpty,
+        onOriginalVideoVolumeChanged: (val) {
+          settings.originalVideoVolume = val;
+          if (_isTtsActive || translator.isEnabled) {
+            _activeController?.setVolume(val);
+          }
+          if (mounted) setState(() {});
+        },
+        onToggleEnabled: _toggleLiveTranslate,
+        onOpenGeminiSettings: () async {
+          await Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const SettingsScreen()),
+          );
+          if (mounted) setState(() {});
+        },
+      ),
+    );
+  }
+
+  /// Nút Nghe Dịch Trực Tiếp (Gemini 3.5 Live): chạm để chỉnh lookahead & bật/tắt, giữ lâu bật/tắt nhanh
+  Widget _buildLiveTranslateButton(FeedDramaPageItem item) {
+    final translator = _liveTranslator;
+    Widget buildButton(bool isActive, double leadSec) {
+      final accent = isActive
+          ? const Color(0xFF64B5F6)
+          : Colors.white;
+      return GestureDetector(
+        onTap: () {
+          HapticFeedback.lightImpact();
+          _openLiveTranslateSheet();
+        },
+        onLongPress: () {
+          HapticFeedback.mediumImpact();
+          _toggleLiveTranslate(!isActive);
+        },
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: isActive
+                    ? const Color(0x3364B5F6)
+                    : Colors.black.withValues(alpha: 0.45),
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: isActive ? const Color(0xFF64B5F6) : Colors.white24,
+                  width: isActive ? 1.5 : 0.6,
+                ),
+                boxShadow: isActive
+                    ? const [BoxShadow(color: Color(0x6664B5F6), blurRadius: 8)]
+                    : null,
+              ),
+              child: Icon(
+                Icons.spatial_audio_rounded,
+                color: accent,
+                size: 24,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              isActive ? '+${leadSec.toStringAsFixed(1)}s' : 'Dịch Live',
+              style: TextStyle(
+                color: accent,
+                fontSize: 10,
+                fontWeight: isActive ? FontWeight.bold : FontWeight.w500,
+                shadows: const [Shadow(color: Colors.black, blurRadius: 2)],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (translator == null) {
+      return buildButton(false, 2.0);
+    }
+    return AnimatedBuilder(
+      animation: translator,
+      builder: (_, _) => buildButton(translator.isEnabled, translator.leadSeconds),
     );
   }
 
@@ -5039,6 +5505,10 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
   /// Bắt đầu phát âm thanh lồng tiếng AI đồng bộ với video
   Future<void> _startTtsPlayback(SubtitleDocument doc) async {
+    if (_liveTranslator?.isEnabled == true) {
+      _cancelLiveWarmupPause(finishTranslatorWarmup: true);
+      await _liveTranslator!.stop();
+    }
     _ttsScheduler ??= TtsAudioScheduler(doc);
     _ttsScheduler!.setDocument(doc);
     await _ttsScheduler!.setVolume(_settings?.ttsVolume ?? 1.0);
@@ -5057,7 +5527,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       await _ttsScheduler!.setEnabled(false);
     }
     _isTtsActive = false;
-    await _activeController?.setVolume(1.0);
+    if (!(_liveTranslator?.isEnabled ?? false)) {
+      await _activeController?.setVolume(1.0);
+    }
     if (mounted) setState(() {});
   }
 

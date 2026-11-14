@@ -16,6 +16,30 @@ class AudioExtractResult {
       'AudioExtractResult(actualStartMs: $actualStartMs, durationMs: $durationMs)';
 }
 
+class PcmStreamOpenResult {
+  final String streamId;
+  final int durationMs;
+
+  const PcmStreamOpenResult({
+    required this.streamId,
+    required this.durationMs,
+  });
+}
+
+class PcmStreamChunkResult {
+  final Uint8List pcmBytes;
+  final int startMs;
+  final int endMs;
+  final bool eof;
+
+  const PcmStreamChunkResult({
+    required this.pcmBytes,
+    required this.startMs,
+    required this.endMs,
+    required this.eof,
+  });
+}
+
 class ContentMediaMetadata {
   const ContentMediaMetadata({
     required this.name,
@@ -94,6 +118,85 @@ class AudioExtractor {
     return AudioExtractResult(
       durationMs: 0,
       actualStartMs: startMs,
+    );
+  }
+
+  static Future<PcmStreamOpenResult> openPcmStream({
+    required String mediaPath,
+    Map<String, String> headers = const {},
+    int startMs = 0,
+  }) async {
+    final res = await _channel.invokeMapMethod<String, dynamic>(
+      'openPcmStream',
+      {
+        'mediaPath': mediaPath,
+        'headers': headers,
+        'startMs': startMs,
+      },
+    );
+    final streamId = (res?['streamId'] as String?)?.trim() ?? '';
+    if (streamId.isEmpty) {
+      throw StateError('Không mở được luồng giải mã âm thanh PCM.');
+    }
+    final durationMs = (res?['durationMs'] as num?)?.toInt() ?? 0;
+    return PcmStreamOpenResult(
+      streamId: streamId,
+      durationMs: durationMs,
+    );
+  }
+
+  static Future<PcmStreamChunkResult> readPcmChunk({
+    required String streamId,
+    int durationMs = 250,
+  }) async {
+    final res = await _channel.invokeMapMethod<String, dynamic>(
+      'readPcmChunk',
+      {
+        'streamId': streamId,
+        'durationMs': durationMs,
+      },
+    );
+    if (res == null) {
+      return PcmStreamChunkResult(
+        pcmBytes: Uint8List(0),
+        startMs: 0,
+        endMs: 0,
+        eof: true,
+      );
+    }
+    final rawPcm = res['pcm'];
+    final pcmBytes = rawPcm is Uint8List
+        ? rawPcm
+        : (rawPcm is List<int>
+            ? Uint8List.fromList(rawPcm)
+            : Uint8List(0));
+    return PcmStreamChunkResult(
+      pcmBytes: pcmBytes,
+      startMs: (res['startMs'] as num?)?.toInt() ?? 0,
+      endMs: (res['endMs'] as num?)?.toInt() ?? 0,
+      eof: res['eof'] == true,
+    );
+  }
+
+  static Future<int> seekPcmStream({
+    required String streamId,
+    required int positionMs,
+  }) async {
+    final res = await _channel.invokeMethod<num>(
+      'seekPcmStream',
+      {
+        'streamId': streamId,
+        'positionMs': positionMs,
+      },
+    );
+    return res?.toInt() ?? positionMs;
+  }
+
+  static Future<void> closePcmStream(String streamId) async {
+    if (streamId.trim().isEmpty) return;
+    await _channel.invokeMethod<dynamic>(
+      'closePcmStream',
+      {'streamId': streamId},
     );
   }
 }

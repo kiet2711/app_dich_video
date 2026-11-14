@@ -170,31 +170,98 @@ class LiveMicRecorder {
 /// Bộ phát âm thanh phản hồi 24kHz PCM từ Gemini Live qua 2 AudioPlayer luân phiên (hỗ trợ Android, iOS, Windows).
 class LivePcmAudioOutput {
   static const int _sampleRate = 24000;
-  static const int _firstSegmentBytes = 19200; // ~0.4s ở 24kHz 16-bit mono
-  static const int _normalSegmentBytes = 57600; // ~1.2s để hạn chế ngắt nhịp
 
+  final int firstSegmentBytes;
+  final int normalSegmentBytes;
   final List<AudioPlayer> _players = [AudioPlayer(), AudioPlayer()];
   final BytesBuilder _pendingPcm = BytesBuilder(copy: false);
   final Queue<String> _segmentQueue = Queue<String>();
 
   bool _enabled = false;
   bool _isPlaying = false;
+  bool _isPaused = false;
   bool _isDrainRunning = false;
   bool _hasStartedTurnSegment = false;
   bool _disposed = false;
   int _playbackEpoch = 0;
   int _segmentCounter = 0;
   int _activePlayerIdx = 0;
+  AudioPlayer? _currentPlayingPlayer;
+  double _volume = 1.0;
+  double _playbackRate = 1.0;
+  Completer<void>? _pauseResumeCompleter;
   Directory? _tempDir;
   VoidCallback? onPlaybackStateChanged;
 
+  LivePcmAudioOutput({
+    this.firstSegmentBytes = 19200, // ~0.4s ở 24kHz 16-bit mono
+    this.normalSegmentBytes = 57600, // ~1.2s để hạn chế ngắt nhịp
+  });
+
   bool get isEnabled => _enabled;
   bool get isPlaying => _isPlaying;
+  bool get isPaused => _isPaused;
+  double get volume => _volume;
+  double get playbackRate => _playbackRate;
 
   void setEnabled(bool enabled) {
     _enabled = enabled;
     if (!enabled) {
       unawaited(interrupt());
+    }
+  }
+
+  Future<void> setVolume(double volume) async {
+    _volume = volume.clamp(0.0, 1.0);
+    if (_disposed) return;
+    for (final player in _players) {
+      try {
+        await player.setVolume(_volume);
+      } catch (_) {}
+    }
+  }
+
+  Future<void> setPlaybackRate(double rate) async {
+    _playbackRate = rate.clamp(0.75, 2.0);
+    if (_disposed) return;
+    for (final player in _players) {
+      try {
+        await player.setSpeed(_playbackRate);
+      } catch (_) {}
+    }
+  }
+
+  Future<void> setPaused(bool paused) async {
+    if (_disposed || _isPaused == paused) return;
+    _isPaused = paused;
+    if (paused) {
+      _pauseResumeCompleter ??= Completer<void>();
+      for (final player in _players) {
+        try {
+          if (player.playing) {
+            await player.pause();
+          }
+        } catch (_) {}
+      }
+    } else {
+      if (_pauseResumeCompleter != null &&
+          !_pauseResumeCompleter!.isCompleted) {
+        _pauseResumeCompleter!.complete();
+      }
+      _pauseResumeCompleter = null;
+      if (_isDrainRunning && _enabled) {
+        final currentPlayer = _currentPlayingPlayer;
+        if (currentPlayer != null) {
+          try {
+            if (currentPlayer.processingState != ProcessingState.idle &&
+                currentPlayer.processingState != ProcessingState.completed) {
+              await currentPlayer.setVolume(_volume);
+              await currentPlayer.setSpeed(_playbackRate);
+              unawaited(currentPlayer.play().catchError((_) => null));
+            }
+          } catch (_) {}
+        }
+      }
     }
   }
 
@@ -219,8 +286,8 @@ class LivePcmAudioOutput {
     _pendingPcm.add(pcmBytes);
 
     final threshold = _hasStartedTurnSegment
-        ? _normalSegmentBytes
-        : _firstSegmentBytes;
+        ? normalSegmentBytes
+        : firstSegmentBytes;
     if (_pendingPcm.length >= threshold) {
       _hasStartedTurnSegment = true;
       await _flushBufferToQueue();
@@ -279,9 +346,23 @@ class LivePcmAudioOutput {
           epoch == _playbackEpoch &&
           _enabled &&
           !_disposed) {
+        while (_isPaused &&
+            epoch == _playbackEpoch &&
+            _enabled &&
+            !_disposed) {
+          final waiter = _pauseResumeCompleter ??= Completer<void>();
+          await waiter.future;
+        }
+        if (_segmentQueue.isEmpty ||
+            epoch != _playbackEpoch ||
+            !_enabled ||
+            _disposed) {
+          break;
+        }
         final path = _segmentQueue.removeFirst();
         final player = _players[_activePlayerIdx % _players.length];
         _activePlayerIdx++;
+        _currentPlayingPlayer = player;
 
         try {
           await player.setFilePath(path);
@@ -289,6 +370,8 @@ class LivePcmAudioOutput {
             unawaited(_safeDeleteFile(path));
             break;
           }
+          await player.setVolume(_volume);
+          await player.setSpeed(_playbackRate);
 
           // Preload đoạn kế tiếp vào player còn lại để giảm khoảng trễ chuyển đoạn
           if (_segmentQueue.isNotEmpty) {
@@ -302,7 +385,9 @@ class LivePcmAudioOutput {
                 s.processingState == ProcessingState.completed ||
                 s.processingState == ProcessingState.idle,
           );
-          await player.play();
+          if (!_isPaused) {
+            unawaited(player.play().catchError((_) => null));
+          }
           await completed.timeout(
             const Duration(seconds: 30),
             onTimeout: () => player.playerState,
@@ -310,6 +395,9 @@ class LivePcmAudioOutput {
         } catch (e) {
           debugPrint('[LivePcmAudioOutput] Lỗi phát segment: $e');
         } finally {
+          if (identical(_currentPlayingPlayer, player)) {
+            _currentPlayingPlayer = null;
+          }
           unawaited(_safeDeleteFile(path));
         }
       }
@@ -330,6 +418,11 @@ class LivePcmAudioOutput {
   /// Ngắt phát ngay lập tức khi người dùng nói chèn (barge-in) hoặc tắt loa.
   Future<void> interrupt() async {
     _playbackEpoch++;
+    _isPaused = false;
+    if (_pauseResumeCompleter != null && !_pauseResumeCompleter!.isCompleted) {
+      _pauseResumeCompleter!.complete();
+    }
+    _pauseResumeCompleter = null;
     _pendingPcm.clear();
     _hasStartedTurnSegment = false;
     final stalePaths = _segmentQueue.toList();

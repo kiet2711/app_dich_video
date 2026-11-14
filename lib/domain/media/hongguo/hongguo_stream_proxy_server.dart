@@ -287,6 +287,24 @@ class HongguoStreamProxyServer {
     }
   }
 
+  /// Đăng ký trước metadata video đã resolve để proxy không phải gọi lại ByteDance API.
+  void registerVideoInfo({
+    required String vid,
+    required HongguoVideoInfo info,
+    String seriesId = '',
+    int episodeIndex = 1,
+  }) {
+    if (vid.trim().isEmpty || info.realMainUrl.trim().isEmpty) return;
+    final session = _getOrCreateSession(
+      vid: vid,
+      seriesId: seriesId,
+      episodeIndex: episodeIndex,
+    );
+    session.info ??= info;
+    session.isDrm = info.isDrmProtected;
+    session.touch();
+  }
+
   _ProxyStreamSession _getOrCreateSession({
     required String vid,
     required String seriesId,
@@ -418,34 +436,31 @@ class HongguoStreamProxyServer {
       }
     } catch (_) {}
 
-    // 1.1 Kiểm tra xem Chunk 0 & Metadata đã có trong Disk Cache chưa (Khôi phục 0ms không cần mạng)
-    try {
-      final chunkDir = await _getChunkDir();
-      final metaFile = _getMetaFile(chunkDir, session);
-      final chunk0File = _getChunkFile(chunkDir, session, 0);
-      if (metaFile.existsSync() && chunk0File.existsSync() && chunk0File.lengthSync() > 0) {
-        final metaContent = await metaFile.readAsString();
-        final metaJson = jsonDecode(metaContent) as Map<String, dynamic>;
-        final totalLen = metaJson['totalLength'] as int?;
-        if (totalLen != null && totalLen > 0) {
-          session.totalLength = totalLen;
-          session.isDrm = (metaJson['isDrm'] as bool?) ?? false;
-          session.moovEnd = (metaJson['moovEnd'] as int?) ?? 0;
-          final hexKey = metaJson['contentKeyHex'] as String?;
-          if (hexKey != null && hexKey.isNotEmpty) {
-            session.contentKey = Uint8List.fromList(hex.decode(hexKey));
+    // 1.1 Chỉ khôi phục nhanh từ Disk Cache khi non-DRM và đã có info (hoặc tránh bỏ thiếu sample table cho DRM)
+    if (session.info != null && !session.info!.isDrmProtected) {
+      try {
+        final chunkDir = await _getChunkDir();
+        final metaFile = _getMetaFile(chunkDir, session);
+        final chunk0File = _getChunkFile(chunkDir, session, 0);
+        if (metaFile.existsSync() &&
+            chunk0File.existsSync() &&
+            chunk0File.lengthSync() > 0) {
+          final metaContent = await metaFile.readAsString();
+          final metaJson = jsonDecode(metaContent) as Map<String, dynamic>;
+          final totalLen = metaJson['totalLength'] as int?;
+          final isDrmMeta = (metaJson['isDrm'] as bool?) ?? false;
+          if (totalLen != null && totalLen > 0 && !isDrmMeta) {
+            session.totalLength = totalLen;
+            session.isDrm = false;
+            session.moovEnd = 0;
+            final chunk0Bytes = await chunk0File.readAsBytes();
+            session.cacheChunk(0, chunk0Bytes);
+            session.touch();
+            return;
           }
-          final chunk0Bytes = await chunk0File.readAsBytes();
-          if (session.moovEnd > 0 && chunk0Bytes.length >= session.moovEnd) {
-            session.sanitizedHeader = Uint8List.fromList(chunk0Bytes.sublist(0, session.moovEnd));
-          }
-          session.cacheChunk(0, chunk0Bytes);
-          session.touch();
-          debugPrint('[HongguoStreamProxyServer] ⚡ Khôi phục Session từ Disk Cache 0ms: ${session.vid} (tập ${session.episodeIndex})');
-          return;
         }
-      }
-    } catch (_) {}
+      } catch (_) {}
+    }
 
     // Tự động chuyển đổi sang vid thật nếu vid đang rỗng hoặc trùng seriesId
     if (session.vid.isEmpty || session.vid == session.seriesId) {
