@@ -323,6 +323,119 @@ void main() {
       translator.dispose();
     });
   });
+
+  group('LivePcmAudioOutput native PCM streaming', () {
+    test(
+      'batches 120ms turn cushion, streams strictly in order without duplicate replay, and drops stale pre-interrupt chunks',
+      () async {
+        const channelName = LivePcmAudioOutput.nativeChannelName;
+        const channel = MethodChannel(channelName);
+        final recordedCalls = <MethodCall>[];
+        final enqueuedPayloads = <Uint8List>[];
+
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+          recordedCalls.add(call);
+          if (call.method == 'enqueuePcm') {
+            final args = Map<Object?, Object?>.from(call.arguments as Map);
+            enqueuedPayloads.add(args['pcm'] as Uint8List);
+          }
+          return true;
+        });
+        addTearDown(() {
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+              .setMockMethodCallHandler(channel, null);
+        });
+
+        final output = LivePcmAudioOutput(
+          nativeChannel: channel,
+          enableNativeStream: true,
+        );
+        var playbackChanges = 0;
+        output.onPlaybackStateChanged = () => playbackChanges++;
+        output.setEnabled(true);
+
+        // 2 chunks nhỏ (< 5760 bytes) ghép lại đủ đệm khởi động ~120ms, phát 1 lần đúng thứ tự
+        final c1 = Uint8List.fromList(List<int>.generate(3000, (i) => i % 200));
+        final c2 = Uint8List.fromList(List<int>.generate(3000, (i) => (i + 50) % 200));
+        final c3 = Uint8List.fromList(List<int>.generate(1600, (i) => 222));
+
+        await output.enqueuePcmChunk(c1);
+        expect(enqueuedPayloads, isEmpty);
+
+        await output.enqueuePcmChunk(c2);
+        await output.enqueuePcmChunk(c3);
+
+        expect(recordedCalls.first.method, equals('start'));
+        expect(enqueuedPayloads.length, equals(2));
+        expect(enqueuedPayloads[0].length, equals(6000));
+        expect(enqueuedPayloads[0].sublist(0, 3000), equals(c1));
+        expect(enqueuedPayloads[0].sublist(3000, 6000), equals(c2));
+        expect(enqueuedPayloads[1], equals(c3));
+
+        // Kiểm tra callback trạng thái phát từ native & reset cushion ở lượt mới
+        await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .handlePlatformMessage(
+          channelName,
+          channel.codec.encodeMethodCall(
+            const MethodCall('onPlaybackStateChanged', true),
+          ),
+          (_) {},
+        );
+        expect(output.isPlaying, isTrue);
+        expect(playbackChanges, equals(1));
+
+        await output.setVolume(0.75);
+        await output.setPlaybackRate(1.25);
+        await output.setPaused(true);
+        expect(output.isPlaying, isFalse);
+
+        // Kết thúc lượt hiện tại để lượt mới quay về tích lũy 120ms cushion, rồi ngắt giữa chừng
+        await output.setPaused(false);
+        await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .handlePlatformMessage(
+          channelName,
+          channel.codec.encodeMethodCall(
+            const MethodCall('onPlaybackStateChanged', false),
+          ),
+          (_) {},
+        );
+        expect(output.isPlaying, isFalse);
+
+        await output.enqueuePcmChunk(Uint8List(1000));
+        expect(enqueuedPayloads.length, equals(2));
+        await output.interrupt();
+        await output.flushTurn();
+        expect(enqueuedPayloads.length, equals(2));
+        expect(recordedCalls.any((c) => c.method == 'interrupt'), isTrue);
+
+        // Chờ ngắn để đảm bảo timer tích lũy cũ đã bị hủy không bắn muộn
+        await Future<void>.delayed(const Duration(milliseconds: 140));
+        expect(enqueuedPayloads.length, equals(2));
+
+        await output.dispose();
+      },
+    );
+
+    test(
+      'flushes short turn tail on flushTurn and falls back gracefully on MissingPluginException',
+      () async {
+        const channel = MethodChannel('capsub/missing_live_audio_test');
+        final output = LivePcmAudioOutput(
+          nativeChannel: channel,
+          enableNativeStream: true,
+        );
+        output.setEnabled(true);
+        // Chunk lớn hơn startCushion để gọi channel ngay -> nhận MissingPluginException mà không crash
+        await output.enqueuePcmChunk(Uint8List(6000));
+        await output.flushTurn();
+        await output.setVolume(0.8);
+        await output.setPaused(true);
+        await output.interrupt();
+        await output.dispose();
+      },
+    );
+  });
 }
 
 Uint8List _makePcm16({required int durationMs, required int amplitude}) {

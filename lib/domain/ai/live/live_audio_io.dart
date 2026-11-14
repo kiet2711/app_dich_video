@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
@@ -167,15 +168,34 @@ class LiveMicRecorder {
   }
 }
 
-/// Bộ phát âm thanh phản hồi 24kHz PCM từ Gemini Live qua 2 AudioPlayer luân phiên (hỗ trợ Android, iOS, Windows).
+/// Bộ phát âm thanh phản hồi 24kHz PCM từ Gemini Live.
+///
+/// Trên Android (`AudioTrack` MODE_STREAM) và iOS (`AVAudioEngine` + `AVAudioPlayerNode`),
+/// PCM 24kHz được phát nối tiếp trực tiếp trên RAM thành một luồng liên tục, không
+/// cắt file WAV 0.8s và không làm đứt/lặp giọng khi tải lại `AudioPlayer`.
+/// Trên nền tảng khác (vd Windows desktop), tự động fallback sang hàng đợi WAV đã
+/// khóa thứ tự FIFO và reset trạng thái `just_audio` sạch sẽ sau từng đoạn.
 class LivePcmAudioOutput {
   static const int _sampleRate = 24000;
+  static const int _nativeStartCushionBytes = 5760; // ~120ms ở 24kHz 16-bit mono
+  static const Duration _nativeStartFlushDelay = Duration(milliseconds: 110);
+  static const String nativeChannelName = 'com.capcut.capsub/live_audio';
 
   final int firstSegmentBytes;
   final int normalSegmentBytes;
-  final List<AudioPlayer> _players = [AudioPlayer(), AudioPlayer()];
+  final MethodChannel _nativeChannel;
+  final bool _preferNativeStream;
+
+  List<AudioPlayer>? _fallbackPlayers;
   final BytesBuilder _pendingPcm = BytesBuilder(copy: false);
   final Queue<String> _segmentQueue = Queue<String>();
+
+  Future<void> _nativeChain = Future<void>.value();
+  Future<void> _flushChain = Future<void>.value();
+  Timer? _nativeStartFlushTimer;
+  bool _nativeFallbackActivated = false;
+  bool _nativeConfigured = false;
+  bool _hasStartedNativeTurn = false;
 
   bool _enabled = false;
   bool _isPlaying = false;
@@ -194,15 +214,53 @@ class LivePcmAudioOutput {
   VoidCallback? onPlaybackStateChanged;
 
   LivePcmAudioOutput({
-    this.firstSegmentBytes = 19200, // ~0.4s ở 24kHz 16-bit mono
-    this.normalSegmentBytes = 57600, // ~1.2s để hạn chế ngắt nhịp
-  });
+    this.firstSegmentBytes = 19200, // ~0.4s ở 24kHz 16-bit mono (fallback)
+    this.normalSegmentBytes = 57600, // ~1.2s để hạn chế ngắt nhịp (fallback)
+    MethodChannel? nativeChannel,
+    bool? enableNativeStream,
+  }) : _nativeChannel = nativeChannel ?? const MethodChannel(nativeChannelName),
+       _preferNativeStream =
+           enableNativeStream ?? (Platform.isIOS || Platform.isAndroid) {
+    if (_preferNativeStream) {
+      _nativeChannel.setMethodCallHandler(_handleNativeCallback);
+    }
+  }
+
+  bool get _usingNativeStream =>
+      _preferNativeStream && !_nativeFallbackActivated;
 
   bool get isEnabled => _enabled;
   bool get isPlaying => _isPlaying;
   bool get isPaused => _isPaused;
   double get volume => _volume;
   double get playbackRate => _playbackRate;
+
+  Future<dynamic> _handleNativeCallback(MethodCall call) async {
+    if (_disposed) return null;
+    if (call.method == 'onPlaybackStateChanged') {
+      final playing = call.arguments == true;
+      if (!playing) {
+        _hasStartedNativeTurn = false;
+      }
+      _setPlaying(playing);
+    }
+    return null;
+  }
+
+  List<AudioPlayer> _ensureFallbackPlayers() {
+    return _fallbackPlayers ??= <AudioPlayer>[
+      AudioPlayer(
+        handleInterruptions: false,
+        androidApplyAudioAttributes: false,
+        handleAudioSessionActivation: false,
+      ),
+      AudioPlayer(
+        handleInterruptions: false,
+        androidApplyAudioAttributes: false,
+        handleAudioSessionActivation: false,
+      ),
+    ];
+  }
 
   void setEnabled(bool enabled) {
     _enabled = enabled;
@@ -214,29 +272,53 @@ class LivePcmAudioOutput {
   Future<void> setVolume(double volume) async {
     _volume = volume.clamp(0.0, 1.0);
     if (_disposed) return;
-    for (final player in _players) {
-      try {
-        await player.setVolume(_volume);
-      } catch (_) {}
+    if (_usingNativeStream) {
+      await _invokeNativeSafe('setVolume', {'volume': _volume});
+    }
+    final players = _fallbackPlayers;
+    if (players != null) {
+      for (final player in players) {
+        try {
+          await player.setVolume(_volume);
+        } catch (_) {}
+      }
     }
   }
 
   Future<void> setPlaybackRate(double rate) async {
     _playbackRate = rate.clamp(0.75, 2.0);
     if (_disposed) return;
-    for (final player in _players) {
-      try {
-        await player.setSpeed(_playbackRate);
-      } catch (_) {}
+    if (_usingNativeStream) {
+      await _invokeNativeSafe('setPlaybackRate', {'rate': _playbackRate});
+    }
+    final players = _fallbackPlayers;
+    if (players != null) {
+      for (final player in players) {
+        try {
+          await player.setSpeed(_playbackRate);
+        } catch (_) {}
+      }
     }
   }
 
   Future<void> setPaused(bool paused) async {
     if (_disposed || _isPaused == paused) return;
     _isPaused = paused;
+    if (_usingNativeStream) {
+      await _invokeNativeSafe('setPaused', {'paused': paused});
+      if (_usingNativeStream) {
+        if (paused) {
+          _setPlaying(false);
+        }
+        return;
+      }
+    }
+
+    final players = _fallbackPlayers;
+    if (players == null) return;
     if (paused) {
       _pauseResumeCompleter ??= Completer<void>();
-      for (final player in _players) {
+      for (final player in players) {
         try {
           if (player.playing) {
             await player.pause();
@@ -283,6 +365,39 @@ class LivePcmAudioOutput {
   /// Nạp thêm chunk PCM 24kHz nhận từ Gemini Live.
   Future<void> enqueuePcmChunk(Uint8List pcmBytes) async {
     if (_disposed || !_enabled || pcmBytes.isEmpty) return;
+
+    if (_usingNativeStream) {
+      _pendingPcm.add(pcmBytes);
+      if (_hasStartedNativeTurn ||
+          _pendingPcm.length >= _nativeStartCushionBytes) {
+        _hasStartedNativeTurn = true;
+        _nativeStartFlushTimer?.cancel();
+        _nativeStartFlushTimer = null;
+        final batch = _pendingPcm.takeBytes();
+        if (batch.isNotEmpty) {
+          await _enqueueNativeBatch(batch);
+        }
+      } else {
+        _nativeStartFlushTimer ??= Timer(_nativeStartFlushDelay, () {
+          _nativeStartFlushTimer = null;
+          if (_disposed || !_enabled || !_usingNativeStream) return;
+          if (_pendingPcm.length > 0) {
+            _hasStartedNativeTurn = true;
+            final batch = _pendingPcm.takeBytes();
+            if (batch.isNotEmpty) {
+              unawaited(_enqueueNativeBatch(batch));
+            }
+          }
+        });
+      }
+      return;
+    }
+
+    await _enqueueFallbackChunk(pcmBytes);
+  }
+
+  Future<void> _enqueueFallbackChunk(Uint8List pcmBytes) async {
+    if (_disposed || !_enabled || pcmBytes.isEmpty) return;
     _pendingPcm.add(pcmBytes);
 
     final threshold = _hasStartedTurnSegment
@@ -290,7 +405,7 @@ class LivePcmAudioOutput {
         : firstSegmentBytes;
     if (_pendingPcm.length >= threshold) {
       _hasStartedTurnSegment = true;
-      await _flushBufferToQueue();
+      await _scheduleFallbackFlush();
     }
   }
 
@@ -299,41 +414,118 @@ class LivePcmAudioOutput {
     if (_disposed || !_enabled) {
       _pendingPcm.clear();
       _hasStartedTurnSegment = false;
+      _hasStartedNativeTurn = false;
+      _nativeStartFlushTimer?.cancel();
+      _nativeStartFlushTimer = null;
       return;
     }
+
+    if (_usingNativeStream) {
+      _nativeStartFlushTimer?.cancel();
+      _nativeStartFlushTimer = null;
+      _hasStartedNativeTurn = false;
+      if (_pendingPcm.length > 0) {
+        final batch = _pendingPcm.takeBytes();
+        if (batch.isNotEmpty) {
+          await _enqueueNativeBatch(batch);
+        }
+      }
+      return;
+    }
+
     _hasStartedTurnSegment = false;
     if (_pendingPcm.length > 0) {
-      await _flushBufferToQueue();
+      await _scheduleFallbackFlush();
     }
   }
 
-  Future<void> _flushBufferToQueue() async {
-    if (_pendingPcm.length == 0 || !_enabled || _disposed) return;
-    final raw = _pendingPcm.takeBytes();
-    if (raw.isEmpty) return;
-
+  Future<void> _enqueueNativeBatch(Uint8List pcmBytes) {
     final epoch = _playbackEpoch;
-    try {
-      final dir = await _ensureTempDir();
+    final op = _nativeChain.then((_) async {
       if (epoch != _playbackEpoch || _disposed || !_enabled) return;
-
-      final wavBytes = buildWavFromPcmBytes(raw, sampleRate: _sampleRate);
-      final filePath =
-          '${dir.path}${Platform.pathSeparator}seg_${_playbackEpoch}_${_segmentCounter++}.wav';
-      await File(filePath).writeAsBytes(wavBytes, flush: false);
-
-      if (epoch != _playbackEpoch || _disposed || !_enabled) {
-        unawaited(_safeDeleteFile(filePath));
+      if (!_usingNativeStream) {
+        await _enqueueFallbackChunk(pcmBytes);
         return;
       }
-
-      _segmentQueue.add(filePath);
-      if (!_isDrainRunning) {
-        unawaited(_drainQueue(epoch));
+      try {
+        if (!_nativeConfigured) {
+          await _nativeChannel.invokeMethod('start', {
+            'sampleRate': _sampleRate,
+            'volume': _volume,
+            'rate': _playbackRate,
+          });
+          _nativeConfigured = true;
+          if (_isPaused) {
+            await _nativeChannel.invokeMethod('setPaused', {'paused': true});
+          }
+        }
+        if (epoch != _playbackEpoch || _disposed || !_enabled) return;
+        await _nativeChannel.invokeMethod('enqueuePcm', {
+          'pcm': pcmBytes,
+          'sampleRate': _sampleRate,
+        });
+      } on MissingPluginException {
+        _nativeFallbackActivated = true;
+        _nativeConfigured = false;
+        await _enqueueFallbackChunk(pcmBytes);
+        await flushTurn();
+      } catch (e) {
+        debugPrint('[LivePcmAudioOutput] Lỗi stream PCM native: $e');
       }
+    });
+    _nativeChain = op.catchError((_) {});
+    return op;
+  }
+
+  Future<void> _invokeNativeSafe(
+    String method, [
+    Map<String, dynamic>? args,
+  ]) async {
+    try {
+      await _nativeChannel.invokeMethod(method, args);
+    } on MissingPluginException {
+      _nativeFallbackActivated = true;
+      _nativeConfigured = false;
     } catch (e) {
-      debugPrint('[LivePcmAudioOutput] Lỗi ghi WAV segment: $e');
+      debugPrint('[LivePcmAudioOutput] Lỗi gọi native $method: $e');
     }
+  }
+
+  Future<void> _scheduleFallbackFlush() {
+    if (_pendingPcm.length == 0 || !_enabled || _disposed) {
+      return Future<void>.value();
+    }
+    final raw = _pendingPcm.takeBytes();
+    if (raw.isEmpty) return Future<void>.value();
+    final epoch = _playbackEpoch;
+
+    // Tuần tự hóa ghi WAV để hàng đợi giữ đúng thứ tự thời gian tuyệt đối.
+    final op = _flushChain.then((_) async {
+      if (epoch != _playbackEpoch || _disposed || !_enabled) return;
+      try {
+        final dir = await _ensureTempDir();
+        if (epoch != _playbackEpoch || _disposed || !_enabled) return;
+
+        final wavBytes = buildWavFromPcmBytes(raw, sampleRate: _sampleRate);
+        final filePath =
+            '${dir.path}${Platform.pathSeparator}seg_${epoch}_${_segmentCounter++}.wav';
+        await File(filePath).writeAsBytes(wavBytes, flush: false);
+
+        if (epoch != _playbackEpoch || _disposed || !_enabled) {
+          unawaited(_safeDeleteFile(filePath));
+          return;
+        }
+
+        _segmentQueue.add(filePath);
+        if (!_isDrainRunning) {
+          unawaited(_drainQueue(epoch));
+        }
+      } catch (e) {
+        debugPrint('[LivePcmAudioOutput] Lỗi ghi WAV segment: $e');
+      }
+    });
+    _flushChain = op.catchError((_) {});
+    return op;
   }
 
   Future<void> _drainQueue(int epoch) async {
@@ -342,6 +534,7 @@ class LivePcmAudioOutput {
     _setPlaying(true);
 
     try {
+      final players = _ensureFallbackPlayers();
       while (_segmentQueue.isNotEmpty &&
           epoch == _playbackEpoch &&
           _enabled &&
@@ -360,11 +553,17 @@ class LivePcmAudioOutput {
           break;
         }
         final path = _segmentQueue.removeFirst();
-        final player = _players[_activePlayerIdx % _players.length];
+        final player = players[_activePlayerIdx % players.length];
         _activePlayerIdx++;
         _currentPlayingPlayer = player;
 
         try {
+          // Dừng dứt điểm để just_audio reset cờ `playing = false`, tránh setFilePath tự phát đè/lặp.
+          await player.stop();
+          if (epoch != _playbackEpoch || !_enabled || _disposed) {
+            unawaited(_safeDeleteFile(path));
+            break;
+          }
           await player.setFilePath(path);
           if (epoch != _playbackEpoch || !_enabled || _disposed) {
             unawaited(_safeDeleteFile(path));
@@ -373,28 +572,22 @@ class LivePcmAudioOutput {
           await player.setVolume(_volume);
           await player.setSpeed(_playbackRate);
 
-          // Preload đoạn kế tiếp vào player còn lại để giảm khoảng trễ chuyển đoạn
-          if (_segmentQueue.isNotEmpty) {
-            final nextPath = _segmentQueue.first;
-            final nextPlayer = _players[_activePlayerIdx % _players.length];
-            unawaited(nextPlayer.setFilePath(nextPath).catchError((_) => null));
-          }
-
-          final completed = player.playerStateStream.firstWhere(
-            (s) =>
-                s.processingState == ProcessingState.completed ||
-                s.processingState == ProcessingState.idle,
+          final completed = player.processingStateStream.firstWhere(
+            (state) => state == ProcessingState.completed,
           );
           if (!_isPaused) {
             unawaited(player.play().catchError((_) => null));
           }
           await completed.timeout(
             const Duration(seconds: 30),
-            onTimeout: () => player.playerState,
+            onTimeout: () => player.processingState,
           );
         } catch (e) {
-          debugPrint('[LivePcmAudioOutput] Lỗi phát segment: $e');
+          debugPrint('[LivePcmAudioOutput] Lỗi phát segment fallback: $e');
         } finally {
+          try {
+            await player.stop();
+          } catch (_) {}
           if (identical(_currentPlayingPlayer, player)) {
             _currentPlayingPlayer = null;
           }
@@ -415,7 +608,7 @@ class LivePcmAudioOutput {
     onPlaybackStateChanged?.call();
   }
 
-  /// Ngắt phát ngay lập tức khi người dùng nói chèn (barge-in) hoặc tắt loa.
+  /// Ngắt phát ngay lập tức khi người dùng nói chèn (barge-in), tua video hoặc tắt loa.
   Future<void> interrupt() async {
     _playbackEpoch++;
     _isPaused = false;
@@ -423,16 +616,26 @@ class LivePcmAudioOutput {
       _pauseResumeCompleter!.complete();
     }
     _pauseResumeCompleter = null;
+    _nativeStartFlushTimer?.cancel();
+    _nativeStartFlushTimer = null;
     _pendingPcm.clear();
     _hasStartedTurnSegment = false;
+    _hasStartedNativeTurn = false;
     final stalePaths = _segmentQueue.toList();
     _segmentQueue.clear();
     _setPlaying(false);
 
-    for (final player in _players) {
-      try {
-        await player.stop();
-      } catch (_) {}
+    if (_usingNativeStream) {
+      await _invokeNativeSafe('interrupt');
+    }
+
+    final players = _fallbackPlayers;
+    if (players != null) {
+      for (final player in players) {
+        try {
+          await player.stop();
+        } catch (_) {}
+      }
     }
     for (final p in stalePaths) {
       unawaited(_safeDeleteFile(p));
@@ -452,10 +655,18 @@ class LivePcmAudioOutput {
     if (_disposed) return;
     _disposed = true;
     await interrupt();
-    for (final player in _players) {
-      try {
-        await player.dispose();
-      } catch (_) {}
+    if (_preferNativeStream) {
+      await _invokeNativeSafe('dispose');
+      _nativeChannel.setMethodCallHandler(null);
+    }
+    final players = _fallbackPlayers;
+    _fallbackPlayers = null;
+    if (players != null) {
+      for (final player in players) {
+        try {
+          await player.dispose();
+        } catch (_) {}
+      }
     }
     try {
       if (_tempDir != null && await _tempDir!.exists()) {

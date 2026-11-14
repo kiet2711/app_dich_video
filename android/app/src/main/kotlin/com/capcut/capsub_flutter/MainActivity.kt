@@ -10,12 +10,15 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.res.Configuration
 import android.graphics.drawable.Icon
+import android.media.AudioAttributes
 import android.media.AudioFormat
+import android.media.AudioTrack
 import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMuxer
 import android.media.MediaMetadataRetriever
+import android.media.PlaybackParams
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
@@ -37,12 +40,14 @@ class MainActivity : FlutterActivity() {
     private val CHANNEL = "com.capcut.capsub/media"
     private val FOREGROUND_CHANNEL = "com.capcut.capsub/foreground_service"
     private val PIP_CHANNEL = "com.capcut.capsub/pip"
+    private val LIVE_AUDIO_CHANNEL = "com.capcut.capsub/live_audio"
     private val mediaExecutor = Executors.newSingleThreadExecutor()
     private val pcmExecutor = Executors.newCachedThreadPool()
     private val pcmReaders = ConcurrentHashMap<String, PcmStreamReader>()
     private val mainHandler = Handler(Looper.getMainLooper())
     private var pendingMediaPickResult: MethodChannel.Result? = null
     private var pipMethodChannel: MethodChannel? = null
+    private var livePcmPlayer: AndroidLivePcmPlayer? = null
 
     companion object {
         private const val REQUEST_PICK_MEDIA = 42017
@@ -396,6 +401,56 @@ class MainActivity : FlutterActivity() {
                 }
             }
         }
+
+        val liveAudioChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, LIVE_AUDIO_CHANNEL)
+        livePcmPlayer?.dispose()
+        val livePlayer = AndroidLivePcmPlayer(liveAudioChannel, mainHandler)
+        livePcmPlayer = livePlayer
+        liveAudioChannel.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "start" -> {
+                    val sampleRate = call.argument<Number>("sampleRate")?.toInt() ?: 24000
+                    val volume = call.argument<Number>("volume")?.toFloat() ?: 1.0f
+                    val rate = call.argument<Number>("rate")?.toFloat() ?: 1.0f
+                    livePlayer.configure(sampleRate, volume, rate)
+                    result.success(true)
+                }
+                "enqueuePcm" -> {
+                    val pcm = call.argument<ByteArray>("pcm")
+                    if (pcm == null) {
+                        result.success(false)
+                        return@setMethodCallHandler
+                    }
+                    val sampleRate = call.argument<Number>("sampleRate")?.toInt() ?: 24000
+                    livePlayer.enqueuePcm(pcm, sampleRate)
+                    result.success(true)
+                }
+                "setVolume" -> {
+                    val volume = call.argument<Number>("volume")?.toFloat() ?: 1.0f
+                    livePlayer.setVolume(volume)
+                    result.success(true)
+                }
+                "setPlaybackRate" -> {
+                    val rate = call.argument<Number>("rate")?.toFloat() ?: 1.0f
+                    livePlayer.setPlaybackRate(rate)
+                    result.success(true)
+                }
+                "setPaused" -> {
+                    val paused = call.argument<Boolean>("paused") ?: false
+                    livePlayer.setPaused(paused)
+                    result.success(true)
+                }
+                "interrupt" -> {
+                    livePlayer.interrupt()
+                    result.success(true)
+                }
+                "dispose" -> {
+                    livePlayer.dispose()
+                    result.success(true)
+                }
+                else -> result.notImplemented()
+            }
+        }
     }
 
 
@@ -494,6 +549,8 @@ class MainActivity : FlutterActivity() {
             } catch (_: Exception) {}
         }
         pcmReaders.clear()
+        livePcmPlayer?.dispose()
+        livePcmPlayer = null
         pcmExecutor.shutdownNow()
         mediaExecutor.shutdownNow()
         super.onDestroy()
@@ -1046,6 +1103,326 @@ class MainActivity : FlutterActivity() {
                 extractor = null
                 leftoverPcm = ByteArray(0)
                 leftoverOffset = 0
+            }
+        }
+    }
+
+    private class AndroidLivePcmPlayer(
+        private val channel: MethodChannel,
+        private val mainHandler: Handler,
+    ) {
+        private data class PcmPacket(
+            val generation: Int,
+            val pcm: ByteArray,
+            val sampleRate: Int,
+        )
+
+        private val queueLock = Object()
+        private val trackLock = Any()
+        private val queue = ArrayDeque<PcmPacket>()
+
+        @Volatile
+        private var disposed = false
+
+        @Volatile
+        private var paused = false
+
+        @Volatile
+        private var active = false
+
+        @Volatile
+        private var generation = 0
+
+        @Volatile
+        private var volume = 1.0f
+
+        @Volatile
+        private var playbackRate = 1.0f
+
+        private var audioTrack: AudioTrack? = null
+        private var currentSampleRate = 24000
+        private var writtenFrames = 0L
+        private var reportedPlaying = false
+
+        private val writerThread = Thread(
+            { runWriterLoop() },
+            "CapSubLivePcmPlayer",
+        ).apply {
+            isDaemon = true
+            start()
+        }
+
+        fun configure(sampleRate: Int, vol: Float, rate: Float) {
+            if (disposed) return
+            volume = vol.coerceIn(0.0f, 1.0f)
+            playbackRate = rate.coerceIn(0.5f, 2.5f)
+            val safeRate = sampleRate.coerceIn(8000, 48000)
+            synchronized(queueLock) {
+                active = true
+                queueLock.notifyAll()
+            }
+            synchronized(trackLock) {
+                val track = ensureTrackLocked(safeRate)
+                applyVolumeAndRateLocked(track)
+            }
+        }
+
+        fun enqueuePcm(pcm: ByteArray, sampleRate: Int) {
+            if (disposed || pcm.isEmpty()) return
+            val safeRate = sampleRate.coerceIn(8000, 48000)
+            synchronized(queueLock) {
+                active = true
+                queue.addLast(PcmPacket(generation, pcm, safeRate))
+                updatePlayingStateLocked(forcePlaying = !paused)
+                queueLock.notifyAll()
+            }
+        }
+
+        fun setVolume(vol: Float) {
+            val clamped = vol.coerceIn(0.0f, 1.0f)
+            volume = clamped
+            synchronized(trackLock) {
+                audioTrack?.let {
+                    try {
+                        it.setVolume(clamped)
+                    } catch (_: Exception) {}
+                }
+            }
+        }
+
+        fun setPlaybackRate(rate: Float) {
+            val clamped = rate.coerceIn(0.5f, 2.5f)
+            playbackRate = clamped
+            synchronized(trackLock) {
+                audioTrack?.let { applyRateLocked(it) }
+            }
+        }
+
+        fun setPaused(isPaused: Boolean) {
+            synchronized(queueLock) {
+                if (disposed) return
+                paused = isPaused
+                if (isPaused) {
+                    updatePlayingStateLocked(forcePlaying = false)
+                } else if (queue.isNotEmpty() || estimateRemainingBufferedFrames() > 0L) {
+                    updatePlayingStateLocked(forcePlaying = true)
+                }
+                queueLock.notifyAll()
+            }
+            synchronized(trackLock) {
+                val track = audioTrack ?: return
+                try {
+                    if (isPaused) {
+                        if (track.playState == AudioTrack.PLAYSTATE_PLAYING) {
+                            track.pause()
+                        }
+                    } else if (active && !disposed) {
+                        if (track.playState != AudioTrack.PLAYSTATE_PLAYING) {
+                            track.play()
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+
+        fun interrupt() {
+            synchronized(queueLock) {
+                generation += 1
+                queue.clear()
+                updatePlayingStateLocked(forcePlaying = false)
+                queueLock.notifyAll()
+            }
+            synchronized(trackLock) {
+                val track = audioTrack ?: return
+                try {
+                    if (track.playState == AudioTrack.PLAYSTATE_PLAYING) {
+                        track.pause()
+                    }
+                    track.flush()
+                } catch (_: Exception) {}
+                writtenFrames = 0L
+            }
+        }
+
+        fun dispose() {
+            synchronized(queueLock) {
+                if (disposed) return
+                disposed = true
+                active = false
+                generation += 1
+                queue.clear()
+                updatePlayingStateLocked(forcePlaying = false)
+                queueLock.notifyAll()
+            }
+            try {
+                writerThread.interrupt()
+            } catch (_: Exception) {}
+            synchronized(trackLock) {
+                releaseTrackLocked()
+            }
+        }
+
+        private fun runWriterLoop() {
+            while (!disposed) {
+                var packet: PcmPacket? = null
+                synchronized(queueLock) {
+                    while (!disposed && (paused || queue.isEmpty())) {
+                        if (!paused && queue.isEmpty() && reportedPlaying) {
+                            val remaining = estimateRemainingBufferedFrames()
+                            if (remaining <= 0L) {
+                                updatePlayingStateLocked(forcePlaying = false)
+                                queueLock.wait()
+                            } else {
+                                queueLock.wait(80L)
+                            }
+                        } else {
+                            queueLock.wait()
+                        }
+                    }
+                    if (!disposed && queue.isNotEmpty() && !paused) {
+                        packet = queue.removeFirst()
+                    }
+                }
+
+                val current = packet ?: continue
+                if (current.generation != generation || paused || disposed) continue
+
+                val bytes = current.pcm
+                val evenLen = bytes.size and 1.inv()
+                if (evenLen <= 0) continue
+
+                var offset = 0
+                val sliceSize = 3840 // ~80ms ở 24kHz 16-bit mono để interrupt phản hồi nhanh
+                while (offset < evenLen &&
+                    !disposed &&
+                    !paused &&
+                    current.generation == generation
+                ) {
+                    val toWrite = minOf(sliceSize, evenLen - offset)
+                    val written = synchronized(trackLock) {
+                        if (disposed || paused || current.generation != generation) {
+                            0
+                        } else {
+                            val track = ensureTrackLocked(current.sampleRate)
+                            if (track.state != AudioTrack.STATE_INITIALIZED) {
+                                -1
+                            } else {
+                                if (track.playState != AudioTrack.PLAYSTATE_PLAYING) {
+                                    applyVolumeAndRateLocked(track)
+                                    track.play()
+                                }
+                                val res = track.write(
+                                    bytes,
+                                    offset,
+                                    toWrite,
+                                    AudioTrack.WRITE_BLOCKING,
+                                )
+                                if (res > 0) {
+                                    writtenFrames += (res / 2).toLong()
+                                }
+                                res
+                            }
+                        }
+                    }
+                    if (written <= 0) break
+                    offset += written
+                }
+            }
+        }
+
+        private fun estimateRemainingBufferedFrames(): Long {
+            synchronized(trackLock) {
+                val track = audioTrack ?: return 0L
+                return try {
+                    val head = track.playbackHeadPosition.toLong() and 0xFFFFFFFFL
+                    (writtenFrames - head).coerceAtLeast(0L)
+                } catch (_: Exception) {
+                    0L
+                }
+            }
+        }
+
+        private fun ensureTrackLocked(sampleRate: Int): AudioTrack {
+            val existing = audioTrack
+            if (existing != null &&
+                currentSampleRate == sampleRate &&
+                existing.state == AudioTrack.STATE_INITIALIZED
+            ) {
+                return existing
+            }
+            releaseTrackLocked()
+            currentSampleRate = sampleRate
+            val minBuf = AudioTrack.getMinBufferSize(
+                sampleRate,
+                AudioFormat.CHANNEL_OUT_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,
+            ).coerceAtLeast(4800)
+            val bufferBytes = maxOf(minBuf * 3, sampleRate * 2) // Ít nhất 1 giây đệm vòng
+            val attrs = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                .build()
+            val fmt = AudioFormat.Builder()
+                .setSampleRate(sampleRate)
+                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                .build()
+            val track = AudioTrack.Builder()
+                .setAudioAttributes(attrs)
+                .setAudioFormat(fmt)
+                .setTransferMode(AudioTrack.MODE_STREAM)
+                .setBufferSizeInBytes(bufferBytes)
+                .build()
+            audioTrack = track
+            writtenFrames = 0L
+            applyVolumeAndRateLocked(track)
+            return track
+        }
+
+        private fun applyVolumeAndRateLocked(track: AudioTrack) {
+            try {
+                track.setVolume(volume)
+            } catch (_: Exception) {}
+            applyRateLocked(track)
+        }
+
+        private fun applyRateLocked(track: AudioTrack) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                try {
+                    val params = try {
+                        track.playbackParams
+                    } catch (_: Exception) {
+                        PlaybackParams()
+                    }
+                    params.speed = playbackRate
+                    track.playbackParams = params
+                } catch (_: Exception) {}
+            }
+        }
+
+        private fun releaseTrackLocked() {
+            val track = audioTrack ?: return
+            audioTrack = null
+            writtenFrames = 0L
+            try {
+                if (track.playState == AudioTrack.PLAYSTATE_PLAYING) {
+                    track.pause()
+                }
+                track.flush()
+            } catch (_: Exception) {}
+            try {
+                track.release()
+            } catch (_: Exception) {}
+        }
+
+        private fun updatePlayingStateLocked(forcePlaying: Boolean) {
+            if (reportedPlaying != forcePlaying) {
+                reportedPlaying = forcePlaying
+                mainHandler.post {
+                    if (!disposed) {
+                        channel.invokeMethod("onPlaybackStateChanged", forcePlaying)
+                    }
+                }
             }
         }
     }

@@ -7,6 +7,7 @@ import UserNotifications
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   private let pcmQueue = DispatchQueue(label: "com.capcut.capsub.pcm")
   private var pcmSessions: [String: IosPcmStreamSession] = [:]
+  private var livePcmPlayer: IosLivePcmPlayer?
 
   override func application(
     _ application: UIApplication,
@@ -128,6 +129,63 @@ import UserNotifications
       case "stop":
         self.clearNotifications()
         result(nil)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+
+    let liveAudioChannel = FlutterMethodChannel(
+      name: "com.capcut.capsub/live_audio",
+      binaryMessenger: registrar.messenger()
+    )
+    let player = IosLivePcmPlayer(channel: liveAudioChannel)
+    self.livePcmPlayer = player
+    liveAudioChannel.setMethodCallHandler { [weak player] call, result in
+      guard let player = player else {
+        result(nil)
+        return
+      }
+      let args = call.arguments as? [String: Any]
+      switch call.method {
+      case "start":
+        let sampleRate = (args?["sampleRate"] as? NSNumber)?.intValue ?? 24000
+        let volume = (args?["volume"] as? NSNumber)?.floatValue ?? 1.0
+        let rate = (args?["rate"] as? NSNumber)?.floatValue ?? 1.0
+        player.configure(sampleRate: sampleRate, volume: volume, rate: rate)
+        result(true)
+
+      case "enqueuePcm":
+        guard let typed = args?["pcm"] as? FlutterStandardTypedData else {
+          result(false)
+          return
+        }
+        let sampleRate = (args?["sampleRate"] as? NSNumber)?.intValue ?? 24000
+        player.enqueuePcm(data: typed.data, sampleRate: sampleRate)
+        result(true)
+
+      case "setVolume":
+        let volume = (args?["volume"] as? NSNumber)?.floatValue ?? 1.0
+        player.setVolume(volume)
+        result(true)
+
+      case "setPlaybackRate":
+        let rate = (args?["rate"] as? NSNumber)?.floatValue ?? 1.0
+        player.setPlaybackRate(rate)
+        result(true)
+
+      case "setPaused":
+        let paused = (args?["paused"] as? NSNumber)?.boolValue ?? false
+        player.setPaused(paused)
+        result(true)
+
+      case "interrupt":
+        player.interrupt()
+        result(true)
+
+      case "dispose":
+        player.dispose()
+        result(true)
+
       default:
         result(FlutterMethodNotImplemented)
       }
@@ -644,6 +702,11 @@ private final class IosPcmStreamSession: @unchecked Sendable {
       }
     }
 
+    let expectedBytes = Int(max(0, sliceMs) * 16000 / 1000) * 2
+    if expectedBytes > 0 && collected.count > expectedBytes {
+      collected = Data(collected.prefix(expectedBytes))
+    }
+
     appendRemoteWindow(winStart: winStart, sliceMs: sliceMs, data: collected)
   }
 
@@ -669,6 +732,265 @@ private final class IosPcmStreamSession: @unchecked Sendable {
     lock.unlock()
     if didAccessSecurityScope {
       url.stopAccessingSecurityScopedResource()
+    }
+  }
+}
+
+private final class IosLivePcmPlayer: @unchecked Sendable {
+  private let queue = DispatchQueue(label: "com.capcut.capsub.live_audio")
+  private let channel: FlutterMethodChannel
+  private var engine: AVAudioEngine?
+  private var playerNode: AVAudioPlayerNode?
+  private var timePitch: AVAudioUnitTimePitch?
+  private var pcmFormat: AVAudioFormat?
+  private var configObserver: NSObjectProtocol?
+
+  private var currentSampleRate: Double = 24000
+  private var volume: Float = 1.0
+  private var playbackRate: Float = 1.0
+  private var isPaused: Bool = false
+  private var isActive: Bool = false
+  private var disposed: Bool = false
+  private var generation: Int = 0
+  private var queuedBuffers: Int = 0
+  private var reportedPlaying: Bool = false
+
+  init(channel: FlutterMethodChannel) {
+    self.channel = channel
+  }
+
+  func configure(sampleRate: Int, volume: Float, rate: Float) {
+    queue.async { [weak self] in
+      guard let self = self, !self.disposed else { return }
+      self.isActive = true
+      self.volume = max(0.0, min(1.0, volume))
+      self.playbackRate = max(0.5, min(2.5, rate))
+      let safeRate = Double(max(8000, min(48000, sampleRate)))
+      if let (eng, _, pitch, _) = self.setupEngineIfNeeded(sampleRate: safeRate) {
+        eng.mainMixerNode.outputVolume = self.volume
+        self.applyRateLocked(pitch)
+      }
+      self.updatePlayingStateLocked()
+    }
+  }
+
+  func enqueuePcm(data: Data, sampleRate: Int) {
+    guard !data.isEmpty else { return }
+    queue.async { [weak self] in
+      guard let self = self, !self.disposed else { return }
+      self.isActive = true
+      let safeRate = Double(max(8000, min(48000, sampleRate)))
+      guard let (_, node, _, format) = self.setupEngineIfNeeded(sampleRate: safeRate) else {
+        return
+      }
+
+      let sampleCount = data.count / 2
+      guard sampleCount > 0,
+            let pcmBuffer = AVAudioPCMBuffer(
+              pcmFormat: format,
+              frameCapacity: AVAudioFrameCount(sampleCount)
+            ) else {
+        return
+      }
+      pcmBuffer.frameLength = AVAudioFrameCount(sampleCount)
+
+      guard let floatChannel = pcmBuffer.floatChannelData?[0] else { return }
+      data.withUnsafeBytes { rawBuf in
+        guard let bytes = rawBuf.bindMemory(to: UInt8.self).baseAddress else { return }
+        for i in 0..<sampleCount {
+          let lo = Int16(bytes[i * 2])
+          let hi = Int16(Int8(bitPattern: bytes[i * 2 + 1]))
+          let sample = (hi << 8) | lo
+          floatChannel[i] = Float(sample) / 32768.0
+        }
+      }
+
+      self.ensureEngineRunningLocked()
+      let gen = self.generation
+      self.queuedBuffers += 1
+      self.updatePlayingStateLocked()
+
+      node.scheduleBuffer(pcmBuffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+        self?.queue.async {
+          guard let self = self, self.generation == gen else { return }
+          if self.queuedBuffers > 0 {
+            self.queuedBuffers -= 1
+          }
+          self.updatePlayingStateLocked()
+        }
+      }
+
+      if !self.isPaused && !node.isPlaying {
+        node.play()
+      }
+    }
+  }
+
+  func setVolume(_ volume: Float) {
+    let clamped = max(0.0, min(1.0, volume))
+    queue.async { [weak self] in
+      guard let self = self, !self.disposed else { return }
+      self.volume = clamped
+      self.engine?.mainMixerNode.outputVolume = clamped
+    }
+  }
+
+  func setPlaybackRate(_ rate: Float) {
+    let clamped = max(0.5, min(2.5, rate))
+    queue.async { [weak self] in
+      guard let self = self, !self.disposed else { return }
+      self.playbackRate = clamped
+      if let pitch = self.timePitch {
+        self.applyRateLocked(pitch)
+      }
+    }
+  }
+
+  func setPaused(_ paused: Bool) {
+    queue.async { [weak self] in
+      guard let self = self, !self.disposed else { return }
+      self.isPaused = paused
+      if paused {
+        self.playerNode?.pause()
+      } else if self.isActive {
+        self.ensureEngineRunningLocked()
+        if self.queuedBuffers > 0, let node = self.playerNode, !node.isPlaying {
+          node.play()
+        }
+      }
+      self.updatePlayingStateLocked()
+    }
+  }
+
+  func interrupt() {
+    queue.async { [weak self] in
+      guard let self = self, !self.disposed else { return }
+      self.generation &+= 1
+      self.queuedBuffers = 0
+      self.playerNode?.stop()
+      self.timePitch?.reset()
+      self.updatePlayingStateLocked()
+    }
+  }
+
+  func dispose() {
+    queue.async { [weak self] in
+      guard let self = self, !self.disposed else { return }
+      self.disposed = true
+      self.isActive = false
+      self.generation &+= 1
+      self.queuedBuffers = 0
+      self.teardownEngineLocked()
+      self.updatePlayingStateLocked()
+    }
+  }
+
+  private func setupEngineIfNeeded(
+    sampleRate: Double
+  ) -> (AVAudioEngine, AVAudioPlayerNode, AVAudioUnitTimePitch, AVAudioFormat)? {
+    if let eng = engine,
+       let node = playerNode,
+       let pitch = timePitch,
+       let format = pcmFormat,
+       abs(currentSampleRate - sampleRate) < 1.0 {
+      return (eng, node, pitch, format)
+    }
+
+    teardownEngineLocked()
+    guard let format = AVAudioFormat(
+      commonFormat: .pcmFormatFloat32,
+      sampleRate: sampleRate,
+      channels: 1,
+      interleaved: false
+    ) else {
+      return nil
+    }
+
+    let eng = AVAudioEngine()
+    let node = AVAudioPlayerNode()
+    let pitch = AVAudioUnitTimePitch()
+    pitch.overlap = 8.0
+    applyRateLocked(pitch)
+    eng.mainMixerNode.outputVolume = volume
+
+    eng.attach(node)
+    eng.attach(pitch)
+    eng.connect(node, to: pitch, format: format)
+    eng.connect(pitch, to: eng.mainMixerNode, format: format)
+
+    configObserver = NotificationCenter.default.addObserver(
+      forName: .AVAudioEngineConfigurationChange,
+      object: eng,
+      queue: nil
+    ) { [weak self] _ in
+      self?.queue.async {
+        guard let self = self, !self.disposed, self.isActive, !self.isPaused else { return }
+        self.ensureEngineRunningLocked()
+        if let n = self.playerNode, self.queuedBuffers > 0, !n.isPlaying {
+          n.play()
+        }
+      }
+    }
+
+    self.engine = eng
+    self.playerNode = node
+    self.timePitch = pitch
+    self.pcmFormat = format
+    self.currentSampleRate = sampleRate
+    return (eng, node, pitch, format)
+  }
+
+  private func teardownEngineLocked() {
+    if let observer = configObserver {
+      NotificationCenter.default.removeObserver(observer)
+      configObserver = nil
+    }
+    playerNode?.stop()
+    engine?.stop()
+    engine = nil
+    playerNode = nil
+    timePitch = nil
+    pcmFormat = nil
+  }
+
+  private func applyRateLocked(_ pitch: AVAudioUnitTimePitch) {
+    if abs(playbackRate - 1.0) < 0.01 {
+      pitch.rate = 1.0
+      pitch.bypass = true
+    } else {
+      pitch.bypass = false
+      pitch.rate = playbackRate
+    }
+  }
+
+  private func ensureEngineRunningLocked() {
+    guard let eng = engine else { return }
+    if !eng.isRunning {
+      do {
+        try AVAudioSession.sharedInstance().setCategory(
+          .playback,
+          mode: .moviePlayback,
+          options: [.mixWithOthers, .allowBluetooth]
+        )
+        try AVAudioSession.sharedInstance().setActive(true)
+      } catch {}
+      do {
+        eng.prepare()
+        try eng.start()
+      } catch {
+        print("[IosLivePcmPlayer] engine.start error: \(error)")
+      }
+    }
+  }
+
+  private func updatePlayingStateLocked() {
+    let nowPlaying = !disposed && isActive && !isPaused && queuedBuffers > 0
+    if nowPlaying != reportedPlaying {
+      reportedPlaying = nowPlaying
+      DispatchQueue.main.async { [weak self] in
+        guard let self = self, !self.disposed else { return }
+        self.channel.invokeMethod("onPlaybackStateChanged", arguments: nowPlaying)
+      }
     }
   }
 }
