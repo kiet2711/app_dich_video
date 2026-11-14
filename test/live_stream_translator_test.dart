@@ -28,7 +28,7 @@ void main() {
   });
 
   group('GeminiLiveClient.buildSetupPayload for Live Translate', () {
-    test('builds translationConfig without speechConfig or tools', () {
+    test('builds translationConfig inside generationConfig without speechConfig or tools', () {
       final payload = GeminiLiveClient.buildSetupPayload(
         modelId: AiModelRegistry.geminiLiveTranslateModel,
         systemPrompt: '',
@@ -44,12 +44,13 @@ void main() {
         setup['model'],
         equals('models/${AiModelRegistry.geminiLiveTranslateModel}'),
       );
-      expect(
-        setup['translationConfig'],
-        equals({'targetLanguageCode': 'vi'}),
-      );
+      expect(setup.containsKey('translationConfig'), isFalse);
       final gen = setup['generationConfig'] as Map<String, dynamic>;
       expect(gen['responseModalities'], equals(['AUDIO']));
+      expect(
+        gen['translationConfig'],
+        equals({'targetLanguageCode': 'vi', 'echoTargetLanguage': false}),
+      );
       expect(gen.containsKey('speechConfig'), isFalse);
       expect(setup.containsKey('tools'), isFalse);
       expect(setup.containsKey('systemInstruction'), isFalse);
@@ -61,7 +62,7 @@ void main() {
       });
     });
 
-    test('includes echoTargetLanguage when enabled', () {
+    test('includes echoTargetLanguage true inside generationConfig.translationConfig', () {
       final payload = GeminiLiveClient.buildSetupPayload(
         modelId: AiModelRegistry.geminiLiveTranslateModel,
         systemPrompt: '',
@@ -70,8 +71,9 @@ void main() {
         echoTargetLanguage: true,
       );
       final setup = payload['setup'] as Map<String, dynamic>;
+      final gen = setup['generationConfig'] as Map<String, dynamic>;
       expect(
-        setup['translationConfig'],
+        gen['translationConfig'],
         equals({'targetLanguageCode': 'en', 'echoTargetLanguage': true}),
       );
     });

@@ -396,6 +396,11 @@ class GeminiLiveClient {
 
     final generationConfig = <String, dynamic>{
       'responseModalities': ['AUDIO'],
+      if (isLiveTranslate)
+        'translationConfig': {
+          'targetLanguageCode': effectiveTargetLang,
+          'echoTargetLanguage': echoTargetLanguage,
+        },
       if (!isLiveTranslate &&
           profile == LiveSetupProfile.full &&
           voiceName.trim().isNotEmpty)
@@ -415,11 +420,6 @@ class GeminiLiveClient {
             {'text': systemPrompt},
           ],
         },
-      if (isLiveTranslate)
-        'translationConfig': {
-          'targetLanguageCode': effectiveTargetLang,
-          if (echoTargetLanguage) 'echoTargetLanguage': true,
-        },
       if (!isLiveTranslate && preparedDecls.isNotEmpty)
         'tools': [
           {'functionDeclarations': preparedDecls},
@@ -429,12 +429,12 @@ class GeminiLiveClient {
     if (profile == LiveSetupProfile.full || profile == LiveSetupProfile.compatible) {
       setupMap['inputAudioTranscription'] = <String, dynamic>{};
       setupMap['outputAudioTranscription'] = <String, dynamic>{};
-      if (!isLiveTranslate || profile == LiveSetupProfile.full) {
-        if (resumptionHandle != null && resumptionHandle.trim().isNotEmpty) {
+      if (resumptionHandle != null && resumptionHandle.trim().isNotEmpty) {
+        if (!isLiveTranslate || profile == LiveSetupProfile.full) {
           setupMap['sessionResumption'] = {'handle': resumptionHandle.trim()};
-        } else {
-          setupMap['sessionResumption'] = <String, dynamic>{};
         }
+      } else if (!isLiveTranslate) {
+        setupMap['sessionResumption'] = <String, dynamic>{};
       }
     }
 
@@ -734,7 +734,10 @@ class GeminiLiveClient {
         joined.contains('failed host lookup')) {
       return 'Không kết nối được máy chủ Google Live WebSocket (kiểm tra mạng/VPN/DNS).';
     }
-    if (availableModels.isNotEmpty) {
+    final cleanModel = modelId.trim().replaceFirst(RegExp(r'^models/'), '');
+    final aliases = AiModelRegistry.liveModelCandidateIds[cleanModel] ?? [cleanModel];
+    final modelWasDiscovered = aliases.any((a) => availableModels.contains(a));
+    if (availableModels.isNotEmpty && !modelWasDiscovered) {
       return 'Key $maskedKey ($keyCount key) chưa mở/khớp được với $modelId. Các model Live khả dụng trên key: ${availableModels.join(", ")}.';
     }
     final lastDetail = attemptLogs.isNotEmpty ? attemptLogs.last : 'Không rõ nguyên nhân';
