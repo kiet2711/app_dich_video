@@ -332,8 +332,9 @@ class _BilibiliAssistantSheetState extends State<BilibiliAssistantSheet> {
               isMicActive: c.isMicActive,
               micLevel: c.micLevel,
               isBusy: c.isAssistantBusy,
-              hintText:
-                  'Tìm video kiến thức, công nghệ, UP chủ, BXH hoặc hỏi tóm tắt #1...',
+              hintText: c.titleTranslateOnly
+                  ? 'Mô tả phim/video tiếng Việt để lấy tên tiếng Trung tự copy tìm...'
+                  : 'Tìm video kiến thức, công nghệ, UP chủ, BXH hoặc hỏi tóm tắt #1...',
               onSend: () => _submitText(),
               onToggleMic: c.toggleMic,
             ),
@@ -715,6 +716,15 @@ class _BilibiliAssistantSheetState extends State<BilibiliAssistantSheet> {
               scrollDirection: Axis.horizontal,
               children: [
                 _FilterDropdownPill(
+                  label: 'Tên Việt → Trung',
+                  icon: Icons.translate_rounded,
+                  selected: c.titleTranslateOnly,
+                  showArrow: false,
+                  activeColor: _biliCyan,
+                  onTap: () => c.setTitleTranslateOnly(!c.titleTranslateOnly),
+                ),
+                const SizedBox(width: 6),
+                _FilterDropdownPill(
                   label: 'Hoạt hình AI',
                   icon: Icons.movie_filter_rounded,
                   selected: c.aiAnimeOnly,
@@ -968,6 +978,11 @@ class _BilibiliAssistantSheetState extends State<BilibiliAssistantSheet> {
         icon: Icons.build_circle_outlined,
         text: 'Hướng dẫn tự build NAS / homelab giá rẻ cho người mới',
       ),
+      (
+        icon: Icons.translate_rounded,
+        text:
+            'Chuyển giúp mình mô tả "phim hoạt hình nam chính trọng sinh giả phàm nhân vào tông môn báo thù" sang tên tiếng Trung để mình tự copy tìm (không đề xuất video)',
+      ),
     ];
 
     return SingleChildScrollView(
@@ -1194,6 +1209,7 @@ class _BilibiliAssistantSheetState extends State<BilibiliAssistantSheet> {
         }
 
         final report = msg.searchReport;
+        final suggestions = msg.titleSuggestions;
         return Container(
           margin: const EdgeInsets.only(top: 6, bottom: 12),
           child: Column(
@@ -1234,6 +1250,13 @@ class _BilibiliAssistantSheetState extends State<BilibiliAssistantSheet> {
                     ),
                   ),
                 ),
+              if (suggestions != null && suggestions.suggestions.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                LiveChineseTitleSuggestionsCard(
+                  batch: suggestions,
+                  accentColor: _biliCyan,
+                ),
+              ],
               if (report != null && report.candidates.isNotEmpty) ...[
                 const SizedBox(height: 10),
                 _buildSearchResultGroup(c, report),

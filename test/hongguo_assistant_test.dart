@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:capsub_flutter/domain/ai/live/gemini_live_client.dart';
 import 'package:capsub_flutter/domain/ai/live/live_audio_io.dart';
+import 'package:capsub_flutter/domain/media/chinese_title_suggestion.dart';
 import 'package:capsub_flutter/domain/media/hongguo/hongguo_assistant_engine.dart';
 import 'package:capsub_flutter/domain/media/hongguo_resolver.dart';
 import 'package:capsub_flutter/ui/hongguo/hongguo_assistant_controller.dart';
@@ -998,6 +999,174 @@ Số 4: Ngọt Sủng Trường Học — Câu chuyện thanh xuân nhẹ nhàng
       expect(assistantMsgs.single.searchReport!.candidates.single.item.cover, contains('autosafety_cover.jpeg'));
       expect(assistantMsgs.single.text, contains('Vương Phi Cổ Trang Ngọt Sủng'));
       expect(fakeClient.oneShotLiveCalls, 1);
+
+      controller.dispose();
+    });
+  });
+
+  group('Vietnamese -> Chinese title translation mode (Hongguo)', () {
+    test('engine exposes suggest_chinese_search_terms and suppresses search & fallback in translate-only mode', () async {
+      final declNames = HongguoAssistantEngine.buildFunctionDeclarations()
+          .map((d) => d['name'])
+          .toList();
+      expect(declNames, contains('suggest_chinese_search_terms'));
+
+      final requests = <RequestOptions>[];
+      final dio = Dio();
+      dio.httpClientAdapter = _MockAdapter((opts) async {
+        requests.add(opts);
+        return ResponseBody.fromString('{}', 200);
+      });
+      final engine = HongguoAssistantEngine(
+        resolver: HongguoResolver(dio: dio),
+      );
+
+      ChineseTitleSuggestionBatch? capturedBatch;
+      final res = await engine.executeToolCall(
+        const LiveFunctionCall(
+          id: 'hg_cn_1',
+          name: 'suggest_chinese_search_terms',
+          args: {
+            'vi_input_summary': 'tổng tài giả nghèo cưới vợ thử lòng',
+            'suggestions': [
+              {
+                'zh_title': '总裁装穷娶妻试探',
+                'han_viet_meaning': 'Tổng Tài Trang Cùng Thú Thê Thí Thám',
+                'match_type': 'literal_han_viet',
+              },
+              {
+                'zh_title': '假装破产后老婆竟是首富',
+                'han_viet_meaning': 'Giả Trang Phá Sản Hậu Lão Bà Cánh Thị Thủ Phú',
+                'match_type': 'synonym_variant',
+              },
+            ],
+          },
+        ),
+        onSuggestionsUpdated: (b) => capturedBatch = b,
+      );
+
+      expect(res.response['ok'], isTrue);
+      expect(res.response['count'], 2);
+      expect(capturedBatch!.suggestions.first.zhTitle, '总裁装穷娶妻试探');
+      expect(requests, isEmpty);
+
+      const naturalPrompt =
+          'Mình mô tả phim: "nữ chính trọng sinh gả nhầm hào môn", cho mình tên tiếng Trung để tự copy tìm (không cần đề xuất phim).';
+      expect(
+        HongguoAssistantEngine.looksLikeMovieDiscoveryQuery(naturalPrompt),
+        isFalse,
+      );
+      expect(
+        await engine.autoSearchFallbackFromPrompt(naturalPrompt),
+        isNull,
+      );
+
+      engine.updateUiLocks(const HongguoUiLocks(titleTranslateOnly: true));
+      expect(engine.buildUiContextHeader(), contains('Chỉ chuyển tên Việt -> Trung'));
+      expect(
+        await engine.autoSearchFallbackFromPrompt('Gợi ý 5 phim tổng tài ngọt sủng'),
+        isNull,
+      );
+      final blockedRes = await engine.executeToolCall(
+        const LiveFunctionCall(
+          id: 'hg_blk_1',
+          name: 'progressive_search',
+          args: {
+            'queries_narrow_to_broad': ['总裁'],
+          },
+        ),
+      );
+      expect(blockedRes.response['ok'], isFalse);
+      expect(blockedRes.response['blocked'], isTrue);
+      expect(requests, isEmpty);
+    });
+
+    test('controller returns copyable Chinese suggestions without auto-fallback movie cards (both tool & text fallback)', () async {
+      SharedPreferences.setMockInitialValues({});
+      final requests = <RequestOptions>[];
+      final dio = Dio();
+      dio.httpClientAdapter = _MockAdapter((opts) async {
+        requests.add(opts);
+        return ResponseBody.fromString('<html></html>', 200);
+      });
+
+      final fakeClient = _FakeGeminiLiveClient();
+      final controller = HongguoAssistantController(
+        resolver: HongguoResolver(dio: dio),
+        liveClient: fakeClient,
+        audioOutput: _NoopAudioOutput(),
+      );
+      await controller.initialize();
+      await controller.saveQuickGeminiKeys('AIzaSyFakeKeyForTranslateModeTest');
+
+      // Case 1: Bật pill Tên Việt -> Trung và Gemini gọi suggest_chinese_search_terms
+      controller.setTitleTranslateOnly(true);
+      await controller.sendTextMessage(
+        'Phim tổng tài giả nghèo cưới vợ thử lòng',
+      );
+      expect(
+        fakeClient.sentClientTexts.last,
+        contains('CHỈ CHUYỂN TÊN VIỆT → TRUNG'),
+      );
+
+      fakeClient.emitEvent(
+        const LiveToolCallEvent([
+          LiveFunctionCall(
+            id: 'call_hg_cn',
+            name: 'suggest_chinese_search_terms',
+            args: {
+              'vi_input_summary': 'tổng tài giả nghèo cưới vợ thử lòng',
+              'suggestions': [
+                {
+                  'zh_title': '总裁装穷试婚',
+                  'han_viet_meaning': 'Tổng Tài Trang Cùng Thí Hôn',
+                  'match_type': 'exact_title',
+                },
+              ],
+            },
+          ),
+        ]),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      fakeClient.emitEvent(
+        const LiveOutputTextEvent('Gợi ý bạn copy tên `总裁装穷试婚` để tự tìm nhé.'),
+      );
+      fakeClient.emitEvent(const LiveTurnCompleteEvent(interactionStatus: 'IDLE'));
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+
+      var assistantMsgs =
+          controller.messages.where((m) => !m.isUser && !m.isSystemNotice).toList();
+      expect(assistantMsgs.length, 1);
+      expect(assistantMsgs.single.searchReport, isNull);
+      expect(
+        assistantMsgs.single.titleSuggestions?.suggestions.single.zhTitle,
+        '总裁装穷试婚',
+      );
+
+      // Case 2: Tắt pill nhưng hỏi tự nhiên không đề xuất phim -> model trả text chay -> KHÔNG tự fallback tìm phim + tự tách cụm Hán Việt copy
+      controller.setTitleTranslateOnly(false);
+      await controller.sendTextMessage(
+        'Mình mô tả phim ngắn: "nữ phụ trọng sinh trả thù tra nam", chỉ cần tên tiếng Trung để tự tìm không đề xuất phim',
+      );
+      fakeClient.emitEvent(
+        const LiveOutputTextEvent(
+          '1. 重生女配复仇记 — Trọng Sinh Nữ Phụ Phục Thù Ký\n'
+          '2. 女配逆袭打脸渣男 — Nữ Phụ Nghịch Tập Đả Kiểm Tra Nam',
+        ),
+      );
+      fakeClient.emitEvent(const LiveTurnCompleteEvent(interactionStatus: 'IDLE'));
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      assistantMsgs =
+          controller.messages.where((m) => !m.isUser && !m.isSystemNotice).toList();
+      expect(assistantMsgs.length, 2);
+      expect(assistantMsgs[1].searchReport, isNull);
+      expect(assistantMsgs[1].titleSuggestions, isNotNull);
+      expect(
+        assistantMsgs[1].titleSuggestions!.suggestions.map((e) => e.zhTitle),
+        containsAll(['重生女配复仇记', '女配逆袭打脸渣男']),
+      );
+      expect(requests, isEmpty);
 
       controller.dispose();
     });

@@ -8,6 +8,7 @@ import '../../domain/ai/ai_model_registry.dart';
 import '../../domain/ai/live/gemini_live_client.dart';
 import '../../domain/ai/live/live_audio_io.dart';
 import '../../domain/ai/live/live_reply_title_sync.dart';
+import '../../domain/media/chinese_title_suggestion.dart';
 import '../../domain/media/hongguo/hongguo_assistant_engine.dart';
 import '../../domain/media/hongguo_resolver.dart';
 
@@ -21,6 +22,7 @@ class AssistantChatMessage {
   final bool isStreaming;
   final bool isSystemNotice;
   final HongguoSearchReport? searchReport;
+  final ChineseTitleSuggestionBatch? titleSuggestions;
 
   const AssistantChatMessage({
     required this.id,
@@ -29,12 +31,14 @@ class AssistantChatMessage {
     this.isStreaming = false,
     this.isSystemNotice = false,
     this.searchReport,
+    this.titleSuggestions,
   });
 
   AssistantChatMessage copyWith({
     String? text,
     bool? isStreaming,
     HongguoSearchReport? searchReport,
+    ChineseTitleSuggestionBatch? titleSuggestions,
   }) {
     return AssistantChatMessage(
       id: id,
@@ -43,6 +47,7 @@ class AssistantChatMessage {
       isStreaming: isStreaming ?? this.isStreaming,
       isSystemNotice: isSystemNotice,
       searchReport: searchReport ?? this.searchReport,
+      titleSuggestions: titleSuggestions ?? this.titleSuggestions,
     );
   }
 }
@@ -63,6 +68,7 @@ class HongguoAssistantController extends ChangeNotifier {
   String _selectedModelId = 'gemini-3.8-live';
   String _resolvedServerModelId = 'gemini-3.8-live';
   bool _outputAudioEnabled = false;
+  bool _titleTranslateOnly = false;
   String _sourceFilter = '';
   int? _preferredCount = 5;
   final List<String> _pinnedSeriesIds = [];
@@ -93,6 +99,7 @@ class HongguoAssistantController extends ChangeNotifier {
   int _inFlightToolCount = 0;
   String _lastUserPrompt = '';
   HongguoSearchReport? _pendingTurnReport;
+  ChineseTitleSuggestionBatch? _pendingTitleSuggestions;
 
   HongguoAssistantController({
     HongguoResolver? resolver,
@@ -117,6 +124,7 @@ class HongguoAssistantController extends ChangeNotifier {
   String get resolvedServerModelId => _resolvedServerModelId;
   String get resolvedApiVersion => _resolvedApiVersion;
   bool get outputAudioEnabled => _outputAudioEnabled;
+  bool get titleTranslateOnly => _titleTranslateOnly;
   String get sourceFilter => _sourceFilter;
   int? get preferredCount => _preferredCount;
   List<String> get pinnedSeriesIds => List.unmodifiable(_pinnedSeriesIds);
@@ -214,9 +222,17 @@ class HongguoAssistantController extends ChangeNotifier {
       HongguoUiLocks(
         sourceCategory: _sourceFilter,
         lockedCount: _preferredCount,
+        titleTranslateOnly: _titleTranslateOnly,
         pinnedSeriesIds: List<String>.from(_pinnedSeriesIds),
       ),
     );
+  }
+
+  void setTitleTranslateOnly(bool enabled) {
+    if (_titleTranslateOnly == enabled) return;
+    _titleTranslateOnly = enabled;
+    _syncEngineLocks();
+    notifyListeners();
   }
 
   Future<void> setOutputAudioEnabled(bool enabled) async {
@@ -473,6 +489,7 @@ class HongguoAssistantController extends ChangeNotifier {
     _lastAssistantMsgId = null;
     _activeUserVoiceMsgId = null;
     _pendingTurnReport = null;
+    _pendingTitleSuggestions = null;
     _turnExecutedTool = false;
     _inFlightToolCount = 0;
     _lastUserPrompt = '';
@@ -642,6 +659,7 @@ class HongguoAssistantController extends ChangeNotifier {
     _lastAssistantMsgId = _activeAssistantMsgId;
     _turnReceivedTranscript = false;
     _pendingTurnReport = null;
+    _pendingTitleSuggestions = null;
     _messages.add(
       AssistantChatMessage(
         id: _activeAssistantMsgId!,
@@ -871,12 +889,28 @@ class HongguoAssistantController extends ChangeNotifier {
     }
   }
 
+  void _attachSuggestionsToMessageId(
+    String msgId,
+    ChineseTitleSuggestionBatch batch,
+  ) {
+    final idx = _messages.indexWhere((m) => m.id == msgId);
+    if (idx != -1) {
+      _messages[idx] = _messages[idx].copyWith(titleSuggestions: batch);
+      notifyListeners();
+    }
+  }
+
   void _finalizeActiveAssistantTurn() {
     _isAssistantBusy = false;
     _busyLabel = '';
     final finishedMsgId = _activeAssistantMsgId;
     final pendingPrompt = _lastUserPrompt;
     final executedToolThisTurn = _turnExecutedTool;
+    final isTranslateOnlyTurn =
+        _titleTranslateOnly ||
+        ChineseTitleSuggestionHelper.looksLikeChineseTitleOnlyRequest(
+          pendingPrompt,
+        );
     HongguoSearchReport? finalReport;
     var hasNonEmptyReplyText = false;
 
@@ -885,6 +919,8 @@ class HongguoAssistantController extends ChangeNotifier {
       if (idx != -1) {
         final cur = _messages[idx];
         var effectiveReport = _pendingTurnReport ?? cur.searchReport;
+        var effectiveSuggestions =
+            _pendingTitleSuggestions ?? cur.titleSuggestions;
         hasNonEmptyReplyText = cur.text.trim().isNotEmpty;
         if (effectiveReport != null && hasNonEmptyReplyText) {
           final parsed = HongguoAssistantEngine.extractAiTitlesFromLiveReply(
@@ -900,24 +936,40 @@ class HongguoAssistantController extends ChangeNotifier {
             effectiveReport = updated;
           }
         }
+        if (effectiveSuggestions == null &&
+            effectiveReport == null &&
+            hasNonEmptyReplyText &&
+            isTranslateOnlyTurn) {
+          effectiveSuggestions =
+              ChineseTitleSuggestionHelper.extractFallbackBatchFromReplyText(
+                cur.text,
+                platformLabel: 'Hồng Quả',
+                viInputSummary: pendingPrompt,
+              );
+        }
         finalReport = effectiveReport;
-        if (!hasNonEmptyReplyText && effectiveReport == null) {
+        if (!hasNonEmptyReplyText &&
+            effectiveReport == null &&
+            effectiveSuggestions == null) {
           _messages.removeAt(idx);
         } else {
           _messages[idx] = cur.copyWith(
             isStreaming: false,
             searchReport: effectiveReport,
+            titleSuggestions: effectiveSuggestions,
           );
         }
       }
       _activeAssistantMsgId = null;
       _pendingTurnReport = null;
+      _pendingTitleSuggestions = null;
       _turnReceivedTranscript = false;
     }
 
     // Safety net: nếu Gemini Live bỏ qua tool calling ở câu tìm phim -> tự lấy thẻ thật rồi nhờ model Live dịch Hán Việt + tóm tắt
     if (finishedMsgId != null &&
         !executedToolThisTurn &&
+        !isTranslateOnlyTurn &&
         finalReport == null &&
         hasNonEmptyReplyText &&
         pendingPrompt.isNotEmpty &&
@@ -1047,6 +1099,10 @@ class HongguoAssistantController extends ChangeNotifier {
             onSearchResultsUpdated: (report) {
               _pendingTurnReport = report;
               _attachReportToMessageId(targetMsgId, report);
+            },
+            onSuggestionsUpdated: (batch) {
+              _pendingTitleSuggestions = batch;
+              _attachSuggestionsToMessageId(targetMsgId, batch);
             },
           ),
         ),

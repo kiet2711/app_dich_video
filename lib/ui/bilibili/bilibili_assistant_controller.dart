@@ -13,6 +13,7 @@ import '../../domain/media/bilibili/bilibili_assistant_engine.dart';
 import '../../domain/media/bilibili/bilibili_srt_service.dart';
 import '../../domain/media/bilibili/bilibili_taste_service.dart';
 import '../../domain/media/bilibili_resolver.dart';
+import '../../domain/media/chinese_title_suggestion.dart';
 
 class BilibiliChatMessage {
   final String id;
@@ -21,6 +22,7 @@ class BilibiliChatMessage {
   final bool isStreaming;
   final bool isSystemNotice;
   final BilibiliSearchReport? searchReport;
+  final ChineseTitleSuggestionBatch? titleSuggestions;
 
   const BilibiliChatMessage({
     required this.id,
@@ -29,12 +31,14 @@ class BilibiliChatMessage {
     this.isStreaming = false,
     this.isSystemNotice = false,
     this.searchReport,
+    this.titleSuggestions,
   });
 
   BilibiliChatMessage copyWith({
     String? text,
     bool? isStreaming,
     BilibiliSearchReport? searchReport,
+    ChineseTitleSuggestionBatch? titleSuggestions,
   }) {
     return BilibiliChatMessage(
       id: id,
@@ -43,6 +47,7 @@ class BilibiliChatMessage {
       isStreaming: isStreaming ?? this.isStreaming,
       isSystemNotice: isSystemNotice,
       searchReport: searchReport ?? this.searchReport,
+      titleSuggestions: titleSuggestions ?? this.titleSuggestions,
     );
   }
 }
@@ -65,6 +70,7 @@ class BilibiliAssistantController extends ChangeNotifier {
   bool _outputAudioEnabled = false;
   int _partitionTid = 0;
   bool _aiAnimeOnly = false;
+  bool _titleTranslateOnly = false;
   int _durationBucket = 0;
   String _recencyBucket = 'any';
   String _sortOrder = 'totalrank';
@@ -100,6 +106,7 @@ class BilibiliAssistantController extends ChangeNotifier {
   int _inFlightToolCount = 0;
   String _lastUserPrompt = '';
   BilibiliSearchReport? _pendingTurnReport;
+  ChineseTitleSuggestionBatch? _pendingTitleSuggestions;
 
   BilibiliAssistantController({
     BilibiliResolver? resolver,
@@ -133,6 +140,7 @@ class BilibiliAssistantController extends ChangeNotifier {
   bool get outputAudioEnabled => _outputAudioEnabled;
   int get partitionTid => _partitionTid;
   bool get aiAnimeOnly => _aiAnimeOnly;
+  bool get titleTranslateOnly => _titleTranslateOnly;
   int get durationBucket => _durationBucket;
   String get recencyBucket => _recencyBucket;
   String get sortOrder => _sortOrder;
@@ -258,10 +266,18 @@ class BilibiliAssistantController extends ChangeNotifier {
         durationBucket: _durationBucket,
         recencyBucket: _recencyBucket,
         sortOrder: _sortOrder,
+        titleTranslateOnly: _titleTranslateOnly,
         lockedCount: _preferredCount,
         pinnedKeys: List<String>.from(_pinnedKeys),
       ),
     );
+  }
+
+  void setTitleTranslateOnly(bool enabled) {
+    if (_titleTranslateOnly == enabled) return;
+    _titleTranslateOnly = enabled;
+    _syncEngineLocks();
+    notifyListeners();
   }
 
   Future<void> setOutputAudioEnabled(bool enabled) async {
@@ -565,6 +581,7 @@ class BilibiliAssistantController extends ChangeNotifier {
     _lastAssistantMsgId = null;
     _activeUserVoiceMsgId = null;
     _pendingTurnReport = null;
+    _pendingTitleSuggestions = null;
     _turnExecutedTool = false;
     _inFlightToolCount = 0;
     _lastUserPrompt = '';
@@ -904,6 +921,7 @@ class BilibiliAssistantController extends ChangeNotifier {
     _lastAssistantMsgId = _activeAssistantMsgId;
     _turnReceivedTranscript = false;
     _pendingTurnReport = null;
+    _pendingTitleSuggestions = null;
     _messages.add(
       BilibiliChatMessage(
         id: _activeAssistantMsgId!,
@@ -1129,12 +1147,28 @@ class BilibiliAssistantController extends ChangeNotifier {
     }
   }
 
+  void _attachSuggestionsToMessageId(
+    String msgId,
+    ChineseTitleSuggestionBatch batch,
+  ) {
+    final idx = _messages.indexWhere((m) => m.id == msgId);
+    if (idx != -1) {
+      _messages[idx] = _messages[idx].copyWith(titleSuggestions: batch);
+      notifyListeners();
+    }
+  }
+
   void _finalizeActiveAssistantTurn() {
     _isAssistantBusy = false;
     _busyLabel = '';
     final finishedMsgId = _activeAssistantMsgId;
     final pendingPrompt = _lastUserPrompt;
     final executedToolThisTurn = _turnExecutedTool;
+    final isTranslateOnlyTurn =
+        _titleTranslateOnly ||
+        ChineseTitleSuggestionHelper.looksLikeChineseTitleOnlyRequest(
+          pendingPrompt,
+        );
     BilibiliSearchReport? finalReport;
     var hasNonEmptyReplyText = false;
 
@@ -1143,6 +1177,8 @@ class BilibiliAssistantController extends ChangeNotifier {
       if (idx != -1) {
         final cur = _messages[idx];
         var effectiveReport = _pendingTurnReport ?? cur.searchReport;
+        var effectiveSuggestions =
+            _pendingTitleSuggestions ?? cur.titleSuggestions;
         hasNonEmptyReplyText = cur.text.trim().isNotEmpty;
         if (effectiveReport != null && hasNonEmptyReplyText) {
           final parsed = LiveReplyTitleSync.extractAiTitlesFromLiveReply(
@@ -1158,23 +1194,39 @@ class BilibiliAssistantController extends ChangeNotifier {
             effectiveReport = updated;
           }
         }
+        if (effectiveSuggestions == null &&
+            effectiveReport == null &&
+            hasNonEmptyReplyText &&
+            isTranslateOnlyTurn) {
+          effectiveSuggestions =
+              ChineseTitleSuggestionHelper.extractFallbackBatchFromReplyText(
+                cur.text,
+                platformLabel: 'Bilibili',
+                viInputSummary: pendingPrompt,
+              );
+        }
         finalReport = effectiveReport;
-        if (!hasNonEmptyReplyText && effectiveReport == null) {
+        if (!hasNonEmptyReplyText &&
+            effectiveReport == null &&
+            effectiveSuggestions == null) {
           _messages.removeAt(idx);
         } else {
           _messages[idx] = cur.copyWith(
             isStreaming: false,
             searchReport: effectiveReport,
+            titleSuggestions: effectiveSuggestions,
           );
         }
       }
       _activeAssistantMsgId = null;
       _pendingTurnReport = null;
+      _pendingTitleSuggestions = null;
       _turnReceivedTranscript = false;
     }
 
     if (finishedMsgId != null &&
         !executedToolThisTurn &&
+        !isTranslateOnlyTurn &&
         finalReport == null &&
         hasNonEmptyReplyText &&
         pendingPrompt.isNotEmpty &&
@@ -1303,6 +1355,10 @@ class BilibiliAssistantController extends ChangeNotifier {
             onSearchResultsUpdated: (report) {
               _pendingTurnReport = report;
               _attachReportToMessageId(targetMsgId, report);
+            },
+            onSuggestionsUpdated: (batch) {
+              _pendingTitleSuggestions = batch;
+              _attachSuggestionsToMessageId(targetMsgId, batch);
             },
           ),
         ),

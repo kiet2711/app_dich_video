@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import '../../ai/live/gemini_live_client.dart';
 import '../../ai/live/live_reply_title_sync.dart';
 import '../bilibili_resolver.dart';
+import '../chinese_title_suggestion.dart';
 import 'bilibili_srt_service.dart';
 import 'bilibili_taste_service.dart';
 
@@ -148,6 +149,9 @@ class BilibiliUiLocks {
   /// 'totalrank' | 'click' | 'pubdate' | 'stow' | 'dm'
   final String sortOrder;
 
+  /// `true` = Chế độ Chỉ chuyển đổi tên/mô tả Tiếng Việt -> Tiếng Trung để tự copy tìm (không đề xuất video).
+  final bool titleTranslateOnly;
+
   final int? lockedCount;
   final List<String> pinnedKeys;
 
@@ -157,6 +161,7 @@ class BilibiliUiLocks {
     this.durationBucket = 0,
     this.recencyBucket = 'any',
     this.sortOrder = 'totalrank',
+    this.titleTranslateOnly = false,
     this.lockedCount,
     this.pinnedKeys = const [],
   });
@@ -294,7 +299,7 @@ class BilibiliAssistantEngine {
     return '''Bạn là **Trợ lý AI Bilibili Toàn Năng** (tìm kiếm thông tin, video kiến thức, công nghệ, hướng dẫn, game, đời sống, âm nhạc, phim AI, hoạt hình, tài liệu, kênh UP) nói Tiếng Việt tự nhiên.
 
 NGUYÊN TẮC BẮT BUỘC:
-1. KHÔNG BAO GIỜ tự bịa tên video, BVID, tên kênh UP hay số liệu ngoài dữ liệu tool trả về. ỨNG DỤNG CHỈ HIỂN THỊ ĐƯỢC THẺ VIDEO / KÊNH KHI BẠN GỌI TOOL. Với mọi yêu cầu tìm kiếm, hỏi BXH, hỏi thông tin hay tóm tắt video, PHẢI gọi tool trước rồi mới trả lời.
+1. KHÔNG BAO GIỜ tự bịa tên video, BVID, tên kênh UP hay số liệu ngoài dữ liệu tool trả về. ỨNG DỤNG CHỈ HIỂN THỊ ĐƯỢC THẺ VIDEO / KÊNH KHI BẠN GỌI TOOL. Với mọi yêu cầu tìm kiếm, hỏi BXH, hỏi thông tin hay tóm tắt video, PHẢI gọi tool trước rồi mới trả lời (TRỪ chế độ Chỉ chuyển tên Việt → Trung ở mục 9 dưới đây).
 2. PHÂN BIỆT RÕ "TÌM ĐÚNG PHIM / TÊN GỐC" VS "ĐỀ XUẤT HỢP GU":
    - **TÌM KIẾM ĐÚNG TÊN (`search_mode: "exact"`)**: Khi người dùng đã biết tên tiếng Việt/Anh/Trung (vd: *"tìm bản gốc tiếng Trung của phim..."*, *"tìm video hướng dẫn cài X"*, *"tìm kênh/tác phẩm cụ thể"*), dịch sát tên đó sang 1–3 biến thể từ khóa tiếng Trung chuẩn trong `queries_narrow_to_broad` và đặt `search_mode: "exact"` để trả đúng **các kết quả đầu trang tìm kiếm Bilibili** theo đúng thứ tự khớp, KHÔNG tự ý lan rộng sang các video không liên quan! Nếu là Anime/Điện ảnh/Tài liệu chính thống có thể kèm `search_bilibili_pgc`.
    - **ĐỀ XUẤT / KHÁM PHÁ HỢP GU (`search_mode: "discover"`)**: Khi người dùng xin gợi ý theo gu/thể loại (*"đề xuất vài bộ hay"*, *"tìm theo gu hay xem của mình"*), hãy gọi `get_user_taste_profile` (và `explore_bilibili_discovery(mode: "recommend")` nếu cần feed cá nhân hóa Bilibili) để nắm lịch sử/thể loại hay xem, rồi tìm Hẹp -> Rộng với `search_mode: "discover"`.
@@ -327,7 +332,8 @@ NGUYÊN TẮC BẮT BUỘC:
    - Mỗi khi giới thiệu danh sách kết quả từ tool (`search_*`, `explore_*`, `inspect_uploader_videos`, `get_related_*`), BẮT BUỘC mở đầu từng mục đúng mẫu để app đồng bộ tiêu đề Việt lên thẻ ảnh bìa:
      `#1. <Tiêu đề Tiếng Việt ngắn gọn> — <Tóm tắt ngắn 1 câu / thông tin nổi bật>`
      `#2. <Tiêu đề Tiếng Việt ngắn gọn> — <...>`
-   - ${compactVoiceStyle ? 'Đang bật đọc thoại: trình bày súc tích tự nhiên, giữ #STT và tên Tiếng Việt gọn rõ, tránh đọc nguyên mã BVID hay chữ Hán dài.' : 'Trình bày rõ ràng, đúng phong cách `story` (không mốc giờ) hoặc `structured` (có mốc giờ `[mm:ss]`).'}''';
+   - ${compactVoiceStyle ? 'Đang bật đọc thoại: trình bày súc tích tự nhiên, giữ #STT và tên Tiếng Việt gọn rõ, tránh đọc nguyên mã BVID hay chữ Hán dài.' : 'Trình bày rõ ràng, đúng phong cách `story` (không mốc giờ) hoặc `structured` (có mốc giờ `[mm:ss]`).'}
+9. ${ChineseTitleSuggestionHelper.systemPromptSection}''';
   }
 
   static List<Map<String, dynamic>> buildFunctionDeclarations({
@@ -614,6 +620,7 @@ NGUYÊN TẮC BẮT BUỘC:
           },
         },
       },
+      ChineseTitleSuggestionHelper.buildToolDeclaration(platformHint: 'Bilibili'),
     ];
 
     if (includeNonBlockingBehavior) {
@@ -629,10 +636,32 @@ NGUYÊN TẮC BẮT BUỘC:
     LiveFunctionCall call, {
     void Function(String statusText)? onProgress,
     void Function(BilibiliSearchReport report)? onSearchResultsUpdated,
+    void Function(ChineseTitleSuggestionBatch batch)? onSuggestionsUpdated,
   }) async {
     try {
+      if (_currentLocks.titleTranslateOnly &&
+          call.name != ChineseTitleSuggestionHelper.toolName) {
+        return LiveFunctionResponse(
+          id: call.id,
+          name: call.name,
+          response: {
+            'ok': false,
+            'blocked': true,
+            'error':
+                'Đang bật chế độ Chỉ chuyển tên Việt -> Trung. KHÔNG tìm hoặc đề xuất video; hãy gọi `${ChineseTitleSuggestionHelper.toolName}` để trả 3–6 tên/từ khóa tiếng Trung cho người dùng copy tự tìm.',
+          },
+        );
+      }
+
       Map<String, dynamic> payload;
       switch (call.name) {
+        case ChineseTitleSuggestionHelper.toolName:
+          payload = ChineseTitleSuggestionHelper.executeToolCall(
+            call.args,
+            platformLabel: 'Bilibili',
+            onProgress: onProgress,
+            onSuggestionsUpdated: onSuggestionsUpdated,
+          );
         case 'get_user_taste_profile':
           payload = await _handleGetUserTasteProfile(
             call.args,
@@ -2563,6 +2592,11 @@ NGUYÊN TẮC BẮT BUỘC:
 
   String buildUiContextHeader() {
     final notes = <String>[];
+    if (_currentLocks.titleTranslateOnly) {
+      notes.add(
+        'CHẾ ĐỘ: Chỉ chuyển tên Việt -> Trung (CHỈ gọi suggest_chinese_search_terms để user tự copy tìm, KHÔNG đề xuất video)',
+      );
+    }
     if (_currentLocks.aiAnimeOnly) {
       notes.add(
         'CHẾ ĐỘ LỌC: Chỉ Phim Hoạt Hình AI (content_focus="ai_anime", loại bỏ kiến thức/người thật/tiểu thuyết audio)',
@@ -2612,13 +2646,24 @@ NGUYÊN TẮC BẮT BUỘC:
     final clean = rawInput.trim();
     if (clean.isEmpty) return '';
     final header = buildUiContextHeader();
-    if (header.isEmpty) return clean;
-    return '$header\n$clean';
+    final isTranslateOnly =
+        _currentLocks.titleTranslateOnly ||
+        ChineseTitleSuggestionHelper.looksLikeChineseTitleOnlyRequest(clean);
+    final parts = <String>[
+      if (header.isNotEmpty) header,
+      if (isTranslateOnly)
+        '[LỆNH HỆ THỐNG: Đang ở chế độ CHỈ CHUYỂN TÊN VIỆT → TRUNG. CHỈ gọi tool `${ChineseTitleSuggestionHelper.toolName}` để trả 3–6 tên/từ khóa tiếng Trung cho người dùng tự copy tìm. TUYỆT ĐỐI KHÔNG gọi `search_bilibili_videos`, `explore_bilibili_discovery`, `search_bilibili_pgc` hay đề xuất video.]',
+      clean,
+    ];
+    return parts.join('\n');
   }
 
   static bool looksLikeDiscoveryQuery(String rawInput) {
     final q = rawInput.trim().toLowerCase();
     if (q.isEmpty) return false;
+    if (ChineseTitleSuggestionHelper.looksLikeChineseTitleOnlyRequest(rawInput)) {
+      return false;
+    }
     final asksExisting = RegExp(
       r'(?:#\d+|video\s*(?:số|thứ)\s*\d+|đoạn\s*(?:tiếp|sau|\d+)|tóm tắt|cốt truyện|nói gì|ở trên|đã tìm|tạo stt|xuất srt|stt|srt)',
     ).hasMatch(q);
@@ -2673,6 +2718,10 @@ NGUYÊN TẮC BẮT BUỘC:
   }) async {
     final clean = rawPrompt.trim();
     if (clean.isEmpty) return null;
+    if (_currentLocks.titleTranslateOnly ||
+        ChineseTitleSuggestionHelper.looksLikeChineseTitleOnlyRequest(clean)) {
+      return null;
+    }
     final lower = clean.toLowerCase();
     final limit = _resolveEffectiveLimit(null);
 
@@ -2804,6 +2853,9 @@ NGUYÊN TẮC BẮT BUỘC:
     final lines = <String>[
       'Ngữ cảnh Bilibili đang giữ từ phiên trước (dùng tiếp, không cần chào lại từ đầu):',
     ];
+    if (_currentLocks.titleTranslateOnly) {
+      lines.add('- Chế độ: Chỉ chuyển tên Việt -> Trung (không đề xuất video)');
+    }
     if (_currentLocks.aiAnimeOnly) {
       lines.add('- Chế độ lọc: Chỉ Phim Hoạt Hình AI (bỏ kiến thức/người thật/audio)');
     }

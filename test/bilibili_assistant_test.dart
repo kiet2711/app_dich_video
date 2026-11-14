@@ -18,6 +18,7 @@ import 'package:capsub_flutter/domain/media/bilibili/bilibili_assistant_engine.d
 import 'package:capsub_flutter/domain/media/bilibili/bilibili_srt_service.dart';
 import 'package:capsub_flutter/domain/media/bilibili/bilibili_taste_service.dart';
 import 'package:capsub_flutter/domain/media/bilibili_resolver.dart';
+import 'package:capsub_flutter/domain/media/chinese_title_suggestion.dart';
 import 'package:capsub_flutter/ui/bilibili/bilibili_assistant_controller.dart';
 
 typedef _MockResponseBuilder =
@@ -2169,6 +2170,243 @@ void main() {
       );
     });
   });
+
+  group('Vietnamese -> Chinese title translation mode (Bilibili)', () {
+    test('detects translate-only intents without false-positive on exact catalog search', () {
+      expect(
+        ChineseTitleSuggestionHelper.looksLikeChineseTitleOnlyRequest(
+          'Mình mô tả phim nam chính trọng sinh báo thù, hãy gợi ý vài tên tiếng Trung để mình tự copy tìm, không đề xuất phim',
+        ),
+        isTrue,
+      );
+      expect(
+        ChineseTitleSuggestionHelper.looksLikeChineseTitleOnlyRequest(
+          'Chuyển đổi tên "Phàm nhân tu tiên" sang tiếng Trung để tự search',
+        ),
+        isTrue,
+      );
+      expect(
+        ChineseTitleSuggestionHelper.looksLikeChineseTitleOnlyRequest(
+          'Tìm đúng phim Phàm Nhân Tu Tiên bản gốc tiếng Trung mới nhất',
+        ),
+        isFalse,
+      );
+      expect(
+        ChineseTitleSuggestionHelper.looksLikeChineseTitleOnlyRequest(
+          'Đề xuất video Bilibili hợp gu hay xem',
+        ),
+        isFalse,
+      );
+    });
+
+    test('engine exposes suggest_chinese_search_terms, executes locally with 0 HTTP calls, and blocks search when locked', () async {
+      final declNames = BilibiliAssistantEngine.buildFunctionDeclarations()
+          .map((d) => d['name'])
+          .toList();
+      expect(declNames, contains('suggest_chinese_search_terms'));
+
+      final dio = Dio();
+      final adapter = _FakeHttpAdapter((_) => {'code': 0, 'data': {}});
+      dio.httpClientAdapter = adapter;
+      final resolver = BilibiliResolver(dio: dio);
+      final engine = BilibiliAssistantEngine(
+        resolver: resolver,
+        srtService: BilibiliSrtService(
+          resolver: resolver,
+          historyDocLoader: (_, _) async => null,
+        ),
+      );
+
+      ChineseTitleSuggestionBatch? capturedBatch;
+      final suggestRes = await engine.executeToolCall(
+        const LiveFunctionCall(
+          id: 'cn_1',
+          name: 'suggest_chinese_search_terms',
+          args: {
+            'vi_input_summary': 'nam chính trọng sinh giả làm ăn mày báo thù',
+            'suggestions': [
+              {
+                'zh_title': '重生乞丐复仇记',
+                'han_viet_meaning': 'Trọng Sinh Khất Cái Phục Thù Ký',
+                'match_type': 'literal_han_viet',
+                'note': 'Dùng khi tìm bản dựng cốt truyện',
+              },
+              {
+                'zh_title': '重生之乞丐逆袭',
+                'han_viet_meaning': 'Trọng Sinh Chi Khất Cái Nghịch Tập',
+                'match_type': 'synonym_variant',
+              },
+            ],
+          },
+        ),
+        onSuggestionsUpdated: (b) => capturedBatch = b,
+      );
+
+      expect(suggestRes.response['ok'], isTrue);
+      expect(suggestRes.response['count'], 2);
+      expect(capturedBatch, isNotNull);
+      expect(capturedBatch!.suggestions.first.zhTitle, '重生乞丐复仇记');
+      expect(adapter.requests, isEmpty);
+
+      // Natural request should suppress looksLikeDiscoveryQuery & autoSearchFallbackFromPrompt
+      const naturalPrompt =
+          'Mình mô tả phim: "tiên tôn trọng sinh về làm rể", chỉ xin tên tiếng Trung để tự copy tìm, không cần đề xuất phim.';
+      expect(
+        BilibiliAssistantEngine.looksLikeDiscoveryQuery(naturalPrompt),
+        isFalse,
+      );
+      expect(
+        await engine.autoSearchFallbackFromPrompt(naturalPrompt),
+        isNull,
+      );
+      expect(engine.decorateUserInput(naturalPrompt), contains('suggest_chinese_search_terms'));
+
+      // Explicit lock blocks search tools and returns null from fallback
+      engine.updateUiLocks(const BilibiliUiLocks(titleTranslateOnly: true));
+      expect(engine.buildUiContextHeader(), contains('Chỉ chuyển tên Việt -> Trung'));
+      expect(
+        await engine.autoSearchFallbackFromPrompt('Đề xuất phim hoạt hình AI'),
+        isNull,
+      );
+      final blockedRes = await engine.executeToolCall(
+        const LiveFunctionCall(
+          id: 'blk_1',
+          name: 'search_bilibili_videos',
+          args: {'queries_narrow_to_broad': ['AI动画']},
+        ),
+      );
+      expect(blockedRes.response['ok'], isFalse);
+      expect(blockedRes.response['blocked'], isTrue);
+      expect(adapter.requests, isEmpty);
+    });
+
+    test('controller attaches copyable titleSuggestions without forcing video cards on turn completion', () async {
+      SharedPreferences.setMockInitialValues({
+        'gemini_api_keys': ['AIzaSyFakeKeyBiliTranslateTest'],
+      });
+      final dio = Dio();
+      final adapter = _FakeHttpAdapter((_) => {'code': 0, 'data': {}});
+      dio.httpClientAdapter = adapter;
+      final resolver = BilibiliResolver(dio: dio);
+      final liveClient = _EventFakeBiliLiveClient();
+
+      final controller = BilibiliAssistantController(
+        resolver: resolver,
+        srtService: BilibiliSrtService(
+          resolver: resolver,
+          historyDocLoader: (_, _) async => null,
+        ),
+        liveClient: liveClient,
+        micRecorder: _FakeMicRecorder(),
+        audioOutput: _FakeAudioOutput(),
+      );
+      await controller.initialize();
+      controller.setTitleTranslateOnly(true);
+      expect(controller.engine.currentLocks.titleTranslateOnly, isTrue);
+
+      await controller.sendTextMessage(
+        'Nam chính trọng sinh giả làm ăn mày để báo thù gia tộc',
+      );
+      expect(
+        liveClient.sentTexts.last,
+        contains('CHỈ CHUYỂN TÊN VIỆT → TRUNG'),
+      );
+
+      liveClient.emit(
+        const LiveToolCallEvent([
+          LiveFunctionCall(
+            id: 'call_cn_bili',
+            name: 'suggest_chinese_search_terms',
+            args: {
+              'vi_input_summary': 'nam chính trọng sinh giả làm ăn mày báo thù',
+              'suggestions': [
+                {
+                  'zh_title': '重生当乞丐复仇',
+                  'han_viet_meaning': 'Trọng Sinh Đương Khất Cái Phục Thù',
+                  'match_type': 'exact_title',
+                },
+              ],
+            },
+          ),
+        ]),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+
+      liveClient.emit(
+        const LiveOutputTextEvent(
+          'Bạn có thể copy cụm `重生当乞丐复仇` để tự tìm trên Bilibili.',
+        ),
+      );
+      liveClient.emit(
+        const LiveTurnCompleteEvent(interactionStatus: 'IDLE'),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      final assistantMsgs = controller.messages
+          .where((m) => !m.isUser && !m.isSystemNotice)
+          .toList();
+      expect(assistantMsgs.length, 1);
+      expect(assistantMsgs.single.searchReport, isNull);
+      expect(assistantMsgs.single.titleSuggestions, isNotNull);
+      expect(
+        assistantMsgs.single.titleSuggestions!.suggestions.single.zhTitle,
+        '重生当乞丐复仇',
+      );
+      expect(adapter.requests, isEmpty);
+
+      controller.dispose();
+    });
+  });
+}
+
+class _EventFakeBiliLiveClient extends _FakeLiveClient {
+  final StreamController<GeminiLiveEvent> _controller =
+      StreamController<GeminiLiveEvent>.broadcast();
+  final List<List<LiveFunctionResponse>> sentResponses = [];
+
+  @override
+  Stream<GeminiLiveEvent> get events => _controller.stream;
+
+  void emit(GeminiLiveEvent event) => _controller.add(event);
+
+  @override
+  Future<LiveConnectionDiagnostics> connect({
+    required List<String> apiKeys,
+    required String modelId,
+    required String systemPrompt,
+    required List<Map<String, dynamic>> functionDeclarations,
+    String? resumptionHandle,
+    String voiceName = 'Aoede',
+    bool forceRefreshModelDiscovery = false,
+  }) async {
+    connected = true;
+    final diag = LiveConnectionDiagnostics(
+      success: true,
+      requestedModelId: modelId,
+      resolvedModelId: modelId,
+      apiVersion: 'v1beta',
+      setupProfile: LiveSetupProfile.full,
+      maskedKey: 'AIza...test',
+      apiKeyCount: apiKeys.length,
+      latencyMs: 12,
+      availableBidiModels: [modelId],
+      summaryMessage: 'OK',
+      attemptLogs: const ['OK'],
+      checkedAt: DateTime.now(),
+    );
+    _controller.add(LiveSetupCompleteEvent(modelId, apiVersion: 'v1beta'));
+    return diag;
+  }
+
+  @override
+  void sendToolResponses(List<LiveFunctionResponse> responses) {
+    sentResponses.add(responses);
+  }
+
+  @override
+  Future<void> dispose() async {
+    await _controller.close();
+  }
 }
 
 class _TempExportableSrtService extends BilibiliSrtService {

@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../ai/live/gemini_live_client.dart';
 import '../../ai/live/live_reply_title_sync.dart';
+import '../chinese_title_suggestion.dart';
 import '../hongguo_resolver.dart';
 
 typedef HongguoTitleTranslator = Future<String> Function(String zhTitle);
@@ -104,12 +105,16 @@ class HongguoUiLocks {
   /// null nếu để AI tự lấy theo câu nói (mặc định 5), hoặc số lượng user chốt trên chip
   final int? lockedCount;
 
+  /// `true` = Chế độ Chỉ chuyển đổi tên/mô tả Tiếng Việt -> Tiếng Trung để tự copy tìm (không đề xuất phim).
+  final bool titleTranslateOnly;
+
   /// Các phim user chạm "Chọn/Ghim" trên UI thẻ
   final List<String> pinnedSeriesIds;
 
   const HongguoUiLocks({
     this.sourceCategory = '',
     this.lockedCount,
+    this.titleTranslateOnly = false,
     this.pinnedSeriesIds = const [],
   });
 }
@@ -290,7 +295,7 @@ class HongguoAssistantEngine {
 
     return '''Bạn là **Trợ lý AI Tìm Phim Ngắn Hồng Quả** thông minh nói Tiếng Việt tự nhiên.
 NGUYÊN TẮC BẮT BUỘC:
-1. KHÔNG BAO GIỜ tự bịa tên phim, mô tả hay link ngoài dữ liệu thật. ỨNG DỤNG CHỈ HIỂN THỊ ĐƯỢC ẢNH BÌA VÀ THẺ PHIM KHI BẠN GỌI TOOL (`progressive_search`, `browse_by_category`, `get_rankings`) — vì vậy với MỌI yêu cầu tìm phim, gợi ý phim, hỏi BXH hay đổi chủ đề phim mới, BẮT BUỘC phải gọi tool trước khi trả lời chữ/thoại.
+1. KHÔNG BAO GIỜ tự bịa tên phim, mô tả hay link ngoài dữ liệu thật. ỨNG DỤNG CHỈ HIỂN THỊ ĐƯỢC ẢNH BÌA VÀ THẺ PHIM KHI BẠN GỌI TOOL (`progressive_search`, `browse_by_category`, `get_rankings`) — vì vậy với MỌI yêu cầu tìm phim, gợi ý phim, hỏi BXH hay đổi chủ đề phim mới, BẮT BUỘC phải gọi tool trước khi trả lời chữ/thoại (TRỪ chế độ Chỉ chuyển tên Việt → Trung ở mục 9 dưới đây).
 2. LUÔN dùng đúng các mã danh mục / thể loại / BXH thực tế của app dưới đây (KHÔNG tự chế slug):
    - Loại nguồn (`source_type`): `all` (Tất cả), `real-drama` (Người thật), `comic-drama` (Hoạt hình), `ai-drama` (Phim AI).
    - Thể loại của `real-drama` (24 loại): $realList
@@ -316,7 +321,8 @@ NGUYÊN TẮC BẮT BUỘC:
      `#1. <Tên phim Tiếng Việt dùng Hán Việt> — <Tóm tắt cốt truyện ngắn gọn bằng Tiếng Việt (dùng Hán Việt, không Pinyin)>`
      `#2. <Tên phim Tiếng Việt dùng Hán Việt> — <...>`
    - Tuyệt đối không kể thêm phim ngoài kết quả tool.
-   - ${compactVoiceStyle ? 'Chế độ thoại đang bật: vẫn đọc đủ từng phim "#1. Tên phim Hán Việt — tóm tắt 1 câu ngắn" súc tích, tránh đọc chuỗi ID hay chữ Hán dài.' : 'Trình bày rõ ràng từng phim #1..#N kèm tên Hán Việt mượt mà, tóm tắt ngắn gọn và lý do khớp mô tả.'}''';
+   - ${compactVoiceStyle ? 'Chế độ thoại đang bật: vẫn đọc đủ từng phim "#1. Tên phim Hán Việt — tóm tắt 1 câu ngắn" súc tích, tránh đọc chuỗi ID hay chữ Hán dài.' : 'Trình bày rõ ràng từng phim #1..#N kèm tên Hán Việt mượt mà, tóm tắt ngắn gọn và lý do khớp mô tả.'}
+9. ${ChineseTitleSuggestionHelper.systemPromptSection}''';
   }
 
   /// Khai báo Function Calling Declarations chuẩn Gemini Live API.
@@ -459,6 +465,7 @@ NGUYÊN TẮC BẮT BUỘC:
           'required': ['user_criteria'],
         },
       },
+      ChineseTitleSuggestionHelper.buildToolDeclaration(platformHint: 'Hồng Quả'),
     ];
     if (includeNonBlockingBehavior) {
       for (final d in declarations) {
@@ -605,9 +612,36 @@ NGUYÊN TẮC BẮT BUỘC:
     LiveFunctionCall call, {
     void Function(String statusText)? onProgress,
     void Function(HongguoSearchReport report)? onSearchResultsUpdated,
+    void Function(ChineseTitleSuggestionBatch batch)? onSuggestionsUpdated,
   }) async {
     try {
+      if (_currentLocks.titleTranslateOnly &&
+          call.name != ChineseTitleSuggestionHelper.toolName) {
+        return LiveFunctionResponse(
+          id: call.id,
+          name: call.name,
+          response: {
+            'ok': false,
+            'blocked': true,
+            'error':
+                'Đang bật chế độ Chỉ chuyển tên Việt -> Trung. KHÔNG tìm hoặc đề xuất phim; hãy gọi `${ChineseTitleSuggestionHelper.toolName}` để trả 3–6 tên/từ khóa tiếng Trung cho người dùng copy tự tìm.',
+          },
+        );
+      }
+
       switch (call.name) {
+        case ChineseTitleSuggestionHelper.toolName:
+          final payload = ChineseTitleSuggestionHelper.executeToolCall(
+            call.args,
+            platformLabel: 'Hồng Quả',
+            onProgress: onProgress,
+            onSuggestionsUpdated: onSuggestionsUpdated,
+          );
+          return LiveFunctionResponse(
+            id: call.id,
+            name: call.name,
+            response: payload,
+          );
         case 'progressive_search':
           final payload = await _handleProgressiveSearch(
             call.args,
@@ -1594,6 +1628,11 @@ NGUYÊN TẮC BẮT BUỘC:
   /// Tạo dòng ngữ cảnh ngắn gọn về nguồn khóa / số lượng / phim đang ghim trên UI.
   String buildUiContextHeader() {
     final notes = <String>[];
+    if (_currentLocks.titleTranslateOnly) {
+      notes.add(
+        'CHẾ ĐỘ: Chỉ chuyển tên Việt -> Trung (CHỈ gọi suggest_chinese_search_terms để user tự copy tìm, KHÔNG đề xuất phim)',
+      );
+    }
     if (_currentLocks.sourceCategory.isNotEmpty) {
       notes.add(
         'NGUỒN ĐÃ CHỌN: ${_currentLocks.sourceCategory.replaceFirst("category/", "")}',
@@ -1622,6 +1661,9 @@ NGUYÊN TẮC BẮT BUỘC:
   static bool looksLikeMovieDiscoveryQuery(String rawInput) {
     final q = rawInput.trim().toLowerCase();
     if (q.isEmpty) return false;
+    if (ChineseTitleSuggestionHelper.looksLikeChineseTitleOnlyRequest(rawInput)) {
+      return false;
+    }
 
     final hasDiscoveryVerb = RegExp(
       r'(tìm|kiếm|gợi ý|đề xuất|muốn xem|cho\s+(?:mình|tôi|em)|bxh|bảng xếp hạng|xếp hạng|top\s*\d*)',
@@ -1669,9 +1711,14 @@ NGUYÊN TẮC BẮT BUỘC:
   String decorateUserInput(String rawInput) {
     final clean = rawInput.trim();
     final header = buildUiContextHeader();
+    final isTranslateOnly =
+        _currentLocks.titleTranslateOnly ||
+        ChineseTitleSuggestionHelper.looksLikeChineseTitleOnlyRequest(clean);
     final parts = <String>[
       if (header.isNotEmpty) header,
-      if (looksLikeMovieDiscoveryQuery(clean))
+      if (isTranslateOnly)
+        '[LỆNH HỆ THỐNG: Đang ở chế độ CHỈ CHUYỂN TÊN VIỆT → TRUNG. CHỈ gọi tool `${ChineseTitleSuggestionHelper.toolName}` để trả 3–6 tên/từ khóa tiếng Trung gợi ý cho người dùng copy tự tìm. TUYỆT ĐỐI KHÔNG gọi `progressive_search`, `browse_by_category` hay `get_rankings` và KHÔNG đề xuất thẻ phim.]'
+      else if (looksLikeMovieDiscoveryQuery(clean))
         '[LỆNH HỆ THỐNG: Bắt buộc gọi tool (`progressive_search`, `browse_by_category` hoặc `get_rankings`) để app tải ảnh bìa và thẻ phim thật trước khi trả lời.]',
       clean,
     ];
@@ -1686,7 +1733,9 @@ NGUYÊN TẮC BẮT BUỘC:
     void Function(HongguoSearchReport report)? onSearchResultsUpdated,
   }) async {
     final clean = rawPrompt.trim();
-    if (!looksLikeMovieDiscoveryQuery(clean)) return null;
+    if (_currentLocks.titleTranslateOnly || !looksLikeMovieDiscoveryQuery(clean)) {
+      return null;
+    }
     final lower = clean.toLowerCase();
 
     // 1. Trích số lượng nếu user ghi rõ ("3 phim", "top 8")
@@ -1836,6 +1885,9 @@ NGUYÊN TẮC BẮT BUỘC:
     ctxLines.add(
       'Ngữ cảnh đang giữ từ phiên trước (hãy dùng tiếp thông tin này, không cần chào lại từ đầu):',
     );
+    if (_currentLocks.titleTranslateOnly) {
+      ctxLines.add('- Chế độ: Chỉ chuyển tên Việt -> Trung (không đề xuất phim)');
+    }
     if (_currentLocks.sourceCategory.isNotEmpty) {
       ctxLines.add('- Nguồn khóa: ${_currentLocks.sourceCategory}');
     }

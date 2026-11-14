@@ -9,6 +9,7 @@ import '../../domain/ai/ai_model_registry.dart';
 import '../../domain/media/hongguo/hongguo_assistant_engine.dart';
 import '../../domain/media/hongguo_resolver.dart';
 import '../../domain/media/network_header_helper.dart';
+import '../ai_assistant/live_assistant_shared_widgets.dart';
 import '../settings/settings_screen.dart';
 import '../theme/app_theme.dart';
 import 'hongguo_assistant_controller.dart';
@@ -1230,6 +1231,52 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
             ),
           ),
           const SizedBox(width: 6),
+          // Pill bật/tắt chế độ Chỉ đổi tên Việt -> Trung để copy tự tìm
+          InkWell(
+            onTap: () {
+              HapticFeedback.selectionClick();
+              c.setTitleTranslateOnly(!c.titleTranslateOnly);
+            },
+            borderRadius: BorderRadius.circular(18),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: c.titleTranslateOnly
+                    ? _geminiBlue.withValues(alpha: 0.18)
+                    : _geminiSurface,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: c.titleTranslateOnly
+                      ? _geminiBlue.withValues(alpha: 0.65)
+                      : Colors.white.withValues(alpha: 0.08),
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.translate_rounded,
+                    size: 13.5,
+                    color: c.titleTranslateOnly
+                        ? Colors.lightBlueAccent
+                        : AppColors.textSecondary,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Tên Việt → Trung',
+                    style: TextStyle(
+                      color: c.titleTranslateOnly
+                          ? Colors.white
+                          : AppColors.textSecondary,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
           // Pill chọn Nguồn phim (gọn 1 dòng)
           PopupMenuButton<String>(
             color: _geminiSurface,
@@ -1449,6 +1496,15 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
         prompt:
             'Lấy giúp mình Top ${c.preferredCount ?? 5} phim trong BXH Điểm cao uy tín và tóm tắt nhanh từng bộ.',
       ),
+      (
+        icon: Icons.translate_rounded,
+        color: _geminiBlue,
+        title: 'Đổi mô tả Việt → tên Trung (tự copy tìm)',
+        subtitle:
+            'Gợi ý tên tiếng Trung để tự tìm kiếm, không đề xuất thẻ phim',
+        prompt:
+            'Mình mô tả phim ngắn: "tổng tài giả nghèo cưới vợ thử lòng, sau lộ thân phận bảo vệ vợ". Hãy gợi ý tên tiếng Trung để mình tự copy tìm (không cần đề xuất phim).',
+      ),
     ];
 
     return ListView(
@@ -1608,6 +1664,7 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
 
         // Gemini Assistant Turn + Rich Movie Cards
         final report = msg.searchReport;
+        final suggestions = msg.titleSuggestions;
         return Container(
           margin: const EdgeInsets.only(top: 6, bottom: 12),
           child: Column(
@@ -1648,6 +1705,13 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
                     ),
                   ),
                 ),
+              if (suggestions != null && suggestions.suggestions.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                LiveChineseTitleSuggestionsCard(
+                  batch: suggestions,
+                  accentColor: _geminiBlue,
+                ),
+              ],
               if (report != null && report.candidates.isNotEmpty) ...[
                 const SizedBox(height: 10),
                 _buildSearchResultGroup(c, report),
@@ -1912,7 +1976,9 @@ class _HongguoAssistantSheetState extends State<HongguoAssistantSheet> {
               decoration: InputDecoration(
                 hintText: c.isMicActive
                     ? 'Đang nghe... chạm nút đỏ để dừng'
-                    : 'Hỏi Gemini về phim Hồng Quả...',
+                    : (c.titleTranslateOnly
+                          ? 'Mô tả phim tiếng Việt để lấy tên tiếng Trung tự copy tìm...'
+                          : 'Hỏi Gemini về phim Hồng Quả...'),
                 hintStyle: const TextStyle(
                   color: AppColors.textMuted,
                   fontSize: 13.5,

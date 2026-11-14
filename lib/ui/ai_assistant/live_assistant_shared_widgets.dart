@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../../domain/ai/ai_model_registry.dart';
 import '../../domain/ai/live/gemini_live_client.dart';
+import '../../domain/media/chinese_title_suggestion.dart';
 import '../theme/app_theme.dart';
 
 const geminiBlue = Color(0xFF4285F4);
@@ -938,6 +939,287 @@ class LiveAssistantInputBar extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Bảng tên & từ khóa Tiếng Trung gợi ý dùng chung cho cả Trợ lý Bilibili và Hồng Quả
+/// khi người dùng muốn đổi mô tả/tên Việt sang Tiếng Trung để tự copy tìm kiếm (không đề xuất phim).
+class LiveChineseTitleSuggestionsCard extends StatefulWidget {
+  final ChineseTitleSuggestionBatch batch;
+  final Color accentColor;
+
+  const LiveChineseTitleSuggestionsCard({
+    super.key,
+    required this.batch,
+    this.accentColor = geminiBlue,
+  });
+
+  @override
+  State<LiveChineseTitleSuggestionsCard> createState() =>
+      _LiveChineseTitleSuggestionsCardState();
+}
+
+class _LiveChineseTitleSuggestionsCardState
+    extends State<LiveChineseTitleSuggestionsCard> {
+  int? _copiedIndex;
+  bool _copiedAll = false;
+
+  Future<void> _copyText(
+    String value, {
+    int? index,
+    bool isAll = false,
+  }) async {
+    await Clipboard.setData(ClipboardData(text: value));
+    HapticFeedback.selectionClick();
+    if (!mounted) return;
+    setState(() {
+      _copiedAll = isAll;
+      _copiedIndex = index;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          isAll
+              ? 'Đã copy ${widget.batch.suggestions.length} tên tiếng Trung'
+              : 'Đã copy: $value',
+        ),
+        duration: const Duration(milliseconds: 1400),
+      ),
+    );
+    Future.delayed(const Duration(seconds: 2), () {
+      if (!mounted) return;
+      if (isAll && _copiedAll) {
+        setState(() => _copiedAll = false);
+      } else if (index != null && _copiedIndex == index) {
+        setState(() => _copiedIndex = null);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final items = widget.batch.suggestions;
+    if (items.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(11),
+      decoration: BoxDecoration(
+        color: geminiSurface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: widget.accentColor.withValues(alpha: 0.35),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.translate_rounded,
+                size: 15,
+                color: widget.accentColor,
+              ),
+              const SizedBox(width: 6),
+              const Expanded(
+                child: Text(
+                  'Tên tiếng Trung gợi ý (bấm để copy)',
+                  style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              if (items.length > 1)
+                InkWell(
+                  onTap: () => _copyText(
+                    items.map((e) => e.zhTitle).join('\n'),
+                    isAll: true,
+                  ),
+                  borderRadius: BorderRadius.circular(10),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: (_copiedAll
+                              ? AppColors.primaryEmerald
+                              : widget.accentColor)
+                          .withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: (_copiedAll
+                                ? AppColors.primaryEmerald
+                                : widget.accentColor)
+                            .withValues(alpha: 0.45),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          _copiedAll
+                              ? Icons.check_rounded
+                              : Icons.copy_all_rounded,
+                          size: 13,
+                          color: _copiedAll
+                              ? AppColors.primaryEmerald
+                              : widget.accentColor,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          _copiedAll ? 'Đã copy' : 'Copy tất cả',
+                          style: TextStyle(
+                            color: _copiedAll
+                                ? AppColors.primaryEmerald
+                                : widget.accentColor,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          for (var i = 0; i < items.length; i++)
+            Padding(
+              padding: EdgeInsets.only(bottom: i == items.length - 1 ? 0 : 7),
+              child: _buildSuggestionRow(items[i], i),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSuggestionRow(ChineseTitleSuggestionItem item, int index) {
+    final copied = _copiedIndex == index;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: geminiPillSurface,
+        borderRadius: BorderRadius.circular(11),
+        border: Border.all(
+          color: copied
+              ? AppColors.primaryEmerald.withValues(alpha: 0.55)
+              : Colors.white.withValues(alpha: 0.07),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: [
+                    SelectableText(
+                      item.zhTitle,
+                      style: const TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.2,
+                      ),
+                    ),
+                    if (item.tag.isNotEmpty)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 1.5,
+                        ),
+                        decoration: BoxDecoration(
+                          color: widget.accentColor.withValues(alpha: 0.14),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          item.tag,
+                          style: TextStyle(
+                            color: widget.accentColor,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                if (item.hanVietOrMeaning.isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Text(
+                    item.hanVietOrMeaning,
+                    style: const TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 11.5,
+                    ),
+                  ),
+                ],
+                if (item.note.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    item.note,
+                    style: const TextStyle(
+                      color: AppColors.textMuted,
+                      fontSize: 10.5,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          InkWell(
+            onTap: () => _copyText(item.zhTitle, index: index),
+            borderRadius: BorderRadius.circular(10),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: copied
+                    ? AppColors.primaryEmerald.withValues(alpha: 0.18)
+                    : widget.accentColor.withValues(alpha: 0.16),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: copied
+                      ? AppColors.primaryEmerald.withValues(alpha: 0.6)
+                      : widget.accentColor.withValues(alpha: 0.45),
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    copied ? Icons.check_rounded : Icons.copy_rounded,
+                    size: 13.5,
+                    color: copied
+                        ? AppColors.primaryEmerald
+                        : widget.accentColor,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    copied ? 'Đã copy' : 'Copy',
+                    style: TextStyle(
+                      color: copied
+                          ? AppColors.primaryEmerald
+                          : widget.accentColor,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
