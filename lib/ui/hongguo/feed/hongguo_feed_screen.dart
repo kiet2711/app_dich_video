@@ -4415,7 +4415,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       return;
     }
     _cancelLiveWarmupPause(finishTranslatorWarmup: false);
-    final liveSource = await _resolveLiveAudioSourceForIndex(index);
+    final liveSourceFuture = _resolveLiveAudioSourceForIndex(index);
+    await translator.prepareForSourceSwitch();
+    final liveSource = await liveSourceFuture;
     if (!mounted ||
         index != _currentIndex ||
         !translator.isEnabled ||

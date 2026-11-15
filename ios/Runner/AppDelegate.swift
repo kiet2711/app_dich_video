@@ -13,22 +13,30 @@ import UserNotifications
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    do {
-      try AVAudioSession.sharedInstance().setCategory(
-        .playback,
-        mode: .moviePlayback,
-        options: [.mixWithOthers, .allowBluetooth]
-      )
-      try AVAudioSession.sharedInstance().setActive(true)
-    } catch {
-      print("Failed to configure AVAudioSession: \(error)")
-    }
+    configurePlaybackAudioSession()
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
   override func applicationDidBecomeActive(_ application: UIApplication) {
     super.applicationDidBecomeActive(application)
-    try? AVAudioSession.sharedInstance().setActive(true)
+    configurePlaybackAudioSession()
+    livePcmPlayer?.resumeIfNeeded()
+  }
+
+  private func configurePlaybackAudioSession() {
+    let session = AVAudioSession.sharedInstance()
+    do {
+      // .allowBluetooth không hợp lệ với .playback (gây lỗi OSStatus -50 khiến cả session không active).
+      // Dùng .playback + .mixWithOthers để tự phát qua loa/Bluetooth và hòa trộn ổn định với video.
+      try session.setCategory(
+        .playback,
+        mode: .default,
+        options: [.mixWithOthers]
+      )
+      try session.setActive(true)
+    } catch {
+      print("Failed to configure AVAudioSession: \(error)")
+    }
   }
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
@@ -744,6 +752,9 @@ private final class IosLivePcmPlayer: @unchecked Sendable {
   private var timePitch: AVAudioUnitTimePitch?
   private var pcmFormat: AVAudioFormat?
   private var configObserver: NSObjectProtocol?
+  private var interruptionObserver: NSObjectProtocol?
+  private var routeObserver: NSObjectProtocol?
+  private var mediaResetObserver: NSObjectProtocol?
 
   private var currentSampleRate: Double = 24000
   private var volume: Float = 1.0
@@ -757,20 +768,39 @@ private final class IosLivePcmPlayer: @unchecked Sendable {
 
   init(channel: FlutterMethodChannel) {
     self.channel = channel
+    registerSessionObservers()
+  }
+
+  deinit {
+    unregisterSessionObservers()
   }
 
   func configure(sampleRate: Int, volume: Float, rate: Float) {
     queue.async { [weak self] in
       guard let self = self, !self.disposed else { return }
       self.isActive = true
+      self.isPaused = false
       self.volume = max(0.0, min(1.0, volume))
       self.playbackRate = max(0.5, min(2.5, rate))
       let safeRate = Double(max(8000, min(48000, sampleRate)))
       if let (eng, _, pitch, _) = self.setupEngineIfNeeded(sampleRate: safeRate) {
         eng.mainMixerNode.outputVolume = self.volume
         self.applyRateLocked(pitch)
+        _ = self.ensureEngineRunningLocked()
       }
       self.updatePlayingStateLocked()
+    }
+  }
+
+  func resumeIfNeeded() {
+    queue.async { [weak self] in
+      guard let self = self, !self.disposed, self.isActive else { return }
+      self.configureSessionLocked()
+      if !self.isPaused && self.ensureEngineRunningLocked() && self.queuedBuffers > 0 {
+        if let node = self.playerNode, !node.isPlaying {
+          node.play()
+        }
+      }
     }
   }
 
@@ -780,9 +810,24 @@ private final class IosLivePcmPlayer: @unchecked Sendable {
       guard let self = self, !self.disposed else { return }
       self.isActive = true
       let safeRate = Double(max(8000, min(48000, sampleRate)))
-      guard let (_, node, _, format) = self.setupEngineIfNeeded(sampleRate: safeRate) else {
+      guard var graph = self.setupEngineIfNeeded(sampleRate: safeRate) else {
         return
       }
+
+      if !self.ensureEngineRunningLocked() {
+        // Thử dựng lại engine 1 lần nếu vừa gặp xung đột audio session/route từ video player.
+        self.teardownEngineLocked()
+        self.queuedBuffers = 0
+        guard let rebuilt = self.setupEngineIfNeeded(sampleRate: safeRate),
+              self.ensureEngineRunningLocked() else {
+          return
+        }
+        graph = rebuilt
+      }
+
+      let eng = graph.0
+      let node = graph.1
+      let format = graph.3
 
       let sampleCount = data.count / 2
       guard sampleCount > 0,
@@ -805,7 +850,6 @@ private final class IosLivePcmPlayer: @unchecked Sendable {
         }
       }
 
-      self.ensureEngineRunningLocked()
       let gen = self.generation
       self.queuedBuffers += 1
       self.updatePlayingStateLocked()
@@ -820,7 +864,7 @@ private final class IosLivePcmPlayer: @unchecked Sendable {
         }
       }
 
-      if !self.isPaused && !node.isPlaying {
+      if eng.isRunning && !self.isPaused && !node.isPlaying {
         node.play()
       }
     }
@@ -853,8 +897,10 @@ private final class IosLivePcmPlayer: @unchecked Sendable {
       if paused {
         self.playerNode?.pause()
       } else if self.isActive {
-        self.ensureEngineRunningLocked()
-        if self.queuedBuffers > 0, let node = self.playerNode, !node.isPlaying {
+        if self.ensureEngineRunningLocked(),
+           self.queuedBuffers > 0,
+           let node = self.playerNode,
+           !node.isPlaying {
           node.play()
         }
       }
@@ -866,6 +912,7 @@ private final class IosLivePcmPlayer: @unchecked Sendable {
     queue.async { [weak self] in
       guard let self = self, !self.disposed else { return }
       self.generation &+= 1
+      self.isPaused = false
       self.queuedBuffers = 0
       self.playerNode?.stop()
       self.timePitch?.reset()
@@ -874,10 +921,12 @@ private final class IosLivePcmPlayer: @unchecked Sendable {
   }
 
   func dispose() {
+    unregisterSessionObservers()
     queue.async { [weak self] in
       guard let self = self, !self.disposed else { return }
       self.disposed = true
       self.isActive = false
+      self.isPaused = false
       self.generation &+= 1
       self.queuedBuffers = 0
       self.teardownEngineLocked()
@@ -910,13 +959,16 @@ private final class IosLivePcmPlayer: @unchecked Sendable {
     let node = AVAudioPlayerNode()
     let pitch = AVAudioUnitTimePitch()
     pitch.overlap = 8.0
+    pitch.pitch = 0.0
     applyRateLocked(pitch)
-    eng.mainMixerNode.outputVolume = volume
 
+    // Attach và kết nối node trước khi chỉnh mainMixerNode.outputVolume
+    // để tránh khóa nhầm cấu trúc mixer mặc định trên iOS.
     eng.attach(node)
     eng.attach(pitch)
     eng.connect(node, to: pitch, format: format)
     eng.connect(pitch, to: eng.mainMixerNode, format: format)
+    eng.mainMixerNode.outputVolume = volume
 
     configObserver = NotificationCenter.default.addObserver(
       forName: .AVAudioEngineConfigurationChange,
@@ -924,10 +976,19 @@ private final class IosLivePcmPlayer: @unchecked Sendable {
       queue: nil
     ) { [weak self] _ in
       self?.queue.async {
-        guard let self = self, !self.disposed, self.isActive, !self.isPaused else { return }
-        self.ensureEngineRunningLocked()
-        if let n = self.playerNode, self.queuedBuffers > 0, !n.isPlaying {
-          n.play()
+        guard let self = self, !self.disposed else { return }
+        self.configureSessionLocked()
+        if !self.isActive || self.isPaused {
+          return
+        }
+        if self.ensureEngineRunningLocked() {
+          if let n = self.playerNode, self.queuedBuffers > 0, !n.isPlaying {
+            n.play()
+          }
+        } else {
+          self.teardownEngineLocked()
+          self.queuedBuffers = 0
+          self.updatePlayingStateLocked()
         }
       }
     }
@@ -938,6 +999,92 @@ private final class IosLivePcmPlayer: @unchecked Sendable {
     self.pcmFormat = format
     self.currentSampleRate = sampleRate
     return (eng, node, pitch, format)
+  }
+
+  private func registerSessionObservers() {
+    let center = NotificationCenter.default
+    let session = AVAudioSession.sharedInstance()
+
+    interruptionObserver = center.addObserver(
+      forName: AVAudioSession.interruptionNotification,
+      object: session,
+      queue: nil
+    ) { [weak self] notification in
+      let rawType = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+      let rawOptions = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt
+      self?.queue.async {
+        guard let self = self, !self.disposed else { return }
+        guard let rawType = rawType,
+              let type = AVAudioSession.InterruptionType(rawValue: rawType) else {
+          return
+        }
+        switch type {
+        case .began:
+          self.playerNode?.pause()
+        case .ended:
+          let shouldResume = rawOptions.map {
+            AVAudioSession.InterruptionOptions(rawValue: $0).contains(.shouldResume)
+          } ?? true
+          guard self.isActive, !self.isPaused, shouldResume else { return }
+          self.configureSessionLocked()
+          if self.ensureEngineRunningLocked(),
+             self.queuedBuffers > 0,
+             let n = self.playerNode,
+             !n.isPlaying {
+            n.play()
+          }
+        @unknown default:
+          break
+        }
+      }
+    }
+
+    routeObserver = center.addObserver(
+      forName: AVAudioSession.routeChangeNotification,
+      object: session,
+      queue: nil
+    ) { [weak self] _ in
+      self?.queue.async {
+        guard let self = self, !self.disposed, self.isActive, !self.isPaused else { return }
+        self.configureSessionLocked()
+        if self.ensureEngineRunningLocked(),
+           self.queuedBuffers > 0,
+           let n = self.playerNode,
+           !n.isPlaying {
+          n.play()
+        }
+      }
+    }
+
+    mediaResetObserver = center.addObserver(
+      forName: AVAudioSession.mediaServicesWereResetNotification,
+      object: session,
+      queue: nil
+    ) { [weak self] _ in
+      self?.queue.async {
+        guard let self = self, !self.disposed else { return }
+        self.generation &+= 1
+        self.queuedBuffers = 0
+        self.teardownEngineLocked()
+        self.updatePlayingStateLocked()
+      }
+    }
+  }
+
+  private func unregisterSessionObservers() {
+    let center = NotificationCenter.default
+    if let observer = interruptionObserver {
+      center.removeObserver(observer)
+      interruptionObserver = nil
+    }
+    if let observer = routeObserver {
+      center.removeObserver(observer)
+      routeObserver = nil
+    }
+    if let observer = mediaResetObserver {
+      center.removeObserver(observer)
+      mediaResetObserver = nil
+    }
   }
 
   private func teardownEngineLocked() {
@@ -963,24 +1110,36 @@ private final class IosLivePcmPlayer: @unchecked Sendable {
     }
   }
 
-  private func ensureEngineRunningLocked() {
-    guard let eng = engine else { return }
-    if !eng.isRunning {
-      do {
-        try AVAudioSession.sharedInstance().setCategory(
+  private func configureSessionLocked() {
+    let session = AVAudioSession.sharedInstance()
+    do {
+      if session.category != .playback || !session.categoryOptions.contains(.mixWithOthers) {
+        try session.setCategory(
           .playback,
-          mode: .moviePlayback,
-          options: [.mixWithOthers, .allowBluetooth]
+          mode: .default,
+          options: [.mixWithOthers]
         )
-        try AVAudioSession.sharedInstance().setActive(true)
-      } catch {}
+      }
+      try session.setActive(true)
+    } catch {
+      print("[IosLivePcmPlayer] AVAudioSession configure error: \(error)")
+    }
+  }
+
+  @discardableResult
+  private func ensureEngineRunningLocked() -> Bool {
+    guard let eng = engine else { return false }
+    configureSessionLocked()
+    if !eng.isRunning {
       do {
         eng.prepare()
         try eng.start()
       } catch {
         print("[IosLivePcmPlayer] engine.start error: \(error)")
+        return false
       }
     }
+    return eng.isRunning
   }
 
   private func updatePlayingStateLocked() {

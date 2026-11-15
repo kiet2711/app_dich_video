@@ -266,6 +266,17 @@ class LivePcmAudioOutput {
     _enabled = enabled;
     if (!enabled) {
       unawaited(interrupt());
+    } else if (_usingNativeStream && !_nativeConfigured && !_disposed) {
+      unawaited(
+        _runSerializedNative(
+          () async {
+            if (_enabled) {
+              await _ensureNativeStartedLocked();
+            }
+          },
+          expectedEpoch: _playbackEpoch,
+        ),
+      );
     }
   }
 
@@ -273,7 +284,9 @@ class LivePcmAudioOutput {
     _volume = volume.clamp(0.0, 1.0);
     if (_disposed) return;
     if (_usingNativeStream) {
-      await _invokeNativeSafe('setVolume', {'volume': _volume});
+      await _runSerializedNative(
+        () => _nativeChannel.invokeMethod('setVolume', {'volume': _volume}),
+      );
     }
     final players = _fallbackPlayers;
     if (players != null) {
@@ -289,7 +302,11 @@ class LivePcmAudioOutput {
     _playbackRate = rate.clamp(0.75, 2.0);
     if (_disposed) return;
     if (_usingNativeStream) {
-      await _invokeNativeSafe('setPlaybackRate', {'rate': _playbackRate});
+      await _runSerializedNative(
+        () => _nativeChannel.invokeMethod('setPlaybackRate', {
+          'rate': _playbackRate,
+        }),
+      );
     }
     final players = _fallbackPlayers;
     if (players != null) {
@@ -305,7 +322,9 @@ class LivePcmAudioOutput {
     if (_disposed || _isPaused == paused) return;
     _isPaused = paused;
     if (_usingNativeStream) {
-      await _invokeNativeSafe('setPaused', {'paused': paused});
+      await _runSerializedNative(
+        () => _nativeChannel.invokeMethod('setPaused', {'paused': paused}),
+      );
       if (_usingNativeStream) {
         if (paused) {
           _setPlaying(false);
@@ -439,6 +458,20 @@ class LivePcmAudioOutput {
     }
   }
 
+  Future<void> _ensureNativeStartedLocked() async {
+    if (!_nativeConfigured) {
+      await _nativeChannel.invokeMethod('start', {
+        'sampleRate': _sampleRate,
+        'volume': _volume,
+        'rate': _playbackRate,
+      });
+      _nativeConfigured = true;
+      if (_isPaused) {
+        await _nativeChannel.invokeMethod('setPaused', {'paused': true});
+      }
+    }
+  }
+
   Future<void> _enqueueNativeBatch(Uint8List pcmBytes) {
     final epoch = _playbackEpoch;
     final op = _nativeChain.then((_) async {
@@ -448,17 +481,7 @@ class LivePcmAudioOutput {
         return;
       }
       try {
-        if (!_nativeConfigured) {
-          await _nativeChannel.invokeMethod('start', {
-            'sampleRate': _sampleRate,
-            'volume': _volume,
-            'rate': _playbackRate,
-          });
-          _nativeConfigured = true;
-          if (_isPaused) {
-            await _nativeChannel.invokeMethod('setPaused', {'paused': true});
-          }
-        }
+        await _ensureNativeStartedLocked();
         if (epoch != _playbackEpoch || _disposed || !_enabled) return;
         await _nativeChannel.invokeMethod('enqueuePcm', {
           'pcm': pcmBytes,
@@ -471,6 +494,27 @@ class LivePcmAudioOutput {
         await flushTurn();
       } catch (e) {
         debugPrint('[LivePcmAudioOutput] Lỗi stream PCM native: $e');
+      }
+    });
+    _nativeChain = op.catchError((_) {});
+    return op;
+  }
+
+  Future<void> _runSerializedNative(
+    Future<void> Function() action, {
+    int? expectedEpoch,
+    bool ignoreDisposed = false,
+  }) {
+    final op = _nativeChain.then((_) async {
+      if ((!ignoreDisposed && _disposed) || !_usingNativeStream) return;
+      if (expectedEpoch != null && expectedEpoch != _playbackEpoch) return;
+      try {
+        await action();
+      } on MissingPluginException {
+        _nativeFallbackActivated = true;
+        _nativeConfigured = false;
+      } catch (e) {
+        debugPrint('[LivePcmAudioOutput] Lỗi gọi native: $e');
       }
     });
     _nativeChain = op.catchError((_) {});
@@ -626,7 +670,15 @@ class LivePcmAudioOutput {
     _setPlaying(false);
 
     if (_usingNativeStream) {
-      await _invokeNativeSafe('interrupt');
+      await _runSerializedNative(
+        () async {
+          await _nativeChannel.invokeMethod('interrupt');
+          // Đồng bộ lại trạng thái unpaused cho native vì Dart đã reset _isPaused = false,
+          // tránh tình trạng native kẹt paused=true khi chuyển video rồi gọi setPaused(false).
+          await _nativeChannel.invokeMethod('setPaused', {'paused': false});
+        },
+        ignoreDisposed: true,
+      );
     }
 
     final players = _fallbackPlayers;

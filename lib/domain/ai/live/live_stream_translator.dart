@@ -47,7 +47,9 @@ class LiveStreamTranslator extends ChangeNotifier {
   LivePcmAudioReader? _reader;
   StreamSubscription<GeminiLiveEvent>? _clientSub;
   Timer? _feedTimer;
+  Future<void>? _inFlightConnect;
 
+  int _sourceEpoch = 0;
   bool _enabled = false;
   bool _disposed = false;
   bool _isConnecting = false;
@@ -264,6 +266,7 @@ class LiveStreamTranslator extends ChangeNotifier {
 
     await stop(silent: true);
 
+    final epoch = ++_sourceEpoch;
     _enabled = true;
     _apiKeys = cleanKeys;
     _source = source;
@@ -276,6 +279,7 @@ class LiveStreamTranslator extends ChangeNotifier {
     _sentAudioSinceFlush = false;
     _warmupFeedActive = true;
     _awaitingFirstOutput = true;
+    _turnFinishedForCaption = false;
     _reconnectAttempts = 0;
     _skippedSilenceChunks = 0;
     _sentAudioMs = 0;
@@ -292,16 +296,22 @@ class LiveStreamTranslator extends ChangeNotifier {
     notifyListeners();
 
     try {
-      await _openAudioReader(source, startMs: targetStartMs);
-      if (!_enabled || _disposed) return;
-
-      await _connectLiveSocket();
-      if (!_enabled || _disposed) return;
-
+      // Làm ấm audio engine/track sớm ngay trong lúc mở luồng & kết nối socket.
       _audioOutput.setEnabled(true);
       await _audioOutput.setVolume(_aiVolume);
       await _audioOutput.setPlaybackRate(_playbackSpeed);
       await _audioOutput.setPaused(false);
+      if (!_enabled || _disposed || epoch != _sourceEpoch) return;
+
+      await _openAudioReader(
+        source,
+        startMs: targetStartMs,
+        expectedEpoch: epoch,
+      );
+      if (!_enabled || _disposed || epoch != _sourceEpoch) return;
+
+      await _connectLiveSocket(expectedEpoch: epoch);
+      if (!_enabled || _disposed || epoch != _sourceEpoch) return;
 
       _status = LiveTranslateStatus.buffering;
       _statusMessage =
@@ -312,7 +322,41 @@ class LiveStreamTranslator extends ChangeNotifier {
       // Đẩy ngay nhịp đầu tiên không cần đợi tick 200ms
       unawaited(_tickFeed());
     } catch (e) {
-      await _handleFatalOrRecoverableFailure(e);
+      if (epoch == _sourceEpoch) {
+        await _handleFatalOrRecoverableFailure(e);
+      }
+    }
+  }
+
+  /// Tạm ngắt ngay luồng dịch của video cũ khi người dùng bắt đầu chuyển tập/video mới
+  /// (trong lúc chờ phân giải URL mới), tránh giọng video cũ nói đè lên quá trình chuyển cảnh.
+  Future<void> prepareForSourceSwitch() async {
+    if (_disposed || !_enabled) return;
+    final epoch = ++_sourceEpoch;
+    _feedTimer?.cancel();
+    _feedTimer = null;
+    _source = null;
+    _reachedEof = false;
+    _warmupFeedActive = true;
+    _awaitingFirstOutput = true;
+    _turnFinishedForCaption = false;
+    _silenceGate.reset();
+    _liveInputTranscript = '';
+    _liveOutputTranscript = '';
+
+    await _audioOutput.interrupt();
+    if (_disposed || !_enabled || epoch != _sourceEpoch) return;
+    await _closeAudioReader();
+    if (_disposed || !_enabled || epoch != _sourceEpoch) return;
+    _safeSendAudioStreamEnd();
+    _client.clearResumptionHandle();
+    if (_client.isConnected) {
+      await _client.disconnect(intentional: true);
+    }
+    if (!_disposed && _enabled && epoch == _sourceEpoch) {
+      _status = LiveTranslateStatus.buffering;
+      _statusMessage = 'Đang chuyển sang video tiếp theo...';
+      notifyListeners();
     }
   }
 
@@ -322,9 +366,15 @@ class LiveStreamTranslator extends ChangeNotifier {
     required int positionMs,
     List<String>? apiKeys,
     double? playbackSpeed,
+    bool? resetSession,
   }) async {
     if (_disposed || !_enabled) return;
-    if (_source != null && _source!.isSameSource(source)) {
+    if (!source.isValid) return;
+    if (_source != null &&
+        _source!.isSameSource(source) &&
+        _reader != null &&
+        _client.isConnected &&
+        _status != LiveTranslateStatus.error) {
       return;
     }
     if (apiKeys != null && apiKeys.isNotEmpty) {
@@ -333,6 +383,19 @@ class LiveStreamTranslator extends ChangeNotifier {
           .where((e) => e.isNotEmpty)
           .toList();
     }
+
+    final previousSource = _source;
+    final bool isSameVideoCacheUpgrade =
+        previousSource != null &&
+        previousSource.sourceLabel.trim().isNotEmpty &&
+        previousSource.sourceLabel.trim() == source.sourceLabel.trim() &&
+        positionMs > 1500;
+    final bool shouldResetSession = resetSession ?? !isSameVideoCacheUpgrade;
+
+    final epoch = ++_sourceEpoch;
+    _feedTimer?.cancel();
+    _feedTimer = null;
+
     _source = source;
     _currentPlayPosMs = math.max(0, positionMs);
     if (playbackSpeed != null) {
@@ -341,29 +404,75 @@ class LiveStreamTranslator extends ChangeNotifier {
     _reachedEof = false;
     _warmupFeedActive = true;
     _awaitingFirstOutput = true;
+    _turnFinishedForCaption = false;
+    _sentAudioSinceFlush = false;
+    _reconnectAttempts = 0;
     _silenceGate.reset();
     _liveInputTranscript = '';
     _liveOutputTranscript = '';
 
     await _audioOutput.interrupt();
-    _safeSendAudioStreamEnd();
+    if (_disposed || !_enabled || epoch != _sourceEpoch) return;
+    _audioOutput.setEnabled(true);
+    await _audioOutput.setVolume(_aiVolume);
+    await _audioOutput.setPlaybackRate(_playbackSpeed);
+    await _audioOutput.setPaused(false);
+    if (_disposed || !_enabled || epoch != _sourceEpoch) return;
 
     final targetStartMs = math.max(0, _currentPlayPosMs);
     _aiReadCursorMs = targetStartMs;
 
     _status = LiveTranslateStatus.buffering;
-    _statusMessage = 'Đang nạp luồng âm thanh nguồn mới...';
+    _statusMessage = shouldResetSession
+        ? 'Đang mở phiên dịch mới cho video tiếp theo...'
+        : 'Đang nạp luồng âm thanh nguồn mới...';
     notifyListeners();
 
     try {
-      await _openAudioReader(source, startMs: targetStartMs);
-      if (!_client.isConnected) {
-        await _connectLiveSocket();
+      if (shouldResetSession) {
+        _safeSendAudioStreamEnd();
+        _client.clearResumptionHandle();
+        if (_client.isConnected) {
+          await _client.disconnect(intentional: true);
+          if (_disposed || !_enabled || epoch != _sourceEpoch) return;
+        } else if (_inFlightConnect != null) {
+          try {
+            await _client.disconnect(intentional: true);
+            await _inFlightConnect!.catchError((_) {});
+          } catch (_) {}
+          if (_disposed || !_enabled || epoch != _sourceEpoch) return;
+        }
+        if (_apiKeys.length > 1) {
+          _keyOffset = (_keyOffset + 1) % _apiKeys.length;
+        }
+        // Tối ưu chuyển video: mở audio extractor và khởi tạo phiên WebSocket sạch ngữ cảnh song song.
+        await Future.wait([
+          _openAudioReader(
+            source,
+            startMs: targetStartMs,
+            expectedEpoch: epoch,
+          ),
+          _connectLiveSocket(expectedEpoch: epoch),
+        ]);
+      } else {
+        _safeSendAudioStreamEnd();
+        await _openAudioReader(
+          source,
+          startMs: targetStartMs,
+          expectedEpoch: epoch,
+        );
+        if (_disposed || !_enabled || epoch != _sourceEpoch) return;
+        if (!_client.isConnected) {
+          await _connectLiveSocket(expectedEpoch: epoch);
+        }
       }
+      if (_disposed || !_enabled || epoch != _sourceEpoch) return;
       _startFeedLoop();
       unawaited(_tickFeed());
     } catch (e) {
-      await _handleFatalOrRecoverableFailure(e);
+      if (epoch == _sourceEpoch) {
+        await _handleFatalOrRecoverableFailure(e);
+      }
     }
   }
 
@@ -471,6 +580,7 @@ class LiveStreamTranslator extends ChangeNotifier {
 
   /// Dừng hoàn toàn phiên Nghe Dịch Trực Tiếp và giải phóng bộ đệm tạm.
   Future<void> stop({bool silent = false}) async {
+    _sourceEpoch++;
     _enabled = false;
     _warmupFeedActive = false;
     _awaitingFirstOutput = false;
@@ -481,8 +591,8 @@ class LiveStreamTranslator extends ChangeNotifier {
 
     _safeSendAudioStreamEnd();
     await _client.disconnect(intentional: true);
-    await _audioOutput.setPaused(false);
     await _audioOutput.interrupt();
+    await _audioOutput.setPaused(false);
     _audioOutput.setEnabled(false);
 
     await _closeAudioReader();
@@ -502,15 +612,23 @@ class LiveStreamTranslator extends ChangeNotifier {
   Future<void> _openAudioReader(
     LiveAudioSource source, {
     required int startMs,
+    int? expectedEpoch,
   }) async {
     await _closeAudioReader();
+    if (_disposed ||
+        !_enabled ||
+        (expectedEpoch != null && expectedEpoch != _sourceEpoch)) {
+      return;
+    }
     final reader = _readerFactory();
-    _reader = reader;
     final dur = await reader.open(source, startMs: startMs);
-    if (_disposed || !_enabled) {
+    if (_disposed ||
+        !_enabled ||
+        (expectedEpoch != null && expectedEpoch != _sourceEpoch)) {
       await reader.close();
       return;
     }
+    _reader = reader;
     _mediaDurationMs = math.max(0, dur);
     if (_mediaDurationMs > 0 && _aiReadCursorMs > _mediaDurationMs) {
       _aiReadCursorMs = _mediaDurationMs;
@@ -538,10 +656,20 @@ class LiveStreamTranslator extends ChangeNotifier {
     ];
   }
 
-  Future<void> _connectLiveSocket() async {
-    if (_isConnecting || _disposed || !_enabled) return;
+  Future<void> _connectLiveSocket({int? expectedEpoch}) async {
+    if (_inFlightConnect != null) {
+      try {
+        await _inFlightConnect!;
+      } catch (_) {}
+    }
+    if (_isConnecting ||
+        _disposed ||
+        !_enabled ||
+        (expectedEpoch != null && expectedEpoch != _sourceEpoch)) {
+      return;
+    }
     _isConnecting = true;
-    try {
+    final task = () async {
       final modelId =
           _settings?.liveTranslateModel ??
           AiModelRegistry.geminiLiveTranslateModel;
@@ -556,11 +684,20 @@ class LiveStreamTranslator extends ChangeNotifier {
         compressionTriggerTokens: 16384,
         compressionTargetTokens: 8192,
       );
-      _activeModelId = diag.resolvedModelId;
-      _maskedActiveKey = diag.maskedKey;
-      _sessionStartedAt = DateTime.now();
-      _reconnectAttempts = 0;
+      if (expectedEpoch == null || expectedEpoch == _sourceEpoch) {
+        _activeModelId = diag.resolvedModelId;
+        _maskedActiveKey = diag.maskedKey;
+        _sessionStartedAt = DateTime.now();
+        _reconnectAttempts = 0;
+      }
+    }();
+    _inFlightConnect = task;
+    try {
+      await task;
     } finally {
+      if (identical(_inFlightConnect, task)) {
+        _inFlightConnect = null;
+      }
       _isConnecting = false;
     }
   }
@@ -583,6 +720,7 @@ class LiveStreamTranslator extends ChangeNotifier {
     final reader = _reader;
     if (reader == null) return;
 
+    final tickEpoch = _sourceEpoch;
     _isTickRunning = true;
     try {
       // Kiểm tra xoay vòng phiên định kỳ (~4.5 phút) lúc đang im lặng để giữ context nhỏ dưới 20k TPM.
@@ -610,10 +748,12 @@ class LiveStreamTranslator extends ChangeNotifier {
         if (deltaMs < -1000) {
           await _audioOutput.interrupt();
         }
+        if (!_enabled || _disposed || tickEpoch != _sourceEpoch) return;
         _safeSendAudioStreamEnd();
         _silenceGate.reset();
         _reachedEof = false;
         final actual = await reader.seekTo(targetCursor);
+        if (!_enabled || _disposed || tickEpoch != _sourceEpoch) return;
         _aiReadCursorMs = actual;
         return;
       }
@@ -637,7 +777,7 @@ class LiveStreamTranslator extends ChangeNotifier {
           : math.min(normalStep, deltaMs + 80);
 
       final chunk = await reader.readChunk(durationMs: stepMs);
-      if (!_enabled || _disposed) return;
+      if (!_enabled || _disposed || tickEpoch != _sourceEpoch) return;
 
       if (chunk.pcmBytes.isNotEmpty) {
         final actualDur = chunk.endMs > chunk.startMs
@@ -718,13 +858,18 @@ class LiveStreamTranslator extends ChangeNotifier {
         notifyListeners();
 
       case LiveOutputAudioEvent():
-        _markFirstOutputArrived();
-        if (_videoIsPlaying || _warmupFeedActive) {
+        final allowOutput =
+            _videoIsPlaying ||
+            _warmupFeedActive ||
+            _awaitingFirstOutput ||
+            _status == LiveTranslateStatus.buffering;
+        _markFirstOutputArrived(fromAudio: true);
+        if (allowOutput) {
           unawaited(_audioOutput.enqueuePcmChunk(event.pcmBytes));
         }
 
       case LiveOutputTranscriptEvent():
-        _markFirstOutputArrived();
+        _markFirstOutputArrived(fromAudio: false);
         final trimmed = event.text;
         if (trimmed.isNotEmpty) {
           if (_turnFinishedForCaption) {
@@ -809,10 +954,12 @@ class LiveStreamTranslator extends ChangeNotifier {
     }
   }
 
-  void _markFirstOutputArrived() {
+  void _markFirstOutputArrived({bool fromAudio = false}) {
     if (_awaitingFirstOutput) {
       _awaitingFirstOutput = false;
-      _warmupFeedActive = false;
+      if (fromAudio) {
+        _warmupFeedActive = false;
+      }
       _status = _videoIsPlaying
           ? LiveTranslateStatus.active
           : LiveTranslateStatus.paused;
@@ -820,13 +967,18 @@ class LiveStreamTranslator extends ChangeNotifier {
           'AI đang nghe trước +${(_leadMs / 1000).toStringAsFixed(1)}s';
       onFirstOutputArrived?.call();
       notifyListeners();
-    } else if (_status == LiveTranslateStatus.buffering) {
-      _status = _videoIsPlaying
-          ? LiveTranslateStatus.active
-          : LiveTranslateStatus.paused;
-      _statusMessage =
-          'AI đang nghe trước +${(_leadMs / 1000).toStringAsFixed(1)}s';
-      notifyListeners();
+    } else {
+      if (fromAudio && _warmupFeedActive) {
+        _warmupFeedActive = false;
+      }
+      if (_status == LiveTranslateStatus.buffering) {
+        _status = _videoIsPlaying
+            ? LiveTranslateStatus.active
+            : LiveTranslateStatus.paused;
+        _statusMessage =
+            'AI đang nghe trước +${(_leadMs / 1000).toStringAsFixed(1)}s';
+        notifyListeners();
+      }
     }
   }
 

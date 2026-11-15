@@ -1142,6 +1142,7 @@ class MainActivity : FlutterActivity() {
         private var audioTrack: AudioTrack? = null
         private var currentSampleRate = 24000
         private var writtenFrames = 0L
+        private var headBaselineFrames = 0L
         private var reportedPlaying = false
 
         private val writerThread = Thread(
@@ -1159,6 +1160,7 @@ class MainActivity : FlutterActivity() {
             val safeRate = sampleRate.coerceIn(8000, 48000)
             synchronized(queueLock) {
                 active = true
+                paused = false
                 queueLock.notifyAll()
             }
             synchronized(trackLock) {
@@ -1228,6 +1230,7 @@ class MainActivity : FlutterActivity() {
         fun interrupt() {
             synchronized(queueLock) {
                 generation += 1
+                paused = false
                 queue.clear()
                 updatePlayingStateLocked(forcePlaying = false)
                 queueLock.notifyAll()
@@ -1239,7 +1242,10 @@ class MainActivity : FlutterActivity() {
                         track.pause()
                     }
                     track.flush()
-                } catch (_: Exception) {}
+                    headBaselineFrames = track.playbackHeadPosition.toLong() and 0xFFFFFFFFL
+                } catch (_: Exception) {
+                    headBaselineFrames = 0L
+                }
                 writtenFrames = 0L
             }
         }
@@ -1335,7 +1341,8 @@ class MainActivity : FlutterActivity() {
                 val track = audioTrack ?: return 0L
                 return try {
                     val head = track.playbackHeadPosition.toLong() and 0xFFFFFFFFL
-                    (writtenFrames - head).coerceAtLeast(0L)
+                    val playedSinceReset = (head - headBaselineFrames).coerceAtLeast(0L)
+                    (writtenFrames - playedSinceReset).coerceAtLeast(0L)
                 } catch (_: Exception) {
                     0L
                 }
@@ -1375,6 +1382,7 @@ class MainActivity : FlutterActivity() {
                 .build()
             audioTrack = track
             writtenFrames = 0L
+            headBaselineFrames = 0L
             applyVolumeAndRateLocked(track)
             return track
         }
@@ -1404,6 +1412,7 @@ class MainActivity : FlutterActivity() {
             val track = audioTrack ?: return
             audioTrack = null
             writtenFrames = 0L
+            headBaselineFrames = 0L
             try {
                 if (track.playState == AudioTrack.PLAYSTATE_PLAYING) {
                     track.pause()

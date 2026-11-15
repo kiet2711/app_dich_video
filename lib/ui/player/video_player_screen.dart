@@ -4493,6 +4493,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
     _playbackMonitor?.cancel();
     _ttsScheduler.dispose();
+    if (_liveTranslator?.isEnabled == true) {
+      unawaited(_liveTranslator!.prepareForSourceSwitch());
+    }
 
     final item = newBilibiliItem;
     setState(() {

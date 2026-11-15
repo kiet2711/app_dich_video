@@ -263,6 +263,103 @@ void main() {
 
       translator.dispose();
     });
+
+    test(
+      'switches video cleanly after pause without getting stuck paused or dropping early audio',
+      () async {
+        final settings = await SettingsRepository.getInstance();
+        settings.liveTranslateLeadMs = 1500;
+        settings.liveTranslateVadFilterEnabled = false;
+
+        final fakeClient = _FakeLiveTranslateClient();
+        final fakeOutput = _FakeAudioOutput();
+        final createdReaders = <_FakePcmReader>[];
+
+        final translator = LiveStreamTranslator(
+          settings: settings,
+          liveClient: fakeClient,
+          audioOutput: fakeOutput,
+          readerFactory: () {
+            final r = _FakePcmReader(totalDurationMs: 60000);
+            createdReaders.add(r);
+            return r;
+          },
+          delayFn: (_) async {},
+        );
+
+        await translator.start(
+          source: const LiveAudioSource(
+            mediaPath: 'https://cdn.example.com/ep1.mp4',
+            sourceLabel: 'Tập 1',
+          ),
+          apiKeys: const ['AIzaKeyOne', 'AIzaKeyTwo'],
+          initialPositionMs: 0,
+          playbackSpeed: 1.0,
+          isPlaying: true,
+        );
+        translator.finishWarmup();
+
+        // Giống VideoPlayerScreen._switchVideo: tạm dừng player cũ trước khi chuyển tập
+        translator.onVideoStateUpdate(
+          positionMs: 1200,
+          isPlaying: false,
+          isBuffering: false,
+          isScrubbing: false,
+          playbackSpeed: 1.0,
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        expect(fakeOutput.isPaused, isTrue);
+
+        // Bắt đầu chuyển tập -> ngắt tập 1 nhưng updateSource chạy sát ngay sau không được phá tập 2
+        unawaited(translator.prepareForSourceSwitch());
+        await translator.updateSource(
+          source: const LiveAudioSource(
+            mediaPath: 'https://cdn.example.com/ep2.mp4',
+            sourceLabel: 'Tập 2',
+          ),
+          positionMs: 0,
+          apiKeys: const ['AIzaKeyOne', 'AIzaKeyTwo'],
+          playbackSpeed: 1.0,
+        );
+
+        expect(createdReaders.length, equals(2));
+        expect(createdReaders.first.closed, isTrue);
+        expect(createdReaders.last.closed, isFalse);
+        // Phải mở phiên WebSocket mới sạch cho video mới & giải phóng paused output
+        expect(fakeClient.disconnectCount, greaterThanOrEqualTo(2));
+        expect(fakeClient.connectHistory.length, equals(2));
+        expect(fakeClient.connectHistory.last.first, equals('AIzaKeyTwo'));
+        expect(fakeOutput.isPaused, isFalse);
+
+        // Ngay cả khi transcript tới trước âm thanh lúc controller mới chưa kịp báo isPlaying=true,
+        // audio trả về từ Gemini vẫn phải được đưa vào output chứ không bị rớt.
+        fakeClient.emit(
+          const LiveOutputTranscriptEvent('Câu mở đầu tập 2', finished: false),
+        );
+        fakeClient.emit(
+          LiveOutputAudioEvent(Uint8List.fromList([10, 20, 30, 40])),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        expect(fakeOutput.enqueuedChunks.length, equals(1));
+
+        // Khi video mới thực sự chạy, audio vẫn tiếp tục thông suốt
+        translator.onVideoStateUpdate(
+          positionMs: 200,
+          isPlaying: true,
+          isBuffering: false,
+          isScrubbing: false,
+          playbackSpeed: 1.0,
+        );
+        fakeClient.emit(
+          LiveOutputAudioEvent(Uint8List.fromList([50, 60, 70, 80])),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        expect(fakeOutput.enqueuedChunks.length, equals(2));
+        expect(translator.status, equals(LiveTranslateStatus.active));
+
+        translator.dispose();
+      },
+    );
   });
 
   group('LiveTranslateSheet widget', () {
@@ -413,6 +510,21 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 140));
         expect(enqueuedPayloads.length, equals(2));
 
+        // Khi đang pause mà interrupt (đổi video), native phải nhận lại setPaused(false)
+        await output.setPaused(true);
+        await output.interrupt();
+        final pausedCallsAfterInterrupt = recordedCalls
+            .skipWhile((c) => c.method != 'interrupt')
+            .where((c) => c.method == 'setPaused')
+            .toList();
+        expect(pausedCallsAfterInterrupt, isNotEmpty);
+        expect(
+          Map<Object?, Object?>.from(
+            pausedCallsAfterInterrupt.last.arguments as Map,
+          )['paused'],
+          isFalse,
+        );
+
         await output.dispose();
       },
     );
@@ -456,6 +568,7 @@ class _FakePcmReader implements LivePcmAudioReader {
   int openedStartMs = 0;
   int lastSeekMs = 0;
   int _cursorMs = 0;
+  bool closed = false;
 
   _FakePcmReader({
     this.totalDurationMs = 60000,
@@ -464,6 +577,7 @@ class _FakePcmReader implements LivePcmAudioReader {
 
   @override
   Future<int> open(LiveAudioSource source, {int startMs = 0}) async {
+    closed = false;
     openedStartMs = startMs;
     _cursorMs = startMs;
     return totalDurationMs;
@@ -493,7 +607,9 @@ class _FakePcmReader implements LivePcmAudioReader {
   }
 
   @override
-  Future<void> close() async {}
+  Future<void> close() async {
+    closed = true;
+  }
 }
 
 class _FakeLiveTranslateClient extends GeminiLiveClient {
@@ -503,6 +619,7 @@ class _FakeLiveTranslateClient extends GeminiLiveClient {
   bool _connected = false;
   String _modelId = AiModelRegistry.geminiLiveTranslateModel;
   String _key = '';
+  int disconnectCount = 0;
   final List<List<String>> connectHistory = [];
   final List<Uint8List> sentPcmFrames = [];
   int audioStreamEndCount = 0;
@@ -570,6 +687,7 @@ class _FakeLiveTranslateClient extends GeminiLiveClient {
 
   @override
   Future<void> disconnect({bool intentional = true}) async {
+    disconnectCount++;
     _connected = false;
   }
 
