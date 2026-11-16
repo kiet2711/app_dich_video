@@ -5,19 +5,24 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../data/model/subtitle_document.dart';
+import '../../data/model/watch_later_item.dart';
+import '../../data/repository/settings_repository.dart';
+import '../../data/repository/watch_later_repository.dart';
 import '../../domain/ai/offline_mlkit_translator.dart';
 import '../../domain/media/hongguo/hongguo_cloud_account_service.dart';
+import '../../domain/media/hongguo/hongguo_discovery_service.dart';
+import '../../domain/media/hongguo/hongguo_similar_engine.dart';
 import '../../domain/media/hongguo_resolver.dart';
 import '../../domain/media/network_header_helper.dart';
 import '../../domain/media/video_cache_manager.dart';
 import '../../player/global_player_manager.dart';
-import '../../data/model/watch_later_item.dart';
-import '../../data/repository/watch_later_repository.dart';
 import '../theme/app_theme.dart';
 import 'feed/hongguo_feed_screen.dart';
 import 'hongguo_account_sheet.dart';
 import 'hongguo_assistant_controller.dart';
 import 'hongguo_assistant_sheet.dart';
+import 'hongguo_discovery_filter_sheet.dart';
+import 'hongguo_related_sheet.dart';
 import 'hongguo_settings_sheet.dart';
 
 class HongguoScreen extends StatefulWidget {
@@ -35,18 +40,28 @@ class _HongguoScreenState extends State<HongguoScreen> {
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
 
-  String _currentCategorySlug = 'discover';
-  String _discoverSource = 'all';
-  String _currentGenreSlug = '';
+  // 3 tab cấp 1 rõ ràng: 'discover' (Đề xuất), 'library' (Kho lọc sâu), 'rank' (BXH)
+  String _primaryTab = 'discover';
+
+  // Tab Đề xuất: 'all' (Dành cho bạn - Bookmall Official) hoặc khóa theo 'short_play' / 'comic_series' / 'ai_series'
+  String _discoverScope = 'all';
+
+  // Tab Kho lọc sâu: Lọc đa chiều bằng ByteDance landpage API + lưu trang con trỏ tuần tự
+  HongguoDiscoverySelection _librarySelection = const HongguoDiscoverySelection(
+    genreKind: HongguoGenreKind.realPlay,
+    filters: <String, String>{'sort': 'hot_score'},
+  );
+  final List<HongguoDiscoveryCursor?> _libraryPageCursors = <HongguoDiscoveryCursor?>[null];
+  bool _libraryHasMore = false;
+
+  // Tab BXH: 10 bảng xếp hạng chính thức
+  String _selectedRankSlug = 'rank/hot-drama';
+
+  // Bộ lọc kho khi Tìm kiếm: null (Tất cả) hoặc HongguoGenreKind
+  HongguoGenreKind? _searchScope;
+
   int _currentPage = 1;
   int _totalPages = 1;
-
-  static const List<({String slug, String label})> _discoverSources = [
-    (slug: 'all', label: 'Tất cả nguồn'),
-    (slug: 'category/real-drama', label: 'Chỉ Người Thật'),
-    (slug: 'category/ai-drama', label: 'Chỉ Phim AI'),
-    (slug: 'category/comic-drama', label: 'Chỉ Hoạt Hình'),
-  ];
 
   bool _isLoading = false;
   String? _errorMessage;
@@ -56,6 +71,7 @@ class _HongguoScreenState extends State<HongguoScreen> {
   bool _isAiResultMode = false;
   String _aiResultLabel = '';
   bool _isTranslationEnabled = true;
+  SettingsRepository? _settings;
   late final HongguoAssistantController _assistantController;
 
   @override
@@ -64,8 +80,24 @@ class _HongguoScreenState extends State<HongguoScreen> {
     _assistantController = HongguoAssistantController(resolver: _resolver);
     unawaited(_assistantController.initialize());
     unawaited(HongguoCloudAccountService.instance.initialize());
-    _loadTranslationSetting();
-    _loadDramas();
+    _loadSettingsAndInitialData();
+  }
+
+  Future<void> _loadSettingsAndInitialData() async {
+    unawaited(_loadTranslationSetting());
+    try {
+      final settings = await SettingsRepository.getInstance();
+      if (!mounted) return;
+      _settings = settings;
+      if (settings.hongguoCatalogDiscoveryJson.isNotEmpty) {
+        _librarySelection = HongguoDiscoverySelection.fromJsonString(
+          settings.hongguoCatalogDiscoveryJson,
+        );
+      }
+    } catch (_) {}
+    if (mounted) {
+      unawaited(_loadDramas());
+    }
   }
 
   Future<void> _loadTranslationSetting() async {
@@ -129,7 +161,13 @@ class _HongguoScreenState extends State<HongguoScreen> {
     super.dispose();
   }
 
-  Future<void> _loadDramas() async {
+  HongguoDiscoveryCursor? _discoverScopedCursor;
+
+  void _persistLibrarySelection() {
+    _settings?.hongguoCatalogDiscoveryJson = _librarySelection.toJsonString();
+  }
+
+  Future<void> _loadDramas({bool resetCursor = false}) async {
     setState(() {
       _isLoading = true;
       _errorMessage = null;
@@ -139,25 +177,86 @@ class _HongguoScreenState extends State<HongguoScreen> {
     });
 
     try {
-      final res = _currentCategorySlug == 'discover'
-          ? await _resolver.getRandomRecommendations(
-              preferredCategory:
-                  _discoverSource == 'all' ? null : _discoverSource,
-              genre: _currentGenreSlug,
-            )
-          : await _resolver.browseList(
-              category: _currentCategorySlug,
-              genre: _currentGenreSlug,
-              page: _currentPage,
+      if (_primaryTab == 'discover') {
+        if (_discoverScope == 'all') {
+          if (resetCursor) {
+            _discoverScopedCursor = null;
+          }
+          final items = await HongguoSimilarEngine.instance
+              .getPersonalizedDiscoverList(resetCursor: resetCursor);
+          if (!mounted) return;
+          setState(() {
+            _dramas = items;
+            _currentPage = 1;
+            _totalPages = 1;
+            _isLoading = false;
+          });
+        } else {
+          final kind = HongguoGenreKind.fromAny(_discoverScope);
+          if (resetCursor) {
+            _discoverScopedCursor = null;
+          }
+          var page = await HongguoDiscoveryService.instance.fetchDiscovery(
+            HongguoDiscoverySelection(
+              genreKind: kind,
+              filters: const <String, String>{'sort': 'hot_score'},
+            ),
+            cursor: _discoverScopedCursor,
+          );
+          if (page.items.isEmpty && _discoverScopedCursor != null) {
+            _discoverScopedCursor = null;
+            page = await HongguoDiscoveryService.instance.fetchDiscovery(
+              HongguoDiscoverySelection(
+                genreKind: kind,
+                filters: const <String, String>{'sort': 'hot_score'},
+              ),
             );
-
-      if (!mounted) return;
-      setState(() {
-        _dramas = res.items;
-        _currentPage = res.currentPage;
-        _totalPages = res.totalPages > 0 ? res.totalPages : 1;
-        _isLoading = false;
-      });
+          }
+          _discoverScopedCursor = page.nextCursor;
+          if (!mounted) return;
+          setState(() {
+            _dramas = page.items;
+            _currentPage = 1;
+            _totalPages = 1;
+            _isLoading = false;
+          });
+        }
+      } else if (_primaryTab == 'library') {
+        if (resetCursor) {
+          _currentPage = 1;
+          _libraryPageCursors
+            ..clear()
+            ..add(null);
+        }
+        final pageIdx = (_currentPage - 1).clamp(0, _libraryPageCursors.length - 1);
+        final cursor = _libraryPageCursors[pageIdx];
+        final pageRes = await HongguoDiscoveryService.instance.fetchDiscovery(
+          _librarySelection,
+          cursor: cursor,
+        );
+        if (!mounted) return;
+        setState(() {
+          _dramas = pageRes.items;
+          _libraryHasMore = pageRes.hasMore && pageRes.nextCursor != null;
+          if (_libraryHasMore && _libraryPageCursors.length <= _currentPage) {
+            _libraryPageCursors.add(pageRes.nextCursor);
+          }
+          _totalPages = _libraryHasMore ? _currentPage + 1 : _currentPage;
+          _isLoading = false;
+        });
+      } else {
+        final res = await _resolver.browseList(
+          category: _selectedRankSlug,
+          page: _currentPage,
+        );
+        if (!mounted) return;
+        setState(() {
+          _dramas = res.items;
+          _currentPage = res.currentPage;
+          _totalPages = res.totalPages > 0 ? res.totalPages : 1;
+          _isLoading = false;
+        });
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -167,103 +266,47 @@ class _HongguoScreenState extends State<HongguoScreen> {
     }
   }
 
-  Future<void> _loadRandomNewDramas() async {
+  Future<void> _loadNextDiscoverBatch() async {
     HapticFeedback.mediumImpact();
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-      _isSearchMode = false;
-      _isAiResultMode = false;
-      _aiResultLabel = '';
-      _searchController.clear();
-      // Nếu đang ở BXH, chuyển sang tab Đề Xuất để nạp phim phong phú ngoài BXH
-      if (_currentCategorySlug.startsWith('rank/')) {
-        _currentCategorySlug = 'discover';
-      }
-    });
-
-    try {
-      final preferredCat = _currentCategorySlug == 'discover'
-          ? (_discoverSource == 'all' ? null : _discoverSource)
-          : ((_currentCategorySlug.startsWith('rank/'))
-              ? null
-              : _currentCategorySlug);
-
-      final res = await _resolver.getRandomRecommendations(
-        preferredCategory: preferredCat,
-        genre: _currentGenreSlug,
-      );
-
-      if (!mounted) return;
-      setState(() {
-        _dramas = res.items;
-        _currentPage = res.currentPage;
-        _totalPages = res.totalPages > 0 ? res.totalPages : 1;
-        _isLoading = false;
-      });
-
-      if (_scrollController.hasClients) {
+    if (_primaryTab != 'discover') {
+      setState(() => _primaryTab = 'discover');
+    }
+    _searchController.clear();
+    await _loadDramas(resetCursor: false);
+    if (_scrollController.hasClients) {
+      unawaited(
         _scrollController.animateTo(
           0,
-          duration: const Duration(milliseconds: 300),
+          duration: const Duration(milliseconds: 280),
           curve: Curves.easeOut,
-        );
-      }
-
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      final genreText = _currentGenreSlug.isNotEmpty
-          ? ' (${_getGenreLabel(_currentGenreSlug)})'
-          : '';
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Row(
-            children: [
-              const Icon(
-                Icons.casino_rounded,
-                color: AppColors.primaryEmerald,
-                size: 20,
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  'Đã nạp ${res.items.length} phim mới ngẫu nhiên$genreText!',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          duration: const Duration(seconds: 2),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: const Color(0xFF1E222D),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(10),
-            side: const BorderSide(color: AppColors.cardBorder),
-          ),
         ),
       );
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _isLoading = false;
-        _errorMessage = 'Không thể nạp phim mới: $e';
-      });
     }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Đã nạp thêm ${_dramas.length} phim đề xuất mới!',
+          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+        ),
+        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: const Color(0xFF1E222D),
+      ),
+    );
   }
 
   Future<void> _performSearch([String? query]) async {
     final text = (query ?? _searchController.text).trim();
     FocusScope.of(context).unfocus();
     if (text.isEmpty) {
-      _loadDramas();
+      await _loadDramas(resetCursor: true);
       return;
     }
 
-    // Nếu người dùng dán link chia sẻ hoặc ID phim
     if (HongguoResolver.isHongguoUrl(text)) {
-      _resolveAndOpenSharedDrama(text);
+      await _resolveAndOpenSharedDrama(text);
       return;
     }
 
@@ -276,7 +319,6 @@ class _HongguoScreenState extends State<HongguoScreen> {
     });
 
     var queryToSearch = text;
-    // Tự động nhận diện tiếng Việt / chữ cái Latin và dùng ML Kit dịch sang tiếng Trung
     if (RegExp(r'[a-zA-ZÀ-ỹ]').hasMatch(text)) {
       try {
         final translatedQuery =
@@ -294,8 +336,7 @@ class _HongguoScreenState extends State<HongguoScreen> {
                     Expanded(
                       child: Text(
                         'Đã dịch tìm kiếm: "$text" ➔ "$translatedQuery"',
-                        style:
-                            const TextStyle(color: Colors.white, fontSize: 12),
+                        style: const TextStyle(color: Colors.white, fontSize: 12),
                       ),
                     ),
                   ],
@@ -333,7 +374,11 @@ class _HongguoScreenState extends State<HongguoScreen> {
     }
 
     try {
-      final res = await _resolver.searchList(_currentSearchQuery, page: page);
+      final res = await HongguoDiscoveryService.instance.searchByType(
+        _currentSearchQuery,
+        genreFilter: _searchScope,
+        page: page,
+      );
       if (!mounted) return;
       setState(() {
         _dramas = res.items;
@@ -381,7 +426,7 @@ class _HongguoScreenState extends State<HongguoScreen> {
     if (text.isNotEmpty) {
       HapticFeedback.lightImpact();
       _searchController.text = text;
-      _performSearch(text);
+      await _performSearch(text);
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -392,99 +437,124 @@ class _HongguoScreenState extends State<HongguoScreen> {
     }
   }
 
-  void _onSelectCategory(String slug) {
-    if (_currentCategorySlug == slug && !_isSearchMode && !_isAiResultMode) {
+  void _onSelectPrimaryTab(String tab) {
+    if (_primaryTab == tab && !_isSearchMode && !_isAiResultMode) return;
+    HapticFeedback.selectionClick();
+    setState(() {
+      _primaryTab = tab;
+      _currentPage = 1;
+      _isAiResultMode = false;
+      _aiResultLabel = '';
+      _isSearchMode = false;
+      _searchController.clear();
+    });
+    _loadDramas(resetCursor: true);
+  }
+
+  void _onSelectDiscoverScope(String scope) {
+    if (_discoverScope == scope && !_isSearchMode && !_isAiResultMode) return;
+    HapticFeedback.selectionClick();
+    setState(() {
+      _discoverScope = scope;
+      _discoverScopedCursor = null;
+      _isAiResultMode = false;
+      _isSearchMode = false;
+    });
+    _loadDramas(resetCursor: true);
+  }
+
+  void _onSelectLibraryKind(HongguoGenreKind kind) {
+    if (_librarySelection.genreKind == kind &&
+        !_isSearchMode &&
+        !_isAiResultMode) {
       return;
     }
     HapticFeedback.selectionClick();
     setState(() {
-      _currentCategorySlug = slug;
-      _currentGenreSlug = '';
-      _currentPage = 1;
+      _librarySelection = _librarySelection.withGenreKind(kind);
       _isAiResultMode = false;
-      _aiResultLabel = '';
-      _searchController.clear();
+      _isSearchMode = false;
     });
-    _loadDramas();
+    _persistLibrarySelection();
+    _loadDramas(resetCursor: true);
   }
 
-  void _onSelectGenre(String slug) {
-    if (_currentGenreSlug == slug && !_isSearchMode && !_isAiResultMode) return;
+  void _toggleQuickLibraryFilter(String axis, String id) {
+    HapticFeedback.selectionClick();
+    final cur = _librarySelection.valueOf(axis);
+    final nextId = axis == 'sort' ? id : (cur == id ? '' : id);
+    setState(() {
+      _librarySelection = _librarySelection.withFilter(axis, nextId);
+      _isAiResultMode = false;
+      _isSearchMode = false;
+    });
+    _persistLibrarySelection();
+    _loadDramas(resetCursor: true);
+  }
+
+  Future<void> _openLibraryFilterSheet() async {
+    final picked = await HongguoDiscoveryFilterSheet.show(
+      context,
+      initialSelection: _librarySelection,
+      accentColor: AppColors.primaryEmerald,
+    );
+    if (!mounted || picked == null) return;
+    setState(() {
+      _primaryTab = 'library';
+      _librarySelection = picked;
+      _isAiResultMode = false;
+      _isSearchMode = false;
+    });
+    _persistLibrarySelection();
+    await _loadDramas(resetCursor: true);
+  }
+
+  void _onSelectRankBoard(String slug) {
+    if (_selectedRankSlug == slug && _primaryTab == 'rank') return;
     HapticFeedback.selectionClick();
     setState(() {
-      _currentGenreSlug = slug;
+      _primaryTab = 'rank';
+      _selectedRankSlug = slug;
       _currentPage = 1;
       _isAiResultMode = false;
-      _aiResultLabel = '';
-      _searchController.clear();
+      _isSearchMode = false;
     });
-    _loadDramas();
+    _loadDramas(resetCursor: true);
   }
 
-  void _onSelectDiscoverSource(String source) {
-    if (_discoverSource == source && !_isSearchMode && !_isAiResultMode) return;
-    HapticFeedback.selectionClick();
+  void _applyTagFilterFromDetail(String zhTag, HongguoDramaDetail detail) {
+    HapticFeedback.mediumImpact();
+    final fallbackCat = detail.sourceCategory.isNotEmpty
+        ? detail.sourceCategory
+        : (_primaryTab == 'library'
+            ? _librarySelection.genreKind.categorySlug
+            : '');
+    final selection = HongguoDiscoveryService.instance.resolveSelectionForTag(
+      zhTag,
+      preferredSourceCategory: fallbackCat,
+      categoryIds: detail.categoryIds,
+      allDramaTags: detail.tags,
+    );
     setState(() {
-      _discoverSource = source;
-      _currentGenreSlug = '';
-      _currentPage = 1;
+      _primaryTab = 'library';
+      _librarySelection = selection;
+      _isSearchMode = false;
       _isAiResultMode = false;
-      _aiResultLabel = '';
       _searchController.clear();
     });
-    _loadDramas();
-  }
-
-  List<HongguoGenre> _getAvailableGenres() {
-    if (_currentCategorySlug == 'discover') {
-      if (_discoverSource == 'category/ai-drama') {
-        return HongguoResolver.aiDramaGenres;
-      } else if (_discoverSource == 'category/comic-drama') {
-        return HongguoResolver.comicDramaGenres;
-      } else {
-        return HongguoResolver.realDramaGenres;
-      }
-    } else if (_currentCategorySlug == 'category/real-drama') {
-      return HongguoResolver.realDramaGenres;
-    } else if (_currentCategorySlug == 'category/ai-drama') {
-      return HongguoResolver.aiDramaGenres;
-    } else if (_currentCategorySlug == 'category/comic-drama') {
-      return HongguoResolver.comicDramaGenres;
-    }
-    return const [];
-  }
-
-  String _getCategoryLabel(String slug) {
-    if (slug == 'all') return 'Tất cả';
-    final match = HongguoResolver.categories
-        .cast<HongguoCategory?>()
-        .firstWhere((c) => c?.slug == slug, orElse: () => null);
-    if (match != null) {
-      return match.label.replaceAll(RegExp(r'^[^\w\s]+\s*'), '');
-    }
-    final rankMatch = HongguoResolver.rankBoards
-        .cast<HongguoCategory?>()
-        .firstWhere((c) => c?.slug == slug, orElse: () => null);
-    if (rankMatch != null) {
-      return rankMatch.label.replaceAll(RegExp(r'^[^\w\s]+\s*'), '');
-    }
-    return slug;
-  }
-
-  String _getGenreLabel(String slug) {
-    if (slug.isEmpty) return 'Tất cả';
-    final match = HongguoResolver.realDramaGenres
-        .cast<HongguoGenre?>()
-        .firstWhere((g) => g?.slug == slug, orElse: () => null);
-    if (match != null) return match.label.split('(').first.trim();
-    final matchComic = HongguoResolver.comicDramaGenres
-        .cast<HongguoGenre?>()
-        .firstWhere((g) => g?.slug == slug, orElse: () => null);
-    if (matchComic != null) return matchComic.label.split('(').first.trim();
-    final matchAi = HongguoResolver.aiDramaGenres
-        .cast<HongguoGenre?>()
-        .firstWhere((g) => g?.slug == slug, orElse: () => null);
-    return matchAi?.label.split('(').first.trim() ?? slug;
+    _persistLibrarySelection();
+    unawaited(_loadDramas(resetCursor: true));
+    final summary = selection.buildSummaryLabel(
+      HongguoDiscoveryService.instance.getSelectorGroups(selection.genreKind),
+    );
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Đã lọc Kho: $summary'),
+        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   void _goToPage(int page) {
@@ -500,7 +570,7 @@ class _HongguoScreenState extends State<HongguoScreen> {
     if (_isSearchMode) {
       _loadSearchPage(page);
     } else {
-      _loadDramas();
+      _loadDramas(resetCursor: false);
     }
   }
 
@@ -550,7 +620,19 @@ class _HongguoScreenState extends State<HongguoScreen> {
     );
 
     try {
-      final detail = await _resolver.getDramaDetail(item.seriesId);
+      final effectiveItem = item.sourceCategory.isNotEmpty
+          ? item
+          : (_primaryTab == 'library'
+              ? item.copyWith(sourceCategory: _librarySelection.genreKind.categorySlug)
+              : (_discoverScope != 'all'
+                  ? item.copyWith(
+                      sourceCategory: HongguoGenreKind.fromAny(_discoverScope).categorySlug,
+                    )
+                  : item));
+      final detail = await _resolver.getDramaDetail(
+        effectiveItem.seriesId,
+        fallbackItem: effectiveItem,
+      );
       if (!mounted) return;
       Navigator.pop(context); // đóng dialog loading
       _showEpisodeBottomSheet(detail);
@@ -573,6 +655,8 @@ class _HongguoScreenState extends State<HongguoScreen> {
         resolver: _resolver,
         onStartTranslation: widget.onStartTranslation,
         isTranslationEnabled: _isTranslationEnabled,
+        onSelectTag: _applyTagFilterFromDetail,
+        onOpenRelatedDrama: _openDramaDetail,
       ),
     );
   }
@@ -691,7 +775,11 @@ class _HongguoScreenState extends State<HongguoScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final availableGenres = _getAvailableGenres();
+    final libraryGroups = HongguoDiscoveryService.instance.getSelectorGroups(
+      _librarySelection.genreKind,
+    );
+    final librarySummary = _librarySelection.buildSummaryLabel(libraryGroups);
+    final activeCount = _librarySelection.activeFilterCount;
 
     return Scaffold(
       backgroundColor: AppColors.darkBackground,
@@ -931,587 +1019,23 @@ class _HongguoScreenState extends State<HongguoScreen> {
               ),
             ),
 
-            // 2. DANH MỤC CHÍNH (HOT, NGƯỜI THẬT, HOẠT HÌNH, AI)
-            SizedBox(
-              height: 42,
-              child: ListView.separated(
-                physics: const BouncingScrollPhysics(),
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                scrollDirection: Axis.horizontal,
-                itemCount: HongguoResolver.categories.length,
-                separatorBuilder: (ctx, i) => const SizedBox(width: 8),
-                itemBuilder: (ctx, i) {
-                  final cat = HongguoResolver.categories[i];
-                  final isRankGroup = cat.slug == 'rank/hot-drama' &&
-                      _currentCategorySlug.startsWith('rank/');
-                  final isSelected = !_isSearchMode &&
-                      !_isAiResultMode &&
-                      (_currentCategorySlug == cat.slug || isRankGroup);
-                  return ChoiceChip(
-                    label: Text(
-                      cat.label,
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight:
-                            isSelected ? FontWeight.bold : FontWeight.normal,
-                        color: isSelected
-                            ? Colors.white
-                            : AppColors.textSecondary,
-                      ),
-                    ),
-                    selected: isSelected,
-                    selectedColor: AppColors.primaryEmerald.withValues(alpha: 0.25),
-                    backgroundColor: AppColors.darkSurfaceVariant,
-                    side: BorderSide(
-                      color: isSelected
-                          ? AppColors.primaryEmerald
-                          : AppColors.cardBorder,
-                    ),
-                    onSelected: (_) => _onSelectCategory(cat.slug),
-                  );
-                },
-              ),
-            ),
+            // 2. THANH 3 TAB CẤP 1 GỌN GÀNG (ĐỀ XUẤT | KHO LỌC SÂU | BẢNG XẾP HẠNG)
+            _buildPrimaryTabBar(),
 
-            // 2.5 HỘP BỘ LỌC CON DÀNH CHO TAB ĐỀ XUẤT (PHÂN CẤP RÕ RÀNG VỚI DANH MỤC CHÍNH)
-            if (_currentCategorySlug == 'discover' &&
-                !_isSearchMode &&
-                !_isAiResultMode)
-              Container(
-                margin: const EdgeInsets.fromLTRB(14, 6, 14, 2),
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-                decoration: BoxDecoration(
-                  color: AppColors.darkSurfaceVariant.withValues(alpha: 0.4),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: AppColors.cardBorder.withValues(alpha: 0.6),
-                  ),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // Hàng Nguồn Đề Xuất
-                    SizedBox(
-                      height: 30,
-                      child: Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 7,
-                              vertical: 3,
-                            ),
-                            decoration: BoxDecoration(
-                              color: AppColors.primaryEmerald
-                                  .withValues(alpha: 0.15),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: const Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Icons.tune_rounded,
-                                  size: 11,
-                                  color: AppColors.primaryEmerald,
-                                ),
-                                SizedBox(width: 4),
-                                Text(
-                                  'Nguồn',
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.bold,
-                                    color: AppColors.primaryEmerald,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: ListView.separated(
-                              physics: const BouncingScrollPhysics(),
-                              scrollDirection: Axis.horizontal,
-                              itemCount: _discoverSources.length,
-                              separatorBuilder: (ctx, i) =>
-                                  const SizedBox(width: 6),
-                              itemBuilder: (ctx, i) {
-                                final src = _discoverSources[i];
-                                final isSelected = _discoverSource == src.slug;
-                                return ChoiceChip(
-                                  visualDensity: VisualDensity.compact,
-                                  materialTapTargetSize:
-                                      MaterialTapTargetSize.shrinkWrap,
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 6,
-                                    vertical: 0,
-                                  ),
-                                  label: Text(
-                                    src.label,
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: isSelected
-                                          ? FontWeight.bold
-                                          : FontWeight.normal,
-                                      color: isSelected
-                                          ? Colors.white
-                                          : AppColors.textSecondary,
-                                    ),
-                                  ),
-                                  selected: isSelected,
-                                  selectedColor: AppColors.primaryEmerald
-                                      .withValues(alpha: 0.35),
-                                  backgroundColor: Colors.transparent,
-                                  side: BorderSide(
-                                    color: isSelected
-                                        ? AppColors.primaryEmerald
-                                        : AppColors.cardBorder
-                                            .withValues(alpha: 0.6),
-                                  ),
-                                  onSelected: (_) =>
-                                      _onSelectDiscoverSource(src.slug),
-                                );
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    // Hàng Thể Loại (nếu nguồn có hỗ trợ thể loại)
-                    if (availableGenres.isNotEmpty) ...[
-                      const SizedBox(height: 6),
-                      SizedBox(
-                        height: 30,
-                        child: Row(
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 7,
-                                vertical: 3,
-                              ),
-                              decoration: BoxDecoration(
-                                color: AppColors.accentGold
-                                    .withValues(alpha: 0.15),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: const Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Icons.local_offer_rounded,
-                                  size: 11,
-                                  color: AppColors.accentGold,
-                                ),
-                                SizedBox(width: 4),
-                                Text(
-                                  'Thể loại',
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.bold,
-                                    color: AppColors.accentGold,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: ListView.separated(
-                              physics: const BouncingScrollPhysics(),
-                              scrollDirection: Axis.horizontal,
-                              itemCount: availableGenres.length,
-                              separatorBuilder: (ctx, i) =>
-                                  const SizedBox(width: 6),
-                              itemBuilder: (ctx, i) {
-                                final g = availableGenres[i];
-                                final isSelected =
-                                    _currentGenreSlug == g.slug;
-                                return ActionChip(
-                                  visualDensity: VisualDensity.compact,
-                                  materialTapTargetSize:
-                                      MaterialTapTargetSize.shrinkWrap,
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 6,
-                                    vertical: 0,
-                                  ),
-                                  label: Text(
-                                    g.label,
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      color: isSelected
-                                          ? AppColors.accentGold
-                                          : AppColors.textMuted,
-                                      fontWeight: isSelected
-                                          ? FontWeight.bold
-                                          : FontWeight.normal,
-                                    ),
-                                  ),
-                                  backgroundColor: isSelected
-                                      ? AppColors.accentGold
-                                          .withValues(alpha: 0.14)
-                                      : Colors.transparent,
-                                  side: BorderSide(
-                                    color: isSelected
-                                        ? AppColors.accentGold
-                                            .withValues(alpha: 0.7)
-                                        : AppColors.cardBorder
-                                            .withValues(alpha: 0.4),
-                                  ),
-                                  onPressed: () => _onSelectGenre(g.slug),
-                                );
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                  ],
-                ),
-              ),
-
-            // 2.8 THANH CHỌN 10 BẢNG XẾP HẠNG HỒNG QUẢ (KHI Ở TAB 🔥 BXH)
-            if (_currentCategorySlug.startsWith('rank/') &&
-                !_isSearchMode &&
-                !_isAiResultMode)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(14, 6, 14, 0),
-                child: SizedBox(
-                  height: 32,
-                  child: Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 7,
-                          vertical: 3,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.redAccent.withValues(alpha: 0.16),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.leaderboard_rounded,
-                              size: 11,
-                              color: Colors.redAccent,
-                            ),
-                            SizedBox(width: 4),
-                            Text(
-                              'BXH',
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.redAccent,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: ListView.separated(
-                          physics: const BouncingScrollPhysics(),
-                          scrollDirection: Axis.horizontal,
-                          itemCount: HongguoResolver.rankBoards.length,
-                          separatorBuilder: (ctx, i) =>
-                              const SizedBox(width: 6),
-                          itemBuilder: (ctx, i) {
-                            final board = HongguoResolver.rankBoards[i];
-                            final isSelected =
-                                _currentCategorySlug == board.slug;
-                            return ActionChip(
-                              visualDensity: VisualDensity.compact,
-                              materialTapTargetSize:
-                                  MaterialTapTargetSize.shrinkWrap,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 0,
-                              ),
-                              label: Text(
-                                board.label,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: isSelected
-                                      ? Colors.redAccent
-                                      : AppColors.textMuted,
-                                  fontWeight: isSelected
-                                      ? FontWeight.bold
-                                      : FontWeight.normal,
-                                ),
-                              ),
-                              backgroundColor: isSelected
-                                  ? Colors.redAccent.withValues(alpha: 0.14)
-                                  : Colors.transparent,
-                              side: BorderSide(
-                                color: isSelected
-                                    ? Colors.redAccent.withValues(alpha: 0.75)
-                                    : AppColors.cardBorder
-                                        .withValues(alpha: 0.5),
-                              ),
-                              onPressed: () => _onSelectCategory(board.slug),
-                            );
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
-            // 3. THỂ LOẠI CON (KHI Ở KHO NGƯỜI THẬT HOẶC PHIM AI)
-            if (_currentCategorySlug != 'discover' &&
-                availableGenres.isNotEmpty &&
-                !_isSearchMode &&
-                !_isAiResultMode)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(14, 4, 14, 0),
-                child: SizedBox(
-                  height: 32,
-                  child: Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 7,
-                          vertical: 3,
-                        ),
-                        decoration: BoxDecoration(
-                          color: AppColors.accentGold.withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.local_offer_rounded,
-                              size: 11,
-                              color: AppColors.accentGold,
-                            ),
-                            SizedBox(width: 4),
-                            Text(
-                              'Thể loại',
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                                color: AppColors.accentGold,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: ListView.separated(
-                          physics: const BouncingScrollPhysics(),
-                          scrollDirection: Axis.horizontal,
-                          itemCount: availableGenres.length,
-                          separatorBuilder: (ctx, i) =>
-                              const SizedBox(width: 6),
-                          itemBuilder: (ctx, i) {
-                            final g = availableGenres[i];
-                            final isSelected = _currentGenreSlug == g.slug;
-                            return ActionChip(
-                              visualDensity: VisualDensity.compact,
-                              materialTapTargetSize:
-                                  MaterialTapTargetSize.shrinkWrap,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 0,
-                              ),
-                              label: Text(
-                                g.label,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: isSelected
-                                      ? AppColors.accentGold
-                                      : AppColors.textMuted,
-                                  fontWeight: isSelected
-                                      ? FontWeight.bold
-                                      : FontWeight.normal,
-                                ),
-                              ),
-                              backgroundColor: isSelected
-                                  ? AppColors.accentGold
-                                      .withValues(alpha: 0.14)
-                                  : Colors.transparent,
-                              side: BorderSide(
-                                color: isSelected
-                                    ? AppColors.accentGold
-                                        .withValues(alpha: 0.7)
-                                    : AppColors.cardBorder
-                                        .withValues(alpha: 0.5),
-                              ),
-                              onPressed: () => _onSelectGenre(g.slug),
-                            );
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
+            // 2.5 THANH LỌC THEO TỪNG TAB (HOẶC PHẠM VI TÌM KIẾM)
+            if (_isSearchMode)
+              _buildSearchScopeBar()
+            else if (!_isAiResultMode && _primaryTab == 'discover')
+              _buildDiscoverScopeBar()
+            else if (!_isAiResultMode && _primaryTab == 'library')
+              _buildLibraryFilterBar(libraryGroups, activeCount)
+            else if (!_isAiResultMode && _primaryTab == 'rank')
+              _buildRankBoardBar(),
 
             const SizedBox(height: 6),
 
-            // 3.5 THANH ĐIỀU KHIỂN TRẠNG THÁI & NÚT LOAD PHIM MỚI
-            Padding(
-              padding: const EdgeInsets.fromLTRB(14, 4, 14, 6),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Expanded(
-                    child: Row(
-                      children: [
-                        Icon(
-                          _isAiResultMode
-                              ? Icons.auto_awesome_rounded
-                              : (_isSearchMode
-                                  ? Icons.search_rounded
-                                  : (_currentCategorySlug == 'discover'
-                                      ? Icons.auto_awesome
-                                      : (_currentCategorySlug.contains('rank')
-                                          ? Icons.local_fire_department_rounded
-                                          : Icons.movie_filter_rounded))),
-                          size: 15,
-                          color: _isAiResultMode
-                              ? AppColors.primaryEmerald
-                              : (_currentCategorySlug == 'discover'
-                                  ? AppColors.accentGold
-                                  : (_currentCategorySlug.contains('rank')
-                                      ? Colors.redAccent
-                                      : AppColors.primaryEmerald)),
-                        ),
-                        const SizedBox(width: 6),
-                        Flexible(
-                          child: Text(
-                            _isAiResultMode
-                                ? '${_aiResultLabel.isNotEmpty ? _aiResultLabel : "Gợi ý từ Trợ lý AI"} (${_dramas.length})'
-                                : (_isSearchMode
-                                    ? (_totalPages > 1
-                                        ? 'Kết quả tìm kiếm (Trang $_currentPage/$_totalPages)'
-                                        : 'Kết quả tìm kiếm (${_dramas.length})')
-                                    : (_currentCategorySlug == 'discover'
-                                        ? (_currentGenreSlug.isNotEmpty
-                                            ? 'Đề xuất ${_getGenreLabel(_currentGenreSlug)} (${_dramas.length})'
-                                            : (_discoverSource == 'all'
-                                                ? 'Phim đề xuất ngẫu nhiên (${_dramas.length})'
-                                                : 'Đề xuất ${_getCategoryLabel(_discoverSource)} (${_dramas.length})'))
-                                        : (_currentCategorySlug.contains('rank')
-                                            ? 'BXH ${_getCategoryLabel(_currentCategorySlug)} (Trang $_currentPage/$_totalPages)'
-                                            : 'Kho ${_getCategoryLabel(_currentCategorySlug)} (Trang $_currentPage/$_totalPages)'))),
-                            style: const TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: AppColors.textSecondary,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  if (_isAiResultMode)
-                    InkWell(
-                      onTap: _loadDramas,
-                      borderRadius: BorderRadius.circular(20),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 5,
-                        ),
-                        decoration: BoxDecoration(
-                          color: AppColors.darkSurfaceVariant,
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: AppColors.cardBorder,
-                          ),
-                        ),
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.close_rounded,
-                              size: 13,
-                              color: AppColors.textSecondary,
-                            ),
-                            SizedBox(width: 4),
-                            Text(
-                              'Thoát lọc AI',
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                                color: AppColors.textSecondary,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  // Nút hành động Subheader (Đổi phim ngẫu nhiên khi ở Đề Xuất, hoặc Làm mới khi ở BXH/Thể loại)
-                  if (!_isSearchMode && !_isAiResultMode)
-                    InkWell(
-                      onTap: _isLoading
-                          ? null
-                          : (_currentCategorySlug == 'discover'
-                              ? _loadRandomNewDramas
-                              : _loadDramas),
-                      borderRadius: BorderRadius.circular(20),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 5,
-                        ),
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [
-                              AppColors.primaryEmerald.withValues(alpha: 0.22),
-                              AppColors.primaryEmerald.withValues(alpha: 0.08),
-                            ],
-                          ),
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: AppColors.primaryEmerald.withValues(alpha: 0.5),
-                          ),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            _isLoading
-                                ? const SizedBox(
-                                    width: 13,
-                                    height: 13,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: AppColors.primaryEmerald,
-                                    ),
-                                  )
-                                : Icon(
-                                    _currentCategorySlug == 'discover'
-                                        ? Icons.casino_rounded
-                                        : Icons.refresh_rounded,
-                                    size: 14,
-                                    color: AppColors.primaryEmerald,
-                                  ),
-                            const SizedBox(width: 5),
-                            Text(
-                              _currentCategorySlug == 'discover'
-                                  ? 'Đổi phim mới'
-                                  : 'Làm mới',
-                              style: const TextStyle(
-                                fontSize: 11.5,
-                                fontWeight: FontWeight.bold,
-                                color: AppColors.primaryEmerald,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
+            // 3.5 THANH TRẠNG THÁI & LÀM MỚI / ĐỔI LOẠT PHIM MỚI
+            _buildStatusActionBar(librarySummary),
 
             // 4. LƯỚI PHIM VỚI PULL-TO-REFRESH + NÚT TRỢ LÝ AI NỔI
             Expanded(
@@ -1522,7 +1046,7 @@ class _HongguoScreenState extends State<HongguoScreen> {
                     backgroundColor: AppColors.darkSurface,
                     onRefresh: _isSearchMode && _currentSearchQuery.isNotEmpty
                         ? () => _loadSearchPage(_currentPage)
-                        : _loadDramas,
+                        : () => _loadDramas(resetCursor: true),
                     child: _buildBody(),
                   ),
                   Positioned(
@@ -1534,14 +1058,14 @@ class _HongguoScreenState extends State<HongguoScreen> {
               ),
             ),
 
-            // 5. THANH PHÂN TRANG (PAGINATION HOẶC ĐỔI PHIM MỚI)
+            // 5. THANH PHÂN TRANG HOẶC XEM THÊM
             if (!_isAiResultMode &&
-                (_isSearchMode || _currentCategorySlug != 'discover') &&
-                _totalPages > 1)
+                (_isSearchMode || _primaryTab != 'discover') &&
+                (_totalPages > 1 || _currentPage > 1))
               _buildPaginationBar(),
             if (!_isAiResultMode &&
                 !_isSearchMode &&
-                _currentCategorySlug == 'discover')
+                _primaryTab == 'discover')
               Container(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -1552,12 +1076,12 @@ class _HongguoScreenState extends State<HongguoScreen> {
                 child: SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
-                    onPressed: _isLoading ? null : _loadRandomNewDramas,
-                    icon: const Icon(Icons.casino_rounded, size: 18),
+                    onPressed: _isLoading ? null : _loadNextDiscoverBatch,
+                    icon: const Icon(Icons.auto_awesome_rounded, size: 18),
                     label: Text(
-                      _currentGenreSlug.isNotEmpty
-                          ? 'Đổi loạt phim ${_getGenreLabel(_currentGenreSlug)} khác'
-                          : 'Đổi danh sách phim mới khác',
+                      _discoverScope == 'all'
+                          ? 'Tải thêm đề xuất mới từ Hồng Quả'
+                          : 'Tải thêm ${HongguoGenreKind.fromAny(_discoverScope).label} mới',
                       style: const TextStyle(
                         fontWeight: FontWeight.bold,
                         fontSize: 13,
@@ -1579,6 +1103,528 @@ class _HongguoScreenState extends State<HongguoScreen> {
               ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildPrimaryTabBar() {
+    const tabs = <({String id, String label, IconData icon})>[
+      (id: 'discover', label: 'Đề xuất', icon: Icons.auto_awesome_rounded),
+      (id: 'library', label: 'Kho lọc sâu', icon: Icons.tune_rounded),
+      (id: 'rank', label: 'Bảng Xếp Hạng', icon: Icons.leaderboard_rounded),
+    ];
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 2, 14, 6),
+      child: Container(
+        padding: const EdgeInsets.all(4),
+        decoration: BoxDecoration(
+          color: AppColors.darkSurfaceVariant.withValues(alpha: 0.65),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppColors.cardBorder),
+        ),
+        child: Row(
+          children: tabs.map((tab) {
+            final isSelected =
+                !_isSearchMode && !_isAiResultMode && _primaryTab == tab.id;
+            return Expanded(
+              child: GestureDetector(
+                onTap: () => _onSelectPrimaryTab(tab.id),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 160),
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  decoration: BoxDecoration(
+                    color: isSelected
+                        ? AppColors.primaryEmerald.withValues(alpha: 0.22)
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(9),
+                    border: Border.all(
+                      color: isSelected
+                          ? AppColors.primaryEmerald.withValues(alpha: 0.75)
+                          : Colors.transparent,
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        tab.icon,
+                        size: 14,
+                        color: isSelected
+                            ? AppColors.primaryEmerald
+                            : AppColors.textSecondary,
+                      ),
+                      const SizedBox(width: 5),
+                      Flexible(
+                        child: Text(
+                          tab.label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12.2,
+                            fontWeight: isSelected
+                                ? FontWeight.bold
+                                : FontWeight.w500,
+                            color: isSelected
+                                ? Colors.white
+                                : AppColors.textSecondary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSearchScopeBar() {
+    final options = <({HongguoGenreKind? kind, String label})>[
+      (kind: null, label: 'Tất cả kho'),
+      for (final k in HongguoGenreKind.values)
+        (kind: k, label: '${k.emoji} ${k.shortLabel}'),
+    ];
+    return SizedBox(
+      height: 36,
+      child: ListView.separated(
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        scrollDirection: Axis.horizontal,
+        physics: const BouncingScrollPhysics(),
+        itemCount: options.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 6),
+        itemBuilder: (_, i) {
+          final opt = options[i];
+          final isSel = _searchScope == opt.kind;
+          return ChoiceChip(
+            visualDensity: VisualDensity.compact,
+            label: Text(
+              opt.label,
+              style: TextStyle(
+                fontSize: 11.5,
+                color: isSel ? Colors.white : AppColors.textSecondary,
+                fontWeight: isSel ? FontWeight.bold : FontWeight.normal,
+              ),
+            ),
+            selected: isSel,
+            selectedColor: AppColors.primaryEmerald.withValues(alpha: 0.3),
+            backgroundColor: AppColors.darkSurfaceVariant,
+            side: BorderSide(
+              color: isSel ? AppColors.primaryEmerald : AppColors.cardBorder,
+            ),
+            onSelected: (_) {
+              if (_searchScope == opt.kind) return;
+              HapticFeedback.selectionClick();
+              setState(() => _searchScope = opt.kind);
+              if (_currentSearchQuery.isNotEmpty) {
+                unawaited(_loadSearchPage(1));
+              }
+            },
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildDiscoverScopeBar() {
+    const scopes = <({String id, String label})>[
+      (id: 'all', label: '✨ Dành cho bạn'),
+      (id: 'short_play', label: '🎬 Người thật'),
+      (id: 'comic_series', label: '🎨 Hoạt hình'),
+      (id: 'ai_series', label: '🤖 Phim AI'),
+    ];
+    return SizedBox(
+      height: 36,
+      child: ListView.separated(
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        scrollDirection: Axis.horizontal,
+        physics: const BouncingScrollPhysics(),
+        itemCount: scopes.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 8),
+        itemBuilder: (_, i) {
+          final s = scopes[i];
+          final isSel = _discoverScope == s.id;
+          return ChoiceChip(
+            visualDensity: VisualDensity.compact,
+            label: Text(
+              s.label,
+              style: TextStyle(
+                fontSize: 12,
+                color: isSel ? Colors.white : AppColors.textSecondary,
+                fontWeight: isSel ? FontWeight.bold : FontWeight.normal,
+              ),
+            ),
+            selected: isSel,
+            selectedColor: AppColors.primaryEmerald.withValues(alpha: 0.28),
+            backgroundColor: AppColors.darkSurfaceVariant,
+            side: BorderSide(
+              color: isSel ? AppColors.primaryEmerald : AppColors.cardBorder,
+            ),
+            onSelected: (_) => _onSelectDiscoverScope(s.id),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildLibraryFilterBar(
+    List<HongguoSelectorGroup> groups,
+    int activeCount,
+  ) {
+    final kind = _librarySelection.genreKind;
+    final quickChips = <({String axis, String id, String label})>[
+      (axis: 'sort', id: 'hot_score', label: '🔥 Hot nhất'),
+      (axis: 'sort', id: 'online_time', label: '🆕 Mới nhất'),
+      (axis: 'gender', id: '0', label: '👩 Nữ tần'),
+      (axis: 'gender', id: '1', label: '👨 Nam tần'),
+      if (kind == HongguoGenreKind.comicSeries) ...const [
+        (axis: 'category_dim_art_style', id: 'cate_5416', label: '2D Anime'),
+        (axis: 'category_dim_art_style', id: 'cate_5415', label: '3D'),
+      ],
+      if (kind == HongguoGenreKind.realPlay) ...const [
+        (axis: 'category_dim_epoch', id: 'cate_5315', label: '🎓 Học đường'),
+        (axis: 'category_dim_theme', id: 'cate_5000', label: '❤️ Tình cảm'),
+        (axis: 'category_dim_theme', id: 'cate_5007', label: '🏯 Cổ trang'),
+        (axis: 'category_dim_theme', id: 'cate_5031', label: '⚡ Nghịch tập'),
+        (axis: 'category_dim_theme', id: 'cate_5008', label: '✨ Tu tiên'),
+      ] else ...const [
+        (axis: 'category_dim_epoch', id: 'cate_4', label: '🎓 Học đường'),
+        (axis: 'category_dim_epoch', id: 'cate_1', label: '🏙️ Đô thị'),
+        (axis: 'category_dim_theme', id: 'cate_7', label: '✨ Tu tiên'),
+        (axis: 'category_dim_theme', id: 'cate_755', label: '💡 Não động'),
+        (axis: 'category_dim_role', id: 'cate_36', label: '⏳ Trọng sinh'),
+        (axis: 'category_dim_role', id: 'cate_19', label: '⚙️ Hệ thống'),
+      ],
+    ];
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Hàng 1: Chọn 1 trong 3 Kho + nút Bộ lọc Đa chiều
+          Row(
+            children: [
+              Expanded(
+                child: SizedBox(
+                  height: 34,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    physics: const BouncingScrollPhysics(),
+                    itemCount: HongguoGenreKind.values.length,
+                    separatorBuilder: (_, _) => const SizedBox(width: 6),
+                    itemBuilder: (_, i) {
+                      final k = HongguoGenreKind.values[i];
+                      final isSel = kind == k;
+                      return ChoiceChip(
+                        visualDensity: VisualDensity.compact,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        label: Text(
+                          '${k.emoji} ${k.shortLabel}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: isSel ? Colors.white : AppColors.textSecondary,
+                            fontWeight:
+                                isSel ? FontWeight.bold : FontWeight.normal,
+                          ),
+                        ),
+                        selected: isSel,
+                        selectedColor:
+                            AppColors.primaryEmerald.withValues(alpha: 0.28),
+                        backgroundColor: AppColors.darkSurfaceVariant,
+                        side: BorderSide(
+                          color: isSel
+                              ? AppColors.primaryEmerald
+                              : AppColors.cardBorder,
+                        ),
+                        onSelected: (_) => _onSelectLibraryKind(k),
+                      );
+                    },
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              InkWell(
+                onTap: _openLibraryFilterSheet,
+                borderRadius: BorderRadius.circular(18),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 11,
+                    vertical: 7,
+                  ),
+                  decoration: BoxDecoration(
+                    color: activeCount > 0
+                        ? AppColors.primaryEmerald.withValues(alpha: 0.2)
+                        : AppColors.darkSurfaceVariant,
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(
+                      color: activeCount > 0
+                          ? AppColors.primaryEmerald
+                          : AppColors.cardBorder,
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.tune_rounded,
+                        size: 14,
+                        color: activeCount > 0
+                            ? AppColors.primaryEmerald
+                            : AppColors.textSecondary,
+                      ),
+                      const SizedBox(width: 5),
+                      Text(
+                        activeCount > 0 ? 'Bộ lọc ($activeCount)' : 'Bộ lọc',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: activeCount > 0
+                              ? AppColors.primaryEmerald
+                              : AppColors.textPrimary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+
+          // Hàng 2: Chip lọc nhanh (Sắp xếp + Nam/Nữ tần + Bối cảnh + Chủ đề)
+          SizedBox(
+            height: 30,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              physics: const BouncingScrollPhysics(),
+              itemCount: quickChips.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 6),
+              itemBuilder: (_, i) {
+                final c = quickChips[i];
+                final selectedVal = c.axis == 'sort'
+                    ? _librarySelection.effectiveSort
+                    : _librarySelection.valueOf(c.axis);
+                final isSel = selectedVal == c.id;
+                return ActionChip(
+                  visualDensity: VisualDensity.compact,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  label: Text(
+                    c.label,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: isSel ? AppColors.accentGold : AppColors.textMuted,
+                      fontWeight: isSel ? FontWeight.bold : FontWeight.normal,
+                    ),
+                  ),
+                  backgroundColor: isSel
+                      ? AppColors.accentGold.withValues(alpha: 0.14)
+                      : AppColors.darkSurfaceVariant.withValues(alpha: 0.5),
+                  side: BorderSide(
+                    color: isSel
+                        ? AppColors.accentGold.withValues(alpha: 0.7)
+                        : AppColors.cardBorder.withValues(alpha: 0.6),
+                  ),
+                  onPressed: () => _toggleQuickLibraryFilter(c.axis, c.id),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRankBoardBar() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 0, 14, 0),
+      child: SizedBox(
+        height: 34,
+        child: ListView.separated(
+          physics: const BouncingScrollPhysics(),
+          scrollDirection: Axis.horizontal,
+          itemCount: HongguoResolver.rankBoards.length,
+          separatorBuilder: (_, _) => const SizedBox(width: 6),
+          itemBuilder: (_, i) {
+            final board = HongguoResolver.rankBoards[i];
+            final isSelected = _selectedRankSlug == board.slug;
+            return ChoiceChip(
+              visualDensity: VisualDensity.compact,
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              label: Text(
+                board.label,
+                style: TextStyle(
+                  fontSize: 11.5,
+                  color: isSelected ? Colors.redAccent : AppColors.textSecondary,
+                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                ),
+              ),
+              selected: isSelected,
+              selectedColor: Colors.redAccent.withValues(alpha: 0.16),
+              backgroundColor: AppColors.darkSurfaceVariant,
+              side: BorderSide(
+                color: isSelected
+                    ? Colors.redAccent.withValues(alpha: 0.75)
+                    : AppColors.cardBorder,
+              ),
+              onSelected: (_) => _onSelectRankBoard(board.slug),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatusActionBar(String librarySummary) {
+    final rankLabel = HongguoResolver.rankBoards
+        .cast<HongguoCategory?>()
+        .firstWhere((c) => c?.slug == _selectedRankSlug, orElse: () => null)
+        ?.label ??
+        'BXH';
+
+    final statusTitle = _isAiResultMode
+        ? '${_aiResultLabel.isNotEmpty ? _aiResultLabel : "Gợi ý từ Trợ lý AI"} (${_dramas.length})'
+        : (_isSearchMode
+            ? (_totalPages > 1
+                ? 'Kết quả tìm kiếm (Trang $_currentPage/$_totalPages)'
+                : 'Kết quả tìm kiếm (${_dramas.length})')
+            : (_primaryTab == 'discover'
+                ? (_discoverScope == 'all'
+                    ? 'Đề xuất cá nhân hóa (${_dramas.length})'
+                    : 'Đề xuất ${HongguoGenreKind.fromAny(_discoverScope).label} (${_dramas.length})')
+                : (_primaryTab == 'rank'
+                    ? '$rankLabel (Trang $_currentPage/$_totalPages)'
+                    : '$librarySummary · Trang $_currentPage')));
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 2, 14, 6),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Expanded(
+            child: Row(
+              children: [
+                Icon(
+                  _isAiResultMode
+                      ? Icons.auto_awesome_rounded
+                      : (_isSearchMode
+                          ? Icons.search_rounded
+                          : (_primaryTab == 'discover'
+                              ? Icons.auto_awesome
+                              : (_primaryTab == 'rank'
+                                  ? Icons.local_fire_department_rounded
+                                  : Icons.filter_list_rounded))),
+                  size: 15,
+                  color: _primaryTab == 'rank'
+                      ? Colors.redAccent
+                      : (_primaryTab == 'discover'
+                          ? AppColors.accentGold
+                          : AppColors.primaryEmerald),
+                ),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    statusTitle,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textSecondary,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          if (_isAiResultMode)
+            InkWell(
+              onTap: () => _loadDramas(resetCursor: true),
+              borderRadius: BorderRadius.circular(20),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: AppColors.darkSurfaceVariant,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: AppColors.cardBorder),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.close_rounded, size: 13, color: AppColors.textSecondary),
+                    SizedBox(width: 4),
+                    Text(
+                      'Thoát lọc AI',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          if (!_isSearchMode && !_isAiResultMode)
+            InkWell(
+              onTap: _isLoading
+                  ? null
+                  : (_primaryTab == 'discover'
+                      ? _loadNextDiscoverBatch
+                      : () => _loadDramas(resetCursor: true)),
+              borderRadius: BorderRadius.circular(20),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      AppColors.primaryEmerald.withValues(alpha: 0.22),
+                      AppColors.primaryEmerald.withValues(alpha: 0.08),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: AppColors.primaryEmerald.withValues(alpha: 0.5),
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _isLoading
+                        ? const SizedBox(
+                            width: 13,
+                            height: 13,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: AppColors.primaryEmerald,
+                            ),
+                          )
+                        : Icon(
+                            _primaryTab == 'discover'
+                                ? Icons.auto_awesome_rounded
+                                : Icons.refresh_rounded,
+                            size: 14,
+                            color: AppColors.primaryEmerald,
+                          ),
+                    const SizedBox(width: 5),
+                    Text(
+                      _primaryTab == 'discover' ? 'Đổi loạt mới' : 'Làm mới',
+                      style: const TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.primaryEmerald,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -1622,17 +1668,17 @@ class _HongguoScreenState extends State<HongguoScreen> {
                     ),
                     onPressed: _isSearchMode && _currentSearchQuery.isNotEmpty
                         ? () => _loadSearchPage(_currentPage)
-                        : _loadDramas,
+                        : () => _loadDramas(resetCursor: false),
                   ),
                   const SizedBox(width: 10),
                   ElevatedButton.icon(
-                    icon: const Icon(Icons.casino_rounded, size: 16),
-                    label: const Text('Load phim mới'),
+                    icon: const Icon(Icons.auto_awesome_rounded, size: 16),
+                    label: const Text('Tải đề xuất'),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primaryEmerald,
                       foregroundColor: Colors.black,
                     ),
-                    onPressed: _loadRandomNewDramas,
+                    onPressed: _loadNextDiscoverBatch,
                   ),
                 ],
               ),
@@ -1649,20 +1695,26 @@ class _HongguoScreenState extends State<HongguoScreen> {
           const SizedBox(height: 100),
           const Center(
             child: Text(
-              'Không tìm thấy bộ phim nào.',
+              'Không tìm thấy phim phù hợp với bộ lọc này.',
               style: TextStyle(color: AppColors.textMuted),
             ),
           ),
           const SizedBox(height: 16),
           Center(
             child: ElevatedButton.icon(
-              icon: const Icon(Icons.casino_rounded, size: 16),
-              label: const Text('Load phim mới ngẫu nhiên'),
+              icon: const Icon(Icons.refresh_rounded, size: 16),
+              label: const Text('Đặt lại bộ lọc'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.primaryEmerald,
                 foregroundColor: Colors.black,
               ),
-              onPressed: _loadRandomNewDramas,
+              onPressed: () {
+                setState(() {
+                  _librarySelection = _librarySelection.resetFilters();
+                  _primaryTab = 'discover';
+                });
+                _loadDramas(resetCursor: true);
+              },
             ),
           ),
         ],
@@ -1693,8 +1745,7 @@ class _HongguoScreenState extends State<HongguoScreen> {
             return _DramaCard(
               drama: drama,
               index: i + 1,
-              isRankCategory:
-                  !_isAiResultMode && _currentCategorySlug.contains('rank'),
+              isRankCategory: !_isSearchMode && _primaryTab == 'rank',
               isTranslationEnabled: _isTranslationEnabled,
               onTap: () => _openDramaDetail(drama),
               onLongPress: () => _showDramaQuickMenu(drama),
@@ -2068,9 +2119,7 @@ class _DramaCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    drama.tags.isNotEmpty
-                        ? drama.tags.take(2).join(' · ')
-                        : 'Phim ngắn Hồng Quả',
+                    _formatCardSubtitle(drama),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -2086,6 +2135,26 @@ class _DramaCard extends StatelessWidget {
       ),
     );
   }
+
+  String _formatCardSubtitle(HongguoDramaItem drama) {
+    final translated =
+        drama.tags.take(2).map(HongguoSimilarEngine.getTagLabel).join(' · ');
+    final inferredSource = drama.categoryIds.isNotEmpty || drama.tags.isNotEmpty
+        ? HongguoResolver.inferSourceCategoryFromIds(
+            drama.categoryIds,
+            tags: drama.tags,
+          )
+        : null;
+    final prefix = inferredSource == 'category/ai-drama'
+        ? 'AI'
+        : inferredSource == 'category/comic-drama'
+            ? 'Hoạt hình'
+            : null;
+    if (translated.isNotEmpty) {
+      return prefix != null ? '$prefix · $translated' : translated;
+    }
+    return prefix != null ? '$prefix · Hồng Quả' : 'Phim ngắn Hồng Quả';
+  }
 }
 
 // ===== BOTTOM SHEET CHỌN TẬP PHIM (TỐI ƯU CẢ IOS VÀ ANDROID, SAFE AREA, CHUNK RANGE) =====
@@ -2095,12 +2164,16 @@ class _EpisodeSelectorSheet extends StatefulWidget {
   final bool isTranslationEnabled;
   final void Function(String videoUrl, String title, int durationMs)?
       onStartTranslation;
+  final void Function(String zhTag, HongguoDramaDetail detail)? onSelectTag;
+  final void Function(HongguoDramaItem drama)? onOpenRelatedDrama;
 
   const _EpisodeSelectorSheet({
     required this.detail,
     required this.resolver,
     this.isTranslationEnabled = true,
     this.onStartTranslation,
+    this.onSelectTag,
+    this.onOpenRelatedDrama,
   });
 
   @override
@@ -2255,7 +2328,10 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                                 },
                               ),
                               const SizedBox(height: 6),
-                              Row(
+                              Wrap(
+                                spacing: 6,
+                                runSpacing: 6,
+                                crossAxisAlignment: WrapCrossAlignment.center,
                                 children: [
                                   Container(
                                     padding: const EdgeInsets.symmetric(
@@ -2276,7 +2352,6 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                                       ),
                                     ),
                                   ),
-                                  const SizedBox(width: 8),
                                   ValueListenableBuilder<List<WatchLaterItem>>(
                                     valueListenable: WatchLaterRepository.watchLaterNotifier,
                                     builder: (wlContext, items, _) {
@@ -2367,7 +2442,6 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                                       );
                                     },
                                   ),
-                                  const SizedBox(width: 6),
                                   ValueListenableBuilder<HongguoCloudAccountState>(
                                     valueListenable: HongguoCloudAccountService.instance.state,
                                     builder: (favCtx, cloudState, _) {
@@ -2456,8 +2530,109 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                                       );
                                     },
                                   ),
+                                  InkWell(
+                                    borderRadius: BorderRadius.circular(6),
+                                    onTap: () {
+                                      HapticFeedback.selectionClick();
+                                      HongguoRelatedDramaSheet.show(
+                                        context,
+                                        currentDetail: detail,
+                                        isTranslationEnabled:
+                                            widget.isTranslationEnabled,
+                                        onSelectDrama: (relatedDrama) {
+                                          Navigator.of(context).pop();
+                                          if (mounted) {
+                                            Navigator.of(context).pop();
+                                          }
+                                          widget.onOpenRelatedDrama
+                                              ?.call(relatedDrama);
+                                        },
+                                      );
+                                    },
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 3,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF7C3AED)
+                                            .withValues(alpha: 0.2),
+                                        borderRadius: BorderRadius.circular(6),
+                                        border: Border.all(
+                                          color: const Color(0xFFA78BFA)
+                                              .withValues(alpha: 0.55),
+                                          width: 0.8,
+                                        ),
+                                      ),
+                                      child: const Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            Icons.auto_awesome_rounded,
+                                            size: 13,
+                                            color: Color(0xFFC4B5FD),
+                                          ),
+                                          SizedBox(width: 4),
+                                          Text(
+                                            'Phim tương tự',
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.bold,
+                                              color: Color(0xFFEDE9FE),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
                                 ],
                               ),
+                              if (detail.tags.isNotEmpty) ...[
+                                const SizedBox(height: 6),
+                                Wrap(
+                                  spacing: 5,
+                                  runSpacing: 5,
+                                  children: detail.tags.take(6).map((zhTag) {
+                                    final viLabel =
+                                        HongguoSimilarEngine.getTagLabel(zhTag);
+                                    return InkWell(
+                                      borderRadius: BorderRadius.circular(12),
+                                      onTap: widget.onSelectTag == null
+                                          ? null
+                                          : () {
+                                              HapticFeedback.selectionClick();
+                                              Navigator.of(context).pop();
+                                              widget.onSelectTag
+                                                  ?.call(zhTag, detail);
+                                            },
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                          vertical: 3,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white
+                                              .withValues(alpha: 0.07),
+                                          borderRadius:
+                                              BorderRadius.circular(12),
+                                          border: Border.all(
+                                            color: Colors.white24,
+                                            width: 0.7,
+                                          ),
+                                        ),
+                                        child: Text(
+                                          '#$viLabel',
+                                          style: const TextStyle(
+                                            fontSize: 10.5,
+                                            color: Colors.white70,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  }).toList(),
+                                ),
+                              ],
                               if (detail.intro.isNotEmpty) ...[
                                 const SizedBox(height: 6),
                                 ConstrainedBox(

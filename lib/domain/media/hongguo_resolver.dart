@@ -21,6 +21,7 @@ class HongguoDramaItem {
   final int? rank;
   final List<String> statusTags;
   final String sourceCategory;
+  final List<String> categoryIds;
 
   const HongguoDramaItem({
     required this.seriesId,
@@ -34,6 +35,7 @@ class HongguoDramaItem {
     this.rank,
     this.statusTags = const [],
     this.sourceCategory = '',
+    this.categoryIds = const [],
   });
 
   HongguoDramaItem copyWith({
@@ -48,6 +50,7 @@ class HongguoDramaItem {
     int? rank,
     List<String>? statusTags,
     String? sourceCategory,
+    List<String>? categoryIds,
   }) {
     return HongguoDramaItem(
       seriesId: seriesId ?? this.seriesId,
@@ -61,6 +64,7 @@ class HongguoDramaItem {
       rank: rank ?? this.rank,
       statusTags: statusTags ?? this.statusTags,
       sourceCategory: sourceCategory ?? this.sourceCategory,
+      categoryIds: categoryIds ?? this.categoryIds,
     );
   }
 }
@@ -88,6 +92,8 @@ class HongguoDramaDetail {
   final List<String> tags;
   final List<HongguoEpisodeItem> episodes;
   final int accessibleEpisodes;
+  final String sourceCategory;
+  final List<String> categoryIds;
 
   const HongguoDramaDetail({
     required this.seriesId,
@@ -98,7 +104,35 @@ class HongguoDramaDetail {
     this.tags = const [],
     this.episodes = const [],
     this.accessibleEpisodes = 3,
+    this.sourceCategory = '',
+    this.categoryIds = const [],
   });
+
+  HongguoDramaDetail copyWith({
+    String? seriesId,
+    String? title,
+    String? cover,
+    String? intro,
+    int? totalEpisodes,
+    List<String>? tags,
+    List<HongguoEpisodeItem>? episodes,
+    int? accessibleEpisodes,
+    String? sourceCategory,
+    List<String>? categoryIds,
+  }) {
+    return HongguoDramaDetail(
+      seriesId: seriesId ?? this.seriesId,
+      title: title ?? this.title,
+      cover: cover ?? this.cover,
+      intro: intro ?? this.intro,
+      totalEpisodes: totalEpisodes ?? this.totalEpisodes,
+      tags: tags ?? this.tags,
+      episodes: episodes ?? this.episodes,
+      accessibleEpisodes: accessibleEpisodes ?? this.accessibleEpisodes,
+      sourceCategory: sourceCategory ?? this.sourceCategory,
+      categoryIds: categoryIds ?? this.categoryIds,
+    );
+  }
 }
 
 class HongguoBrowseResult {
@@ -234,6 +268,37 @@ class HongguoResolver {
       return 'category/comic-drama';
     }
     if (lower.contains('ai-drama')) return 'category/ai-drama';
+    return '';
+  }
+
+  /// Suy luận kho nội dung ('category/real-drama', 'category/ai-drama', 'category/comic-drama')
+  /// từ danh sách `category_id` trong `category_schema` của ByteDance hoặc tag đặc trưng.
+  static String inferSourceCategoryFromIds(
+    List<String> categoryIds, {
+    List<String> tags = const [],
+  }) {
+    if (tags.contains('真人剧') || tags.contains('短剧')) {
+      return 'category/real-drama';
+    }
+    if (tags.contains('漫剧') || tags.contains('2D漫') || tags.contains('3D漫')) {
+      return 'category/comic-drama';
+    }
+    if (tags.contains('AI剧') || tags.contains('AI短剧')) {
+      return 'category/ai-drama';
+    }
+    for (final raw in categoryIds) {
+      final id = int.tryParse(raw.trim());
+      if (id == null) continue;
+      if ((id >= 5000 && id <= 5459) || (id >= 9160 && id <= 9199)) {
+        return 'category/real-drama';
+      }
+      if ((id >= 5460 && id <= 5869) || (id >= 9380 && id <= 9409)) {
+        return 'category/ai-drama';
+      }
+      if ((id >= 5870 && id <= 6499) || (id >= 9300 && id <= 9379)) {
+        return 'category/comic-drama';
+      }
+    }
     return '';
   }
 
@@ -551,16 +616,21 @@ class HongguoResolver {
   static final Map<String, Future<HongguoDramaDetail>> _inFlightDetails = {};
 
   /// Lấy chi tiết bộ phim và danh sách toàn bộ các tập (có cache trong RAM)
-  Future<HongguoDramaDetail> getDramaDetail(String seriesId) async {
+  Future<HongguoDramaDetail> getDramaDetail(
+    String seriesId, {
+    HongguoDramaItem? fallbackItem,
+  }) async {
     final cleanId = await resolveSeriesId(seriesId);
-    if (_detailCache.containsKey(cleanId) && _detailCache[cleanId]!.episodes.isNotEmpty) {
-      return _detailCache[cleanId]!;
+    final cached = _detailCache[cleanId];
+    if (cached != null && cached.episodes.isNotEmpty) {
+      return _mergeDetailMetadata(cached, fallbackItem);
     }
     if (_inFlightDetails.containsKey(cleanId)) {
-      return _inFlightDetails[cleanId]!;
+      final res = await _inFlightDetails[cleanId]!;
+      return _mergeDetailMetadata(res, fallbackItem);
     }
 
-    final future = _fetchDramaDetail(cleanId);
+    final future = _fetchDramaDetail(cleanId, fallbackItem: fallbackItem);
     _inFlightDetails[cleanId] = future;
     try {
       final res = await future;
@@ -573,7 +643,32 @@ class HongguoResolver {
     }
   }
 
-  Future<HongguoDramaDetail> _fetchDramaDetail(String cleanId) async {
+  HongguoDramaDetail _mergeDetailMetadata(
+    HongguoDramaDetail detail,
+    HongguoDramaItem? fallbackItem,
+  ) {
+    if (fallbackItem == null) return detail;
+    final mergedTags = detail.tags.isNotEmpty ? detail.tags : fallbackItem.tags;
+    final mergedCatIds = detail.categoryIds.isNotEmpty
+        ? detail.categoryIds
+        : fallbackItem.categoryIds;
+    var mergedSource = detail.sourceCategory.isNotEmpty
+        ? detail.sourceCategory
+        : fallbackItem.sourceCategory;
+    if (mergedSource.isEmpty) {
+      mergedSource = inferSourceCategoryFromIds(mergedCatIds, tags: mergedTags);
+    }
+    return detail.copyWith(
+      tags: mergedTags,
+      categoryIds: mergedCatIds,
+      sourceCategory: mergedSource,
+    );
+  }
+
+  Future<HongguoDramaDetail> _fetchDramaDetail(
+    String cleanId, {
+    HongguoDramaItem? fallbackItem,
+  }) async {
     // Mở trang player để lấy đầy đủ vid_list và thông tin phim
     final url = '$siteOrigin/player/$cleanId';
     final res = await dio.get<String>(url);
@@ -586,6 +681,9 @@ class HongguoResolver {
     if (title.isEmpty) {
       title = _cleanJsonString(_extractMatch(html, r'"name"\s*:\s*"([^"]+)"'))
           .replaceAll(RegExp(r'\s*第\d+集.*$'), '');
+    }
+    if (title.isEmpty && (fallbackItem?.title ?? '').isNotEmpty) {
+      title = fallbackItem!.title;
     }
     if (title.isEmpty) {
       title = 'Phim Hồng Quả #$cleanId';
@@ -605,11 +703,57 @@ class HongguoResolver {
         _extractMatch(html, r'"thumbnailUrl"\s*:\s*\[\s*"([^"]+)"'),
       );
     }
+    if (cover.isEmpty && (fallbackItem?.cover ?? '').isNotEmpty) {
+      cover = fallbackItem!.cover;
+    }
 
     // Tóm tắt nội dung
-    final intro = _cleanJsonString(
+    var intro = _cleanJsonString(
       _extractMatch(html, r'"description"\s*:\s*"([^"]+)"'),
     );
+    if (intro.isEmpty && (fallbackItem?.intro ?? '').isNotEmpty) {
+      intro = fallbackItem!.intro;
+    }
+
+    // Bóc tách thêm tags & sourceCategory từ _ROUTER_DATA nếu có
+    final parsedTags = <String>[];
+    final parsedCategoryIds = <String>[];
+    var parsedSourceCategory = '';
+    try {
+      final router = _readRouterData(html);
+      final loader = router?['loaderData'];
+      if (loader is Map) {
+        for (final val in loader.values) {
+          if (val is Map && val['seriesDetail'] is Map) {
+            final sd = Map<String, dynamic>.from(val['seriesDetail'] as Map);
+            final dummy = <String>{};
+            final parsedItem = _parseDramaItemMap(sd, dummy);
+            if (parsedItem != null) {
+              parsedTags.addAll(parsedItem.tags);
+              parsedCategoryIds.addAll(parsedItem.categoryIds);
+              parsedSourceCategory = parsedItem.sourceCategory;
+            }
+            break;
+          }
+        }
+      }
+    } catch (_) {}
+
+    final mergedTags = parsedTags.isNotEmpty
+        ? parsedTags
+        : (fallbackItem?.tags ?? const <String>[]);
+    final mergedCategoryIds = parsedCategoryIds.isNotEmpty
+        ? parsedCategoryIds
+        : (fallbackItem?.categoryIds ?? const <String>[]);
+    var mergedSource = parsedSourceCategory.isNotEmpty
+        ? parsedSourceCategory
+        : (fallbackItem?.sourceCategory ?? '');
+    if (mergedSource.isEmpty) {
+      mergedSource = inferSourceCategoryFromIds(
+        mergedCategoryIds,
+        tags: mergedTags,
+      );
+    }
 
     // Số tập xem được trên nền tảng Web Hồng Quả (mặc định các phim web chỉ mở xem trước 3 tập)
     final accMatch = RegExp(r'"accessible_episode_cnt"\s*:\s*(\d+)')
@@ -686,10 +830,13 @@ class HongguoResolver {
       cover: cover,
       intro: intro,
       totalEpisodes: episodes.isNotEmpty ? episodes.length : accessibleEpisodes,
+      tags: mergedTags,
       episodes: episodes,
       accessibleEpisodes: episodes.isNotEmpty
           ? episodes.length
           : accessibleEpisodes,
+      sourceCategory: mergedSource,
+      categoryIds: mergedCategoryIds,
     );
   }
 
@@ -1366,6 +1513,19 @@ class HongguoResolver {
     return null;
   }
 
+  /// Phân tích một JSON map phim từ web SSR hoặc ByteDance App API thành [HongguoDramaItem].
+  static HongguoDramaItem? parseDramaItemMap(
+    Map<String, dynamic> raw,
+    Set<String> seen, {
+    String fallbackTitle = '',
+    String inferredSourceCategory = '',
+  }) => _parseDramaItemMap(
+    raw,
+    seen,
+    fallbackTitle: fallbackTitle,
+    inferredSourceCategory: inferredSourceCategory,
+  );
+
   static HongguoDramaItem? _parseDramaItemMap(
     Map<String, dynamic> raw,
     Set<String> seen, {
@@ -1386,6 +1546,7 @@ class HongguoResolver {
                 raw['seriesName'] ??
                 raw['series_title'] ??
                 raw['seriesTitle'] ??
+                raw['book_name'] ??
                 raw['title'] ??
                 raw['name'] ??
                 fallbackTitle)
@@ -1397,6 +1558,8 @@ class HongguoResolver {
       (raw['series_cover'] ??
               raw['seriesCover'] ??
               raw['cover'] ??
+              raw['cover_url'] ??
+              raw['thumb_url'] ??
               raw['image'] ??
               '')
           .toString(),
@@ -1408,29 +1571,63 @@ class HongguoResolver {
         ) ??
         0;
     final intro = _cleanJsonString(
-      (raw['series_intro'] ?? raw['intro'] ?? raw['description'] ?? '')
+      (raw['series_intro'] ??
+              raw['video_desc'] ??
+              raw['abstract'] ??
+              raw['intro'] ??
+              raw['description'] ??
+              '')
           .toString(),
     );
 
     final tags = <String>[];
     final seenTags = <String>{};
+    final categoryIds = <String>[];
+    final seenCategoryIds = <String>{};
+
+    void addTagAndId(dynamic nameVal, dynamic idVal) {
+      final cleanName = _cleanJsonString((nameVal ?? '').toString());
+      if (cleanName.isNotEmpty && cleanName != 'null' && seenTags.add(cleanName)) {
+        tags.add(cleanName);
+      }
+      final cleanId = (idVal ?? '').toString().trim();
+      if (cleanId.isNotEmpty &&
+          cleanId != '0' &&
+          cleanId != 'null' &&
+          seenCategoryIds.add(cleanId)) {
+        categoryIds.add(cleanId);
+      }
+    }
+
     final rawTags = raw['tags'];
     if (rawTags is List) {
       for (final t in rawTags) {
-        final clean = _cleanJsonString(t.toString());
-        if (clean.isNotEmpty && seenTags.add(clean)) {
-          tags.add(clean);
-        }
+        addTagAndId(t, null);
       }
     }
     final rawCats = raw['category_list'];
     if (rawCats is List) {
       for (final c in rawCats) {
         if (c is Map) {
-          final clean = _cleanJsonString((c['name'] ?? '').toString());
-          if (clean.isNotEmpty && seenTags.add(clean)) {
-            tags.add(clean);
-          }
+          addTagAndId(c['name'], c['category_id'] ?? c['id']);
+        }
+      }
+    }
+
+    final rawSchema = raw['category_schema'];
+    List? schemaList;
+    if (rawSchema is List) {
+      schemaList = rawSchema;
+    } else if (rawSchema is String && rawSchema.trim().startsWith('[')) {
+      try {
+        final decoded = jsonDecode(rawSchema);
+        if (decoded is List) schemaList = decoded;
+      } catch (_) {}
+    }
+    if (schemaList != null) {
+      for (final entry in schemaList) {
+        if (entry is Map) {
+          addTagAndId(entry['name'], entry['category_id'] ?? entry['id']);
         }
       }
     }
@@ -1443,6 +1640,12 @@ class HongguoResolver {
         if (clean.isNotEmpty) statusTags.add(clean);
       }
     }
+    final tagInfoText = _cleanJsonString(
+      (raw['tag_info'] is Map ? (raw['tag_info'] as Map)['text'] : '').toString(),
+    );
+    if (tagInfoText.isNotEmpty && !statusTags.contains(tagInfoText)) {
+      statusTags.add(tagInfoText);
+    }
 
     final vidList = <String>[];
     final rawVids = raw['vid_list'] ?? raw['episodeVids'];
@@ -1453,6 +1656,12 @@ class HongguoResolver {
             .where((s) => s.isNotEmpty && RegExp(r'^\d+$').hasMatch(s)),
       );
     }
+    if (vidList.isEmpty) {
+      final firstVid = (raw['first_vid'] ?? raw['vid'] ?? '').toString().trim();
+      if (RegExp(r'^\d+$').hasMatch(firstVid)) {
+        vidList.add(firstVid);
+      }
+    }
 
     final metricText = _cleanJsonString(
       (raw['primaryMetricText'] ??
@@ -1462,6 +1671,7 @@ class HongguoResolver {
               raw['favoriteText'] ??
               raw['like_text'] ??
               raw['likeText'] ??
+              raw['read_cnt_text'] ??
               '')
           .toString(),
     );
@@ -1469,13 +1679,7 @@ class HongguoResolver {
 
     var resolvedSource = inferredSourceCategory;
     if (resolvedSource.isEmpty) {
-      if (tags.contains('真人剧')) {
-        resolvedSource = 'category/real-drama';
-      } else if (tags.contains('漫剧')) {
-        resolvedSource = 'category/comic-drama';
-      } else if (tags.contains('AI剧')) {
-        resolvedSource = 'category/ai-drama';
-      }
+      resolvedSource = inferSourceCategoryFromIds(categoryIds, tags: tags);
     }
 
     return HongguoDramaItem(
@@ -1490,6 +1694,7 @@ class HongguoResolver {
       rank: rankVal,
       statusTags: statusTags,
       sourceCategory: resolvedSource,
+      categoryIds: categoryIds,
     );
   }
 

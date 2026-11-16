@@ -421,6 +421,18 @@ class SettingsRepository {
   set hongguoFeedTrendingPage(int v) =>
       prefs.setInt('hongguo_feed_trending_page', v);
 
+  /// Trạng thái bộ lọc đa chiều (JSON) cho màn hình Lướt Shorts Hồng Quả
+  String get hongguoFeedDiscoveryJson =>
+      prefs.getString('hongguo_feed_discovery_json') ?? '';
+  set hongguoFeedDiscoveryJson(String v) =>
+      prefs.setString('hongguo_feed_discovery_json', v);
+
+  /// Trạng thái bộ lọc đa chiều (JSON) cho Kho Phim Hồng Quả
+  String get hongguoCatalogDiscoveryJson =>
+      prefs.getString('hongguo_catalog_discovery_json') ?? '';
+  set hongguoCatalogDiscoveryJson(String v) =>
+      prefs.setString('hongguo_catalog_discovery_json', v);
+
   /// Chế độ dịch riêng của Bilibili: 'capcut' (CapCut Free) hoặc 'api_online' (AI Online)
   String get bilibiliTranslationMode =>
       prefs.getString('bilibili_translation_mode') ?? 'capcut';

@@ -24,12 +24,15 @@ import '../../../domain/ai/offline_mlkit_translator.dart';
 import '../../../domain/media/audio_extractor.dart';
 import '../../../domain/media/hongguo/hongguo_cloud_account_service.dart';
 import '../../../domain/media/hongguo/hongguo_codec_capabilities.dart';
+import '../../../domain/media/hongguo/hongguo_discovery_service.dart';
 import '../../../domain/media/hongguo/hongguo_local_engine.dart';
 import '../../../domain/media/hongguo/hongguo_playback_routes.dart';
 import '../../../domain/media/hongguo/hongguo_remote_video.dart';
 import '../../../domain/media/hongguo/hongguo_similar_engine.dart';
 import '../../../domain/media/hongguo/hongguo_stream_proxy_server.dart';
 import '../hongguo_account_sheet.dart';
+import '../hongguo_discovery_filter_sheet.dart';
+import '../hongguo_related_sheet.dart';
 import '../../../domain/media/hongguo_resolver.dart';
 import '../../../domain/media/multi_thread_downloader.dart';
 import '../../../domain/media/network_header_helper.dart';
@@ -88,22 +91,6 @@ class _FeedPlaybackSource {
 /// - Bottom Sheet chọn tập chuẩn ByteDance với phân trang dải tập (1-30, 31-60...), lưới 6 cột và icon sóng nhạc 'ıll'
 /// - Thanh tua Scrubber cảm ứng mượt mà với bong bóng thời gian thực
 /// - Bộ điều tốc độ phát (1.0x, 1.25x, 1.5x, 2.0x) và nút xoay toàn màn hình
-/// Model cho tuỳ chọn thể loại trong Feed Hồng Quả
-class HongguoFeedGenreOption {
-  final String slug;
-  final String label;
-  final String zhTag;
-  final String icon;
-
-  const HongguoFeedGenreOption({
-    required this.slug,
-    required this.label,
-    required this.zhTag,
-    required this.icon,
-  });
-}
-
-/// - Thao tác vuốt dọc mượt mà, chạm dừng/phát, nhấp đúp thả tim
 class HongguoFeedScreen extends StatefulWidget {
   final HongguoDramaDetail? initialDrama;
   final int initialEpisodeIndex;
@@ -139,272 +126,21 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
   List<FeedDramaPageItem> _savedDiscoverItems = [];
   int _savedDiscoverIndex = 0;
 
-  // Danh mục thể loại chuẩn xác 100% của Hồng Quả
-  static const List<HongguoFeedGenreOption> realDramaOptions = [
-    HongguoFeedGenreOption(
-      slug: '',
-      label: 'Tất cả thể loại',
-      zhTag: '全部',
-      icon: '🌟',
-    ),
-    HongguoFeedGenreOption(
-      slug: 'costume',
-      label: 'Cổ trang',
-      zhTag: '古装',
-      icon: '🏯',
-    ),
-    HongguoFeedGenreOption(
-      slug: 'urban',
-      label: 'Đô thị',
-      zhTag: '都市',
-      icon: '🏙️',
-    ),
-    HongguoFeedGenreOption(
-      slug: 'comeback',
-      label: 'Nghịch tập',
-      zhTag: '逆袭',
-      icon: '⚡',
-    ),
-    HongguoFeedGenreOption(
-      slug: 'clan',
-      label: 'Hào môn / Gia tộc',
-      zhTag: '家族',
-      icon: '🏰',
-    ),
-    HongguoFeedGenreOption(
-      slug: 'romance',
-      label: 'Tình cảm',
-      zhTag: '爱情',
-      icon: '❤️',
-    ),
-    HongguoFeedGenreOption(
-      slug: 'fantasy',
-      label: 'Tu tiên / Huyền huyễn',
-      zhTag: '玄幻',
-      icon: '✨',
-    ),
-    HongguoFeedGenreOption(
-      slug: 'period',
-      label: 'Niên đại',
-      zhTag: '年代',
-      icon: '📻',
-    ),
-    HongguoFeedGenreOption(
-      slug: 'suspense',
-      label: 'Hồi hộp / Trinh thám',
-      zhTag: '悬疑',
-      icon: '🔍',
-    ),
-    HongguoFeedGenreOption(
-      slug: 'comedy',
-      label: 'Hài hước',
-      zhTag: '喜剧',
-      icon: '😂',
-    ),
-    HongguoFeedGenreOption(
-      slug: 'action-adventure',
-      label: 'Hành động phiêu lưu',
-      zhTag: '动作冒险',
-      icon: '💥',
-    ),
-    HongguoFeedGenreOption(
-      slug: 'cute-kids',
-      label: 'Manh bảo / Nuôi con',
-      zhTag: '萌宝',
-      icon: '🍼',
-    ),
-    HongguoFeedGenreOption(
-      slug: 'growth',
-      label: 'Trưởng thành',
-      zhTag: '成长',
-      icon: '🌱',
-    ),
-    HongguoFeedGenreOption(
-      slug: 'family',
-      label: 'Gia đình',
-      zhTag: '家庭',
-      icon: '🏡',
-    ),
-    HongguoFeedGenreOption(
-      slug: 'legend',
-      label: 'Truyền kỳ',
-      zhTag: '传奇',
-      icon: '⚔️',
-    ),
-    HongguoFeedGenreOption(
-      slug: 'supernatural',
-      label: 'Linh dị / Yêu ma',
-      zhTag: '志怪',
-      icon: '👻',
-    ),
-    HongguoFeedGenreOption(
-      slug: 'sci-fi',
-      label: 'Khoa huyễn',
-      zhTag: '科幻',
-      icon: '🚀',
-    ),
-    HongguoFeedGenreOption(
-      slug: 'disaster',
-      label: 'Thảm họa',
-      zhTag: '灾难',
-      icon: '🌋',
-    ),
-    HongguoFeedGenreOption(
-      slug: 'war',
-      label: 'Chiến tranh',
-      zhTag: '战争',
-      icon: '🛡️',
-    ),
-    HongguoFeedGenreOption(
-      slug: 'youth',
-      label: 'Thanh xuân học đường',
-      zhTag: '青春',
-      icon: '🎓',
-    ),
-    HongguoFeedGenreOption(
-      slug: 'drama',
-      label: 'Chính kịch / Tâm lý',
-      zhTag: '剧情',
-      icon: '🎭',
-    ),
-  ];
-
-  static const List<HongguoFeedGenreOption> comicDramaOptions = [
-    HongguoFeedGenreOption(
-      slug: '',
-      label: 'Tất cả hoạt hình',
-      zhTag: '全部',
-      icon: '🌟',
-    ),
-    HongguoFeedGenreOption(
-      slug: 'creative',
-      label: 'Hệ thống / Não động',
-      zhTag: '脑洞',
-      icon: '💡',
-    ),
-    HongguoFeedGenreOption(
-      slug: 'fantasy',
-      label: 'Tu tiên / Huyền huyễn',
-      zhTag: '玄幻',
-      icon: '✨',
-    ),
-    HongguoFeedGenreOption(
-      slug: 'apocalypse',
-      label: 'Mạt thế / Sinh tồn',
-      zhTag: '末世',
-      icon: '☣️',
-    ),
-    HongguoFeedGenreOption(
-      slug: 'wealthy-family',
-      label: 'Hào môn / Đô thị',
-      zhTag: '豪门',
-      icon: '🏰',
-    ),
-    HongguoFeedGenreOption(
-      slug: 'sci-fi',
-      label: 'Khoa huyễn',
-      zhTag: '科幻',
-      icon: '🚀',
-    ),
-    HongguoFeedGenreOption(
-      slug: 'adventure',
-      label: 'Phiêu lưu / Nhiệt huyết',
-      zhTag: '冒险',
-      icon: '⚔️',
-    ),
-    HongguoFeedGenreOption(
-      slug: 'drama',
-      label: 'Tâm lý / Cốt truyện',
-      zhTag: '剧情',
-      icon: '🎭',
-    ),
-    HongguoFeedGenreOption(
-      slug: 'wonder',
-      label: 'Kỳ ảo / Dị giới',
-      zhTag: '奇幻',
-      icon: '🔮',
-    ),
-  ];
-
-  static const List<HongguoFeedGenreOption> aiDramaOptions = [
-    HongguoFeedGenreOption(
-      slug: '',
-      label: 'Tất cả phim AI',
-      zhTag: '全部',
-      icon: '🌟',
-    ),
-    HongguoFeedGenreOption(
-      slug: 'creative',
-      label: 'Não động / Sáng tạo',
-      zhTag: '脑洞',
-      icon: '💡',
-    ),
-    HongguoFeedGenreOption(
-      slug: 'fantasy',
-      label: 'Tu tiên / Huyền huyễn',
-      zhTag: '玄幻',
-      icon: '✨',
-    ),
-    HongguoFeedGenreOption(
-      slug: 'apocalypse',
-      label: 'Mạt thế / Sinh tồn',
-      zhTag: '末世',
-      icon: '☣️',
-    ),
-    HongguoFeedGenreOption(
-      slug: 'wealthy-family',
-      label: 'Hào môn / Tổng tài',
-      zhTag: '豪门',
-      icon: '🏰',
-    ),
-    HongguoFeedGenreOption(
-      slug: 'sci-fi',
-      label: 'Khoa huyễn',
-      zhTag: '科幻',
-      icon: '🚀',
-    ),
-    HongguoFeedGenreOption(
-      slug: 'adventure',
-      label: 'Phiêu lưu kỳ ảo',
-      zhTag: '冒险',
-      icon: '⚔️',
-    ),
-    HongguoFeedGenreOption(
-      slug: 'drama',
-      label: 'Tâm lý / Cốt truyện',
-      zhTag: '剧情',
-      icon: '🎭',
-    ),
-    HongguoFeedGenreOption(
-      slug: 'wonder',
-      label: 'Kỳ ảo',
-      zhTag: '奇幻',
-      icon: '🔮',
-    ),
-  ];
-
-  List<HongguoFeedGenreOption> _getGenreOptionsForCategory(String category) {
-    if (category == 'category/comic-drama') return comicDramaOptions;
-    if (category == 'category/ai-drama') return aiDramaOptions;
-    return realDramaOptions;
-  }
-
-  // Quản lý các Tab khám phá: 'trending' (Thịnh hành) | 'discover' (Đề xuất cá nhân hoá) | 'genre' (Theo thể loại)
+  // Quản lý các Tab khám phá: 'trending' (Thịnh hành) | 'discover' (Đề xuất cá nhân hoá) | 'genre' (Bộ lọc đa chiều)
   String _currentFeedTab = 'discover';
-  String _selectedCategorySlug = 'category/real-drama';
-  String _selectedGenreSlug = '';
+  HongguoDiscoverySelection _genreSelection = const HongguoDiscoverySelection();
+  HongguoDiscoveryCursor? _genreCursor;
   String _selectedGenreLabel = 'Người thật';
-  String _selectedZhTag = '全部';
   int _trendingPage = 1;
-  int _genrePage = 1;
 
   void _saveFeedPreferences() {
     if (_settings == null || _isDramaEpisodeMode) return;
     _settings!.hongguoFeedTab = _currentFeedTab;
-    _settings!.hongguoFeedCategory = _selectedCategorySlug;
-    _settings!.hongguoFeedGenreSlug = _selectedGenreSlug;
+    _settings!.hongguoFeedDiscoveryJson = _genreSelection.toJsonString();
+    _settings!.hongguoFeedCategory = _genreSelection.genreKind.categorySlug;
     _settings!.hongguoFeedGenreLabel = _selectedGenreLabel;
-    _settings!.hongguoFeedZhTag = _selectedZhTag;
+    _settings!.hongguoFeedZhTag =
+        _genreSelection.tagHint.isNotEmpty ? _genreSelection.tagHint : '全部';
   }
 
   // Lưu vị trí video đang xem của từng tab để khôi phục mượt mà như TikTok
@@ -620,10 +356,33 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       }
 
       if (!_isDramaEpisodeMode) {
-        _selectedCategorySlug = settings.hongguoFeedCategory;
-        _selectedGenreSlug = settings.hongguoFeedGenreSlug;
-        _selectedGenreLabel = settings.hongguoFeedGenreLabel;
-        _selectedZhTag = settings.hongguoFeedZhTag;
+        if (settings.hongguoFeedDiscoveryJson.isNotEmpty) {
+          _genreSelection = HongguoDiscoverySelection.fromJsonString(
+            settings.hongguoFeedDiscoveryJson,
+          );
+          _selectedGenreLabel = _genreSelection.buildSummaryLabel(
+            HongguoDiscoveryService.instance.getSelectorGroups(
+              _genreSelection.genreKind,
+            ),
+          );
+        } else {
+          final fallbackKind = HongguoGenreKind.fromAny(
+            settings.hongguoFeedCategory,
+          );
+          _genreSelection =
+              settings.hongguoFeedZhTag.isNotEmpty &&
+                  settings.hongguoFeedZhTag != '全部'
+              ? HongguoDiscoveryService.instance.resolveSelectionForTag(
+                  settings.hongguoFeedZhTag,
+                  preferredSourceCategory: fallbackKind.categorySlug,
+                )
+              : HongguoDiscoverySelection(genreKind: fallbackKind);
+          _selectedGenreLabel = _genreSelection.buildSummaryLabel(
+            HongguoDiscoveryService.instance.getSelectorGroups(
+              _genreSelection.genreKind,
+            ),
+          );
+        }
       }
     });
 
@@ -721,6 +480,8 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       intro: drama.intro,
       totalEpisodes: drama.episodeCount,
       tags: drama.tags,
+      sourceCategory: drama.sourceCategory,
+      categoryIds: drama.categoryIds,
       episodes: [
         for (var i = 0; i < drama.vidList.length; i++)
           HongguoEpisodeItem(
@@ -1977,21 +1738,25 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         }
         dramas = res.items;
       } else if (_currentFeedTab == 'genre') {
-        _genrePage++;
-        var res = await _resolver.browseList(
-          category: _selectedCategorySlug,
-          genre: _selectedGenreSlug,
-          page: _genrePage,
+        final existingSids = _feedItems.map((e) => e.detail.seriesId).toSet();
+        final seenAll = <String>{
+          ...existingSids,
+          ...?_settings?.hongguoSeenSeriesIds,
+        };
+        var page = await HongguoDiscoveryService.instance.fetchDiscovery(
+          _genreSelection,
+          cursor: _genreCursor,
+          seenIds: seenAll,
         );
-        if (res.items.isEmpty) {
-          _genrePage = math.Random().nextInt(15) + 1;
-          res = await _resolver.browseList(
-            category: _selectedCategorySlug,
-            genre: _selectedGenreSlug,
-            page: _genrePage,
+        if (page.items.isEmpty && _genreCursor != null) {
+          _genreCursor = null;
+          page = await HongguoDiscoveryService.instance.fetchDiscovery(
+            _genreSelection,
+            seenIds: existingSids,
           );
         }
-        dramas = res.items;
+        _genreCursor = page.nextCursor;
+        dramas = page.items;
       } else {
         final existingSids = _feedItems.map((e) => e.detail.seriesId).toSet();
         dramas = await HongguoSimilarEngine.instance
@@ -2087,8 +1852,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         targetItems = _trendingFeedItems;
       } else {
         _tabCurrentIndices['trending'] = 0;
-        final rng = math.Random();
-        _trendingPage = forceReload ? (rng.nextInt(3) + 1) : 1;
+        _trendingPage = forceReload ? (_trendingPage % 3) + 1 : 1;
         _settings?.hongguoFeedTrendingPage = _trendingPage;
 
         try {
@@ -2115,7 +1879,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         _tabCurrentIndices['discover'] = 0;
         try {
           final list = await HongguoSimilarEngine.instance
-              .getPersonalizedDiscoverList();
+              .getPersonalizedDiscoverList(resetCursor: forceReload);
           final sorted = _prioritizeUnwatchedDramas(list);
           final items = <FeedDramaPageItem>[];
           for (final drama in sorted) {
@@ -2133,25 +1897,19 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         targetItems = _genreFeedItems;
       } else {
         _tabCurrentIndices['genre'] = 0;
-        final rng = math.Random();
-        _genrePage = forceReload ? (rng.nextInt(15) + 1) : 1;
-        _settings?.hongguoFeedGenrePage = _genrePage;
+        _genreCursor = null;
 
         try {
-          var res = await _resolver.browseList(
-            category: _selectedCategorySlug,
-            genre: _selectedGenreSlug,
-            page: _genrePage,
+          final seenSet = _settings?.hongguoSeenSeriesIds.toSet() ?? <String>{};
+          final pageRes = await HongguoDiscoveryService.instance.fetchDiscovery(
+            _genreSelection,
+            seenIds: seenSet,
           );
-          if (res.items.isEmpty && _genrePage > 1) {
-            _genrePage = 1;
-            res = await _resolver.browseList(
-              category: _selectedCategorySlug,
-              genre: _selectedGenreSlug,
-              page: 1,
-            );
-          }
-          final sorted = _prioritizeUnwatchedDramas(res.items);
+          _genreCursor = pageRes.nextCursor;
+          _selectedGenreLabel = _genreSelection.buildSummaryLabel(
+            pageRes.selectorGroups,
+          );
+          final sorted = _prioritizeUnwatchedDramas(pageRes.items);
           final items = <FeedDramaPageItem>[];
           for (final drama in sorted) {
             items.add(_createFeedDramaItem(drama));
@@ -2189,396 +1947,61 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     }
   }
 
-  /// Mở bảng chọn thể loại & dạng phim (Người thật / Hoạt hình / Phim AI)
-  void _openGenrePickerSheet() {
-    HapticFeedback.mediumImpact();
-    var tempCategory = _selectedCategorySlug;
-    var tempGenre = _selectedGenreSlug;
-    var tempZhTag = _selectedZhTag;
-    var tempLabel = _selectedGenreLabel;
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (sheetCtx) => StatefulBuilder(
-        builder: (ctx, setSheetState) {
-          final isReal = tempCategory == 'category/real-drama';
-          final isComic = tempCategory == 'category/comic-drama';
-          final isAi = tempCategory == 'category/ai-drama';
-
-          final currentOptions = _getGenreOptionsForCategory(tempCategory);
-          final categoryName = isComic
-              ? 'Hoạt hình'
-              : (isAi ? 'Phim AI' : 'Người thật');
-
-          String buttonLabel;
-          if (tempGenre.isEmpty) {
-            buttonLabel = 'Tất cả $categoryName';
-          } else {
-            buttonLabel = tempLabel;
-          }
-
-          return Container(
-            constraints: BoxConstraints(
-              maxHeight: MediaQuery.of(context).size.height * 0.82,
-            ),
-            decoration: const BoxDecoration(
-              color: Color(0xFF181A20),
-              borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
-              boxShadow: [BoxShadow(color: Colors.black87, blurRadius: 20)],
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  margin: const EdgeInsets.only(top: 10, bottom: 8),
-                  width: 38,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.white24,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Row(
-                        children: [
-                          Icon(
-                            Icons.tune_rounded,
-                            color: Color(0xFFFF6A00),
-                            size: 19,
-                          ),
-                          SizedBox(width: 8),
-                          Text(
-                            'Bộ lọc Thể loại & Dạng phim',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 16.5,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                      IconButton(
-                        icon: const Icon(
-                          Icons.close_rounded,
-                          color: Colors.white54,
-                          size: 20,
-                        ),
-                        onPressed: () => Navigator.pop(sheetCtx),
-                      ),
-                    ],
-                  ),
-                ),
-                const Divider(color: Colors.white12, height: 1),
-                Expanded(
-                  child: SingleChildScrollView(
-                    physics: const BouncingScrollPhysics(),
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // 1. CHỌN DẠNG PHIM
-                        Row(
-                          children: [
-                            const Text(
-                              '1. Dạng phim',
-                              style: TextStyle(
-                                color: Colors.white70,
-                                fontSize: 13.5,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const Spacer(),
-                            Text(
-                              'Hồng Quả phân loại chuẩn',
-                              style: TextStyle(
-                                color: Colors.white.withValues(alpha: 0.35),
-                                fontSize: 11,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 10),
-                        Wrap(
-                          spacing: 10,
-                          runSpacing: 10,
-                          children: [
-                            _buildFilterChip(
-                              label: '🎬 Người thật',
-                              isSelected: isReal,
-                              onSelected: () {
-                                setSheetState(() {
-                                  tempCategory = 'category/real-drama';
-                                  final exists = realDramaOptions.any(
-                                    (o) =>
-                                        o.slug.isNotEmpty &&
-                                        o.slug == tempGenre,
-                                  );
-                                  if (!exists) {
-                                    tempGenre = '';
-                                    tempZhTag = '全部';
-                                    tempLabel = 'Người thật';
-                                  }
-                                });
-                              },
-                            ),
-                            _buildFilterChip(
-                              label: '🎨 Hoạt hình',
-                              isSelected: isComic,
-                              onSelected: () {
-                                setSheetState(() {
-                                  tempCategory = 'category/comic-drama';
-                                  final exists = comicDramaOptions.any(
-                                    (o) =>
-                                        o.slug.isNotEmpty &&
-                                        o.slug == tempGenre,
-                                  );
-                                  if (!exists) {
-                                    tempGenre = '';
-                                    tempZhTag = '全部';
-                                    tempLabel = 'Hoạt hình';
-                                  }
-                                });
-                              },
-                            ),
-                            _buildFilterChip(
-                              label: '🤖 Phim AI',
-                              isSelected: isAi,
-                              onSelected: () {
-                                setSheetState(() {
-                                  tempCategory = 'category/ai-drama';
-                                  final exists = aiDramaOptions.any(
-                                    (o) =>
-                                        o.slug.isNotEmpty &&
-                                        o.slug == tempGenre,
-                                  );
-                                  if (!exists) {
-                                    tempGenre = '';
-                                    tempZhTag = '全部';
-                                    tempLabel = 'Phim AI';
-                                  }
-                                });
-                              },
-                            ),
-                          ],
-                        ),
-
-                        const SizedBox(height: 22),
-
-                        // 2. CHỌN THỂ LOẠI
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              '2. Thể loại ($categoryName)',
-                              style: const TextStyle(
-                                color: Colors.white70,
-                                fontSize: 13.5,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            Text(
-                              tempGenre.isEmpty
-                                  ? 'Xem toàn bộ thể loại'
-                                  : 'Đã chọn 1 thể loại',
-                              style: const TextStyle(
-                                color: Color(0xFFFF9E40),
-                                fontSize: 11.5,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          tempGenre.isEmpty
-                              ? '💡 Bạn đang chọn xem tất cả $categoryName (không giới hạn thể loại).'
-                              : '💡 Chạm vào "Tất cả $categoryName" nếu chỉ muốn lướt dạng phim mà không lọc thể loại.',
-                          style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.45),
-                            fontSize: 11.5,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-
-                        // DANH SÁCH THỂ LOẠI CHUẨN XÁC CỦA HỒNG QUẢ CHO DẠNG PHIM NÀY
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 10,
-                          children: currentOptions.map((opt) {
-                            final isSel = tempGenre == opt.slug;
-                            final displayLabel = '${opt.icon} ${opt.label}';
-
-                            return _buildFilterChip(
-                              label: displayLabel,
-                              isSelected: isSel,
-                              onSelected: () {
-                                setSheetState(() {
-                                  tempGenre = opt.slug;
-                                  tempZhTag = opt.zhTag;
-                                  if (opt.slug.isEmpty) {
-                                    tempLabel = categoryName;
-                                  } else {
-                                    if (isComic) {
-                                      tempLabel = 'Hoạt hình · ${opt.label}';
-                                    } else if (isAi) {
-                                      tempLabel = 'AI · ${opt.label}';
-                                    } else {
-                                      tempLabel = opt.label;
-                                    }
-                                  }
-                                });
-                              },
-                            );
-                          }).toList(),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-
-                // NÚT XÁC NHẬN BỘ LỌC
-                Padding(
-                  padding: EdgeInsets.fromLTRB(
-                    16,
-                    8,
-                    16,
-                    MediaQuery.of(context).padding.bottom + 12,
-                  ),
-                  child: SizedBox(
-                    width: double.infinity,
-                    height: 48,
-                    child: ElevatedButton.icon(
-                      icon: const Icon(Icons.check_rounded, size: 19),
-                      label: Text(
-                        'Xem phim: $buttonLabel',
-                        style: const TextStyle(
-                          fontSize: 14.5,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFFF6A00),
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(24),
-                        ),
-                        elevation: 4,
-                      ),
-                      onPressed: () {
-                        Navigator.pop(sheetCtx);
-                        setState(() {
-                          _selectedCategorySlug = tempCategory;
-                          _selectedGenreSlug = tempGenre;
-                          _selectedZhTag = tempZhTag;
-                          _selectedGenreLabel = tempLabel;
-                          _genreFeedItems.clear();
-                          _genrePage = 1;
-                          _tabCurrentIndices['genre'] = 0;
-                        });
-                        _saveFeedPreferences();
-                        _switchFeedTab('genre', forceReload: true);
-                      },
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          );
-        },
-      ),
+  /// Mở bảng Bộ lọc Thể loại Đa chiều (Kho + Phong cách + Bối cảnh + Chủ đề + Đối tượng + Sắp xếp)
+  Future<void> _openGenrePickerSheet() async {
+    final picked = await HongguoDiscoveryFilterSheet.show(
+      context,
+      initialSelection: _genreSelection,
+      accentColor: const Color(0xFFFF6A00),
     );
+    if (!mounted || picked == null) return;
+    final groups = HongguoDiscoveryService.instance.getSelectorGroups(
+      picked.genreKind,
+    );
+    setState(() {
+      _genreSelection = picked;
+      _selectedGenreLabel = picked.buildSummaryLabel(groups);
+      _genreFeedItems.clear();
+      _genreCursor = null;
+      _tabCurrentIndices['genre'] = 0;
+    });
+    _saveFeedPreferences();
+    unawaited(_switchFeedTab('genre', forceReload: true));
   }
 
-  Widget _buildFilterChip({
-    required String label,
-    required bool isSelected,
-    required VoidCallback onSelected,
-  }) {
-    return GestureDetector(
-      onTap: () {
-        HapticFeedback.selectionClick();
-        onSelected();
-      },
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-        decoration: BoxDecoration(
-          color: isSelected
-              ? const Color(0xFFFF6A00).withValues(alpha: 0.18)
-              : Colors.white.withValues(alpha: 0.08),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: isSelected ? const Color(0xFFFF6A00) : Colors.white12,
-            width: isSelected ? 1.4 : 0.8,
-          ),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: isSelected ? const Color(0xFFFF6A00) : Colors.white70,
-            fontSize: 13,
-            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// Lọc nhanh theo thể loại khi người dùng chạm vào bất kỳ thẻ tag nào trên video hoặc bảng chi tiết
-  void _filterByTag(String tag) {
+  /// Lọc nhanh theo thể loại khi người dùng chạm vào thẻ tag trên video hoặc bảng chi tiết.
+  /// Khóa chặt hệ sinh thái đang xem (AI / Hoạt hình / Người thật), không nhảy nhầm về Người thật.
+  void _filterByTag(String tag, {HongguoDramaDetail? detail}) {
     HapticFeedback.mediumImpact();
+    final activeDetail =
+        detail ??
+        (_currentIndex >= 0 && _currentIndex < _feedItems.length
+            ? _feedItems[_currentIndex].detail
+            : null);
+
+    var fallbackSource = activeDetail?.sourceCategory ?? '';
+    if (fallbackSource.isEmpty && _currentFeedTab == 'genre') {
+      fallbackSource = _genreSelection.genreKind.categorySlug;
+    }
+
     final cleanZh = tag.replaceAll(RegExp(r'[\[\]#\s]'), '').trim();
-    final viLabel = HongguoSimilarEngine.getTagLabel(cleanZh);
-
-    // Tìm trong các danh mục chuẩn
-    HongguoFeedGenreOption? matched;
-    String matchedCategory = 'category/real-drama';
-
-    for (final opt in realDramaOptions) {
-      if (opt.slug.isNotEmpty &&
-          (opt.zhTag == cleanZh || opt.slug == cleanZh.toLowerCase())) {
-        matched = opt;
-        matchedCategory = 'category/real-drama';
-        break;
-      }
-    }
-    if (matched == null) {
-      for (final opt in comicDramaOptions) {
-        if (opt.slug.isNotEmpty &&
-            (opt.zhTag == cleanZh || opt.slug == cleanZh.toLowerCase())) {
-          matched = opt;
-          matchedCategory = 'category/comic-drama';
-          break;
-        }
-      }
-    }
-    if (matched == null) {
-      for (final opt in aiDramaOptions) {
-        if (opt.slug.isNotEmpty &&
-            (opt.zhTag == cleanZh || opt.slug == cleanZh.toLowerCase())) {
-          matched = opt;
-          matchedCategory = 'category/ai-drama';
-          break;
-        }
-      }
-    }
-
-    final targetSlug = matched?.slug ?? '';
-    final targetLabel = matched != null ? matched.label : viLabel;
+    final selection = HongguoDiscoveryService.instance.resolveSelectionForTag(
+      cleanZh,
+      preferredSourceCategory: fallbackSource,
+      categoryIds: activeDetail?.categoryIds ?? const <String>[],
+      allDramaTags: activeDetail?.tags ?? const <String>[],
+    );
+    final groups = HongguoDiscoveryService.instance.getSelectorGroups(
+      selection.genreKind,
+    );
+    final summaryLabel = selection.buildSummaryLabel(groups);
 
     setState(() {
-      _selectedZhTag = cleanZh;
-      _selectedCategorySlug = matchedCategory;
-      _selectedGenreSlug = targetSlug;
-      _selectedGenreLabel = targetLabel;
+      _genreSelection = selection;
+      _selectedGenreLabel = summaryLabel;
       _genreFeedItems.clear();
-      _genrePage = 1;
+      _genreCursor = null;
+      _tabCurrentIndices['genre'] = 0;
     });
 
     _saveFeedPreferences();
@@ -2593,7 +2016,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                'Đang lọc theo thể loại: $targetLabel',
+                'Đang lọc: $summaryLabel',
                 style: const TextStyle(fontWeight: FontWeight.w600),
               ),
             ),
@@ -2609,27 +2032,22 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     _switchFeedTab('genre', forceReload: true);
   }
 
-  /// Mở Bottom Sheet tìm phim tương tự theo Zone
+  /// Mở Bottom Sheet "Đề xuất tương tự (相关推荐)" chuẩn API ByteDance
   void _openSimilarDramasSheet(FeedDramaPageItem item) {
-    HapticFeedback.mediumImpact();
     HongguoSimilarEngine.instance.recordInterest(item.detail.tags, 3.0);
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (sheetCtx) => _SimilarDramasBottomSheet(
-        currentItem: item,
-        onSelectDrama: (selectedDrama) {
-          Navigator.pop(sheetCtx);
-          final detail = _dramaItemToDetail(selectedDrama);
-          _switchToDramaEpisodeMode(detail);
-        },
-        onPlaySimilarFeed: (similarDramas) {
-          Navigator.pop(sheetCtx);
-          _loadSimilarDramasIntoFeed(similarDramas);
-        },
-      ),
+    HongguoRelatedDramaSheet.show(
+      context,
+      currentDetail: item.detail,
+      isTranslationEnabled: true,
+      onSelectDrama: (selectedDrama) {
+        Navigator.pop(context);
+        final detail = _dramaItemToDetail(selectedDrama);
+        _switchToDramaEpisodeMode(detail);
+      },
+      onPlaySimilarFeed: (similarDramas) {
+        Navigator.pop(context);
+        _loadSimilarDramasIntoFeed(similarDramas);
+      },
     );
   }
 
@@ -2910,7 +2328,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
             await _switchToDramaEpisodeMode(fullDetail, targetEpisode: epIndex);
           }
         },
-        onSelectTag: _filterByTag,
+        onSelectTag: (tag) => _filterByTag(tag, detail: detail),
       ),
     );
   }
@@ -3744,7 +3162,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
                     _buildTopTabItem(
                       label: _selectedGenreLabel.isNotEmpty
                           ? _selectedGenreLabel
-                          : 'Thể loại',
+                          : 'Bộ lọc',
                       isSelected: _currentFeedTab == 'genre',
                       showDropdownIcon: true,
                       onTap: () {
@@ -3987,7 +3405,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
                         children: item.detail.tags.take(4).map((tag) {
                           final viLabel = HongguoSimilarEngine.getTagLabel(tag);
                           return GestureDetector(
-                            onTap: () => _filterByTag(tag),
+                            onTap: () => _filterByTag(tag, detail: item.detail),
                             child: Container(
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 7,
@@ -6867,497 +6285,6 @@ class _EqualizerBar extends StatelessWidget {
       decoration: BoxDecoration(
         color: const Color(0xFFFF6A00),
         borderRadius: BorderRadius.circular(1),
-      ),
-    );
-  }
-}
-
-/// Bottom Sheet hiển thị danh sách phim tương tự theo Zone (Zone 1: Cực kỳ giống, Zone 2: Cùng chủ đề, Zone 3: Mở rộng)
-class _SimilarDramasBottomSheet extends StatefulWidget {
-  final FeedDramaPageItem currentItem;
-  final ValueChanged<HongguoDramaItem> onSelectDrama;
-  final ValueChanged<List<HongguoDramaItem>> onPlaySimilarFeed;
-
-  const _SimilarDramasBottomSheet({
-    required this.currentItem,
-    required this.onSelectDrama,
-    required this.onPlaySimilarFeed,
-  });
-
-  @override
-  State<_SimilarDramasBottomSheet> createState() =>
-      _SimilarDramasBottomSheetState();
-}
-
-class _SimilarDramasBottomSheetState extends State<_SimilarDramasBottomSheet> {
-  bool _isLoading = true;
-  List<SimilarDramaResult> _results = [];
-
-  @override
-  void initState() {
-    super.initState();
-    _loadSimilarDramas();
-  }
-
-  Future<void> _loadSimilarDramas() async {
-    try {
-      final list = await HongguoSimilarEngine.instance.findSimilarDramas(
-        detail: widget.currentItem.detail,
-      );
-      if (mounted) {
-        setState(() {
-          _results = list;
-          _isLoading = false;
-        });
-      }
-    } catch (_) {
-      if (mounted) setState(() => _isLoading = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final curTitle =
-        OfflineMlKitTranslator.getCachedTitle(
-          widget.currentItem.detail.title,
-        ) ??
-        widget.currentItem.detail.title;
-    final curTags = HongguoSimilarEngine.instance.extractTagsFromDrama(
-      tags: widget.currentItem.detail.tags,
-      title: widget.currentItem.detail.title,
-      intro: widget.currentItem.detail.intro,
-    );
-
-    final zone1 = _results.where((r) => r.zone == 1).toList();
-    final zone2 = _results.where((r) => r.zone == 2).toList();
-    final zone3 = _results.where((r) => r.zone == 3).toList();
-
-    return Container(
-      constraints: BoxConstraints(
-        maxHeight: MediaQuery.of(context).size.height * 0.78,
-      ),
-      decoration: const BoxDecoration(
-        color: Color(0xFF16181D),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black87,
-            blurRadius: 18,
-            offset: Offset(0, -4),
-          ),
-        ],
-      ),
-      child: Column(
-        children: [
-          // Drag handle
-          Container(
-            margin: const EdgeInsets.only(top: 10, bottom: 6),
-            width: 36,
-            height: 4,
-            decoration: BoxDecoration(
-              color: Colors.white24,
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-
-          // Header
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(7),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF2DE1FC).withValues(alpha: 0.15),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.auto_awesome_motion_rounded,
-                    color: Color(0xFF2DE1FC),
-                    size: 18,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Phim tương tự theo Zone',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        'Gợi ý dựa trên thể loại của: $curTitle',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white54,
-                          fontSize: 11,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(
-                    Icons.close_rounded,
-                    color: Colors.white70,
-                    size: 20,
-                  ),
-                  onPressed: () => Navigator.pop(context),
-                ),
-              ],
-            ),
-          ),
-
-          // Hàng tag của phim hiện tại
-          if (curTags.isNotEmpty)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-              color: Colors.black12,
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: [
-                    const Text(
-                      'Tags gốc: ',
-                      style: TextStyle(color: Colors.white38, fontSize: 11),
-                    ),
-                    for (final tag in curTags.take(5))
-                      Container(
-                        margin: const EdgeInsets.only(right: 6),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 7,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.08),
-                          borderRadius: BorderRadius.circular(4),
-                          border: Border.all(color: Colors.white12, width: 0.6),
-                        ),
-                        child: Text(
-                          HongguoSimilarEngine.getTagLabel(tag),
-                          style: const TextStyle(
-                            color: Colors.white70,
-                            fontSize: 11,
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-
-          const Divider(color: Colors.white12, height: 1),
-
-          // Nội dung
-          Expanded(
-            child: _isLoading
-                ? const Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        SizedBox(
-                          width: 26,
-                          height: 26,
-                          child: CircularProgressIndicator(
-                            color: Color(0xFF2DE1FC),
-                            strokeWidth: 2.2,
-                          ),
-                        ),
-                        SizedBox(height: 12),
-                        Text(
-                          'Đang tổ hợp thể loại & phân nhóm Zone...',
-                          style: TextStyle(color: Colors.white70, fontSize: 12),
-                        ),
-                      ],
-                    ),
-                  )
-                : _results.isEmpty
-                ? const Center(
-                    child: Text(
-                      'Chưa tìm thấy phim tương tự cho thể loại này.',
-                      style: TextStyle(color: Colors.white54, fontSize: 13),
-                    ),
-                  )
-                : ListView(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-                    children: [
-                      // Nút Lướt ngay toàn bộ danh sách tương tự
-                      Container(
-                        margin: const EdgeInsets.only(bottom: 14),
-                        width: double.infinity,
-                        child: ElevatedButton.icon(
-                          icon: const Icon(Icons.play_arrow_rounded, size: 20),
-                          label: Text(
-                            '⚡ Lướt chuỗi ${_results.length} phim tương tự theo Zone',
-                            style: const TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF2DE1FC),
-                            foregroundColor: Colors.black,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            padding: const EdgeInsets.symmetric(vertical: 10),
-                            elevation: 4,
-                          ),
-                          onPressed: () => widget.onPlaySimilarFeed(
-                            _results.map((r) => r.drama).toList(),
-                          ),
-                        ),
-                      ),
-
-                      // Zone 1
-                      if (zone1.isNotEmpty) ...[
-                        _buildZoneHeader(
-                          icon: Icons.stars_rounded,
-                          color: const Color(0xFFFF6A00),
-                          title: 'Zone 1: Cực kỳ giống',
-                          subtitle: 'Trùng nhiều thể loại & phong cách nhất',
-                          count: zone1.length,
-                        ),
-                        const SizedBox(height: 8),
-                        for (final item in zone1) _buildDramaCard(item),
-                        const SizedBox(height: 16),
-                      ],
-
-                      // Zone 2
-                      if (zone2.isNotEmpty) ...[
-                        _buildZoneHeader(
-                          icon: Icons.track_changes_rounded,
-                          color: const Color(0xFF2DE1FC),
-                          title: 'Zone 2: Cùng chủ đề',
-                          subtitle: 'Trùng thể loại chính của phim',
-                          count: zone2.length,
-                        ),
-                        const SizedBox(height: 8),
-                        for (final item in zone2) _buildDramaCard(item),
-                        const SizedBox(height: 16),
-                      ],
-
-                      // Zone 3
-                      if (zone3.isNotEmpty) ...[
-                        _buildZoneHeader(
-                          icon: Icons.explore_rounded,
-                          color: const Color(0xFFB388FF),
-                          title: 'Zone 3: Mở rộng liên quan',
-                          subtitle: 'Đa dạng hoá, có thể bạn sẽ thích',
-                          count: zone3.length,
-                        ),
-                        const SizedBox(height: 8),
-                        for (final item in zone3) _buildDramaCard(item),
-                      ],
-                    ],
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildZoneHeader({
-    required IconData icon,
-    required Color color,
-    required String title,
-    required String subtitle,
-    required int count,
-  }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withValues(alpha: 0.3), width: 0.8),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, color: color, size: 16),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '$title ($count phim)',
-                  style: TextStyle(
-                    color: color,
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                Text(
-                  subtitle,
-                  style: TextStyle(
-                    color: color.withValues(alpha: 0.8),
-                    fontSize: 10.5,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildDramaCard(SimilarDramaResult item) {
-    final drama = item.drama;
-    final title =
-        OfflineMlKitTranslator.getCachedTitle(drama.title) ?? drama.title;
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.04),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.white12, width: 0.6),
-      ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(10),
-        onTap: () => widget.onSelectDrama(drama),
-        child: Padding(
-          padding: const EdgeInsets.all(8),
-          child: Row(
-            children: [
-              // Ảnh bìa
-              ClipRRect(
-                borderRadius: BorderRadius.circular(6),
-                child: Image.network(
-                  drama.cover,
-                  width: 52,
-                  height: 72,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, _, _) => Container(
-                    width: 52,
-                    height: 72,
-                    color: const Color(0xFF26282E),
-                    child: const Icon(
-                      Icons.movie_rounded,
-                      color: Colors.white30,
-                      size: 24,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-
-              // Thông tin phim
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      drama.episodeCount > 0
-                          ? 'Trọn bộ ${drama.episodeCount} tập'
-                          : 'Phim ngắn hot',
-                      style: const TextStyle(
-                        color: Colors.white54,
-                        fontSize: 11,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    // Matched Tags
-                    Wrap(
-                      spacing: 4,
-                      runSpacing: 4,
-                      children: [
-                        for (final tag in item.matchedTags.take(3))
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 1.5,
-                            ),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFFF6A00)
-                                  .withValues(alpha: 0.2),
-                              borderRadius: BorderRadius.circular(4),
-                              border: Border.all(
-                                color: const Color(0xFFFF6A00)
-                                    .withValues(alpha: 0.5),
-                                width: 0.6,
-                              ),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const Icon(
-                                  Icons.check_rounded,
-                                  color: Color(0xFFFF6A00),
-                                  size: 10,
-                                ),
-                                const SizedBox(width: 2),
-                                Text(
-                                  HongguoSimilarEngine.getTagLabel(tag),
-                                  style: const TextStyle(
-                                    color: Color(0xFFFF9E40),
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-
-              // Nút Xem
-              const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFF6A00),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.play_arrow_rounded,
-                      color: Colors.white,
-                      size: 14,
-                    ),
-                    SizedBox(width: 2),
-                    Text(
-                      'Xem',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }
