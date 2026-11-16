@@ -14,8 +14,13 @@ import '../../domain/ai/offline_mlkit_translator.dart';
 import '../../domain/ai/title_translator.dart';
 import '../../domain/media/bilibili_resolver.dart';
 import '../../domain/media/douyin_resolver.dart';
+import '../../domain/media/hongguo/hongguo_cloud_account_service.dart';
+import '../../domain/media/hongguo/hongguo_codec_capabilities.dart';
+import '../../domain/media/hongguo/hongguo_local_engine.dart';
+import '../../domain/media/hongguo/hongguo_playback_routes.dart';
 import '../../domain/media/hongguo_prefetch_manager.dart';
 import '../../domain/media/hongguo_resolver.dart';
+import '../hongguo/hongguo_account_sheet.dart';
 import '../../domain/media/video_cache_manager.dart';
 import '../../domain/media/media_storage.dart';
 import '../../domain/media/multi_thread_downloader.dart';
@@ -161,6 +166,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   SubtitleDocument? _originalDocument;
   BilibiliVideoDetails? _bilibiliDetails;
   HongguoPrefetchManager? _prefetchManager;
+  HongguoVideoInfo? _hongguoVideoInfo;
+  String _hongguoQuality = '1080';
+  final Set<String> _hongguoExcludedKeys = <String>{};
+  int _hongguoDowngradeAttempts = 0;
+  bool _isDowngradingHongguo = false;
   bool _autoPlayNextEpisode = true;
   bool _isSwitchingEpisode = false;
   bool _showEpisodeSwitchOverlay = false;
@@ -795,8 +805,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       setState(() {
         _autoPlayNextEpisode = _settings.autoPlayNextEpisode;
         _commentTranslationEngine = _settings.commentTranslationEngine;
+        _hongguoQuality = _settings.hongguoPreferredQuality;
         if (widget.dramaDetail != null) {
           _playbackSpeed = _settings.hongguoPlaybackSpeed;
+          unawaited(HongguoCloudAccountService.instance.initialize());
         }
       });
     }
@@ -5202,6 +5214,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   @override
   void dispose() {
     unawaited(_persistPlaybackPosition(force: true));
+    unawaited(HongguoCloudAccountService.instance.flushPendingProgress());
     _pipControlsTimer?.cancel();
     _pipFeedbackTimer?.cancel();
     PipManager.isInPipMode.removeListener(_onPipModeChanged);
@@ -5349,6 +5362,216 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       setState(() {});
       _syncTtsWithVideo();
     }
+    if (widget.dramaDetail != null && !_isDowngradingHongguo) {
+      final hasErr = _controller?.value.hasError ?? false;
+      final longStall = _isPlaybackStalled &&
+          DateTime.now().difference(_lastPositionAdvanceAt) >=
+              const Duration(seconds: 20);
+      if ((hasErr || longStall) && _hongguoDowngradeAttempts < 2) {
+        unawaited(
+          _attemptHongguoAutoDowngrade(
+            reason: hasErr ? 'player_error' : 'stall_20s',
+          ),
+        );
+      }
+    }
+  }
+
+  String _currentHongguoVid() {
+    final detail = widget.dramaDetail;
+    if (detail == null) return '';
+    final idx = _currentEpisodeIndex - 1;
+    if (idx >= 0 && idx < detail.episodes.length) {
+      return detail.episodes[idx].vid;
+    }
+    return '';
+  }
+
+  Future<void> _attemptHongguoAutoDowngrade({String reason = ''}) async {
+    final detail = widget.dramaDetail;
+    final vid = _currentHongguoVid();
+    if (detail == null ||
+        vid.isEmpty ||
+        _isDowngradingHongguo ||
+        _hongguoDowngradeAttempts >= 2) {
+      return;
+    }
+    _isDowngradingHongguo = true;
+    try {
+      final info = _hongguoVideoInfo ??
+          await HongguoLocalEngine.resolveVideoInfo(
+            vid,
+            preferredQuality: _hongguoQuality,
+            excludedRenditionKeys: _hongguoExcludedKeys,
+          );
+      final curRendition = info.selectedRendition;
+      if (curRendition == null || info.ladder == null) return;
+
+      HongguoPlaybackRoutes.instance.markFailed(info.realMainUrl);
+      await HongguoCodecCapabilities.instance.learnFailure(curRendition);
+      _hongguoExcludedKeys.add(curRendition.uniqueKey);
+
+      final support =
+          await HongguoCodecCapabilities.instance.getHardwareSupport();
+      final next = info.ladder!.selectDowngrade(
+        curRendition,
+        hardwareSupport: support,
+        lessons: HongguoCodecCapabilities.instance.lessons,
+        excludedKeys: _hongguoExcludedKeys,
+      );
+      if (next == null) return;
+
+      _hongguoDowngradeAttempts++;
+      final resumeMs = _controller?.value.position.inMilliseconds ?? _currentPosMs;
+      final newUrl = await HongguoLocalEngine.resolveAndGetPlayableUrl(
+        detail.seriesId,
+        vid,
+        episodeIndex: _currentEpisodeIndex,
+        preferredQuality: next.qualityTier.toString(),
+        forceH264: !next.isBytevc1,
+        forceRedownload: true,
+      );
+      if (!mounted) return;
+      await _switchVideo(
+        newVideoPath: newUrl,
+        newDocument: _currentDocument,
+        newTitle: _currentTitle,
+      );
+      if (resumeMs > 0) {
+        await _controller?.seekTo(Duration(milliseconds: resumeMs));
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Tự động hạ sang ${next.normalizedCodec.toUpperCase()} ${next.qualityLabel} để phát ổn định hơn',
+            ),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('[VideoPlayer] Hongguo auto-downgrade lỗi ($reason): $e');
+    } finally {
+      _isDowngradingHongguo = false;
+    }
+  }
+
+  Future<void> _showHongguoQualitySheet() async {
+    final detail = widget.dramaDetail;
+    final vid = _currentHongguoVid();
+    if (detail == null || vid.isEmpty) return;
+
+    HongguoVideoInfo? info = _hongguoVideoInfo;
+    if (info == null) {
+      try {
+        info = await HongguoLocalEngine.resolveVideoInfo(
+          vid,
+          preferredQuality: _hongguoQuality,
+        );
+        _hongguoVideoInfo = info;
+      } catch (_) {}
+    }
+    if (!mounted) return;
+    final availableTiers = info?.ladder?.availableQualityTiers ??
+        const <String>['1080', '720', '480', '360'];
+
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF181A22),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        final options = <({String key, String label})>[
+          for (final t in availableTiers)
+            (key: t, label: '${t}P${t == "1080" ? " (Sắc nét)" : ""}'),
+          const (key: 'auto', label: 'Tự động theo thiết bị'),
+        ];
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Chọn chất lượng Hồng Quả',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                ...options.map((opt) {
+                  final selected = _hongguoQuality == opt.key;
+                  return ListTile(
+                    dense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                    leading: Icon(
+                      selected
+                          ? Icons.radio_button_checked
+                          : Icons.radio_button_off,
+                      color:
+                          selected ? AppTheme.primaryEmerald : Colors.white54,
+                    ),
+                    title: Text(
+                      opt.label,
+                      style: TextStyle(
+                        color:
+                            selected ? AppTheme.primaryEmerald : Colors.white,
+                        fontWeight:
+                            selected ? FontWeight.w700 : FontWeight.normal,
+                      ),
+                    ),
+                    onTap: () async {
+                      Navigator.of(ctx).pop();
+                      if (_hongguoQuality == opt.key) return;
+                      setState(() {
+                        _hongguoQuality = opt.key;
+                        _hongguoExcludedKeys.clear();
+                        _hongguoDowngradeAttempts = 0;
+                      });
+                      _settings.hongguoPreferredQuality = opt.key;
+                      final resumeMs =
+                          _controller?.value.position.inMilliseconds ??
+                              _currentPosMs;
+                      try {
+                        final fresh =
+                            await HongguoLocalEngine.resolveAndGetPlayableUrl(
+                          detail.seriesId,
+                          vid,
+                          episodeIndex: _currentEpisodeIndex,
+                          preferredQuality: opt.key,
+                          forceRedownload: true,
+                        );
+                        if (!mounted) return;
+                        await _switchVideo(
+                          newVideoPath: fresh,
+                          newDocument: _currentDocument,
+                          newTitle: _currentTitle,
+                        );
+                        if (resumeMs > 0) {
+                          await _controller?.seekTo(
+                            Duration(milliseconds: resumeMs),
+                          );
+                        }
+                      } catch (e) {
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Đổi chất lượng thất bại: $e')),
+                        );
+                      }
+                    },
+                  );
+                }),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   LiveStreamTranslator _createLiveTranslator(SettingsRepository settings) {
@@ -5625,6 +5848,41 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           durationMs: controller?.value.duration.inMilliseconds,
           seriesTitle: detail.title,
         );
+        final vid = _currentHongguoVid();
+        if (vid.isNotEmpty) {
+          final durMs = controller?.value.duration.inMilliseconds ??
+              _hongguoVideoInfo?.durationMs ??
+              0;
+          final cloudProgress = HongguoCloudProgress(
+            seriesId: detail.seriesId,
+            title: detail.title,
+            cover: detail.cover,
+            episodeId: vid,
+            episodeIndex: _currentEpisodeIndex,
+            positionMs: positionMs,
+            durationMs: durMs,
+            updatedAtMs: DateTime.now().millisecondsSinceEpoch,
+          );
+          if (force) {
+            unawaited(
+              HongguoCloudAccountService.instance
+                  .uploadProgressNow(
+                    cloudProgress,
+                    episodeCount: detail.totalEpisodes > 0
+                        ? detail.totalEpisodes
+                        : detail.episodes.length,
+                  )
+                  .catchError((_) {}),
+            );
+          } else {
+            HongguoCloudAccountService.instance.scheduleProgressUpload(
+              cloudProgress,
+              episodeCount: detail.totalEpisodes > 0
+                  ? detail.totalEpisodes
+                  : detail.episodes.length,
+            );
+          }
+        }
         // Bản ghi cũ có thể chưa có seriesId. Chỉ fallback callback cho đúng
         // tập ban đầu, tuyệt đối không ghi tiến độ tập mới vào tập đã mở trước đó.
         if (!updated &&
@@ -7049,6 +7307,30 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                     icon: Icons.format_list_numbered_rounded,
                                     tooltip: 'Danh sách tập phim',
                                     onPressed: _showEpisodeListSheet,
+                                  ),
+                                  _buildTopBarIconButton(
+                                    icon: Icons.high_quality_rounded,
+                                    iconColor: AppTheme.primaryEmerald,
+                                    tooltip:
+                                        'Chất lượng Hồng Quả (${_hongguoQuality == "auto" ? "Tự động" : "${_hongguoQuality}P"})',
+                                    onPressed: _showHongguoQualitySheet,
+                                  ),
+                                  ValueListenableBuilder<HongguoCloudAccountState>(
+                                    valueListenable:
+                                        HongguoCloudAccountService.instance.state,
+                                    builder: (context, cloudState, _) {
+                                      return _buildTopBarIconButton(
+                                        icon: cloudState.isLoggedIn
+                                            ? Icons.cloud_done_rounded
+                                            : Icons.account_circle_outlined,
+                                        iconColor: cloudState.isLoggedIn
+                                            ? AppTheme.primaryEmerald
+                                            : Colors.white70,
+                                        tooltip: 'Tài khoản Đám mây Hồng Quả',
+                                        onPressed: () =>
+                                            HongguoAccountSheet.show(context),
+                                      );
+                                    },
                                   ),
                                   _buildTopBarIconButton(
                                     icon: Icons.settings_rounded,

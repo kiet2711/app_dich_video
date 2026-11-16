@@ -14,6 +14,7 @@ import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
 import android.media.MediaCodec
+import android.media.MediaCodecList
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMuxer
@@ -303,6 +304,11 @@ class MainActivity : FlutterActivity() {
                     moveTaskToBack(true)
                     result.success(true)
                 }
+                "checkVideoDecoderSupport" -> {
+                    val width = call.argument<Int>("width") ?: 1080
+                    val height = call.argument<Int>("height") ?: 1920
+                    result.success(checkVideoDecoderSupport(width, height))
+                }
                 else -> result.notImplemented()
             }
         }
@@ -469,6 +475,35 @@ class MainActivity : FlutterActivity() {
             ratio < 0.42f -> Rational(42, 100)
             else -> Rational(w, h)
         }
+    }
+
+    private fun checkVideoDecoderSupport(width: Int, height: Int): Map<String, Boolean> {
+        var avcSupported = false
+        var hevcSupported = false
+        try {
+            val codecs = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
+            for (info in codecs) {
+                if (info.isEncoder) continue
+                for (type in info.supportedTypes) {
+                    val lower = type.lowercase()
+                    if (lower != "video/avc" && lower != "video/hevc") continue
+                    val sizeOk = try {
+                        val caps = info.getCapabilitiesForType(type)
+                        val vc = caps.videoCapabilities
+                        vc == null || vc.isSizeSupported(width, height) || vc.isSizeSupported(height, width)
+                    } catch (_: Throwable) {
+                        true
+                    }
+                    if (!sizeOk) continue
+                    if (lower == "video/avc") avcSupported = true
+                    if (lower == "video/hevc") hevcSupported = true
+                }
+            }
+        } catch (_: Throwable) {
+            // Fail-open nếu thiết bị chặn truy vấn MediaCodecList
+            return mapOf("avc" to true, "hevc" to true)
+        }
+        return mapOf("avc" to avcSupported, "hevc" to hevcSupported)
     }
 
     private fun openPersistentMediaPicker(videoOnly: Boolean, result: MethodChannel.Result) {

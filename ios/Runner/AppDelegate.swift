@@ -2,6 +2,7 @@ import Flutter
 import UIKit
 import AVFoundation
 import UserNotifications
+import VideoToolbox
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
@@ -115,6 +116,18 @@ import UserNotifications
         let args = call.arguments as? [String: Any]
         let streamId = (args?["streamId"] as? String) ?? ""
         self.closePcmStream(streamId: streamId, result: result)
+
+      case "checkVideoDecoderSupport":
+        let hevcSupported: Bool
+        if #available(iOS 11.0, *) {
+          hevcSupported = VTIsHardwareDecodeSupported(kCMVideoCodecType_HEVC)
+        } else {
+          hevcSupported = false
+        }
+        result([
+          "avc": VTIsHardwareDecodeSupported(kCMVideoCodecType_H264),
+          "hevc": hevcSupported,
+        ])
 
       default:
         result(FlutterMethodNotImplemented)

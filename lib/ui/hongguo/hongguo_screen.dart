@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../data/model/subtitle_document.dart';
 import '../../domain/ai/offline_mlkit_translator.dart';
+import '../../domain/media/hongguo/hongguo_cloud_account_service.dart';
 import '../../domain/media/hongguo_resolver.dart';
 import '../../domain/media/network_header_helper.dart';
 import '../../domain/media/video_cache_manager.dart';
@@ -14,6 +15,7 @@ import '../../data/model/watch_later_item.dart';
 import '../../data/repository/watch_later_repository.dart';
 import '../theme/app_theme.dart';
 import 'feed/hongguo_feed_screen.dart';
+import 'hongguo_account_sheet.dart';
 import 'hongguo_assistant_controller.dart';
 import 'hongguo_assistant_sheet.dart';
 import 'hongguo_settings_sheet.dart';
@@ -61,6 +63,7 @@ class _HongguoScreenState extends State<HongguoScreen> {
     super.initState();
     _assistantController = HongguoAssistantController(resolver: _resolver);
     unawaited(_assistantController.initialize());
+    unawaited(HongguoCloudAccountService.instance.initialize());
     _loadTranslationSetting();
     _loadDramas();
   }
@@ -756,6 +759,62 @@ class _HongguoScreenState extends State<HongguoScreen> {
                 ? 'Tắt dịch tiếng Việt'
                 : 'Bật dịch tiếng Việt (Tên & Giới thiệu)',
             onPressed: _toggleTranslation,
+          ),
+          ValueListenableBuilder<HongguoCloudAccountState>(
+            valueListenable: HongguoCloudAccountService.instance.state,
+            builder: (ctx, cloudState, _) {
+              return IconButton(
+                tooltip: cloudState.isLoggedIn
+                    ? 'Tài khoản Hồng Quả (${cloudState.profile?.userName ?? "Đã đăng nhập"})'
+                    : 'Đăng nhập Tài khoản Hồng Quả',
+                onPressed: () {
+                  HapticFeedback.lightImpact();
+                  HongguoAccountSheet.show(
+                    context,
+                    onOpenSeries: (seriesId, {int episodeIndex = 1, int positionMs = 0}) {
+                      _openDramaDetail(
+                        HongguoDramaItem(
+                          seriesId: seriesId,
+                          title: '',
+                          cover: '',
+                          episodeCount: 0,
+                        ),
+                      );
+                    },
+                  );
+                },
+                icon: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Icon(
+                      cloudState.isLoggedIn
+                          ? Icons.account_circle_rounded
+                          : Icons.account_circle_outlined,
+                      color: cloudState.isLoggedIn
+                          ? AppColors.primaryEmerald
+                          : AppColors.textSecondary,
+                    ),
+                    if (cloudState.isLoggedIn)
+                      Positioned(
+                        right: -1,
+                        top: -1,
+                        child: Container(
+                          width: 8,
+                          height: 8,
+                          decoration: BoxDecoration(
+                            color: AppColors.primaryEmerald,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: AppColors.darkSurface,
+                              width: 1.5,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              );
+            },
           ),
           IconButton(
             icon: const Icon(Icons.settings_rounded, color: AppColors.textSecondary),
@@ -2300,6 +2359,95 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                                                   fontSize: 11,
                                                   fontWeight: FontWeight.bold,
                                                   color: isWl ? AppColors.primaryEmerald : Colors.white70,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                  const SizedBox(width: 6),
+                                  ValueListenableBuilder<HongguoCloudAccountState>(
+                                    valueListenable: HongguoCloudAccountService.instance.state,
+                                    builder: (favCtx, cloudState, _) {
+                                      final isFav = cloudState.isFavorite(detail.seriesId);
+                                      final pending = cloudState.isFavoritePending(detail.seriesId);
+                                      return InkWell(
+                                        borderRadius: BorderRadius.circular(6),
+                                        onTap: pending
+                                            ? null
+                                            : () async {
+                                                HapticFeedback.selectionClick();
+                                                if (!cloudState.isLoggedIn) {
+                                                  await HongguoAccountSheet.show(context);
+                                                  return;
+                                                }
+                                                final messenger = ScaffoldMessenger.of(context);
+                                                try {
+                                                  final msg = await HongguoCloudAccountService
+                                                      .instance
+                                                      .setFavorite(
+                                                    seriesId: detail.seriesId,
+                                                    title: detail.title,
+                                                    add: !isFav,
+                                                  );
+                                                  if (msg.isNotEmpty) {
+                                                    messenger.showSnackBar(
+                                                      SnackBar(
+                                                        content: Text(msg),
+                                                        duration: const Duration(seconds: 2),
+                                                      ),
+                                                    );
+                                                  }
+                                                } catch (e) {
+                                                  messenger.showSnackBar(
+                                                    SnackBar(content: Text(e.toString())),
+                                                  );
+                                                }
+                                              },
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 8,
+                                            vertical: 3,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: isFav
+                                                ? const Color(0xFFFF4D67).withValues(alpha: 0.16)
+                                                : Colors.white.withValues(alpha: 0.06),
+                                            borderRadius: BorderRadius.circular(6),
+                                            border: Border.all(
+                                              color: isFav
+                                                  ? const Color(0xFFFF4D67).withValues(alpha: 0.6)
+                                                  : Colors.white24,
+                                            ),
+                                          ),
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              if (pending)
+                                                const SizedBox(
+                                                  width: 12,
+                                                  height: 12,
+                                                  child: CircularProgressIndicator(strokeWidth: 1.5),
+                                                )
+                                              else
+                                                Icon(
+                                                  isFav ? Icons.favorite : Icons.favorite_border,
+                                                  size: 13,
+                                                  color: isFav
+                                                      ? const Color(0xFFFF4D67)
+                                                      : Colors.white70,
+                                                ),
+                                              const SizedBox(width: 4),
+                                              Text(
+                                                isFav ? 'Cloud' : 'Yêu thích',
+                                                style: TextStyle(
+                                                  fontSize: 11,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: isFav
+                                                      ? const Color(0xFFFF6B81)
+                                                      : Colors.white70,
                                                 ),
                                               ),
                                             ],

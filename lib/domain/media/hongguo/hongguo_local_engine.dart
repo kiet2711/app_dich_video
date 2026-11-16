@@ -1,661 +1,830 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:convert/convert.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../data/repository/settings_repository.dart';
+import '../audio_extractor.dart';
 import '../hongguo_cenc_decryptor.dart';
 import '../video_cache_manager.dart';
+import 'hongguo_codec_capabilities.dart';
 import 'hongguo_device_service.dart';
+import 'hongguo_playback_routes.dart';
+import 'hongguo_remote_video.dart';
 import 'hongguo_sixgod_signer.dart';
+import 'hongguo_v5_signer.dart';
 
-Future<void> _decryptDownloadedHongguoVideo(Map<String, String> args) async {
-  final encryptedFile = File(args['inputPath']!);
-  final outputFile = File(args['outputPath']!);
-  final encryptedBytes = await encryptedFile.readAsBytes();
-  final keyBytes = Uint8List.fromList(hex.decode(args['contentKeyHex']!));
-  final decryptedBytes = HongguoCencDecryptor.decryptMp4Cenc(
-    encryptedBytes,
-    keyBytes,
-  );
-  await outputFile.writeAsBytes(decryptedBytes, flush: true);
-}
-
-/// Kết quả trích xuất thông tin video từ ByteDance
+/// Thông tin nguồn phát video đã giải mã từ Hongguo Local Engine.
 class HongguoVideoInfo {
-  final String videoId;
-  final String title;
-  final int duration;
+  final String vid;
   final String realMainUrl;
+  final String realBackupUrl;
   final String contentKeyHex;
-  final String quality;
-
-  const HongguoVideoInfo({
-    required this.videoId,
-    required this.title,
-    required this.duration,
-    required this.realMainUrl,
-    required this.contentKeyHex,
-    required this.quality,
-  });
+  final String spadeA;
+  final int durationMs;
+  final String preferredQuality;
+  final HongguoStreamLadder? ladder;
+  final HongguoRendition? selectedRendition;
+  final List<String> candidateUrls;
 
   bool get isDrmProtected => contentKeyHex.isNotEmpty;
-}
+  int get duration => durationMs > 0 ? durationMs ~/ 1000 : 0;
+  String get quality => selectedRendition?.qualityLabel ?? 'HD';
 
-enum _VideoModelHeaderMode {
-  gorgonMedusa,
-  gorgonHelios,
-  unsigned,
-}
-
-class _ResolvedStreamCandidate {
-  final String realMainUrl;
-  final String contentKeyHex;
-  final int height;
-  final int duration;
-  final String title;
-
-  const _ResolvedStreamCandidate({
+  const HongguoVideoInfo({
+    required this.vid,
     required this.realMainUrl,
+    required this.realBackupUrl,
     required this.contentKeyHex,
-    required this.height,
-    required this.duration,
-    required this.title,
-  });
+    this.spadeA = '',
+    this.durationMs = 0,
+    this.preferredQuality = '1080',
+    this.ladder,
+    this.selectedRendition,
+    List<String>? candidateUrls,
+  }) : candidateUrls = candidateUrls ??
+            const <String>[];
+
+  /// Danh sách URL ứng viên đã sắp xếp theo tình trạng đường truyền (`HongguoPlaybackRoutes`).
+  List<String> get orderedUrls {
+    final base = candidateUrls.isNotEmpty
+        ? candidateUrls
+        : <String>[
+            if (realMainUrl.isNotEmpty) realMainUrl,
+            if (realBackupUrl.isNotEmpty && realBackupUrl != realMainUrl)
+              realBackupUrl,
+          ];
+    return HongguoPlaybackRoutes.instance.orderUrls(base);
+  }
+
+  /// Chọn bản hạ cấp tiếp theo (HEVC -> H.264 hoặc 1080p -> 720p -> 480p).
+  HongguoVideoInfo? downgradeWith(
+    HongguoRendition nextRendition, {
+    required String preferredQuality,
+  }) {
+    final ordered = HongguoPlaybackRoutes.instance.orderUrls(
+      nextRendition.candidateUrls,
+    );
+    if (ordered.isEmpty) return null;
+    return HongguoVideoInfo(
+      vid: vid,
+      realMainUrl: ordered.first,
+      realBackupUrl: ordered.length > 1 ? ordered[1] : ordered.first,
+      contentKeyHex: nextRendition.contentKeyHex,
+      spadeA: nextRendition.spadeA,
+      durationMs: durationMs,
+      preferredQuality: preferredQuality,
+      ladder: ladder,
+      selectedRendition: nextRendition,
+      candidateUrls: ordered,
+    );
+  }
 }
 
-/// Trình xử lý giải mã video Hồng Quả On-Device thuần Dart
+/// Engine phân giải và giải mã video Hongguo thuần Dart (Mobile v5 + fallback v3 + StreamLadder + CENC Streaming).
 class HongguoLocalEngine {
-  static final Dio _dio = Dio(
+  HongguoLocalEngine._();
+
+  static final Dio _defaultDio = Dio(
     BaseOptions(
-      connectTimeout: const Duration(seconds: 15),
-      receiveTimeout: const Duration(seconds: 30),
+      connectTimeout: const Duration(seconds: 12),
+      receiveTimeout: const Duration(seconds: 15),
+      validateStatus: (status) => status != null && status < 500,
     ),
   );
 
-  static const List<String> _videoModelHosts = [
-    'https://api5-normal-sinfonlineb.fqnovel.com',
-    'https://api5-normal-sinfonlinec.fqnovel.com',
-    'https://api5-normal-lf.fqnovel.com',
-  ];
+  static Dio? _overrideDio;
 
-  static const String _videoModelPathAndQuery =
-      '/novel/player/multi_video_model/v1/'
+  @visibleForTesting
+  static void setDioForTesting(Dio? dio) {
+    _overrideDio = dio;
+  }
+
+  static Dio get _dio => _overrideDio ?? _defaultDio;
+
+  static const String v5PlayerPath = '/novel/player/multi_video_model/player/v1';
+  static const String v3PlayerPath = '/novel/player/multi_video_model/v1/';
+  static const String videoModelUrlTemplate =
+      'https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/v1/'
       '?iid=3076883975280827&device_id=3076883975276731&ac=wifi&channel=update_64&aid=8662'
       '&app_name=novelread&version_code=71332&version_name=7.1.3.32'
-      '&device_platform=android&os=android&ssmix=a&device_type=25053RT47C'
-      '&device_brand=Redmi&language=zh&os_api=36&os_version=16'
-      '&manifest_version_code=71332&resolution=1280*2772&dpi=520'
-      '&update_version_code=71332&host_abi=arm64-v8a&dragon_device_type=phone'
-      '&pv_player=71332&compliance_status=0&need_personal_recommend=1'
       '&player_so_load=1&is_android_pad_screen=0';
 
-  static const String videoModelUrlTemplate =
-      'https://api5-normal-sinfonlineb.fqnovel.com$_videoModelPathAndQuery';
+  static const List<String> _apiHosts = <String>[
+    'api5-normal-sinfonlinea.fqnovel.com',
+    'api5-normal-sinfonlineb.fqnovel.com',
+    'api5-normal-sinfonlinec.fqnovel.com',
+    'api5-normal-lf.fqnovel.com',
+    'api5-normal-lq.fqnovel.com',
+    'api3-normal-lf.fqnovel.com',
+  ];
 
-  static int _preferredHostIndex = 0;
-  static _VideoModelHeaderMode _preferredHeaderMode =
-      _VideoModelHeaderMode.gorgonMedusa;
+  // Bộ nhớ tạm thời lượng thực tế (ms) theo `vid` (tối đa 128 mục gần nhất).
+  static final Map<String, int> _durationCacheMs = <String, int>{};
 
-  /// Lấy trực tiếp thông tin URL stream và Content Key từ API gốc của ByteDance
-  /// [preferLowest]: Nếu true sẽ chọn luồng chất lượng thấp nhất (360p ~ 1.2MB) để tải siêu tốc lấy âm thanh
+  static void rememberDurationMs(String vid, int durationMs) {
+    if (vid.isEmpty || durationMs <= 0) return;
+    _durationCacheMs.remove(vid);
+    _durationCacheMs[vid] = durationMs;
+    while (_durationCacheMs.length > 128) {
+      _durationCacheMs.remove(_durationCacheMs.keys.first);
+    }
+  }
+
+  static int getCachedDurationMs(String vid) => _durationCacheMs[vid] ?? 0;
+
+  /// Chuẩn hoá giá trị thời lượng từ API ByteDance sang milliseconds.
+  ///
+  /// API thường trả về đơn vị giây (`60` - `600`) hoặc đôi khi là milliseconds (`>= 10000`).
+  static int normalizeDurationMs(dynamic rawDuration) {
+    if (rawDuration == null) return 0;
+    double? numVal;
+    if (rawDuration is num) {
+      numVal = rawDuration.toDouble();
+    } else {
+      numVal = double.tryParse(rawDuration.toString().trim());
+    }
+    if (numVal == null || numVal <= 0 || numVal.isNaN || numVal.isInfinite) {
+      return 0;
+    }
+    if (numVal < 10000) {
+      return (numVal * 1000).round();
+    }
+    return numVal.round();
+  }
+
+  /// Xác định thời lượng thực tế tốt nhất (ms) theo thứ tự độ tin cậy:
+  /// 1. Native `AudioExtractor.probeDuration` (trên file cục bộ)
+  /// 2. `HongguoCencDecryptor.probeMp4FileMetadata` (đọc hộp `moov`/`mdhd`/`stts`)
+  /// 3. `HongguoStreamProxyServer.instance.getSessionDurationMs(vid)` (qua Stream Proxy)
+  /// 4. `videoInfo.durationMs` / cache `getCachedDurationMs(vid)` / `apiDurationRaw`
+  /// 5. `playerDurationMs` -> Fallback `120000` nếu mọi probe đều trả 0.
+  static Future<int> resolveEffectiveDurationMs({
+    String? localFilePath,
+    String? vid,
+    HongguoVideoInfo? videoInfo,
+    dynamic apiDurationRaw,
+    int? playerDurationMs,
+    int proxySessionDurationMs = 0,
+    Future<int> Function(String path)? probeAudioFn,
+  }) async {
+    if (localFilePath != null &&
+        localFilePath.isNotEmpty &&
+        !localFilePath.startsWith('http://') &&
+        !localFilePath.startsWith('https://')) {
+      final f = File(localFilePath);
+      if (await f.exists()) {
+        try {
+          final probed = probeAudioFn != null
+              ? await probeAudioFn(localFilePath)
+              : await AudioExtractor.probeDuration(localFilePath);
+          if (probed > 0) {
+            if (vid != null && vid.isNotEmpty) rememberDurationMs(vid, probed);
+            return probed;
+          }
+        } catch (_) {}
+        final meta = await HongguoCencDecryptor.probeMp4FileMetadata(f);
+        if (meta != null && meta.durationMs > 0) {
+          if (vid != null && vid.isNotEmpty) {
+            rememberDurationMs(vid, meta.durationMs);
+          }
+          return meta.durationMs;
+        }
+      }
+    }
+
+    if (proxySessionDurationMs > 0) {
+      if (vid != null && vid.isNotEmpty) {
+        rememberDurationMs(vid, proxySessionDurationMs);
+      }
+      return proxySessionDurationMs;
+    }
+    if (videoInfo != null && videoInfo.durationMs > 0) {
+      return videoInfo.durationMs;
+    }
+    if (vid != null && vid.isNotEmpty) {
+      final cached = getCachedDurationMs(vid);
+      if (cached > 0) return cached;
+    }
+    final normalizedApi = normalizeDurationMs(apiDurationRaw);
+    if (normalizedApi > 0) {
+      if (vid != null && vid.isNotEmpty) {
+        rememberDurationMs(vid, normalizedApi);
+      }
+      return normalizedApi;
+    }
+    if (playerDurationMs != null && playerDurationMs > 0) {
+      return playerDurationMs;
+    }
+    return 120000;
+  }
+
+  /// Phân giải `videoId` sang đầy đủ `HongguoStreamLadder` + lựa chọn tối ưu theo thiết bị & chất lượng.
   static Future<HongguoVideoInfo> resolveVideoInfo(
     String videoId, {
     bool preferLowest = false,
+    String? preferredQuality,
+    bool forceH264 = false,
+    Set<String> excludedRenditionKeys = const <String>{},
   }) async {
     final cleanVideoId = videoId.trim();
-    if (!RegExp(r'^\d+$').hasMatch(cleanVideoId)) {
-      throw ArgumentError.value(videoId, 'videoId', 'Video ID phải là dãy số');
+    if (cleanVideoId.isEmpty) {
+      throw ArgumentError('video_id không được rỗng');
     }
 
-    final videoEntry = await _fetchVideoEntryWithFallbacks(cleanVideoId);
+    final quality = preferLowest
+        ? '360'
+        : (preferredQuality ?? await _readPreferredQuality());
+    final hardwareSupport = await HongguoCodecCapabilities.instance
+        .getHardwareSupport();
+    final effectiveSupport = forceH264
+        ? HongguoCodecSupport(
+            avcSupported: hardwareSupport.avcSupported,
+            hevcSupported: false,
+          )
+        : hardwareSupport;
 
-    dynamic vm = videoEntry['video_model'];
-    Map videoModel = {};
-    if (vm is String && vm.isNotEmpty) {
-      try {
-        videoModel = jsonDecode(vm) as Map;
-      } catch (_) {}
-    } else if (vm is Map) {
-      videoModel = vm;
-    }
-
-    final fallbackApi = _extractFallbackApiUrl(videoModel);
-    _ResolvedStreamCandidate? selected;
-    Object? fallbackError;
-
-    // 1. Ưu tiên fallback_api (trả về URL gốc + key_seed ổn định nhất)
-    if (fallbackApi.isNotEmpty) {
-      try {
-        selected = await _resolveFromFallbackApi(
-          fallbackApi,
-          preferLowest: preferLowest,
-          videoId: cleanVideoId,
-        );
-      } catch (e) {
-        fallbackError = e;
-        debugPrint(
-          '[HongguoLocalEngine] fallback_api lỗi ($e), thử video_list trực tiếp...',
-        );
-      }
-    }
-
-    // 2. Dự phòng trực tiếp từ video_model['video_list'] (không cần vòng HTTP thứ 2)
-    selected ??= _resolveFromVideoList(
-      videoModel['video_list'],
-      keySeedRaw: Uint8List(0),
-      preferLowest: preferLowest,
-      fallbackDuration:
-          int.tryParse(videoModel['duration']?.toString() ?? '0') ?? 0,
-      fallbackTitle: videoModel['title']?.toString() ?? cleanVideoId,
+    final videoModel = await _fetchVideoModelWithFallbacks(cleanVideoId);
+    final durationMs = normalizeDurationMs(
+      videoModel['video_duration'] ?? videoModel['duration'],
     );
-
-    if (selected == null || selected.realMainUrl.isEmpty) {
-      if (fallbackError != null) {
-        throw StateError(
-          'Không lấy được stream hợp lệ cho video $cleanVideoId: $fallbackError',
-        );
-      }
-      throw StateError(
-        'ByteDance không trả về stream H.264/HEVC hợp lệ cho video $cleanVideoId',
-      );
+    if (durationMs > 0) {
+      rememberDurationMs(cleanVideoId, durationMs);
     }
 
-    final duration =
-        int.tryParse(videoModel['duration']?.toString() ?? '') ??
-        selected.duration;
-    final title = (videoModel['title']?.toString().isNotEmpty ?? false)
-        ? videoModel['title'].toString()
-        : selected.title;
+    // 1. Parse video_list từ videoModel trước (hành vi ưu tiên của hongguoTV).
+    final fallbackInfo = _extractFallbackApiInfo(videoModel);
+    final renditions = <HongguoRendition>[
+      ..._parseVideoListRenditions(
+        cleanVideoId,
+        videoModel['video_list'],
+        keySeedB64: fallbackInfo.keySeedB64,
+      ),
+    ];
 
+    // 2. Nếu chưa có luồng hợp lệ hoặc đang ép H.264 mà ladder chưa có H.264 -> gọi fallback_api.
+    final hasH264 = renditions.any((r) => !r.isBytevc1);
+    if ((renditions.isEmpty || (forceH264 && !hasH264)) &&
+        fallbackInfo.url.isNotEmpty) {
+      final extra = await _fetchFallbackApiRenditions(
+        cleanVideoId,
+        fallbackInfo.url,
+        fallbackKeySeedB64: fallbackInfo.keySeedB64,
+        forceH264: forceH264,
+      );
+      renditions.addAll(extra);
+    }
+
+    if (renditions.isEmpty) {
+      throw StateError('Không tìm thấy luồng video khả dụng cho $cleanVideoId');
+    }
+
+    final ladder = HongguoStreamLadder(
+      renditions: renditions,
+      durationMs: durationMs,
+    );
+    final selected = ladder.selectBest(
+      preferredQuality: quality,
+      hardwareSupport: effectiveSupport,
+      lessons: HongguoCodecCapabilities.instance.lessons,
+      excludedKeys: excludedRenditionKeys,
+    );
+    if (selected == null || selected.candidateUrls.isEmpty) {
+      throw StateError('Không chọn được rendition phù hợp cho $cleanVideoId');
+    }
+
+    final orderedUrls = HongguoPlaybackRoutes.instance.orderUrls(
+      selected.candidateUrls,
+    );
     return HongguoVideoInfo(
-      videoId: cleanVideoId,
-      title: title,
-      duration: duration,
-      realMainUrl: selected.realMainUrl,
+      vid: cleanVideoId,
+      realMainUrl: orderedUrls.first,
+      realBackupUrl: orderedUrls.length > 1 ? orderedUrls[1] : orderedUrls.first,
       contentKeyHex: selected.contentKeyHex,
-      quality: selected.height > 0 ? '${selected.height}p' : 'HD',
+      spadeA: selected.spadeA,
+      durationMs: durationMs,
+      preferredQuality: quality,
+      ladder: ladder,
+      selectedRendition: selected,
+      candidateUrls: orderedUrls,
     );
   }
 
-  static Future<Map> _fetchVideoEntryWithFallbacks(String cleanVideoId) async {
-    final payload = {
-      'biz_param': {
+  /// Tải/giải mã stream hoặc trả về URL phát trực tiếp cho `vid`.
+  static Future<String> resolveAndGetPlayableUrl(
+    String seriesId,
+    String vid, {
+    int episodeIndex = 1,
+    Function(double)? onProgress,
+    String? preferredQuality,
+    bool forceH264 = false,
+    bool forceRedownload = false,
+  }) async {
+    if (!forceRedownload) {
+      final cached = await VideoCacheManager.findCachedFile(
+        url: 'hongguo://$vid',
+        seriesId: seriesId,
+        episodeIndex: episodeIndex,
+      );
+      if (cached != null) {
+        return cached.path;
+      }
+    }
+
+    var info = await resolveVideoInfo(
+      vid,
+      preferredQuality: preferredQuality,
+      forceH264: forceH264,
+    );
+
+    if (!info.isDrmProtected && onProgress == null && !forceRedownload) {
+      return info.realMainUrl;
+    }
+
+    final targetFile = await VideoCacheManager.getCachedVideoFile(
+      url: info.realMainUrl,
+      seriesId: seriesId,
+      episodeIndex: episodeIndex,
+    );
+
+    final excludedKeys = <String>{};
+    Object? lastError;
+
+    for (var downgradeAttempt = 0; downgradeAttempt < 3; downgradeAttempt++) {
+      final contentKey = info.isDrmProtected
+          ? Uint8List.fromList(hex.decode(info.contentKeyHex))
+          : null;
+
+      for (final candidateUrl in info.orderedUrls) {
+        final remote = HongguoRemoteVideo(
+          url: candidateUrl,
+          contentKey: contentKey,
+        );
+        try {
+          final saved = await remote.streamDecryptedToFile(
+            targetFile,
+            onProgress: onProgress,
+          );
+          if (remote.durationMs > 0) {
+            rememberDurationMs(vid, remote.durationMs);
+          }
+          if (await HongguoCencDecryptor.isCorruptedMp4File(saved)) {
+            try {
+              await saved.delete();
+            } catch (_) {}
+            throw const FormatException('MP4 sau giải mã không hợp lệ');
+          }
+          HongguoPlaybackRoutes.instance.markHealthy(candidateUrl);
+          await VideoCacheManager.pruneCacheIfNeeded();
+          return saved.path;
+        } catch (e) {
+          lastError = e;
+          HongguoPlaybackRoutes.instance.markFailed(candidateUrl);
+          debugPrint(
+            '[HongguoLocalEngine] Route lỗi ($candidateUrl): $e',
+          );
+        } finally {
+          remote.close();
+        }
+      }
+
+      final curRendition = info.selectedRendition;
+      if (curRendition == null || info.ladder == null) break;
+      excludedKeys.add(curRendition.uniqueKey);
+      final support = await HongguoCodecCapabilities.instance
+          .getHardwareSupport();
+      final next = info.ladder!.selectDowngrade(
+        curRendition,
+        hardwareSupport: support,
+        lessons: HongguoCodecCapabilities.instance.lessons,
+        excludedKeys: excludedKeys,
+      );
+      if (next == null) break;
+      info = info.downgradeWith(next, preferredQuality: info.preferredQuality) ??
+          info;
+    }
+
+    throw lastError ??
+        StateError('Không thể tải/giải mã video Hongguo cho $vid');
+  }
+
+  static Future<String> _readPreferredQuality() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final q = prefs.getString('hongguo_preferred_quality') ?? '1080';
+      return SettingsRepository.validHongguoQualities.contains(q) ? q : '1080';
+    } catch (_) {
+      return '1080';
+    }
+  }
+
+  static Future<Map<String, dynamic>> _fetchVideoModelWithFallbacks(
+    String videoId,
+  ) async {
+    var device = await HongguoDeviceService.instance.getOrRegisterDevice();
+
+    // 1. Mobile v5 playback (`/novel/player/multi_video_model/player/v1` với `device_level: 1`).
+    final v5Model = await _tryV5Hosts(videoId, device);
+    if (v5Model != null) return v5Model;
+
+    // 2. Fallback sang v3 (`/novel/player/multi_video_model/v1/`).
+    var v3Model = await _tryV3Hosts(videoId, device);
+    if (v3Model != null) return v3Model;
+
+    // 3. Nếu thiết bị ẩn danh bị từ chối/chưa đăng ký, thử xoay danh tính 1 lần (có cooldown 5 phút).
+    final rotated = await HongguoDeviceService.instance.rotateDevice(
+      expected: device,
+    );
+    if (rotated) {
+      device = await HongguoDeviceService.instance.getOrRegisterDevice();
+      final retryV5 = await _tryV5Hosts(videoId, device);
+      if (retryV5 != null) return retryV5;
+      final retryV3 = await _tryV3Hosts(videoId, device);
+      if (retryV3 != null) return retryV3;
+    }
+
+    throw StateError('Không lấy được video_model cho videoId=$videoId');
+  }
+
+  static Future<Map<String, dynamic>?> _tryV5Hosts(
+    String videoId,
+    HongguoDeviceInfo device,
+  ) async {
+    final payload = <String, dynamic>{
+      'biz_param': const <String, dynamic>{
         'detail_page_version': 0,
-        'device_level': 3,
+        'device_level': 1,
         'disable_digg_stat': false,
+        'disable_video_relate_book': false,
         'need_all_video_definition': true,
         'need_mp4_align': false,
         'use_os_player': false,
         'use_server_dns': false,
         'video_platform': 1024,
       },
-      'mixed_video_id_map': {
-        '1004': [cleanVideoId],
+      'mixed_video_id_map': <String, List<String>>{
+        '1004': <String>[videoId],
+      },
+      'dr_scene': 'player',
+    };
+    final gzBytes = Uint8List.fromList(
+      gzip.encode(utf8.encode(jsonEncode(payload))),
+    );
+
+    final orderedHosts = HongguoPlaybackRoutes.instance.orderUrls(
+      _apiHosts.map((h) => 'https://$h$v5PlayerPath').toList(growable: false),
+    );
+
+    for (final endpoint in orderedHosts) {
+      try {
+        final signed = HongguoV5Signer.signPlaybackV5(
+          baseUrl: endpoint,
+          device: device,
+          bodyBytes: gzBytes,
+        );
+        final res = await _dio.post<dynamic>(
+          signed.url,
+          data: Stream<List<int>>.fromIterable(<List<int>>[gzBytes]),
+          options: Options(
+            headers: <String, dynamic>{
+              ...signed.headers,
+              Headers.contentLengthHeader: gzBytes.length,
+            },
+            responseType: ResponseType.json,
+          ),
+        );
+        final extracted = _extractVideoModelFromResponse(res.data, videoId);
+        if (extracted != null) {
+          HongguoPlaybackRoutes.instance.markHealthy(endpoint);
+          return extracted;
+        }
+        HongguoPlaybackRoutes.instance.markFailed(
+          endpoint,
+          cooldown: const Duration(minutes: 2),
+        );
+      } catch (e) {
+        HongguoPlaybackRoutes.instance.markFailed(endpoint);
+        debugPrint('[HongguoLocalEngine] v5 host ($endpoint) lỗi: $e');
+      }
+    }
+    return null;
+  }
+
+  static Future<Map<String, dynamic>?> _tryV3Hosts(
+    String videoId,
+    HongguoDeviceInfo device,
+  ) async {
+    final payload = <String, dynamic>{
+      'biz_param': const <String, dynamic>{
+        'detail_page_version': 0,
+        'device_level': 1,
+        'disable_digg_stat': false,
+        'disable_video_relate_book': false,
+        'need_all_video_definition': true,
+        'need_mp4_align': false,
+        'use_os_player': false,
+        'use_server_dns': false,
+        'video_platform': 1024,
+      },
+      'mixed_video_id_map': <String, List<String>>{
+        '1004': <String>[videoId],
       },
     };
 
-    final activeDevice =
-        await HongguoDeviceService.instance.getOrRegisterDevice();
-    final devicesToTry = <HongguoDeviceInfo>[activeDevice];
-    if (activeDevice.deviceId != HongguoSixgodSigner.defaultDeviceId ||
-        activeDevice.installId != HongguoSixgodSigner.defaultInstallId) {
-      devicesToTry.add(
-        HongguoDeviceInfo(
-          deviceId: HongguoSixgodSigner.defaultDeviceId,
-          installId: HongguoSixgodSigner.defaultInstallId,
-          registeredAtMs: 0,
+    final orderedHosts = HongguoPlaybackRoutes.instance.orderUrls(
+      _apiHosts.map((h) => 'https://$h$v3PlayerPath').toList(growable: false),
+    );
+
+    for (final endpoint in orderedHosts) {
+      try {
+        final signed = HongguoSixgodSigner.signRequest(
+          url: endpoint,
+          body: payload,
+          deviceId: device.deviceId,
+          installId: device.installId,
+          includeHelios: true,
+        );
+        final res = await _dio.post<dynamic>(
+          signed.signedUrl,
+          data: signed.bodyBytes,
+          options: Options(
+            headers: <String, dynamic>{
+              ...signed.headers,
+              if (device.cookieHeader.isNotEmpty) 'cookie': device.cookieHeader,
+            },
+            responseType: ResponseType.json,
+          ),
+        );
+        final extracted = _extractVideoModelFromResponse(res.data, videoId);
+        if (extracted != null) {
+          HongguoPlaybackRoutes.instance.markHealthy(endpoint);
+          return extracted;
+        }
+      } catch (e) {
+        HongguoPlaybackRoutes.instance.markFailed(endpoint);
+        debugPrint('[HongguoLocalEngine] v3 host ($endpoint) lỗi: $e');
+      }
+    }
+    return null;
+  }
+
+  static Map<String, dynamic>? _extractVideoModelFromResponse(
+    dynamic raw,
+    String videoId,
+  ) {
+    dynamic root = raw;
+    if (root is String && root.trim().isNotEmpty) {
+      try {
+        root = jsonDecode(root);
+      } catch (_) {
+        return null;
+      }
+    }
+    if (root is! Map) return null;
+    final data = root['data'];
+    if (data is! Map) return null;
+
+    final entries = data['1004'] is Map ? data['1004'] as Map : data;
+    final entry = entries[videoId];
+    if (entry is! Map) return null;
+
+    var vm = entry['video_model'];
+    if (vm is String && vm.trim().isNotEmpty) {
+      try {
+        vm = jsonDecode(vm);
+      } catch (_) {
+        return null;
+      }
+    }
+    if (vm is Map) {
+      return Map<String, dynamic>.from(vm);
+    }
+    return null;
+  }
+
+  static ({String url, String keySeedB64}) _extractFallbackApiInfo(
+    Map<String, dynamic> videoModel,
+  ) {
+    dynamic raw = videoModel['fallback_api'];
+    if (raw is String && raw.trim().startsWith('{')) {
+      try {
+        raw = jsonDecode(raw);
+      } catch (_) {}
+    }
+    if (raw is Map) {
+      return (
+        url: raw['fallback_api']?.toString() ?? '',
+        keySeedB64: raw['key_seed']?.toString() ?? '',
+      );
+    }
+    if (raw is String && raw.startsWith('http')) {
+      return (url: raw, keySeedB64: '');
+    }
+    return (url: '', keySeedB64: '');
+  }
+
+  static List<HongguoRendition> _parseVideoListRenditions(
+    String vid,
+    dynamic rawVideoList, {
+    String keySeedB64 = '',
+  }) {
+    final keySeed = keySeedB64.isNotEmpty
+        ? HongguoCencDecryptor.b64DecodePadded(keySeedB64)
+        : null;
+    final entries = <Map<String, dynamic>>[];
+    if (rawVideoList is Map) {
+      for (final val in rawVideoList.values) {
+        if (val is Map) entries.add(Map<String, dynamic>.from(val));
+      }
+    } else if (rawVideoList is List) {
+      for (final val in rawVideoList) {
+        if (val is Map) entries.add(Map<String, dynamic>.from(val));
+      }
+    }
+
+    final renditions = <HongguoRendition>[];
+    for (final item in entries) {
+      final codecRaw = (item['codec_type'] ??
+              item['vtype'] ??
+              item['codec'] ??
+              item['video_codec'] ??
+              'h264')
+          .toString()
+          .toLowerCase();
+      if (codecRaw.contains('bytevc2') ||
+          codecRaw.contains('bvc2') ||
+          codecRaw.contains('vvc')) {
+        continue;
+      }
+
+      final encryptInfo = item['encrypt_info'];
+      final spadeA = (item['spade_a'] ??
+              (encryptInfo is Map ? encryptInfo['spade_a'] : null) ??
+              item['play_auth_token'] ??
+              '')
+          .toString()
+          .trim();
+      final mainUrl = _decodeStreamUrl(
+        item['main_url']?.toString() ?? '',
+        spadeA: spadeA,
+        keySeed: keySeed,
+      );
+      if (mainUrl.isEmpty) continue;
+
+      final backupUrl = _decodeStreamUrl(
+        item['backup_url_1']?.toString() ??
+            item['backup_url']?.toString() ??
+            '',
+        spadeA: spadeA,
+        keySeed: keySeed,
+      );
+
+      final contentKeyHex = spadeA.isNotEmpty
+          ? HongguoCencDecryptor.deriveContentKeyHex(spadeA)
+          : '';
+
+      renditions.add(
+        HongguoRendition(
+          vid: vid,
+          definition: item['definition']?.toString() ?? '720p',
+          codec: codecRaw,
+          mainUrl: mainUrl,
+          backupUrl: backupUrl,
+          spadeA: spadeA,
+          contentKeyHex: contentKeyHex,
+          width: (item['vwidth'] as num?)?.toInt() ??
+              (item['width'] as num?)?.toInt() ??
+              0,
+          height: (item['vheight'] as num?)?.toInt() ??
+              (item['height'] as num?)?.toInt() ??
+              0,
+          bitrate: (item['bitrate'] as num?)?.toInt() ?? 0,
+          fps: (item['fps'] as num?)?.toInt() ?? 0,
+          sizeBytes: (item['size'] as num?)?.toInt() ?? 0,
+          isDrmProtected: contentKeyHex.isNotEmpty,
         ),
       );
     }
-
-    Object? lastError;
-    for (final device in devicesToTry) {
-      final entry = await _tryAllHostsAndModes(
-        cleanVideoId: cleanVideoId,
-        payload: payload,
-        device: device,
-        onError: (err) => lastError = err,
-      );
-      if (entry != null) return entry;
-    }
-
-    // Chỉ làm mới device khi tất cả host + header mode đều thất bại trên cả device hiện tại lẫn default
-    debugPrint(
-      '[HongguoLocalEngine] Tất cả chế độ với device ${activeDevice.deviceId} đều rỗng, thử đăng ký device mới...',
-    );
-    await HongguoDeviceService.instance.invalidateDevice();
-    final refreshedDevice = await HongguoDeviceService.instance
-        .getOrRegisterDevice(forceRefresh: true);
-    final refreshedEntry = await _tryAllHostsAndModes(
-      cleanVideoId: cleanVideoId,
-      payload: payload,
-      device: refreshedDevice,
-      onError: (err) => lastError = err,
-    );
-    if (refreshedEntry != null) return refreshedEntry;
-
-    if (lastError != null) {
-      throw StateError(
-        'Không tìm thấy thông tin video ID: $cleanVideoId từ ByteDance ($lastError)',
-      );
-    }
-    throw StateError(
-      'Không tìm thấy thông tin video ID: $cleanVideoId từ ByteDance',
-    );
+    return renditions;
   }
 
-  static Future<Map?> _tryAllHostsAndModes({
-    required String cleanVideoId,
-    required Map<String, dynamic> payload,
-    required HongguoDeviceInfo device,
-    required void Function(Object err) onError,
+  static Future<List<HongguoRendition>> _fetchFallbackApiRenditions(
+    String vid,
+    String fallbackUrl, {
+    String fallbackKeySeedB64 = '',
+    bool forceH264 = false,
   }) async {
-    final hostOrder = <int>[
-      _preferredHostIndex,
-      for (var i = 0; i < _videoModelHosts.length; i++)
-        if (i != _preferredHostIndex) i,
-    ];
-    final modeOrder = <_VideoModelHeaderMode>[
-      _preferredHeaderMode,
-      for (final mode in _VideoModelHeaderMode.values)
-        if (mode != _preferredHeaderMode) mode,
-    ];
-
-    for (final mode in modeOrder) {
-      for (final hostIdx in hostOrder) {
-        final baseUrl = '${_videoModelHosts[hostIdx]}$_videoModelPathAndQuery';
-        try {
-          final entry = await _postVideoModel(
-            cleanVideoId: cleanVideoId,
-            baseUrl: baseUrl,
-            payload: payload,
-            device: device,
-            mode: mode,
-          );
-          if (entry != null) {
-            _preferredHostIndex = hostIdx;
-            _preferredHeaderMode = mode;
-            return entry;
-          }
-        } catch (e) {
-          onError(e);
-        }
-      }
-    }
-    return null;
-  }
-
-  static Future<Map?> _postVideoModel({
-    required String cleanVideoId,
-    required String baseUrl,
-    required Map<String, dynamic> payload,
-    required HongguoDeviceInfo device,
-    required _VideoModelHeaderMode mode,
-  }) async {
-    late final String targetUrl;
-    late final Map<String, String> headers;
-    late final List<int> bodyBytes;
-
-    if (mode == _VideoModelHeaderMode.unsigned) {
-      final parsed = Uri.parse(baseUrl);
-      final qp = Map<String, String>.from(parsed.queryParameters)
-        ..['iid'] = device.installId
-        ..['device_id'] = device.deviceId;
-      targetUrl = parsed.replace(queryParameters: qp).toString();
-      headers = <String, String>{
-        'user-agent': HongguoSixgodSigner.userAgent,
-        'content-type': 'application/json; charset=UTF-8',
-      };
-      bodyBytes = utf8.encode(jsonEncode(payload));
-    } else {
-      final signed = HongguoSixgodSigner.signRequest(
-        url: baseUrl,
-        body: payload,
-        deviceId: device.deviceId,
-        installId: device.installId,
-        deviceToken: device.deviceToken,
-        includeHelios: mode == _VideoModelHeaderMode.gorgonHelios,
-      );
-      targetUrl = signed.signedUrl;
-      headers = Map<String, String>.from(signed.headers);
-      if (mode == _VideoModelHeaderMode.gorgonHelios) {
-        headers.remove('x-medusa');
-      }
-      bodyBytes = signed.bodyBytes;
-    }
-
-    final res = await _dio.post(
-      targetUrl,
-      data: bodyBytes,
-      options: Options(
-        headers: headers,
-        responseType: ResponseType.json,
-        validateStatus: (status) => status != null && status < 500,
-      ),
-    );
-
-    if (res.data == null) {
-      debugPrint(
-        '[HongguoLocalEngine] Body rỗng với mode=${mode.name} host=${Uri.parse(baseUrl).host}',
-      );
-      return null;
-    }
-
-    final data = res.data is Map ? res.data as Map : <String, dynamic>{};
-    final apiCode =
-        int.tryParse((data['Code'] ?? data['code'])?.toString() ?? '0') ?? 0;
-    if (apiCode != 0) {
-      throw StateError(
-        'ByteDance từ chối request (code $apiCode): '
-        '${data['Message'] ?? data['message'] ?? 'không rõ lỗi'}',
-      );
-    }
-
-    final dataMap = data['data'] is Map
-        ? data['data'] as Map
-        : <String, dynamic>{};
-    if (dataMap.isEmpty) return null;
-
-    final entry = dataMap[cleanVideoId] ?? dataMap.values.first;
-    return entry is Map ? entry : null;
-  }
-
-  static String _extractFallbackApiUrl(Map videoModel) {
-    final fallbackRaw = videoModel['fallback_api'] ?? '';
-    var fallbackApi = '';
-    if (fallbackRaw is String) {
-      if (fallbackRaw.startsWith('{')) {
-        try {
-          final dec = jsonDecode(fallbackRaw) as Map;
-          fallbackApi = dec['fallback_api']?.toString() ?? '';
-        } catch (_) {}
-      }
-      if (fallbackApi.isEmpty) fallbackApi = fallbackRaw;
-    } else if (fallbackRaw is Map) {
-      fallbackApi = fallbackRaw['fallback_api']?.toString() ?? '';
-    }
-    return fallbackApi;
-  }
-
-  static Future<_ResolvedStreamCandidate?> _resolveFromFallbackApi(
-    String fallbackApi, {
-    required bool preferLowest,
-    required String videoId,
-  }) async {
-    final fbRes = await _dio.get(
-      fallbackApi,
-      options: Options(
-        headers: {'user-agent': HongguoSixgodSigner.userAgent},
-        responseType: ResponseType.json,
-      ),
-    );
-
-    final fbData = fbRes.data is Map ? fbRes.data as Map : <String, dynamic>{};
-    final videoInfo = fbData['video_info'] is Map
-        ? fbData['video_info'] as Map
-        : <String, dynamic>{};
-    for (final responsePart in [fbData, videoInfo]) {
-      final code =
-          int.tryParse(
-            (responsePart['Code'] ?? responsePart['code'] ?? 0).toString(),
-          ) ??
-          0;
-      if (code != 0) {
-        throw StateError('ByteDance fallback từ chối request (code $code)');
-      }
-    }
-    final videoData = videoInfo['data'] is Map
-        ? videoInfo['data'] as Map
-        : <String, dynamic>{};
-    if (videoData.isEmpty) {
-      throw StateError('ByteDance fallback không trả về dữ liệu video');
-    }
-
-    final keySeedB64 = videoData['key_seed']?.toString() ?? '';
-    final keySeedRaw = keySeedB64.isNotEmpty
-        ? HongguoCencDecryptor.b64DecodePadded(keySeedB64)
-        : Uint8List(0);
-
-    return _resolveFromVideoList(
-      videoData['video_list'],
-      keySeedRaw: keySeedRaw,
-      preferLowest: preferLowest,
-      fallbackDuration:
-          int.tryParse(videoData['duration']?.toString() ?? '0') ?? 0,
-      fallbackTitle: videoData['title']?.toString() ?? videoId,
-    );
-  }
-
-  static _ResolvedStreamCandidate? _resolveFromVideoList(
-    dynamic videoListRaw, {
-    required Uint8List keySeedRaw,
-    required bool preferLowest,
-    required int fallbackDuration,
-    required String fallbackTitle,
-  }) {
-    final Iterable<dynamic> rawItems;
-    if (videoListRaw is Map) {
-      rawItems = videoListRaw.values;
-    } else if (videoListRaw is List) {
-      rawItems = videoListRaw;
-    } else {
-      return null;
-    }
-
-    int codecRank(Map item) {
-      final meta = item['video_meta'];
-      final codec =
-          (item['codec_type'] ??
-                  (meta is Map ? meta['codec_type'] : null) ??
-                  '')
-              .toString()
-              .toLowerCase();
-      if (const ['h264', 'avc', 'avc1'].contains(codec)) return 0;
-      if (const ['h265', 'hevc', 'hvc1', 'hev1', 'bytevc1'].contains(codec)) {
-        return 1;
-      }
-      return 2;
-    }
-
-    int streamHeight(Map item) {
-      final meta = item['video_meta'];
-      for (final value in [
-        item['vheight'],
-        item['height'],
-        if (meta is Map) meta['vheight'],
-        if (meta is Map) meta['height'],
-      ]) {
-        final parsed = int.tryParse(value?.toString() ?? '');
-        if (parsed != null && parsed > 0) return parsed;
-      }
-      final label =
-          (item['quality_desc'] ??
-                  item['definition'] ??
-                  (meta is Map ? meta['definition'] : null) ??
-                  '')
-              .toString();
-      return int.tryParse(RegExp(r'\d+').firstMatch(label)?.group(0) ?? '') ??
-          0;
-    }
-
-    final streams =
-        rawItems
-            .whereType<Map>()
-            .where((item) => codecRank(item) < 2)
-            .toList()
-          ..sort((a, b) {
-            final codecCompare = codecRank(a).compareTo(codecRank(b));
-            if (codecCompare != 0) return codecCompare;
-            return preferLowest
-                ? streamHeight(a).compareTo(streamHeight(b))
-                : streamHeight(b).compareTo(streamHeight(a));
-          });
-
-    for (final item in streams) {
-      final encryptInfo = item['encrypt_info'];
-      final spadeA =
-          (item['spade_a'] ??
-                  (encryptInfo is Map ? encryptInfo['spade_a'] : null) ??
-                  '')
-              .toString();
-      var candidateKey = '';
-      if (spadeA.isNotEmpty) {
-        try {
-          candidateKey = hex.encode(
-            HongguoCencDecryptor.deriveContentKey(spadeA),
-          );
-        } catch (e) {
-          debugPrint('[HongguoLocalEngine] Bỏ qua stream có spade_a lỗi: $e');
-          continue;
-        }
-      }
-
-      final rawCandidates = <dynamic>[
-        item['main_url'],
-        item['backup_url'],
-        if (item['backup_url_list'] is List) ...item['backup_url_list'] as List,
-        item['play_addr'],
-      ];
-      for (final raw in rawCandidates) {
-        final encodedUrl = raw?.toString() ?? '';
-        if (encodedUrl.isEmpty) continue;
-        try {
-          final decodedUrl = keySeedRaw.isNotEmpty
-              ? HongguoCencDecryptor.decryptSpadeUrl(encodedUrl, keySeedRaw)
-              : encodedUrl
-                    .replaceAll(r'\/', '/')
-                    .replaceAll(r'\u0026', '&')
-                    .replaceAll('&amp;', '&');
-          if (decodedUrl.startsWith('https://') ||
-              decodedUrl.startsWith('http://')) {
-            return _ResolvedStreamCandidate(
-              realMainUrl: decodedUrl,
-              contentKeyHex: candidateKey,
-              height: streamHeight(item),
-              duration: fallbackDuration,
-              title: fallbackTitle,
-            );
-          }
-        } catch (e) {
-          debugPrint('[HongguoLocalEngine] URL stream không dùng được: $e');
-        }
-      }
-    }
-    return null;
-  }
-
-  /// Tải về và tự động giải mã DRM CENC trực tiếp trên điện thoại
-  /// Trả về đường dẫn file mp4 cục bộ đã sẵn sàng phát
-  static Future<String> resolveAndGetPlayableUrl(
-    String seriesId,
-    String vid, {
-    int episodeIndex = 1,
-    Function(double)? onProgress,
-  }) async {
-    // 1. Kiểm tra cache trong máy trước
-    final cached = await VideoCacheManager.findCachedFile(
-      url: '',
-      seriesId: seriesId,
-      episodeIndex: episodeIndex,
-    );
-    if (cached != null &&
-        await cached.exists() &&
-        await cached.length() > 1024 * 50) {
-      debugPrint(
-        '[HongguoLocalEngine] ✅ Tìm thấy video trong cache máy: ${cached.path}',
-      );
-      return cached.path;
-    }
-
-    // 2. Tự sinh chữ ký & lấy thông tin từ ByteDance API
-    debugPrint(
-      '[HongguoLocalEngine] ⚡ Đang gọi API ByteDance trực tiếp trên máy...',
-    );
-    final info = await resolveVideoInfo(vid);
-    final urlPreview = info.realMainUrl.length > 50
-        ? '${info.realMainUrl.substring(0, 50)}...'
-        : info.realMainUrl;
-    debugPrint(
-      '[HongguoLocalEngine] 🎯 Lấy stream URL thành công: '
-      '$urlPreview (DRM: ${info.isDrmProtected})',
-    );
-
-    // Nếu video KHÔNG bị mã hóa DRM (ví dụ web mở hoặc public stream), trả link CDN trực tiếp luôn
-    if (!info.isDrmProtected) {
-      return info.realMainUrl;
-    }
-
-    // 3. Nếu video CÓ mã hóa DRM CENC: Tải về và giải mã tại chỗ trên điện thoại
-    final cacheDir = await VideoCacheManager.getCacheDirectory();
-    final cleanSid = seriesId.replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '');
-    final targetFile = File(
-      '${cacheDir.path}${Platform.pathSeparator}hg_${cleanSid}_ep$episodeIndex.mp4',
-    );
-    final encryptedFile = File('${targetFile.path}.encrypted.part');
-    final decryptedPartFile = File('${targetFile.path}.part');
-
-    for (final staleFile in [encryptedFile, decryptedPartFile]) {
-      if (await staleFile.exists()) {
-        await staleFile.delete();
-      }
-    }
-
-    debugPrint(
-      '[HongguoLocalEngine] 📥 Đang tải chunk MP4 mã hóa từ CDN ByteDance...',
-    );
-    await _dio.download(
-      info.realMainUrl,
-      encryptedFile.path,
-      deleteOnError: true,
-      options: Options(
-        headers: {
-          'user-agent': HongguoSixgodSigner.userAgent,
-          'referer': 'https://novelquickapp.com/',
-        },
-      ),
-      onReceiveProgress: (received, total) {
-        if (total > 0 && onProgress != null) {
-          onProgress(received / total);
-        }
-      },
-    );
-
-    final encryptedSize = await encryptedFile.length();
-    if (encryptedSize < 1024) {
-      await encryptedFile.delete();
-      throw StateError('File video tải về không hợp lệ ($encryptedSize bytes)');
-    }
-    debugPrint(
-      '[HongguoLocalEngine] 🔓 Đang giải mã CENC DRM trên máy '
-      '(size: $encryptedSize bytes)...',
-    );
     try {
-      await compute(_decryptDownloadedHongguoVideo, {
-        'inputPath': encryptedFile.path,
-        'outputPath': decryptedPartFile.path,
-        'contentKeyHex': info.contentKeyHex,
-      });
-      if (await targetFile.exists()) {
-        await targetFile.delete();
+      var target = fallbackUrl.trim();
+      if (target.startsWith('/')) {
+        target = 'https://is.snssdk.com$target';
       }
-      await decryptedPartFile.rename(targetFile.path);
-    } finally {
-      if (await encryptedFile.exists()) {
-        await encryptedFile.delete();
+      if (forceH264) {
+        final uri = Uri.parse(target);
+        target = uri
+            .replace(
+              queryParameters: <String, String>{
+                ...uri.queryParameters,
+                'codec_type': '0',
+                'force_codec': 'h264',
+              },
+            )
+            .toString();
       }
-      if (await decryptedPartFile.exists()) {
-        await decryptedPartFile.delete();
+
+      final res = await _dio.get<dynamic>(
+        target,
+        options: Options(
+          headers: <String, dynamic>{
+            'User-Agent': HongguoSixgodSigner.userAgent,
+            'Accept-Encoding': 'gzip',
+          },
+          responseType: ResponseType.json,
+        ),
+      );
+      dynamic body = res.data;
+      if (body is String && body.trim().isNotEmpty) {
+        body = jsonDecode(body);
       }
+      if (body is! Map) return const <HongguoRendition>[];
+      final data = body['data'] is Map ? body['data'] as Map : body;
+      final effectiveSeed =
+          data['key_seed']?.toString() ?? fallbackKeySeedB64;
+      final videoList = data['video_list'];
+      if (videoList != null) {
+        return _parseVideoListRenditions(
+          vid,
+          videoList,
+          keySeedB64: effectiveSeed,
+        );
+      }
+    } catch (e) {
+      debugPrint('[HongguoLocalEngine] fallback_api ($vid) lỗi: $e');
     }
-    debugPrint(
-      '[HongguoLocalEngine] 🎉 Giải mã hoàn tất! File lưu tại: ${targetFile.path}',
+    return const <HongguoRendition>[];
+  }
+
+  static String _decodeStreamUrl(
+    String raw, {
+    String spadeA = '',
+    Uint8List? keySeed,
+  }) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return '';
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      return trimmed;
+    }
+
+    // Thử giải mã plaintext base64 trước (multi_video_model hay trả URL base64 thuần).
+    try {
+      final b64Decoded = utf8.decode(
+        HongguoCencDecryptor.b64DecodePadded(trimmed),
+        allowMalformed: false,
+      );
+      if (b64Decoded.startsWith('http://') || b64Decoded.startsWith('https://')) {
+        return b64Decoded;
+      }
+    } catch (_) {}
+
+    // Giải mã URL mã hoá bởi key_seed / spade_a.
+    if (keySeed != null && keySeed.isNotEmpty) {
+      try {
+        final dec = HongguoCencDecryptor.decryptSpadeUrl(trimmed, keySeed);
+        if (dec.startsWith('http://') || dec.startsWith('https://')) {
+          return dec;
+        }
+      } catch (_) {}
+    }
+
+    if (spadeA.isNotEmpty) {
+      try {
+        final spadeSeed = HongguoCencDecryptor.b64DecodePadded(spadeA);
+        final dec = HongguoCencDecryptor.decryptSpadeUrl(trimmed, spadeSeed);
+        if (dec.startsWith('http://') || dec.startsWith('https://')) {
+          return dec;
+        }
+      } catch (_) {}
+    }
+
+    return '';
+  }
+
+  /// Tạo một rendition tương ứng bản dự phòng nếu player báo lỗi với stream hiện tại.
+  static HongguoRendition? pickFallbackRendition(
+    HongguoVideoInfo info, {
+    required HongguoRendition current,
+    required HongguoCodecSupport support,
+    Set<String> excludedKeys = const <String>{},
+  }) {
+    return info.ladder?.selectDowngrade(
+      current,
+      hardwareSupport: support,
+      lessons: HongguoCodecCapabilities.instance.lessons,
+      excludedKeys: excludedKeys,
     );
-
-    // Tự động dọn dẹp cache nếu đầy
-    await VideoCacheManager.pruneCacheIfNeeded();
-
-    return targetFile.path;
   }
 }

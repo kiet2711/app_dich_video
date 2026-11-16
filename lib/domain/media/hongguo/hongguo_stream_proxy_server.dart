@@ -6,7 +6,6 @@ import 'dart:math' as math;
 import 'package:convert/convert.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
-import 'package:pointycastle/export.dart';
 
 import '../hongguo_cenc_decryptor.dart';
 import '../hongguo_resolver.dart';
@@ -14,21 +13,6 @@ import '../video_cache_manager.dart';
 import 'hongguo_local_engine.dart';
 
 const int _maxSessionCacheBytes = 12 * 1024 * 1024;
-
-/// Đại diện cho 1 khoảng sample đã mã hóa trong file MP4
-class _SampleInterval {
-  final int offset;
-  final int size;
-  final Uint8List iv8;
-
-  int get endOffset => offset + size;
-
-  _SampleInterval({
-    required this.offset,
-    required this.size,
-    required this.iv8,
-  });
-}
 
 /// Session quản lý siêu dữ liệu và bộ đệm cho một video đang phát
 class _ProxyStreamSession {
@@ -40,13 +24,14 @@ class _ProxyStreamSession {
   int? totalLength;
   Uint8List? sanitizedHeader;
   int moovEnd = 0;
+  int durationMs = 0;
   bool isDrm = false;
   Uint8List? contentKey;
   File? existingLocalFile;
 
-  List<_SampleInterval> samples = [];
+  HongguoPreparedCenc? preparedCenc;
 
-  // Bộ đệm khối 2 MB đã giải mã: chunkIndex -> Uint8List
+  // Bộ đệm khối 512 KiB đã giải mã: chunkIndex -> Uint8List
   final Map<int, Uint8List> chunkCache = {};
   final Map<int, Future<Uint8List>> inFlightChunks = {};
   Future<void>? prepareFuture;
@@ -104,9 +89,8 @@ class HongguoStreamProxyServer {
   HongguoStreamProxyServer._();
 
   static const int chunkSize =
-      2 *
-      1024 *
-      1024; // 2 MB mỗi chunk (giảm 4x số request mạng và RTT latency)
+      512 *
+      1024; // 512 KiB mỗi chunk (khởi phát & tua nhanh hơn 4x, RAM cực thấp)
 
   HttpServer? _server;
   int _port = 0;
@@ -449,7 +433,12 @@ class HongguoStreamProxyServer {
           final metaJson = jsonDecode(metaContent) as Map<String, dynamic>;
           final totalLen = metaJson['totalLength'] as int?;
           final isDrmMeta = (metaJson['isDrm'] as bool?) ?? false;
-          if (totalLen != null && totalLen > 0 && !isDrmMeta) {
+          final savedChunkSize = metaJson['chunkSize'] as int?;
+          if (totalLen != null &&
+              totalLen > 0 &&
+              !isDrmMeta &&
+              savedChunkSize == chunkSize &&
+              chunk0File.lengthSync() <= chunkSize) {
             session.totalLength = totalLen;
             session.isDrm = false;
             session.moovEnd = 0;
@@ -532,6 +521,7 @@ class HongguoStreamProxyServer {
           'totalLength': session.totalLength,
           'isDrm': false,
           'moovEnd': 0,
+          'chunkSize': chunkSize,
           'contentKeyHex': '',
         }));
       } catch (_) {}
@@ -548,251 +538,168 @@ class HongguoStreamProxyServer {
       options: Options(
         responseType: ResponseType.bytes,
         headers: {
-          'Range': 'bytes=0-${chunkSize - 1}', // 2 MB đầu tiên
+          'Range': 'bytes=0-${chunkSize - 1}',
           'User-Agent':
               'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
         },
       ),
     );
 
-    session.totalLength = _readTotalLength(initChunkRes);
-    if (session.totalLength == null || session.totalLength! <= 0) {
+    final totalLen = _readTotalLength(initChunkRes);
+    if (totalLen == null || totalLen <= 0) {
       throw StateError('CDN không trả về kích thước video DRM hợp lệ');
     }
+    session.totalLength = totalLen;
 
-    final firstEnd = math.min(chunkSize, session.totalLength!) - 1;
+    final firstEnd = math.min(chunkSize, totalLen) - 1;
     final rawInitBytes = _rangeBytesFromResponse(
       initChunkRes,
       start: 0,
       end: firstEnd,
     );
 
-    // Bóc tách box moov
-    final bd = ByteData.sublistView(rawInitBytes);
-    var moovOff = -1;
-    var moovSize = 0;
-    final (foundMoovOff, foundMoovSz) = HongguoCencDecryptor.findBox(
-      rawInitBytes,
-      'moov',
-      0,
-    );
-    if (foundMoovOff >= 0) {
-      moovOff = foundMoovOff;
-      moovSize = foundMoovSz;
-    } else {
-      final ftypEnd = bd.getUint32(0, Endian.big);
-      if (ftypEnd + 8 < rawInitBytes.length) {
-        moovOff = ftypEnd;
-        moovSize = bd.getUint32(ftypEnd, Endian.big);
+    Future<Uint8List> readSlice(int offset, int length) async {
+      if (length <= 0) return Uint8List(0);
+      if (offset >= 0 && offset + length <= rawInitBytes.length) {
+        return Uint8List.sublistView(rawInitBytes, offset, offset + length);
       }
+      final res = await _dio.get<List<int>>(
+        info.realMainUrl,
+        cancelToken: cancelToken,
+        options: Options(
+          responseType: ResponseType.bytes,
+          headers: {
+            'Range': 'bytes=$offset-${offset + length - 1}',
+            'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
+          },
+        ),
+      );
+      return _rangeBytesFromResponse(
+        res,
+        start: offset,
+        end: offset + length - 1,
+      );
     }
 
-    if (moovOff < 0 || moovSize <= 0) {
+    // Duyệt top-level boxes hỗ trợ moov ở cả đầu lẫn cuối file, và box size == 1/0.
+    Uint8List? moovBytes;
+    var moovOff = -1;
+    var moovSize = 0;
+    var cursor = 0;
+    for (var step = 0; step < 64 && cursor + 8 <= totalLen; step++) {
+      final hdr = await readSlice(cursor, math.min(16, totalLen - cursor));
+      if (hdr.length < 8) break;
+      final hdrBd = ByteData.sublistView(hdr);
+      final box = Mp4BoxScanner.readBoxHeader(
+        hdr,
+        hdrBd,
+        0,
+        totalLen - cursor,
+      );
+      if (box == null || box.size <= 0) break;
+      if (box.type == 'moov') {
+        if (box.size > 24 * 1024 * 1024) {
+          throw FormatException('Box moov quá lớn (${box.size}) cho ${session.vid}');
+        }
+        moovOff = cursor;
+        moovSize = box.size;
+        moovBytes = await readSlice(moovOff, moovSize);
+        break;
+      }
+      cursor += box.size;
+    }
+
+    if (moovBytes == null || moovOff < 0 || moovSize <= 0) {
       throw FormatException(
-        'Không tìm thấy box moov trong 1MB đầu của video ${session.vid}',
+        'Không tìm thấy box moov trong video ${session.vid}',
       );
     }
 
     session.moovEnd = moovOff + moovSize;
+    final prepared = HongguoPreparedCenc.parseMoov(
+      moovBytes,
+      moovFileOffset: moovOff,
+    );
 
-    // Parse các track và xây dựng danh sách sample
-    final moovBytes = rawInitBytes.sublist(moovOff + 8, session.moovEnd);
-    final allSamples = <_SampleInterval>[];
-
-    var trakSearchStart = 0;
-    while (trakSearchStart < moovBytes.length - 8) {
-      final (tOff, tSz) = HongguoCencDecryptor.findBox(
-        moovBytes,
-        'trak',
-        trakSearchStart,
-      );
-      if (tOff < 0 || tSz <= 0) break;
-      trakSearchStart = tOff + (tSz > 0 ? tSz : 8);
-
-      final parsed = HongguoCencDecryptor.parseTrack(moovBytes, tOff);
-      if (parsed == null || parsed.ns == 0) continue;
-
-      // Đọc bảng aux (IVs)
-      Uint8List auxBytes;
-      if (parsed.auxOff + parsed.auxSz <= rawInitBytes.length) {
-        auxBytes = Uint8List.sublistView(
-          rawInitBytes,
-          parsed.auxOff,
-          parsed.auxOff + parsed.auxSz,
-        );
-      } else {
-        // Nếu aux nằm ngoài 2MB, tải thêm phần aux
-        final auxRes = await _dio.get<List<int>>(
-          info.realMainUrl,
-          cancelToken: cancelToken,
-          options: Options(
-            responseType: ResponseType.bytes,
-            headers: {
-              'Range':
-                  'bytes=${parsed.auxOff}-${parsed.auxOff + parsed.auxSz - 1}',
-              'User-Agent':
-                  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
-            },
-          ),
-        );
-        auxBytes = Uint8List.fromList(auxRes.data!);
+    if (prepared.auxRanges.isNotEmpty) {
+      final auxSlices = <({int start, Uint8List bytes})>[];
+      for (final r in prepared.auxRanges) {
+        final safeEnd = math.min(totalLen, r.end);
+        if (r.start >= safeEnd) continue;
+        final auxData = await readSlice(r.start, safeEnd - r.start);
+        auxSlices.add((start: r.start, bytes: auxData));
       }
-
-      var si = 0;
-      var ap = 0;
-      for (var ci = 0; ci < parsed.offsets.length; ci++) {
-        var off = parsed.offsets[ci];
-        final count = parsed.cns[ci];
-
-        for (var k = 0; k < count; k++) {
-          if (si >= parsed.ns) break;
-          final sz = parsed.sizes[si];
-          final iv8 = Uint8List(8);
-          if (ap + 8 <= auxBytes.length) {
-            iv8.setRange(0, 8, auxBytes.sublist(ap, ap + 8));
+      prepared.finalizeWithAuxChunks((off, len) {
+        for (final s in auxSlices) {
+          if (off >= s.start && off + len <= s.start + s.bytes.length) {
+            return Uint8List.sublistView(
+              s.bytes,
+              off - s.start,
+              off - s.start + len,
+            );
           }
-          allSamples.add(_SampleInterval(offset: off, size: sz, iv8: iv8));
-          off += sz;
-          si++;
-          ap += 8;
         }
-      }
+        return null;
+      });
+    } else if (!prepared.isFinalized) {
+      prepared.finalizeWithAuxChunks((_, _) => null);
     }
 
-    allSamples.sort((a, b) => a.offset.compareTo(b.offset));
-    session.samples = allSamples;
+    session.preparedCenc = prepared;
+    session.durationMs = prepared.metadata.durationMs;
 
-    // Sửa header: đổi sinf -> free và đổi FourCC encv -> hvc1/avc1, enca -> mp4a
-    final cleanHeader = Uint8List.fromList(
-      rawInitBytes.sublist(0, session.moovEnd),
-    );
-    HongguoCencDecryptor.replaceSinf(cleanHeader);
-    HongguoCencDecryptor.replaceFourcc(
-      cleanHeader,
-      ascii.encode('encv'),
-      ascii.encode('hvc1'),
-    );
-    HongguoCencDecryptor.replaceFourcc(
-      cleanHeader,
-      ascii.encode('enca'),
-      ascii.encode('mp4a'),
-    );
-    session.sanitizedHeader = cleanHeader;
-
-    // Giải mã luôn phần mdat nằm trong 2MB đầu tiên và nạp vào chunkCache (Chunk 0)
-    if (rawInitBytes.length > session.moovEnd) {
-      final initialMdat = Uint8List.fromList(
-        rawInitBytes.sublist(session.moovEnd),
+    // Tạo bản header moov sạch (phục hồi frma gốc & xóa sinf -> free).
+    final cleanMoov = Uint8List.fromList(moovBytes);
+    prepared.decryptRange(moovOff, cleanMoov, contentKey: null);
+    if (moovOff + moovSize <= rawInitBytes.length) {
+      final cleanFront = Uint8List.fromList(
+        Uint8List.sublistView(rawInitBytes, 0, session.moovEnd),
       );
-      _decryptSampleIntervals(
-        data: initialMdat,
-        rangeStart: session.moovEnd,
-        samples: session.samples,
-        contentKey: session.contentKey!,
+      prepared.decryptRange(0, cleanFront, contentKey: null);
+      session.sanitizedHeader = cleanFront;
+    } else {
+      session.sanitizedHeader = cleanMoov;
+    }
+
+    // Giải mã các chunk nằm trong 512 KiB đầu tiên và cache sẵn.
+    final combined = Uint8List.fromList(rawInitBytes);
+    prepared.decryptRange(0, combined, contentKey: session.contentKey!);
+
+    for (var off = 0; off < combined.length; off += chunkSize) {
+      final end = math.min(off + chunkSize, combined.length);
+      final chunkIdx = off ~/ chunkSize;
+      final chunkBytes = Uint8List.fromList(
+        Uint8List.sublistView(combined, off, end),
       );
-
-      // Ghép Header + Mdat đầu tiên thành 1 khối hoàn chỉnh cho Chunk 0
-      final combined = Uint8List(cleanHeader.length + initialMdat.length);
-      combined.setRange(0, cleanHeader.length, cleanHeader);
-      combined.setRange(cleanHeader.length, combined.length, initialMdat);
-
-      for (var off = 0; off < combined.length; off += chunkSize) {
-        final end = math.min(off + chunkSize, combined.length);
-        final chunkIdx = off ~/ chunkSize;
-        final chunkBytes = Uint8List.sublistView(combined, off, end);
-        session.cacheChunk(chunkIdx, chunkBytes);
-        try {
-          final chunkDir = await _getChunkDir();
-          final chunkFile = _getChunkFile(chunkDir, session, chunkIdx);
-          _saveChunkToDiskAsync(chunkFile, chunkBytes);
-        } catch (_) {}
-      }
-
+      session.cacheChunk(chunkIdx, chunkBytes);
       try {
         final chunkDir = await _getChunkDir();
-        final metaFile = _getMetaFile(chunkDir, session);
-        await metaFile.writeAsString(jsonEncode({
-          'totalLength': session.totalLength,
-          'isDrm': true,
-          'moovEnd': session.moovEnd,
-          'contentKeyHex': info.contentKeyHex,
-        }));
+        final chunkFile = _getChunkFile(chunkDir, session, chunkIdx);
+        _saveChunkToDiskAsync(chunkFile, chunkBytes);
       } catch (_) {}
     }
+
+    try {
+      final chunkDir = await _getChunkDir();
+      final metaFile = _getMetaFile(chunkDir, session);
+      await metaFile.writeAsString(jsonEncode({
+        'totalLength': session.totalLength,
+        'isDrm': true,
+        'moovEnd': session.moovEnd,
+        'chunkSize': chunkSize,
+        'durationMs': session.durationMs,
+        'contentKeyHex': info.contentKeyHex,
+      }));
+    } catch (_) {}
 
     session.touch();
   }
 
-  /// Giải mã một khối dữ liệu dựa theo vị trí offset của nó trong file
-  /// Tối ưu hoá cực đại: Tìm kiếm nhị phân O(log N), tái sử dụng IV/KeyParameter,
-  /// giải mã in-place trực tiếp không cấp phát bộ nhớ (Zero Allocation).
-  static void _decryptSampleIntervals({
-    required Uint8List data,
-    required int rangeStart,
-    required List<_SampleInterval> samples,
-    required Uint8List contentKey,
-  }) {
-    if (samples.isEmpty || data.isEmpty) return;
-    final rangeEnd = rangeStart + data.length;
+  /// Lấy thời lượng MP4 thực tế (ms) nếu session đã chuẩn bị xong box `moov`.
+  int getSessionDurationMs(String vid) => _sessions[vid]?.durationMs ?? 0;
 
-    // Tìm nhanh sample đầu tiên có khả năng cắt qua rangeStart bằng Binary Search O(log N)
-    int low = 0;
-    int high = samples.length - 1;
-    int startIndex = samples.length;
-    while (low <= high) {
-      final mid = (low + high) >> 1;
-      if (samples[mid].endOffset > rangeStart) {
-        startIndex = mid;
-        high = mid - 1;
-      } else {
-        low = mid + 1;
-      }
-    }
-
-    if (startIndex >= samples.length) return;
-
-    final keyParam = KeyParameter(contentKey);
-    final blockIv = Uint8List(16);
-    final ivData = ByteData.sublistView(blockIv);
-
-    for (var i = startIndex; i < samples.length; i++) {
-      final s = samples[i];
-      if (s.offset >= rangeEnd) break;
-
-      final intersectStart = math.max(s.offset, rangeStart);
-      final intersectEnd = math.min(s.endOffset, rangeEnd);
-      final intersectLen = intersectEnd - intersectStart;
-      if (intersectLen <= 0) continue;
-
-      final chunkBufOffset = intersectStart - rangeStart;
-      final sampleRelOffset = intersectStart - s.offset;
-
-      final blockIndex = sampleRelOffset ~/ 16;
-      final offsetInBlock = sampleRelOffset % 16;
-
-      blockIv.setRange(0, 8, s.iv8);
-      ivData.setUint64(8, blockIndex, Endian.big);
-
-      final cipher = StreamCipher('AES/SIC')
-        ..init(false, ParametersWithIV(keyParam, blockIv));
-
-      if (offsetInBlock > 0) {
-        final dummy = Uint8List(offsetInBlock);
-        cipher.processBytes(dummy, 0, offsetInBlock, dummy, 0);
-      }
-
-      // In-place decryption: giải mã trực tiếp đè lên buffer data gốc
-      cipher.processBytes(
-        data,
-        chunkBufOffset,
-        intersectLen,
-        data,
-        chunkBufOffset,
-      );
-    }
-  }
-
-  /// Lấy 1 chunk 2 MB (đã giải mã) tại chunkIndex.
+  /// Lấy 1 chunk 512 KiB (đã giải mã) tại chunkIndex.
   Future<Uint8List> _getOrFetchChunk(
     _ProxyStreamSession session,
     int chunkIndex, {
@@ -864,41 +771,15 @@ class HongguoStreamProxyServer {
 
     final chunkData = _rangeBytesFromResponse(res, start: start, end: end);
 
-    // Giải mã nếu có DRM
-    if (session.isDrm && session.contentKey != null) {
-      // Nếu chunk này cắt qua phần Header moov: ghi đè phần header sạch
-      if (start < session.moovEnd && session.sanitizedHeader != null) {
-        final headerOverlapEnd = math.min(session.moovEnd, end + 1);
-        final overlapLen = headerOverlapEnd - start;
-        chunkData.setRange(
-          0,
-          overlapLen,
-          Uint8List.sublistView(
-            session.sanitizedHeader!,
-            start,
-            headerOverlapEnd,
-          ),
-        );
-
-        // Phần còn lại thuộc mdat thì giải mã in-place
-        if (headerOverlapEnd < end + 1) {
-          final mdatView = Uint8List.sublistView(chunkData, overlapLen);
-          _decryptSampleIntervals(
-            data: mdatView,
-            rangeStart: headerOverlapEnd,
-            samples: session.samples,
-            contentKey: session.contentKey!,
-          );
-        }
-      } else {
-        // Toàn bộ chunk thuộc mdat
-        _decryptSampleIntervals(
-          data: chunkData,
-          rangeStart: start,
-          samples: session.samples,
-          contentKey: session.contentKey!,
-        );
-      }
+    // Giải mã nếu có DRM (bao gồm cả vá moov encv/enca -> frma & sinf -> free tại chỗ)
+    if (session.isDrm &&
+        session.contentKey != null &&
+        session.preparedCenc != null) {
+      session.preparedCenc!.decryptRange(
+        start,
+        chunkData,
+        contentKey: session.contentKey!,
+      );
     }
 
     session.cacheChunk(chunkIndex, chunkData);

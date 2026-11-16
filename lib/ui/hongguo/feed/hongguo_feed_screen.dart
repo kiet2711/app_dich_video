@@ -22,10 +22,14 @@ import '../../../domain/ai/live/live_pcm_stream_extractor.dart';
 import '../../../domain/ai/live/live_stream_translator.dart';
 import '../../../domain/ai/offline_mlkit_translator.dart';
 import '../../../domain/media/audio_extractor.dart';
+import '../../../domain/media/hongguo/hongguo_cloud_account_service.dart';
+import '../../../domain/media/hongguo/hongguo_codec_capabilities.dart';
 import '../../../domain/media/hongguo/hongguo_local_engine.dart';
+import '../../../domain/media/hongguo/hongguo_playback_routes.dart';
+import '../../../domain/media/hongguo/hongguo_remote_video.dart';
 import '../../../domain/media/hongguo/hongguo_similar_engine.dart';
 import '../../../domain/media/hongguo/hongguo_stream_proxy_server.dart';
-import '../../../domain/media/hongguo_cenc_decryptor.dart';
+import '../hongguo_account_sheet.dart';
 import '../../../domain/media/hongguo_resolver.dart';
 import '../../../domain/media/multi_thread_downloader.dart';
 import '../../../domain/media/network_header_helper.dart';
@@ -458,10 +462,16 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     });
   }
 
-  // Watchdog giám sát chống đứng hình 1s
+  // Watchdog giám sát chống đứng hình 1s & hạ cấp tự động
   Timer? _stallWatchdog;
   Duration _lastObservedPos = Duration.zero;
   int _stallTickCount = 0;
+  String _preferredQuality = '1080';
+  HongguoVideoInfo? _activeVideoInfo;
+  final Set<String> _excludedRenditionKeys = <String>{};
+  int _downgradeAttempts = 0;
+  bool _isRecoveringDowngrade = false;
+  StreamSubscription<String>? _errorSub;
 
   bool _isLoadingVideo = false;
   bool _showLoadingIndicator = false;
@@ -592,12 +602,14 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
   }
 
   Future<void> _bootstrapFeed() async {
+    unawaited(HongguoCloudAccountService.instance.initialize());
     final settings = await SettingsRepository.getInstance();
     if (!mounted) return;
     final targetFeedTab = settings.hongguoFeedTab;
 
     setState(() {
       _settings = settings;
+      _preferredQuality = settings.hongguoPreferredQuality;
       _liveTranslator?.dispose();
       _liveTranslator = _createLiveTranslator(settings);
       _isAutoNextEpisode = settings.hongguoAutoNextEpisode;
@@ -755,6 +767,13 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     _posSub?.cancel();
     _bufferingSub?.cancel();
     _completedSub?.cancel();
+    _errorSub?.cancel();
+
+    _errorSub = _activeController?.player.stream.error.listen((errMsg) {
+      if (!mounted || errMsg.trim().isEmpty || _isRecoveringDowngrade) return;
+      debugPrint('[HongguoFeedScreen] ⚠️ Player stream error: $errMsg');
+      unawaited(_attemptFeedAutoDowngrade(_currentIndex, reason: errMsg));
+    });
 
     _posSub = _activeController?.player.stream.position.listen((pos) {
       if (!mounted) return;
@@ -845,7 +864,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     _feedGeneration++;
     _standbyRequestId++;
     _completedSub?.cancel();
+    _errorSub?.cancel();
     _stallWatchdog?.cancel();
+    unawaited(HongguoCloudAccountService.instance.flushPendingProgress());
     _loadingIndicatorTimer?.cancel();
     _liveWarmupTimeoutTimer?.cancel();
     _posSub?.cancel();
@@ -897,12 +918,14 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
           currentPos > Duration.zero &&
           currentPos == _lastObservedPos) {
         _stallTickCount++;
-        if (_stallTickCount >= 4) {
+        if (_stallTickCount == 4 || _stallTickCount == 12) {
           debugPrint(
             '[HongguoFeedScreen] ⚡ Phục hồi phát video tại $currentPos',
           );
           player.play();
+        } else if (_stallTickCount >= 55 && !_isRecoveringDowngrade) {
           _stallTickCount = 0;
+          unawaited(_attemptFeedAutoDowngrade(_currentIndex, reason: 'stall_20s'));
         }
       } else {
         _stallTickCount = 0;
@@ -911,9 +934,205 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     });
   }
 
+  /// Thử hạ cấp chất lượng / chuyển từ HEVC sang H.264 tối đa 2 lần khi gặp lỗi codec hoặc đơ mạng.
+  Future<void> _attemptFeedAutoDowngrade(
+    int index, {
+    String reason = '',
+  }) async {
+    if (!mounted ||
+        _isRecoveringDowngrade ||
+        _downgradeAttempts >= 2 ||
+        index < 0 ||
+        index >= _feedItems.length) {
+      return;
+    }
+    final info = _activeVideoInfo;
+    final curRendition = info?.selectedRendition;
+    if (info == null || curRendition == null || info.ladder == null) return;
+
+    _isRecoveringDowngrade = true;
+    try {
+      HongguoPlaybackRoutes.instance.markFailed(info.realMainUrl);
+      await HongguoCodecCapabilities.instance.learnFailure(curRendition);
+      _excludedRenditionKeys.add(curRendition.uniqueKey);
+
+      final support = await HongguoCodecCapabilities.instance.getHardwareSupport();
+      final next = info.ladder!.selectDowngrade(
+        curRendition,
+        hardwareSupport: support,
+        lessons: HongguoCodecCapabilities.instance.lessons,
+        excludedKeys: _excludedRenditionKeys,
+      );
+      if (next == null) return;
+
+      _downgradeAttempts++;
+      final resumePos = _activeController?.value.position ?? Duration.zero;
+      final downgradedInfo = info.downgradeWith(
+        next,
+        preferredQuality: _preferredQuality,
+      );
+      if (downgradedInfo == null) return;
+
+      final item = _feedItems[index];
+      final mediaKey = _mediaKey(item);
+      if (_liveTranslator?.isEnabled == true && downgradedInfo.isDrmProtected) {
+        HongguoStreamProxyServer.instance.registerVideoInfo(
+          vid: item.vid,
+          seriesId: item.detail.seriesId,
+          episodeIndex: item.episodeIndex,
+          info: downgradedInfo,
+        );
+      }
+      _activeVideoInfo = downgradedInfo;
+      _preloadedSources[mediaKey] = _FeedPlaybackSource(
+        url: (_liveTranslator?.isEnabled == true && downgradedInfo.isDrmProtected)
+            ? HongguoStreamProxyServer.instance.getStreamUrl(
+                vid: item.vid,
+                seriesId: item.detail.seriesId,
+                episodeIndex: item.episodeIndex,
+              )
+            : downgradedInfo.realMainUrl,
+        decryptionKey: (_liveTranslator?.isEnabled == true)
+            ? null
+            : (downgradedInfo.isDrmProtected
+                ? downgradedInfo.contentKeyHex
+                : null),
+        videoInfo: downgradedInfo,
+        vid: item.vid,
+        seriesId: item.detail.seriesId,
+        episodeIndex: item.episodeIndex,
+      );
+      _pendingInitialSeekMs = resumePos.inMilliseconds;
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Tự động chuyển luồng ${next.normalizedCodec.toUpperCase()} ${next.qualityLabel} để phát mượt hơn',
+            ),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+      await _activatePage(index);
+    } catch (e) {
+      debugPrint('[HongguoFeedScreen] Auto-downgrade lỗi: $e');
+    } finally {
+      _isRecoveringDowngrade = false;
+    }
+  }
+
+  /// Mở bộ chọn chất lượng stream ngay trên màn hình Feed.
+  Future<void> _showFeedQualitySheet() async {
+    final availableTiers = _activeVideoInfo?.ladder?.availableQualityTiers ??
+        const <String>['1080', '720', '480', '360'];
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF181A22),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        final options = <({String key, String title})>[
+          for (final t in availableTiers)
+            (key: t, title: '${t}P${t == "1080" ? " (Sắc nét)" : ""}'),
+          const (key: 'auto', title: 'Tự động theo thiết bị'),
+        ];
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Chọn chất lượng phát Hồng Quả',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                ...options.map((opt) {
+                  final selected = _preferredQuality == opt.key;
+                  return ListTile(
+                    dense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                    leading: Icon(
+                      selected
+                          ? Icons.radio_button_checked
+                          : Icons.radio_button_off,
+                      color:
+                          selected ? AppColors.primaryEmerald : Colors.white54,
+                    ),
+                    title: Text(
+                      opt.title,
+                      style: TextStyle(
+                        color: selected
+                            ? AppColors.primaryEmerald
+                            : Colors.white,
+                        fontWeight:
+                            selected ? FontWeight.w700 : FontWeight.normal,
+                      ),
+                    ),
+                    onTap: () async {
+                      Navigator.of(ctx).pop();
+                      if (_preferredQuality == opt.key) return;
+                      _preferredQuality = opt.key;
+                      _settings?.hongguoPreferredQuality = opt.key;
+                      _excludedRenditionKeys.clear();
+                      _downgradeAttempts = 0;
+                      if (_currentIndex >= 0 &&
+                          _currentIndex < _feedItems.length) {
+                        final item = _feedItems[_currentIndex];
+                        _preloadedSources.remove(_mediaKey(item));
+                        _pendingInitialSeekMs =
+                            _activeController?.value.position.inMilliseconds ??
+                                0;
+                        await _activatePage(_currentIndex);
+                      }
+                    },
+                  );
+                }),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   /// Kích hoạt và phát video cho trang được chọn
   void _afterSuccessfulActivation(int index) {
     unawaited(_checkHistoryForEpisode(index));
+    _downgradeAttempts = 0;
+
+    if (index >= 0 && index < _feedItems.length) {
+      final item = _feedItems[index];
+      final info = _preloadedSources[_mediaKey(item)]?.videoInfo;
+      if (info != null) {
+        _activeVideoInfo = info;
+      }
+      final posMs = _activeController?.value.position.inMilliseconds ?? 0;
+      final durMs = _activeController?.value.duration.inMilliseconds ??
+          info?.durationMs ??
+          0;
+      HongguoCloudAccountService.instance.scheduleProgressUpload(
+        HongguoCloudProgress(
+          seriesId: item.detail.seriesId,
+          title: item.detail.title,
+          cover: item.detail.cover,
+          episodeId: item.vid,
+          episodeIndex: item.episodeIndex,
+          positionMs: posMs,
+          durationMs: durMs,
+          updatedAtMs: DateTime.now().millisecondsSinceEpoch,
+        ),
+        episodeCount: item.detail.totalEpisodes > 0
+            ? item.detail.totalEpisodes
+            : item.detail.episodes.length,
+      );
+    }
 
     if (!_isDramaEpisodeMode && index >= 0 && index < _feedItems.length) {
       _settings?.addHongguoSeenSeriesId(_feedItems[index].detail.seriesId);
@@ -1333,7 +1552,12 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
     // 2. ƯU TIÊN SỐ 1 TUYỆT ĐỐI: Phân giải trực tiếp từ ByteDance API (720p/1080p, giải mã FFmpeg native)
     try {
-      final info = await HongguoLocalEngine.resolveVideoInfo(item.vid);
+      final info = await HongguoLocalEngine.resolveVideoInfo(
+        item.vid,
+        preferredQuality: _preferredQuality,
+        excludedRenditionKeys: _excludedRenditionKeys,
+      );
+      _activeVideoInfo = info;
       if (info.realMainUrl.isNotEmpty) {
         if (info.isDrmProtected) {
           HongguoStreamProxyServer.instance.registerVideoInfo(
@@ -3316,6 +3540,80 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
               ),
             ),
 
+            const SizedBox(width: 6),
+
+            // Nút chọn Chất lượng (1080P / 720P / 480P / 360P / Tự động)
+            GestureDetector(
+              onTap: _showFeedQualitySheet,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 9,
+                  vertical: 5,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.45),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.white24, width: 0.6),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.high_quality_rounded,
+                      color: AppColors.primaryEmerald,
+                      size: 14,
+                    ),
+                    const SizedBox(width: 3),
+                    Text(
+                      _activeVideoInfo?.selectedRendition?.qualityLabel ??
+                          (_preferredQuality == 'auto'
+                              ? 'AUTO'
+                              : '${_preferredQuality}P'),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(width: 6),
+
+            // Nút Tài khoản Cloud
+            ValueListenableBuilder<HongguoCloudAccountState>(
+              valueListenable: HongguoCloudAccountService.instance.state,
+              builder: (_, cloudState, _) {
+                return GestureDetector(
+                  onTap: () => HongguoAccountSheet.show(context),
+                  child: Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.45),
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: cloudState.isLoggedIn
+                            ? AppColors.primaryEmerald
+                            : Colors.white24,
+                        width: 0.8,
+                      ),
+                    ),
+                    child: Icon(
+                      cloudState.isLoggedIn
+                          ? Icons.account_circle_rounded
+                          : Icons.account_circle_outlined,
+                      color: cloudState.isLoggedIn
+                          ? AppColors.primaryEmerald
+                          : Colors.white,
+                      size: 16,
+                    ),
+                  ),
+                );
+              },
+            ),
+
             const SizedBox(width: 8),
 
             // Nút More Options: `⋮`
@@ -5258,31 +5556,36 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         '${tempDir.path}/pre_audio_${itemToProcess.detail.seriesId}_${itemToProcess.episodeIndex}_$timestamp.m4a',
       );
 
-      final headers = NetworkHeaderHelper.getHeadersForUrl(streamUrl);
-      await MultiThreadDownloader.downloadFile(
-        url: streamUrl,
-        outputFile: tempMp4,
-        headers: headers,
-        concurrency: 4,
-      );
+      if (videoInfo.isDrmProtected) {
+        final keyBytes = Uint8List.fromList(hex.decode(videoInfo.contentKeyHex));
+        final remote = HongguoRemoteVideo(url: streamUrl, contentKey: keyBytes);
+        try {
+          await remote.streamDecryptedToFile(tempMp4);
+        } finally {
+          remote.close();
+        }
+      } else {
+        final headers = NetworkHeaderHelper.getHeadersForUrl(streamUrl);
+        await MultiThreadDownloader.downloadFile(
+          url: streamUrl,
+          outputFile: tempMp4,
+          headers: headers,
+          concurrency: 4,
+        );
+      }
 
       if (!tempMp4.existsSync() || tempMp4.lengthSync() < 1024) return;
-
-      if (videoInfo.isDrmProtected) {
-        final encryptedBytes = await tempMp4.readAsBytes();
-        final keyBytes = Uint8List.fromList(
-          hex.decode(videoInfo.contentKeyHex),
-        );
-        final decryptedBytes = HongguoCencDecryptor.decryptMp4Cenc(
-          encryptedBytes,
-          keyBytes,
-        );
-        await tempMp4.writeAsBytes(decryptedBytes, flush: true);
-      }
 
       await AudioExtractor.extractAudio(
         videoPath: tempMp4.path,
         outputPath: tempAudio.path,
+      );
+
+      final preRealDurationMs =
+          await HongguoLocalEngine.resolveEffectiveDurationMs(
+        localFilePath: tempAudio.path,
+        vid: itemToProcess.vid,
+        videoInfo: videoInfo,
       );
 
       try {
@@ -5321,7 +5624,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
       final doc = await pipeline.execute(
         videoPath: tempAudio.path,
-        totalDurationMs: 120000,
+        totalDurationMs: preRealDurationMs,
         sourceLanguage: 'zh-CN',
         seriesId: itemToProcess.detail.seriesId,
         episodeIndex: itemToProcess.episodeIndex,
@@ -5371,7 +5674,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
           title:
               '${itemToProcess.detail.title} - Tập ${itemToProcess.episodeIndex}',
           document: doc,
-          durationMs: 120000,
+          durationMs: preRealDurationMs,
           ttsVoice: appliedVoice,
           seriesId: itemToProcess.detail.seriesId,
           seriesCover: itemToProcess.detail.cover,
@@ -5717,36 +6020,43 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         '${tempDir.path}/feed_audio_${seriesId}_${epIdx}_$timestamp.m4a',
       );
 
-      final headers = NetworkHeaderHelper.getHeadersForUrl(streamUrl);
-      await MultiThreadDownloader.downloadFile(
-        url: streamUrl,
-        outputFile: tempMp4,
-        headers: headers,
-        concurrency: 4,
-        progressCallback: (p, msg) {
-          if (!mounted) return;
-          setState(() {
-            _translationProgress = (0.10 + p * 0.15).clamp(0.10, 0.25);
-            _translationStatus = 'Đang tải 1.28MB: ${(p * 100).toInt()}%';
-          });
-        },
-      );
+      if (videoInfo.isDrmProtected) {
+        final keyBytes = Uint8List.fromList(hex.decode(videoInfo.contentKeyHex));
+        final remote = HongguoRemoteVideo(url: streamUrl, contentKey: keyBytes);
+        try {
+          await remote.streamDecryptedToFile(
+            tempMp4,
+            onProgress: (p) {
+              if (!mounted) return;
+              setState(() {
+                _translationProgress = (0.10 + p * 0.15).clamp(0.10, 0.25);
+                _translationStatus =
+                    'Đang tải & giải mã stream: ${(p * 100).toInt()}%';
+              });
+            },
+          );
+        } finally {
+          remote.close();
+        }
+      } else {
+        final headers = NetworkHeaderHelper.getHeadersForUrl(streamUrl);
+        await MultiThreadDownloader.downloadFile(
+          url: streamUrl,
+          outputFile: tempMp4,
+          headers: headers,
+          concurrency: 4,
+          progressCallback: (p, msg) {
+            if (!mounted) return;
+            setState(() {
+              _translationProgress = (0.10 + p * 0.15).clamp(0.10, 0.25);
+              _translationStatus = 'Đang tải luồng: ${(p * 100).toInt()}%';
+            });
+          },
+        );
+      }
 
       if (!tempMp4.existsSync() || tempMp4.lengthSync() < 1024) {
         throw StateError('Tải tệp video tạm không thành công');
-      }
-
-      // Nếu video bị mã hóa DRM CENC, giải mã tại chỗ siêu nhanh (1.28MB chỉ mất ~4ms)
-      if (videoInfo.isDrmProtected) {
-        final encryptedBytes = await tempMp4.readAsBytes();
-        final keyBytes = Uint8List.fromList(
-          hex.decode(videoInfo.contentKeyHex),
-        );
-        final decryptedBytes = HongguoCencDecryptor.decryptMp4Cenc(
-          encryptedBytes,
-          keyBytes,
-        );
-        await tempMp4.writeAsBytes(decryptedBytes, flush: true);
       }
 
       if (!mounted) return;
@@ -5828,11 +6138,17 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         });
       });
 
+      final manualRealDurationMs =
+          await HongguoLocalEngine.resolveEffectiveDurationMs(
+        localFilePath: audioPath,
+        vid: item.vid,
+        videoInfo: videoInfo,
+        playerDurationMs: _currentDur.inMilliseconds,
+      );
+
       final doc = await pipeline.execute(
         videoPath: audioPath,
-        totalDurationMs: _currentDur.inMilliseconds > 0
-            ? _currentDur.inMilliseconds
-            : 120000,
+        totalDurationMs: manualRealDurationMs,
         sourceLanguage: 'zh-CN',
         seriesId: seriesId,
         episodeIndex: epIdx,
@@ -5898,9 +6214,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
           videoPath: _preloadedSources[_mediaKey(item)]?.url ?? item.vid,
           title: '${item.detail.title} - Tập $epIdx',
           document: doc,
-          durationMs: _currentDur.inMilliseconds > 0
-              ? _currentDur.inMilliseconds
-              : 120000,
+          durationMs: manualRealDurationMs,
           ttsVoice: appliedVoice,
           seriesId: seriesId,
           seriesCover: item.detail.cover,

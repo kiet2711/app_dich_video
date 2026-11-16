@@ -11,6 +11,7 @@ import '../pipeline/subtitling_pipeline.dart';
 import '../service/foreground_service_manager.dart';
 import '../tts/tts_cache_helper.dart';
 import '../tts/tts_generation_manager.dart';
+import 'hongguo/hongguo_local_engine.dart';
 import 'hongguo_resolver.dart';
 import 'multi_thread_downloader.dart';
 import 'network_header_helper.dart';
@@ -717,11 +718,19 @@ class HongguoPrefetchManager {
         );
       });
 
+      // Xác định thời lượng thực tế từ AudioExtractor / MP4 moov / API trước khi chạy pipeline.
+      final epItem = detail.episodes
+          .where((e) => e.index == episodeIndex)
+          .firstOrNull;
+      final resolvedDurationMs = await HongguoLocalEngine.resolveEffectiveDurationMs(
+        localFilePath: playUrl,
+        vid: epItem?.vid,
+      );
+
       // Bước 3: Chạy quy trình bóc tách âm thanh & dịch phụ đề (cố định zh-CN -> vi-VN)
-      // Phim ngắn Hồng Quả trung bình 1.5 - 2 phút (~120000ms)
       final doc = await pipeline.execute(
         videoPath: playUrl,
-        totalDurationMs: 120000,
+        totalDurationMs: resolvedDurationMs,
         sourceLanguage: 'zh-CN',
         seriesId: detail.seriesId,
         episodeIndex: episodeIndex,
@@ -757,7 +766,7 @@ class HongguoPrefetchManager {
           videoPath: finalVideoPath,
           title: epTitle,
           document: doc,
-          durationMs: 120000,
+          durationMs: resolvedDurationMs,
           ttsVoice: appliedTtsVoice,
           seriesId: detail.seriesId,
           seriesCover: detail.cover,

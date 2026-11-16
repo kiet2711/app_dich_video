@@ -8,6 +8,8 @@ import 'package:path_provider/path_provider.dart';
 
 import '../hongguo_cenc_decryptor.dart';
 import 'hongguo_local_engine.dart';
+import 'hongguo_playback_routes.dart';
+import 'hongguo_remote_video.dart';
 
 /// Kết quả chuẩn bị media cho 1 tập phim trong Feed
 class FeedEpisodeMedia {
@@ -103,12 +105,13 @@ class HongguoFeedCacheManager {
         );
       }
 
-      // 3. Nếu có DRM: Tải vào thư mục tạm và giải mã CENC trong Isolate
+      // 3. Nếu có DRM: Giải mã stream từng chunk 512 KiB thẳng ra đĩa (RAM < 2 MB)
       final tempDir = await _getPreviewTempDir();
       final targetFile = File('${tempDir.path}${Platform.pathSeparator}preview_${vid}_ep$episodeIndex.mp4');
-      final encPartFile = File('${targetFile.path}.enc.tmp');
 
-      if (targetFile.existsSync() && targetFile.lengthSync() > 1024 * 100) {
+      if (targetFile.existsSync() &&
+          targetFile.lengthSync() > 1024 * 100 &&
+          !await HongguoCencDecryptor.isCorruptedMp4File(targetFile)) {
         _activeTempFiles[vid] = targetFile;
         return FeedEpisodeMedia(
           episodeIndex: episodeIndex,
@@ -122,33 +125,37 @@ class HongguoFeedCacheManager {
       _activeDownloads[vid] = cancelToken;
 
       try {
-        // Tải video mã hóa
-        await _dio.download(
-          info.realMainUrl,
-          encPartFile.path,
-          cancelToken: cancelToken,
-          options: Options(
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
-            },
-          ),
-        );
-
-        if (!encPartFile.existsSync() || encPartFile.lengthSync() < 1024) {
-          throw StateError('File tải về không hợp lệ');
-        }
-
-        // Giải mã trong Isolate
-        final encBytes = await encPartFile.readAsBytes();
         final keyBytes = Uint8List.fromList(hex.decode(info.contentKeyHex));
-        final decBytes = await compute(_decryptIsolated, {
-          'data': encBytes,
-          'key': keyBytes,
-        });
-
-        await targetFile.writeAsBytes(decBytes, flush: true);
-        if (encPartFile.existsSync()) {
-          await encPartFile.delete();
+        Object? streamErr;
+        var saved = false;
+        for (final candidateUrl in info.orderedUrls) {
+          final remote = HongguoRemoteVideo(
+            url: candidateUrl,
+            contentKey: keyBytes,
+            dio: _dio,
+          );
+          try {
+            await remote.streamDecryptedToFile(
+              targetFile,
+              cancelToken: cancelToken,
+            );
+            if (await HongguoCencDecryptor.isCorruptedMp4File(targetFile)) {
+              if (targetFile.existsSync()) await targetFile.delete();
+              throw const FormatException('File MP4 sau giải mã không hợp lệ');
+            }
+            HongguoPlaybackRoutes.instance.markHealthy(candidateUrl);
+            saved = true;
+            break;
+          } catch (e) {
+            streamErr = e;
+            HongguoPlaybackRoutes.instance.markFailed(candidateUrl);
+            if (cancelToken.isCancelled) rethrow;
+          } finally {
+            remote.close();
+          }
+        }
+        if (!saved) {
+          throw streamErr ?? StateError('Không thể giải mã stream DRM Hongguo');
         }
 
         _activeTempFiles[vid] = targetFile;
@@ -165,12 +172,6 @@ class HongguoFeedCacheManager {
       debugPrint('[HongguoFeedCacheManager] Lỗi nạp tập $episodeIndex ($vid): $e');
       return null;
     }
-  }
-
-  static Uint8List _decryptIsolated(Map<String, dynamic> args) {
-    final data = args['data'] as Uint8List;
-    final key = args['key'] as Uint8List;
-    return HongguoCencDecryptor.decryptMp4Cenc(data, key);
   }
 
   /// Dọn dẹp các file cũ cách xa vị trí hiện tại (Chỉ giữ lại tối đa 3 file: current-1, current, current+1)

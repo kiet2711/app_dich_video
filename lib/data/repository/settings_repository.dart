@@ -312,6 +312,22 @@ class SettingsRepository {
     v == 'hf' ? 'hf' : 'local',
   );
 
+  /// Chất lượng ưu tiên cho video Hongguo: '1080', '720', '480', '360', 'auto'.
+  static const List<String> validHongguoQualities = <String>[
+    '1080',
+    '720',
+    '480',
+    '360',
+    'auto',
+  ];
+
+  String get hongguoPreferredQuality =>
+      prefs.getString('hongguo_preferred_quality') ?? '1080';
+  set hongguoPreferredQuality(String v) {
+    final clean = validHongguoQualities.contains(v) ? v : '1080';
+    prefs.setString('hongguo_preferred_quality', clean);
+  }
+
   /// Giọng đọc lồng tiếng AI riêng cho phim ngắn Hồng Quả
   String get hongguoSelectedTtsVoice =>
       prefs.getString('hongguo_selected_tts_voice') ?? selectedTtsVoice;

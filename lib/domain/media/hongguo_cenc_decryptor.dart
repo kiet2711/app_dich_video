@@ -6,9 +6,69 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:pointycastle/export.dart';
 
+import 'hongguo/hongguo_mp4_cenc.dart';
+export 'hongguo/hongguo_mp4_cenc.dart';
+
 /// Bộ giải mã DRM video CENC (Common Encryption) và Spade URL
 /// Chạy trực tiếp trên thiết bị (On-Device Dart thuần) cho nền tảng Hồng Quả / ByteDance.
 class HongguoCencDecryptor {
+  /// Chuẩn bị bộ giải mã stream từ buffer hộp `moov`.
+  static HongguoPreparedCenc prepareFromMoov(
+    Uint8List moovBytes, {
+    required int moovFileOffset,
+  }) {
+    return HongguoPreparedCenc.parseMoov(
+      moovBytes,
+      moovFileOffset: moovFileOffset,
+    );
+  }
+
+  /// Đọc nhanh thời lượng & thông tin track từ file MP4 cục bộ (chỉ đọc box `moov`).
+  static Future<Mp4ContainerMetadata?> probeMp4FileMetadata(File file) async {
+    try {
+      if (!await file.exists()) return null;
+      final fileLen = await file.length();
+      if (fileLen < 16) return null;
+      final raf = await file.open(mode: FileMode.read);
+      try {
+        var cursor = 0;
+        final headerBuf = Uint8List(16);
+        while (cursor + 8 <= fileLen) {
+          await raf.setPosition(cursor);
+          final n = await raf.readInto(headerBuf, 0, 16);
+          if (n < 8) break;
+          final bd = ByteData.sublistView(headerBuf);
+          final size32 = bd.getUint32(0, Endian.big);
+          final type = ascii.decode(headerBuf.sublist(4, 8), allowInvalid: true);
+          int boxSize;
+          if (size32 == 1) {
+            if (n < 16) break;
+            boxSize = bd.getUint64(8, Endian.big);
+          } else if (size32 == 0) {
+            boxSize = fileLen - cursor;
+          } else if (size32 < 8) {
+            break;
+          } else {
+            boxSize = size32;
+          }
+          if (boxSize <= 0 || cursor + boxSize > fileLen) break;
+          if (type == 'moov') {
+            if (boxSize > 16 * 1024 * 1024) return null;
+            await raf.setPosition(cursor);
+            final moovBytes = await raf.read(boxSize);
+            return HongguoPreparedCenc.probeMoovMetadata(
+              moovBytes,
+              moovFileOffset: cursor,
+            );
+          }
+          cursor += boxSize;
+        }
+      } finally {
+        await raf.close();
+      }
+    } catch (_) {}
+    return null;
+  }
   /// Kiểm tra xem file MP4 có bị lỗi box free size 8 gây crash ExoPlayer không
   static Future<bool> isCorruptedMp4File(File file) async {
     try {
@@ -394,8 +454,6 @@ class HongguoCencDecryptor {
     List<int> newBytes,
   ) => replaceFourcc(data, oldBytes, newBytes);
 
-  static void _replaceSinf(Uint8List data) => replaceSinf(data);
-
   static void replaceSinf(Uint8List data) {
     final bd = ByteData.sublistView(data);
     var i = 0;
@@ -457,82 +515,31 @@ class HongguoCencDecryptor {
     if (data.length < 16) {
       throw ArgumentError('Dữ liệu video quá nhỏ');
     }
-    // Hàm chạy trong isolate tải/giải mã và không cần giữ lại bản mã, nên sửa
-    // trực tiếp giúp tránh nhân đôi toàn bộ video trong RAM trên điện thoại.
-    final buffer = data;
-    final bd = ByteData.sublistView(buffer);
-
-    var moovOff = -1;
-    var moovSize = 0;
-    final (foundMoovOff, foundMoovSz) = findBox(buffer, 'moov', 0);
-    if (foundMoovOff >= 0) {
-      moovOff = foundMoovOff;
-      moovSize = foundMoovSz;
-    } else {
-      final ftypEnd = bd.getUint32(0, Endian.big);
-      if (ftypEnd + 8 < buffer.length) {
-        moovOff = ftypEnd;
-        moovSize = bd.getUint32(ftypEnd, Endian.big);
+    final bd = ByteData.sublistView(data);
+    Mp4BoxRef? moovBox;
+    for (final box in Mp4BoxScanner.iterChildren(data, bd, 0, data.length)) {
+      if (box.type == 'moov') {
+        moovBox = box;
+        break;
       }
     }
-
-    if (moovOff < 0 || moovOff + 8 + moovSize > buffer.length) {
-      throw FormatException('MP4 không hợp lệ: không tìm thấy hoặc lỗi box moov');
-    }
-    final moov = buffer.sublist(moovOff + 8, moovOff + moovSize);
-
-    // Lặp qua tất cả track trong moov
-    var trakSearchStart = 0;
-    while (trakSearchStart < moov.length - 8) {
-      final (tOff, tSz) = findBox(moov, 'trak', trakSearchStart);
-      if (tOff < 0 || tSz <= 0) break;
-      trakSearchStart = tOff + (tSz > 0 ? tSz : 8);
-
-      final parsed = parseTrack(moov, tOff);
-      if (parsed == null || parsed.ns == 0) continue;
-
-      if (parsed.auxOff + parsed.auxSz > buffer.length) continue;
-      final aux = buffer.sublist(parsed.auxOff, parsed.auxOff + parsed.auxSz);
-
-      var si = 0;
-      var ap = 0;
-      for (var ci = 0; ci < parsed.offsets.length; ci++) {
-        var off = parsed.offsets[ci];
-        final count = parsed.cns[ci];
-
-        for (var k = 0; k < count; k++) {
-          if (si >= parsed.ns) break;
-          final sz = parsed.sizes[si];
-          if (off + sz > buffer.length) break;
-
-          final iv = Uint8List(16);
-          if (ap + 8 <= aux.length) {
-            iv.setRange(0, 8, aux.sublist(ap, ap + 8));
-          }
-
-          // SICBlockCipher (AES-CTR mode)
-          final ctr = StreamCipher('AES/SIC')
-            ..init(false, ParametersWithIV(KeyParameter(contentKey), iv));
-
-          final sample = buffer.sublist(off, off + sz);
-          final decrypted = Uint8List(sample.length);
-          ctr.processBytes(sample, 0, sample.length, decrypted, 0);
-          buffer.setRange(off, off + sz, decrypted);
-
-          off += sz;
-          si++;
-          ap += 8;
-        }
-      }
+    if (moovBox == null) {
+      throw const FormatException('MP4 không hợp lệ: không tìm thấy hoặc lỗi box moov');
     }
 
-    // Ghi đè sinf box và tự động đổi FourCC gốc nếu tìm thấy frma
-    _replaceSinf(buffer);
+    final moovSlice = Uint8List.sublistView(
+      data,
+      moovBox.offset,
+      moovBox.endOffset,
+    );
+    final prepared = HongguoPreparedCenc.parseMoov(
+      moovSlice,
+      moovFileOffset: moovBox.offset,
+    );
+    prepared.finalizeFromFullBuffer(data);
 
-    // Dự phòng đổi FourCC nếu chưa được đổi qua frma
-    _replaceFourcc(buffer, ascii.encode('encv'), ascii.encode('hvc1'));
-    _replaceFourcc(buffer, ascii.encode('enca'), ascii.encode('mp4a'));
-
-    return buffer;
+    // Cho phép sửa tại chỗ khi caller không giữ bản mã để tiết kiệm RAM.
+    prepared.decryptRange(0, data, contentKey: contentKey);
+    return data;
   }
 }

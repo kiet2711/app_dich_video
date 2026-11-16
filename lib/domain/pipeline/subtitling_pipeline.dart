@@ -381,42 +381,49 @@ class SubtitlingPipeline {
           episodeIndex: epIndex,
         );
 
+        final isRemoteHttp = directMp4.startsWith('http://') ||
+            directMp4.startsWith('https://');
         final isAlreadyCached = await VideoCacheManager.hasValidCache(
           url: directMp4,
           seriesId: targetSeriesId,
           episodeIndex: epIndex,
         );
+        var localSourcePath = cachedVideo.path;
 
         if (!isAlreadyCached) {
-          _emit(
-            const ProcessProgress(
-              stage: ProcessStage.extractingAudio,
-              progress: 0.03,
-              message: 'Đang tải video phim ngắn siêu tốc...',
-            ),
-          );
+          if (!isRemoteHttp && await File(directMp4).exists()) {
+            localSourcePath = directMp4;
+          } else {
+            _emit(
+              const ProcessProgress(
+                stage: ProcessStage.extractingAudio,
+                progress: 0.03,
+                message: 'Đang tải video phim ngắn siêu tốc...',
+              ),
+            );
 
-          final partFile = File('${cachedVideo.path}.part');
-          final headers = NetworkHeaderHelper.getHeadersForUrl(directMp4);
-          await MultiThreadDownloader.downloadFile(
-            url: directMp4,
-            outputFile: partFile,
-            headers: headers,
-            concurrency: settings.downloadThreadCount,
-            progressCallback: (progress, message) {
-              _emit(
-                ProcessProgress(
-                  stage: ProcessStage.extractingAudio,
-                  progress: 0.03 + progress * 0.12,
-                  message: message,
-                ),
-              );
-            },
-          );
+            final partFile = File('${cachedVideo.path}.part');
+            final headers = NetworkHeaderHelper.getHeadersForUrl(directMp4);
+            await MultiThreadDownloader.downloadFile(
+              url: directMp4,
+              outputFile: partFile,
+              headers: headers,
+              concurrency: settings.downloadThreadCount,
+              progressCallback: (progress, message) {
+                _emit(
+                  ProcessProgress(
+                    stage: ProcessStage.extractingAudio,
+                    progress: 0.03 + progress * 0.12,
+                    message: message,
+                  ),
+                );
+              },
+            );
 
-          if (await partFile.exists() && await partFile.length() > 1024 * 100) {
-            if (await cachedVideo.exists()) await cachedVideo.delete();
-            await partFile.rename(cachedVideo.path);
+            if (await partFile.exists() && await partFile.length() > 1024 * 100) {
+              if (await cachedVideo.exists()) await cachedVideo.delete();
+              await partFile.rename(cachedVideo.path);
+            }
           }
         } else {
           _emit(
@@ -428,7 +435,7 @@ class SubtitlingPipeline {
           );
         }
 
-        lastLocalVideoPath = cachedVideo.path;
+        lastLocalVideoPath = localSourcePath;
 
         final downloadedAudio = File(
           '${sessionDir.path}${Platform.pathSeparator}hongguo_audio.m4a',
@@ -445,16 +452,16 @@ class SubtitlingPipeline {
 
         try {
           await AudioExtractor.extractAudio(
-            videoPath: cachedVideo.path,
+            videoPath: localSourcePath,
             outputPath: downloadedAudio.path,
           );
           if (await downloadedAudio.exists() && await downloadedAudio.length() > 1024) {
             extractionPath = downloadedAudio.path;
           } else {
-            extractionPath = cachedVideo.path;
+            extractionPath = localSourcePath;
           }
         } catch (_) {
-          extractionPath = cachedVideo.path;
+          extractionPath = localSourcePath;
         }
       } else if (sourceDocument == null && douyinDetails != null) {
         final shouldDownloadVideo =
