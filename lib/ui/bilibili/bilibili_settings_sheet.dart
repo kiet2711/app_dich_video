@@ -38,7 +38,9 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
 
   String _translationMode = 'capcut';
   String _subtitleSource = 'bilibili_first';
-  String _streamMode = 'dash';
+  String _cdnService = 'auto';
+  bool _hardwareDecode = true;
+  String _qualityKey = '64';
   VoiceItem _selectedVoice = VoicePresets.defaultVoice;
   bool _downloadOffline = false;
   int _bufferSizeMb = 64;
@@ -56,7 +58,13 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
       _settings = settings;
       _translationMode = settings.bilibiliTranslationMode;
       _subtitleSource = settings.bilibiliSubtitleSource;
-      _streamMode = settings.bilibiliStreamMode;
+      _cdnService = BilibiliCdnService.fromCode(settings.bilibiliCdnService).code;
+      _hardwareDecode = settings.bilibiliHardwareDecode;
+      _qualityKey = BilibiliResolver.normalizeQualityCode(
+        settings.bilibiliPreferredQuality.isNotEmpty
+            ? settings.bilibiliPreferredQuality
+            : settings.preferredVideoQuality,
+      );
       _selectedVoice = VoicePresets.vietnameseVoices.firstWhere(
         (v) => v.voiceType == settings.bilibiliSelectedTtsVoice,
         orElse: () => VoicePresets.defaultVoice,
@@ -146,16 +154,24 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
     }
   }
 
+  void _persistSettings() {
+    final settings = _settings;
+    if (settings == null) return;
+    settings.bilibiliTranslationMode = _translationMode;
+    settings.bilibiliSubtitleSource = _subtitleSource;
+    settings.bilibiliStreamMode = 'dash';
+    settings.bilibiliCdnService = _cdnService;
+    settings.bilibiliHardwareDecode = _hardwareDecode;
+    settings.bilibiliPreferredQuality = _qualityKey;
+    settings.preferredVideoQuality = _qualityKey;
+    settings.bilibiliSelectedTtsVoice = _selectedVoice.voiceType;
+    settings.downloadBilibiliVideo = _downloadOffline;
+    settings.playerBufferSizeMb = _bufferSizeMb;
+  }
+
   Future<void> _saveAndClose() async {
     HapticFeedback.lightImpact();
-    if (_settings != null) {
-      _settings!.bilibiliTranslationMode = _translationMode;
-      _settings!.bilibiliSubtitleSource = _subtitleSource;
-      _settings!.bilibiliStreamMode = _streamMode;
-      _settings!.bilibiliSelectedTtsVoice = _selectedVoice.voiceType;
-      _settings!.downloadBilibiliVideo = _downloadOffline;
-      _settings!.playerBufferSizeMb = _bufferSizeMb;
-    }
+    _persistSettings();
     Navigator.of(context).pop();
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
@@ -367,13 +383,7 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                       InkWell(
                         onTap: () async {
                           HapticFeedback.mediumImpact();
-                          if (_settings != null) {
-                            _settings!.bilibiliTranslationMode = _translationMode;
-                            _settings!.bilibiliSubtitleSource = _subtitleSource;
-                            _settings!.bilibiliStreamMode = _streamMode;
-                            _settings!.bilibiliSelectedTtsVoice = _selectedVoice.voiceType;
-                            _settings!.downloadBilibiliVideo = _downloadOffline;
-                          }
+                          _persistSettings();
                           Navigator.of(context).pop();
                           widget.onRecreateSubtitles!();
                         },
@@ -540,9 +550,9 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
 
                     const SizedBox(height: 18),
 
-                    // ===== 4. ĐỊNH DẠNG LUỒNG VIDEO =====
+                    // ===== 4. TỐI ƯU PHÁT VIDEO, CDN & TẢI VỀ =====
                     const Text(
-                      'ĐỊNH DẠNG LUỒNG VIDEO (STREAM):',
+                      'TỐI ƯU PHÁT VIDEO & TẢI VỀ (DASH THỐNG NHẤT):',
                       style: TextStyle(
                         color: AppTheme.textSecondary,
                         fontSize: 12,
@@ -552,63 +562,8 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                     ),
                     const SizedBox(height: 4),
                     const Text(
-                      'Chọn giữa luồng Muxed (chống mất tiếng khi tua) hoặc luồng DASH gốc.',
+                      'Gộp hình & tiếng DASH trực tiếp trong một demuxer giúp tua nhanh, không mất tiếng hoặc đứng hình.',
                       style: TextStyle(color: AppTheme.textMuted, fontSize: 11),
-                    ),
-                    const SizedBox(height: 8),
-
-                    IntrinsicHeight(
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Expanded(
-                            child: _buildModeOption(
-                              mode: 'muxed',
-                              title: 'Luồng Muxed',
-                              badge: 'TUA MƯỢT',
-                              badgeColor: Colors.greenAccent,
-                              icon: Icons.layers_rounded,
-                              iconColor: Colors.greenAccent,
-                              description: 'Gộp chung hình & tiếng\nTua mượt mà, chống mất tiếng',
-                              isSelected: _streamMode == 'muxed',
-                              onTap: () {
-                                HapticFeedback.selectionClick();
-                                setState(() => _streamMode = 'muxed');
-                              },
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: _buildModeOption(
-                              mode: 'dash',
-                              title: 'Bình thường (DASH)',
-                              badge: 'MẶC ĐỊNH',
-                              badgeColor: const Color(0xFF00AEEC),
-                              icon: Icons.alt_route_rounded,
-                              iconColor: const Color(0xFF00AEEC),
-                              description: 'Tách 2 luồng hình & tiếng\nChuẩn Bilibili (có thể trễ tiếng)',
-                              isSelected: _streamMode == 'dash',
-                              onTap: () {
-                                HapticFeedback.selectionClick();
-                                setState(() => _streamMode = 'dash');
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    const SizedBox(height: 18),
-
-                    // ===== 5. CÀI ĐẶT PHÁT VIDEO & TẢI VỀ =====
-                    const Text(
-                      'TÙY CHỌN PHÁT & TẢI VIDEO:',
-                      style: TextStyle(
-                        color: AppTheme.textSecondary,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 0.5,
-                      ),
                     ),
                     const SizedBox(height: 8),
 
@@ -621,7 +576,7 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                         ),
                         child: Column(
                           children: [
-                            // Video Quality Option
+                            // Độ phân giải ưu tiên (chuẩn QN '80'/'64'/'32'/'16')
                             ListTile(
                               leading: const Icon(Icons.high_quality_rounded, color: Color(0xFF00AEEC)),
                               title: const Text(
@@ -629,24 +584,25 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                                 style: TextStyle(color: AppTheme.textPrimary, fontSize: 13.5),
                               ),
                               subtitle: Text(
-                                _getQualityLabel(settings.bilibiliPreferredQuality),
+                                _getQualityLabel(_qualityKey),
                                 style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11.5),
                               ),
                               trailing: DropdownButtonHideUnderline(
                                 child: DropdownButton<String>(
-                                  value: settings.bilibiliPreferredQuality,
+                                  value: _qualityKey,
                                   dropdownColor: AppTheme.darkSurfaceVariant,
                                   icon: const Icon(Icons.arrow_drop_down, color: Colors.white70),
                                   items: const [
-                                    DropdownMenuItem(value: '1080', child: Text('1080p FHD', style: TextStyle(color: Colors.white, fontSize: 12.5))),
-                                    DropdownMenuItem(value: '720', child: Text('720p HD', style: TextStyle(color: Colors.white, fontSize: 12.5))),
-                                    DropdownMenuItem(value: '480', child: Text('480p SD', style: TextStyle(color: Colors.white, fontSize: 12.5))),
-                                    DropdownMenuItem(value: '360', child: Text('360p Tiết kiệm', style: TextStyle(color: Colors.white, fontSize: 12.5))),
+                                    DropdownMenuItem(value: '80', child: Text('1080p FHD', style: TextStyle(color: Colors.white, fontSize: 12.5))),
+                                    DropdownMenuItem(value: '64', child: Text('720p HD', style: TextStyle(color: Colors.white, fontSize: 12.5))),
+                                    DropdownMenuItem(value: '32', child: Text('480p SD', style: TextStyle(color: Colors.white, fontSize: 12.5))),
+                                    DropdownMenuItem(value: '16', child: Text('360p Nhẹ', style: TextStyle(color: Colors.white, fontSize: 12.5))),
                                   ],
                                   onChanged: (val) {
                                     if (val != null) {
+                                      HapticFeedback.selectionClick();
                                       setState(() {
-                                        settings.bilibiliPreferredQuality = val;
+                                        _qualityKey = val;
                                       });
                                     }
                                   },
@@ -654,6 +610,62 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                               ),
                             ),
                             const Divider(color: AppTheme.cardBorder, height: 1),
+                            // Máy chủ CDN ưu tiên (kiểu PiliPlus, né MCDN chậm)
+                            ListTile(
+                              leading: const Icon(Icons.dns_rounded, color: Color(0xFF00AEEC)),
+                              title: const Text(
+                                'Máy chủ CDN phát video',
+                                style: TextStyle(color: AppTheme.textPrimary, fontSize: 13.5),
+                              ),
+                              subtitle: Text(
+                                BilibiliCdnService.fromCode(_cdnService).label,
+                                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11.5),
+                              ),
+                              trailing: DropdownButtonHideUnderline(
+                                child: DropdownButton<String>(
+                                  value: _cdnService,
+                                  dropdownColor: AppTheme.darkSurfaceVariant,
+                                  icon: const Icon(Icons.arrow_drop_down, color: Colors.white70),
+                                  items: BilibiliCdnService.values
+                                      .map(
+                                        (cdn) => DropdownMenuItem<String>(
+                                          value: cdn.code,
+                                          child: Text(
+                                            cdn.label,
+                                            style: const TextStyle(color: Colors.white, fontSize: 12),
+                                          ),
+                                        ),
+                                      )
+                                      .toList(),
+                                  onChanged: (val) {
+                                    if (val != null) {
+                                      HapticFeedback.selectionClick();
+                                      setState(() => _cdnService = val);
+                                    }
+                                  },
+                                ),
+                              ),
+                            ),
+                            const Divider(color: AppTheme.cardBorder, height: 1),
+                            // Giải mã phần cứng GPU (tắt nếu gặp lỗi đen màn hình)
+                            SwitchListTile(
+                              dense: true,
+                              activeThumbColor: const Color(0xFF00AEEC),
+                              secondary: const Icon(Icons.developer_board_rounded, color: Color(0xFF00AEEC)),
+                              title: const Text(
+                                'Giải mã phần cứng (Hardware)',
+                                style: TextStyle(color: AppTheme.textPrimary, fontSize: 13.5),
+                              ),
+                              subtitle: const Text(
+                                'Tăng tốc GPU giảm giật lag khi tua; tắt nếu máy bị đen hình còn tiếng',
+                                style: TextStyle(color: AppTheme.textMuted, fontSize: 11),
+                              ),
+                              value: _hardwareDecode,
+                              onChanged: (val) {
+                                HapticFeedback.selectionClick();
+                                setState(() => _hardwareDecode = val);
+                              },
+                            ),
                             const Divider(color: AppTheme.cardBorder, height: 1),
                             // Buffer RAM Slider/Dropdown
                             ListTile(
@@ -682,7 +694,6 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                                       HapticFeedback.selectionClick();
                                       setState(() {
                                         _bufferSizeMb = val;
-                                        settings.playerBufferSizeMb = val;
                                       });
                                     }
                                   },
@@ -1044,17 +1055,17 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
   }
 
   String _getQualityLabel(String quality) {
-    switch (quality) {
-      case '1080':
-        return 'Full HD (1080p) - Yêu cầu đăng nhập';
-      case '720':
-        return 'HD (720p)';
-      case '480':
+    switch (BilibiliResolver.normalizeQualityCode(quality)) {
+      case '80':
+        return 'Full HD (1080p) - Sắc nét nhất';
+      case '64':
+        return 'HD (720p) - Nhanh & ổn định';
+      case '32':
         return 'Tiêu chuẩn (480p)';
-      case '360':
+      case '16':
         return 'Tiết kiệm pin/dữ liệu (360p)';
       default:
-        return 'Mặc định (1080p)';
+        return 'HD (720p)';
     }
   }
 }

@@ -130,18 +130,108 @@ class BilibiliSubtitleInfo {
   });
 }
 
+enum BilibiliCdnService {
+  auto('auto', 'Tự động (Né MCDN)', null),
+  akamai('akamai', 'Akamai CDN (Quốc tế nhanh)', 'upos-hz-mirrorakam.akamaized.net'),
+  ali('ali', 'Aliyun CDN', 'upos-sz-mirrorali.bilivideo.com'),
+  cos('cos', 'Tencent COS CDN', 'upos-sz-mirrorcos.bilivideo.com'),
+  hw('hw', 'Huawei Cloud CDN', 'upos-sz-mirrorhw.bilivideo.com'),
+  origin('origin', 'Gốc Bilibili trả về', null);
+
+  final String code;
+  final String label;
+  final String? mirrorHost;
+
+  const BilibiliCdnService(this.code, this.label, this.mirrorHost);
+
+  static BilibiliCdnService fromCode(String? raw) {
+    final clean = (raw ?? '').trim().toLowerCase();
+    for (final item in values) {
+      if (item.code == clean) return item;
+    }
+    return BilibiliCdnService.auto;
+  }
+}
+
+class BilibiliStreamPair {
+  final String videoUrl;
+  final String audioUrl;
+
+  const BilibiliStreamPair({
+    required this.videoUrl,
+    required this.audioUrl,
+  });
+}
+
 class BilibiliDashStream {
   final String videoUrl;
   final String audioUrl;
+  final List<String> videoUrls;
+  final List<String> audioUrls;
   final Map<String, String> headers;
   final int quality;
+  final String videoCodec;
+  final int durationMs;
 
   const BilibiliDashStream({
     required this.videoUrl,
     required this.audioUrl,
     required this.headers,
     this.quality = 64,
+    this.videoUrls = const [],
+    this.audioUrls = const [],
+    this.videoCodec = '',
+    this.durationMs = 0,
   });
+
+  List<String> get effectiveVideoUrls =>
+      videoUrls.isNotEmpty ? videoUrls : [if (videoUrl.isNotEmpty) videoUrl];
+
+  List<String> get effectiveAudioUrls =>
+      audioUrls.isNotEmpty ? audioUrls : [if (audioUrl.isNotEmpty) audioUrl];
+
+  /// Tạo các cặp (videoUrl, audioUrl) theo thứ tự ưu tiên để dự phòng khi CDN đầu lỗi.
+  List<BilibiliStreamPair> buildCandidatePairs({int maxPairs = 4}) {
+    final vList = effectiveVideoUrls;
+    final aList = effectiveAudioUrls;
+    if (vList.isEmpty || aList.isEmpty) return const [];
+    final pairs = <BilibiliStreamPair>[];
+    final maxLen = vList.length > aList.length ? vList.length : aList.length;
+    for (var i = 0; i < maxLen && pairs.length < maxPairs; i++) {
+      final v = vList[i < vList.length ? i : 0];
+      final a = aList[i < aList.length ? i : 0];
+      pairs.add(BilibiliStreamPair(videoUrl: v, audioUrl: a));
+    }
+    return pairs;
+  }
+}
+
+class BilibiliMuxedSegment {
+  final List<String> urls;
+  final double? durationSec;
+
+  const BilibiliMuxedSegment({
+    required this.urls,
+    this.durationSec,
+  });
+}
+
+class BilibiliPlaybackPlan {
+  final BilibiliDashStream? dash;
+  final List<BilibiliMuxedSegment> muxedSegments;
+  final List<String> muxedUrls;
+  final Map<String, String> headers;
+  final int quality;
+
+  const BilibiliPlaybackPlan({
+    this.dash,
+    this.muxedSegments = const [],
+    this.muxedUrls = const [],
+    required this.headers,
+    this.quality = 64,
+  });
+
+  bool get hasDash => dash != null && dash!.videoUrl.isNotEmpty;
 }
 
 class BilibiliSubtitleLoginRequiredException implements Exception {
@@ -822,8 +912,12 @@ class BilibiliResolver {
   static String? _cachedImgKey;
   static String? _cachedSubKey;
   static DateTime? _wbiFetchedAt;
+  static final String _sessionBuvid3 =
+      '${DateTime.now().millisecondsSinceEpoch.toRadixString(16).toUpperCase()}infoc';
   static final Map<String, BilibiliVideoDetails> _videoDetailsCache = {};
-  static final Map<String, List<String>> _muxedUrlsCache = {};
+  static final Map<String, ({List<String> urls, DateTime cachedAt})>
+      _muxedUrlsCache = {};
+  static const Duration _streamCacheTtl = Duration(minutes: 20);
 
   BilibiliResolver({Dio? dio})
     : dio =
@@ -865,44 +959,36 @@ class BilibiliResolver {
   static const _desktopUserAgent =
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
 
-  static Map<String, String> requestHeaders([String cookie = '']) {
+  static bool _hasSessData(String cookie) => cookie.contains('SESSDATA=');
+
+  static String _formatCookieHeader(String cookie, {bool includeBuvid = false}) {
     final trimmed = cookie.trim();
     final sessData = trimmed.isEmpty
         ? ''
-        : trimmed.contains('SESSDATA=')
-        ? trimmed
-        : 'SESSDATA=$trimmed';
-    final defaultCookie =
-        'CURRENT_FNVAL=4048; b_nut=${DateTime.now().millisecondsSinceEpoch ~/ 1000}';
-    final finalCookie =
-        sessData.isEmpty ? defaultCookie : '$sessData; $defaultCookie';
+        : (_hasSessData(trimmed) ? trimmed : 'SESSDATA=$trimmed');
+    final bNut = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final buvidPart = includeBuvid ? 'buvid3=$_sessionBuvid3; ' : '';
+    final defaultCookie = '${buvidPart}CURRENT_FNVAL=4048; b_nut=$bNut';
+    return sessData.isEmpty ? defaultCookie : '$sessData; $defaultCookie';
+  }
+
+  static Map<String, String> requestHeaders([String cookie = '']) {
     return {
       'User-Agent': _desktopUserAgent,
       'Referer': _referer,
       'Origin': 'https://www.bilibili.com',
       'Accept': 'application/json, text/plain, */*',
       'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-      'Cookie': finalCookie,
+      'Cookie': _formatCookieHeader(cookie),
     };
   }
 
   static Map<String, String> streamHeaders([String cookie = '']) {
-    final trimmed = cookie.trim();
-    final sessData = trimmed.isEmpty
-        ? ''
-        : trimmed.contains('SESSDATA=')
-        ? trimmed
-        : 'SESSDATA=$trimmed';
-    final buvid = 'buvid3_infoc_${DateTime.now().millisecondsSinceEpoch}';
-    final defaultCookie =
-        'buvid3=$buvid; b_nut=${DateTime.now().millisecondsSinceEpoch ~/ 1000}; CURRENT_FNVAL=4048';
-    final finalCookie =
-        sessData.isEmpty ? defaultCookie : '$sessData; $defaultCookie';
     return {
-      'User-Agent': _userAgent,
+      'User-Agent': _desktopUserAgent,
       'Referer': _referer,
       'Origin': 'https://www.bilibili.com',
-      'Cookie': finalCookie,
+      'Cookie': _formatCookieHeader(cookie, includeBuvid: true),
     };
   }
 
@@ -1174,67 +1260,373 @@ class BilibiliResolver {
     return url;
   }
 
-  /// Lấy luồng phát DASH phân đoạn (video và audio riêng biệt) cho media_kit
-  Future<BilibiliDashStream> getDashStream(
-    BilibiliVideoDetails details, [
-    String cookie = '',
-    String quality = '64',
-  ]) async {
-    final data = await _getPlayData(details, cookie, fnval: '4048', quality: quality);
-    final dash = data['dash'] as Map<String, dynamic>?;
-    if (dash == null) {
-      throw StateError('Bilibili không trả luồng DASH.');
+  /// Chuẩn hóa mã chất lượng từ settings cũ ('1080'/'720') hoặc QN ('80'/'64') về QN chuẩn Bilibili.
+  static String normalizeQualityCode(String raw) {
+    final clean = raw.trim().toLowerCase();
+    switch (clean) {
+      case '1080':
+      case '1080p':
+      case '80':
+        return '80';
+      case '720':
+      case '720p':
+      case '64':
+        return '64';
+      case '480':
+      case '480p':
+      case '32':
+        return '32';
+      case '360':
+      case '360p':
+      case '16':
+        return '16';
+      case '112':
+      case '116':
+      case '120':
+      case '125':
+      case '127':
+        return clean;
+      default:
+        return '64';
     }
+  }
+
+  static final RegExp _mcdnResourceRegex = RegExp(
+    r'^https?://(?:(?:\d{1,3}\.){3}\d{1,3}|[^/]+\.mcdn\.bilivideo\.(?:com|cn|net))(?::\d{1,5})?/v\d/resource',
+    caseSensitive: false,
+  );
+
+  static bool isMcdnUrl(String url) {
+    final lower = url.toLowerCase();
+    if (lower.contains('.mcdn.bilivideo.')) return true;
+    final uri = Uri.tryParse(url);
+    if (uri == null) return false;
+    if (uri.queryParameters['os'] == 'mcdn') return true;
+    return _mcdnResourceRegex.hasMatch(url);
+  }
+
+  static List<String> _collectRawTrackUrls(Map<String, dynamic> track) {
+    final rawUrls = <String>[
+      track['baseUrl']?.toString() ??
+          track['base_url']?.toString() ??
+          track['url']?.toString() ??
+          '',
+      ...(track['backup_url'] as List<dynamic>? ?? const []).map(
+        (u) => u.toString(),
+      ),
+      ...(track['backupUrl'] as List<dynamic>? ?? const []).map(
+        (u) => u.toString(),
+      ),
+    ];
+    final seen = <String>{};
+    final result = <String>[];
+    for (final raw in rawUrls) {
+      final clean = raw.trim();
+      if ((clean.startsWith('http://') || clean.startsWith('https://')) &&
+          seen.add(clean)) {
+        result.add(clean);
+      }
+    }
+    return result;
+  }
+
+  /// Sắp xếp & chọn CDN tối ưu: né `mcdn` chậm ngoài Trung Quốc, giữ nguyên backup URLs,
+  /// và chỉ rewrite host cho luồng UPOS `/upgcxcode/` khi người dùng chọn mirror cụ thể.
+  static List<String> rankCdnUrls(
+    Iterable<String> rawUrls, {
+    BilibiliCdnService cdn = BilibiliCdnService.auto,
+  }) {
+    final input = <String>[];
+    final seenIn = <String>{};
+    for (final raw in rawUrls) {
+      final clean = raw.trim();
+      if ((clean.startsWith('http://') || clean.startsWith('https://')) &&
+          seenIn.add(clean)) {
+        input.add(clean);
+      }
+    }
+    if (input.isEmpty) return const [];
+    if (cdn == BilibiliCdnService.origin) return input;
+
+    final nonMcdn = <String>[];
+    final mcdn = <String>[];
+    for (final url in input) {
+      if (isMcdnUrl(url)) {
+        mcdn.add(url);
+      } else {
+        nonMcdn.add(url);
+      }
+    }
+
+    final prioritized = <String>[];
+    final seenOut = <String>{};
+    void addUnique(String url) {
+      if (url.isNotEmpty && seenOut.add(url)) {
+        prioritized.add(url);
+      }
+    }
+
+    if (cdn == BilibiliCdnService.akamai) {
+      for (final url in nonMcdn) {
+        if (Uri.tryParse(url)?.host == BilibiliCdnService.akamai.mirrorHost) {
+          addUnique(url);
+        }
+      }
+    } else if (cdn.mirrorHost != null) {
+      for (final url in nonMcdn) {
+        final uri = Uri.tryParse(url);
+        if (uri != null &&
+            url.contains('/upgcxcode/') &&
+            !uri.host.contains('akamaized.net') &&
+            !uri.queryParameters.containsKey('hdnts')) {
+          addUnique(uri.replace(host: cdn.mirrorHost).toString());
+        }
+      }
+    }
+
+    for (final url in nonMcdn) {
+      addUnique(url);
+    }
+
+    // Nếu không có mirror UPOS nào mà chỉ có PCDN `/v1/resource`, bọc qua proxy-tf chính thức trước rồi mới tới mcdn gốc.
+    if (nonMcdn.isEmpty) {
+      for (final url in mcdn) {
+        if (_mcdnResourceRegex.hasMatch(url)) {
+          addUnique(
+            Uri(
+              scheme: 'https',
+              host: 'proxy-tf-all-ws.bilivideo.com',
+              path: '/',
+              queryParameters: {'url': url},
+            ).toString(),
+          );
+        }
+      }
+    }
+
+    for (final url in mcdn) {
+      addUnique(url);
+    }
+    return prioritized;
+  }
+
+  /// Chọn track video phù hợp nhất theo chất lượng mục tiêu & độ tương thích giải mã phần cứng.
+  static Map<String, dynamic>? selectBestVideoTrack(
+    List<Map<String, dynamic>> videoList,
+    int targetQn, {
+    bool preferAvc = true,
+  }) {
+    if (videoList.isEmpty) return null;
+    final qualities = videoList
+        .map((v) => (v['id'] as num?)?.toInt() ?? 0)
+        .where((qn) => qn > 0)
+        .toSet()
+        .toList()
+      ..sort();
+    if (qualities.isEmpty) return videoList.first;
+
+    int chosenQn = qualities.first;
+    final atOrBelow = qualities.where((q) => q <= targetQn).toList();
+    if (atOrBelow.isNotEmpty) {
+      chosenQn = atOrBelow.last;
+    } else {
+      chosenQn = qualities.first;
+    }
+
+    int codecRank(String codecRaw) {
+      final c = codecRaw.toLowerCase();
+      if (!preferAvc) return 0;
+      if (c.startsWith('avc')) return 0;
+      if (c.startsWith('hvc') || c.startsWith('hev')) return 1;
+      if (c.startsWith('av01')) return 2;
+      return 3;
+    }
+
+    final candidates = videoList
+        .where((v) => ((v['id'] as num?)?.toInt() ?? 0) == chosenQn)
+        .toList();
+    if (candidates.isEmpty) return videoList.first;
+
+    candidates.sort((a, b) {
+      final rankA = codecRank(a['codecs']?.toString() ?? '');
+      final rankB = codecRank(b['codecs']?.toString() ?? '');
+      if (rankA != rankB) return rankA.compareTo(rankB);
+      final bwA = (a['bandwidth'] as num?)?.toInt() ?? 0;
+      final bwB = (b['bandwidth'] as num?)?.toInt() ?? 0;
+      return bwB.compareTo(bwA);
+    });
+    return candidates.first;
+  }
+
+  /// Chọn track audio AAC tiêu chuẩn (`30280`/`30232`/`30216`), tránh chọn nhầm Dolby/Hi-Res FLAC gây câm tiếng trên mobile.
+  static Map<String, dynamic>? selectBestAudioTrack(
+    List<Map<String, dynamic>> audioList,
+  ) {
+    if (audioList.isEmpty) return null;
+
+    int audioRank(Map<String, dynamic> audio) {
+      final id = (audio['id'] as num?)?.toInt() ?? 0;
+      final codec = (audio['codecs']?.toString() ?? '').toLowerCase();
+      if (id == 30250 || id == 30251 || codec.contains('ec-3') || codec.contains('flac')) {
+        return 10;
+      }
+      if (id == 30280) return 0; // 192kbps AAC chuẩn
+      if (id == 30232) return 1; // 132kbps AAC chuẩn
+      if (id == 30216) return 2; // 64kbps AAC chuẩn
+      if (codec.isEmpty || codec.contains('mp4a')) return 3;
+      return 5;
+    }
+
+    final sorted = List<Map<String, dynamic>>.from(audioList)
+      ..sort((a, b) {
+        final rankA = audioRank(a);
+        final rankB = audioRank(b);
+        if (rankA != rankB) return rankA.compareTo(rankB);
+        final bwA = (a['bandwidth'] as num?)?.toInt() ?? 0;
+        final bwB = (b['bandwidth'] as num?)?.toInt() ?? 0;
+        return bwB.compareTo(bwA);
+      });
+    return sorted.first;
+  }
+
+  /// Bóc tách đầy đủ tất cả các đoạn `durl` (kèm danh sách CDN xếp hạng) cho trường hợp video cũ không có DASH.
+  static List<BilibiliMuxedSegment> extractMuxedSegments(
+    Map<String, dynamic> data, {
+    BilibiliCdnService cdn = BilibiliCdnService.auto,
+  }) {
+    final durl = data['durl'] as List<dynamic>? ?? const [];
+    final segments = <BilibiliMuxedSegment>[];
+    for (final raw in durl) {
+      if (raw is! Map<String, dynamic>) continue;
+      final urls = rankCdnUrls(_collectRawTrackUrls(raw), cdn: cdn);
+      if (urls.isEmpty) continue;
+      final lengthMs = (raw['length'] as num?)?.toDouble();
+      segments.add(
+        BilibiliMuxedSegment(
+          urls: urls,
+          durationSec: (lengthMs != null && lengthMs > 0) ? lengthMs / 1000.0 : null,
+        ),
+      );
+    }
+    return segments;
+  }
+
+  BilibiliDashStream? _parseDashStream(
+    Map<String, dynamic> data, {
+    required String cookie,
+    required int targetQn,
+    BilibiliCdnService cdn = BilibiliCdnService.auto,
+  }) {
+    final dash = data['dash'] as Map<String, dynamic>?;
+    if (dash == null) return null;
     final videoList = (dash['video'] as List<dynamic>? ?? const [])
         .whereType<Map<String, dynamic>>()
         .toList();
     final audioList = (dash['audio'] as List<dynamic>? ?? const [])
         .whereType<Map<String, dynamic>>()
         .toList();
+    if (videoList.isEmpty || audioList.isEmpty) return null;
 
-    if (videoList.isEmpty || audioList.isEmpty) {
-      throw StateError('DASH stream không có đủ video hoặc audio.');
-    }
+    final bestVideo = selectBestVideoTrack(videoList, targetQn, preferAvc: true);
+    final bestAudio = selectBestAudioTrack(audioList);
+    if (bestVideo == null || bestAudio == null) return null;
 
-    final targetQn = int.tryParse(quality) ?? 64;
-
-    videoList.sort((a, b) {
-      final qnA = (a['id'] as num?)?.toInt() ?? 0;
-      final qnB = (b['id'] as num?)?.toInt() ?? 0;
-      final diffA = (qnA - targetQn).abs();
-      final diffB = (qnB - targetQn).abs();
-      if (diffA != diffB) return diffA.compareTo(diffB);
-      final codecA = a['codecs']?.toString().toLowerCase() ?? '';
-      final codecB = b['codecs']?.toString().toLowerCase() ?? '';
-      final isAvcA = codecA.contains('avc');
-      final isAvcB = codecB.contains('avc');
-      if (isAvcA && !isAvcB) return -1;
-      if (!isAvcA && isAvcB) return 1;
-      return 0;
-    });
-
-    audioList.sort((a, b) {
-      final bwA = (a['bandwidth'] as num?)?.toInt() ?? 0;
-      final bwB = (b['bandwidth'] as num?)?.toInt() ?? 0;
-      return bwB.compareTo(bwA);
-    });
-
-    final bestVideo = videoList.first;
-    final bestAudio = audioList.first;
-
-    final videoUrl = bestVideo['baseUrl']?.toString() ?? bestVideo['base_url']?.toString() ?? '';
-    final audioUrl = bestAudio['baseUrl']?.toString() ?? bestAudio['base_url']?.toString() ?? '';
-
-    if (videoUrl.isEmpty || audioUrl.isEmpty) {
-      throw StateError('Không tìm thấy link video hoặc audio DASH hợp lệ.');
-    }
+    final videoUrls = rankCdnUrls(_collectRawTrackUrls(bestVideo), cdn: cdn);
+    final audioUrls = rankCdnUrls(_collectRawTrackUrls(bestAudio), cdn: cdn);
+    if (videoUrls.isEmpty || audioUrls.isEmpty) return null;
 
     return BilibiliDashStream(
-      videoUrl: videoUrl,
-      audioUrl: audioUrl,
+      videoUrl: videoUrls.first,
+      audioUrl: audioUrls.first,
+      videoUrls: videoUrls,
+      audioUrls: audioUrls,
       headers: streamHeaders(cookie),
       quality: (bestVideo['id'] as num?)?.toInt() ?? targetQn,
+      videoCodec: bestVideo['codecs']?.toString() ?? '',
+      durationMs: (data['timelength'] as num?)?.toInt() ?? 0,
     );
+  }
+
+  /// Giải pháp phát Bilibili thống nhất chuẩn PiliPlus:
+  /// 1 lần gọi `fnval=4048` ưu tiên DASH (gộp `edl://`), tự fallback `durl` nếu video cổ không có DASH.
+  Future<BilibiliPlaybackPlan> resolvePlaybackPlan(
+    BilibiliVideoDetails details, {
+    String cookie = '',
+    String quality = '64',
+    BilibiliCdnService cdn = BilibiliCdnService.auto,
+  }) async {
+    final normQnStr = normalizeQualityCode(quality);
+    final targetQn = int.tryParse(normQnStr) ?? 64;
+    final hdrs = streamHeaders(cookie);
+
+    final data = await _getPlayData(
+      details,
+      cookie,
+      fnval: '4048',
+      quality: normQnStr,
+    );
+    final dashStream = _parseDashStream(
+      data,
+      cookie: cookie,
+      targetQn: targetQn,
+      cdn: cdn,
+    );
+    if (dashStream != null) {
+      final fallbackSegments = extractMuxedSegments(data, cdn: cdn);
+      return BilibiliPlaybackPlan(
+        dash: dashStream,
+        muxedSegments: fallbackSegments,
+        muxedUrls: fallbackSegments.isNotEmpty ? fallbackSegments.first.urls : const [],
+        headers: hdrs,
+        quality: dashStream.quality,
+      );
+    }
+
+    var segments = extractMuxedSegments(data, cdn: cdn);
+    if (segments.isEmpty) {
+      final fallbackUrls = await getMuxedVideoUrls(details, cookie, normQnStr);
+      if (fallbackUrls.isNotEmpty) {
+        segments = [
+          BilibiliMuxedSegment(
+            urls: rankCdnUrls(fallbackUrls, cdn: cdn),
+          ),
+        ];
+      }
+    }
+
+    if (segments.isEmpty) {
+      throw StateError('Bilibili không trả luồng phát hợp lệ.');
+    }
+
+    return BilibiliPlaybackPlan(
+      dash: null,
+      muxedSegments: segments,
+      muxedUrls: segments.first.urls,
+      headers: hdrs,
+      quality: (data['quality'] as num?)?.toInt() ?? targetQn,
+    );
+  }
+
+  /// Lấy luồng phát DASH phân đoạn (video và audio riêng biệt) cho media_kit
+  Future<BilibiliDashStream> getDashStream(
+    BilibiliVideoDetails details, [
+    String cookie = '',
+    String quality = '64',
+    BilibiliCdnService cdn = BilibiliCdnService.auto,
+  ]) async {
+    final normQnStr = normalizeQualityCode(quality);
+    final targetQn = int.tryParse(normQnStr) ?? 64;
+    final data = await _getPlayData(details, cookie, fnval: '4048', quality: normQnStr);
+    final dash = _parseDashStream(
+      data,
+      cookie: cookie,
+      targetQn: targetQn,
+      cdn: cdn,
+    );
+    if (dash == null) {
+      throw StateError('Không tìm thấy link video hoặc audio DASH hợp lệ.');
+    }
+    return dash;
   }
 
   Future<String> getMuxedVideoUrl(
@@ -1251,49 +1643,38 @@ class BilibiliResolver {
     String cookie = '',
     String quality = '64',
   ]) async {
-    final cacheKey = '${details.bvid}_${details.selectedPageIndex}_$quality';
-    if (_muxedUrlsCache.containsKey(cacheKey)) {
-      return _muxedUrlsCache[cacheKey]!;
+    final normQuality = normalizeQualityCode(quality);
+    final cacheKey = '${details.bvid}_${details.selectedPageIndex}_$normQuality';
+    final cached = _muxedUrlsCache[cacheKey];
+    if (cached != null &&
+        DateTime.now().difference(cached.cachedAt) < _streamCacheTtl) {
+      return cached.urls;
     }
-    var data = await _getPlayData(details, cookie, fnval: '0', quality: quality);
+    var data = await _getPlayData(details, cookie, fnval: '0', quality: normQuality);
     var urls = extractMuxedVideoUrls(data);
-    if (urls.isEmpty && quality != '32') {
+    if (urls.isEmpty && normQuality != '32') {
       try {
         final fallbackData = await _getPlayData(details, cookie, fnval: '0', quality: '32');
         urls = extractMuxedVideoUrls(fallbackData);
       } catch (_) {}
     }
-    if (urls.isEmpty && quality != '16') {
+    if (urls.isEmpty && normQuality != '16') {
       try {
         final fallbackData = await _getPlayData(details, cookie, fnval: '0', quality: '16');
         urls = extractMuxedVideoUrls(fallbackData);
       } catch (_) {}
     }
     if (urls.isEmpty) {
-      throw StateError('Bilibili không trả luồng video MP4 tương thích iOS.');
+      throw StateError('Bilibili không trả luồng video MP4 tương thích.');
     }
-    _muxedUrlsCache[cacheKey] = urls;
+    _muxedUrlsCache[cacheKey] = (urls: urls, cachedAt: DateTime.now());
     return urls;
   }
 
   static List<String> extractMuxedVideoUrls(Map<String, dynamic> data) {
     final durl = data['durl'] as List<dynamic>? ?? const [];
     if (durl.isEmpty || durl.first is! Map<String, dynamic>) return const [];
-    final first = durl.first as Map<String, dynamic>;
-    final rawUrls = <String>[
-      first['url']?.toString() ?? '',
-      ...(first['backup_url'] as List<dynamic>? ?? const []).map(
-        (url) => url.toString(),
-      ),
-      ...(first['backupUrl'] as List<dynamic>? ?? const []).map(
-        (url) => url.toString(),
-      ),
-    ];
-    return rawUrls
-        .map((url) => url.trim())
-        .where((url) => url.startsWith('http://') || url.startsWith('https://'))
-        .toSet()
-        .toList();
+    return _collectRawTrackUrls(durl.first as Map<String, dynamic>);
   }
 
   Future<List<BilibiliSubtitleInfo>> getSubtitles(
@@ -1517,7 +1898,7 @@ class BilibiliResolver {
     required String fnval,
     String quality = '127',
   }) {
-    return _getWbiJson('https://api.bilibili.com/x/player/wbi/playurl', {
+    final params = <String, String>{
       'bvid': details.bvid,
       'cid': details.cid.toString(),
       'qn': quality,
@@ -1525,7 +1906,16 @@ class BilibiliResolver {
       'fnver': '0',
       'fourk': '1',
       'high_quality': '1',
-    }, cookie);
+      'gaia_source': 'pre-load',
+      'isGaiaAvoided': 'true',
+      'web_location': '1315873',
+      if (cookie.trim().isEmpty) 'try_look': '1',
+    };
+    return _getWbiJson(
+      'https://api.bilibili.com/x/player/wbi/playurl',
+      params,
+      cookie,
+    );
   }
 
   Future<Map<String, dynamic>> _getWbiJson(

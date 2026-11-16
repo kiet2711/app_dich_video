@@ -461,6 +461,18 @@ class SettingsRepository {
   set bilibiliStreamMode(String v) =>
       prefs.setString('bilibili_stream_mode', v);
 
+  /// Máy chủ CDN ưu tiên cho Bilibili: 'auto' (né MCDN), 'akamai', 'ali', 'cos', 'hw', 'origin'
+  String get bilibiliCdnService =>
+      prefs.getString('bilibili_cdn_service') ?? 'auto';
+  set bilibiliCdnService(String v) =>
+      prefs.setString('bilibili_cdn_service', v);
+
+  /// Bật giải mã phần cứng GPU cho trình phát video (giảm nóng/giật khi xem Bilibili)
+  bool get bilibiliHardwareDecode =>
+      prefs.getBool('bilibili_hw_decode') ?? true;
+  set bilibiliHardwareDecode(bool v) =>
+      prefs.setBool('bilibili_hw_decode', v);
+
   /// Giọng đọc lồng tiếng AI riêng cho Bilibili
   String get bilibiliSelectedTtsVoice =>
       prefs.getString('bilibili_selected_tts_voice') ?? selectedTtsVoice;

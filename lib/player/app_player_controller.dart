@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -58,33 +59,204 @@ class AppVideoPlayerValue {
 class AppPlayerController extends ChangeNotifier {
   late final Player player;
   late final VideoController videoController;
+  final int _bufferSizeMb;
+  final bool hardwareDecode;
   AppVideoPlayerValue _value = const AppVideoPlayerValue();
 
   AppVideoPlayerValue get value => _value;
 
   final List<StreamSubscription> _subscriptions = [];
   bool _isDisposed = false;
+  bool _inSilentStandby = false;
   bool get isDisposed => _isDisposed;
   Completer<void> _initCompleter = Completer<void>();
+  late final Future<void> _baseOptionsFuture;
 
-  AppPlayerController({int? bufferSizeMb, bool silent = false}) {
-    final mb = (bufferSizeMb ?? 64).clamp(16, 256);
+  AppPlayerController({
+    int? bufferSizeMb,
+    bool silent = false,
+    this.hardwareDecode = true,
+  }) : _bufferSizeMb = (bufferSizeMb ?? 64).clamp(16, 256) {
+    _inSilentStandby = silent;
     player = Player(
       configuration: PlayerConfiguration(
         title: 'CapSub MediaKit Player',
-        bufferSize: mb * 1024 * 1024,
+        bufferSize: _bufferSizeMb * 1024 * 1024,
         muted: silent,
       ),
     );
-    videoController = VideoController(player);
+    videoController = VideoController(
+      player,
+      configuration: VideoControllerConfiguration(
+        enableHardwareAcceleration: hardwareDecode,
+        androidAttachSurfaceAfterVideoParameters:
+            Platform.isAndroid ? false : null,
+        hwdec: hardwareDecode
+            ? (Platform.isAndroid ? 'mediacodec,auto-safe' : 'auto')
+            : 'no',
+      ),
+    );
 
     _listenToPlayerStreams();
+    _baseOptionsFuture = _applyBaseMpvOptions();
+  }
+
+  /// Ghép DASH video + audio của Bilibili thành một nguồn `edl://` hợp nhất theo kiểu PiliPlus.
+  /// Nhờ `mpv` mở song song cả hai track trong cùng demuxer timeline, việc tải nhanh hơn hẳn,
+  /// không bị rớt audio rời khi tua và giữ đồng bộ hình/tiếng tuyệt đối.
+  static String buildBilibiliEdlUri({
+    required String videoUrl,
+    String audioUrl = '',
+  }) {
+    final cleanV = videoUrl.trim();
+    final cleanA = audioUrl.trim();
+    if (cleanV.isEmpty || cleanA.isEmpty) return cleanV;
+    final vLen = utf8.encode(cleanV).length;
+    final aLen = utf8.encode(cleanA).length;
+    return 'edl://!no_chapters;%$vLen%$cleanV;!new_stream;!no_chapters;%$aLen%$cleanA';
+  }
+
+  /// Nối danh sách phân đoạn `durl` nhiều phần thành một timeline `edl://` liên tục.
+  static String buildMultiPartEdlUri(
+    List<({String url, double? durationSec})> segments,
+  ) {
+    final valid = segments.where((s) => s.url.trim().isNotEmpty).toList();
+    if (valid.isEmpty) return '';
+    if (valid.length == 1) return valid.first.url.trim();
+    final sb = StringBuffer('edl://!no_chapters;');
+    for (final seg in valid) {
+      final clean = seg.url.trim();
+      final len = utf8.encode(clean).length;
+      if (seg.durationSec != null && seg.durationSec! > 0) {
+        sb.write('%$len%$clean,length=${seg.durationSec!.toStringAsFixed(3)};');
+      } else {
+        sb.write('%$len%$clean;');
+      }
+    }
+    return sb.toString();
+  }
+
+  Future<void> _applyBaseMpvOptions() async {
+    if (_isDisposed || player.platform is! NativePlayer) return;
+    final native = player.platform as NativePlayer;
+    try {
+      if (Platform.isAndroid) {
+        await native.setProperty('force-window', 'no');
+        await native.setProperty('autosync', '30');
+      }
+      await native.setProperty('video-sync', 'display-resample');
+      await native.setProperty('hr-seek', 'yes');
+      // Cho phép bỏ qua frame trung gian khi tua xa để thanh tua phản hồi tức thì, không đứng hình.
+      await native.setProperty('hr-seek-framedrop', 'yes');
+    } catch (_) {}
+  }
+
+  Future<void> _applyStreamBufferProperties({
+    required bool isLocalFile,
+    bool silentStandby = false,
+  }) async {
+    await _baseOptionsFuture;
+    if (_isDisposed || player.platform is! NativePlayer) return;
+    final native = player.platform as NativePlayer;
+    try {
+      if (isLocalFile) {
+        await native.setProperty('cache', 'no');
+        return;
+      }
+      final forwardMb = _bufferSizeMb.clamp(16, 64);
+      final backMb = (_bufferSizeMb ~/ 2).clamp(8, 32);
+      await native.setProperty('cache', 'yes');
+      await native.setProperty('cache-secs', silentStandby ? '6' : '20');
+      await native.setProperty(
+        'demuxer-hysteresis-secs',
+        silentStandby ? '3' : '12',
+      );
+      await native.setProperty(
+        'demuxer-readahead-secs',
+        silentStandby ? '1' : '12',
+      );
+      await native.setProperty(
+        'demuxer-max-bytes',
+        '${forwardMb * 1024 * 1024}',
+      );
+      await native.setProperty(
+        'demuxer-max-back-bytes',
+        '${backMb * 1024 * 1024}',
+      );
+      await native.setProperty('network-timeout', '15');
+    } catch (_) {}
+  }
+
+  Future<void> _applyNetworkStreamOptions({
+    String? urlForHint,
+    Map<String, String> headers = const {},
+    String? decryptionKey,
+  }) async {
+    if (_isDisposed || player.platform is! NativePlayer) return;
+    final native = player.platform as NativePlayer;
+    try {
+      final ua = headers['User-Agent'] ?? headers['user-agent'] ?? '';
+      final referer = headers['Referer'] ?? headers['referer'] ?? '';
+      if (ua.isNotEmpty) {
+        await native.setProperty('user-agent', ua);
+      }
+      // Luôn gán hoặc xóa referrer theo nguồn hiện tại để không rò header Bilibili sang nguồn khác.
+      await native.setProperty('referrer', referer);
+
+      if (headers.isNotEmpty) {
+        final headerStr = headers.entries
+            .map((e) => '${e.key}: ${e.value}')
+            .join('\r\n');
+        await native.setProperty('http-header-fields', headerStr);
+      } else {
+        await native.setProperty('http-header-fields', '');
+      }
+
+      final lowerUrl = (urlForHint ?? '').toLowerCase();
+      final needsHlsOrCenc =
+          (decryptionKey != null && decryptionKey.isNotEmpty) ||
+          lowerUrl.contains('.m3u8');
+      if (needsHlsOrCenc) {
+        final lavfOptions = <String>[
+          'seg_max_retry=3',
+          'strict=experimental',
+          'allowed_extensions=ALL',
+          'protocol_whitelist=[http,https,tcp,tls,crypto,data,file]',
+        ];
+        if (decryptionKey != null && decryptionKey.isNotEmpty) {
+          lavfOptions.add('decryption_key=$decryptionKey');
+        }
+        await native.setProperty('demuxer-lavf-o', lavfOptions.join(','));
+      } else {
+        // Không áp tùy chọn HLS/experimental lên Bilibili DASH fMP4 để tìm kiếm keyframe/range mượt hơn.
+        await native.setProperty('demuxer-lavf-o', 'seg_max_retry=3');
+      }
+    } catch (_) {}
+  }
+
+  void _resetCompleterAndState() {
+    _initCompleter = Completer<void>();
+    _value = AppVideoPlayerValue(playbackSpeed: _value.playbackSpeed);
+    notifyListeners();
+  }
+
+  void _completeInitializedIfReady(Duration dur) {
+    if (_isDisposed || dur <= Duration.zero) return;
+    _value = _value.copyWith(
+      duration: dur,
+      isInitialized: true,
+      hasError: false,
+    );
+    if (!_initCompleter.isCompleted) {
+      _initCompleter.complete();
+    }
+    notifyListeners();
   }
 
   void _listenToPlayerStreams() {
     _subscriptions.add(
       player.stream.playing.listen((playing) {
-        if (_isDisposed) return;
+        if (_isDisposed || _value.isPlaying == playing) return;
         _value = _value.copyWith(isPlaying: playing);
         notifyListeners();
       }),
@@ -100,14 +272,8 @@ class AppPlayerController extends ChangeNotifier {
 
     _subscriptions.add(
       player.stream.duration.listen((dur) {
-        if (_isDisposed) return;
-        if (dur > Duration.zero) {
-          _value = _value.copyWith(duration: dur, isInitialized: true);
-          if (!_initCompleter.isCompleted) {
-            _initCompleter.complete();
-          }
-          notifyListeners();
-        }
+        if (_isDisposed || dur <= Duration.zero) return;
+        _completeInitializedIfReady(dur);
       }),
     );
 
@@ -141,7 +307,7 @@ class AppPlayerController extends ChangeNotifier {
 
     _subscriptions.add(
       player.stream.rate.listen((rate) {
-        if (_isDisposed) return;
+        if (_isDisposed || _value.playbackSpeed == rate) return;
         _value = _value.copyWith(playbackSpeed: rate);
         notifyListeners();
       }),
@@ -149,55 +315,11 @@ class AppPlayerController extends ChangeNotifier {
 
     _subscriptions.add(
       player.stream.error.listen((err) {
-        if (_isDisposed) return;
+        if (_isDisposed || err.trim().isEmpty) return;
         _value = _value.copyWith(hasError: true, errorDescription: err);
         notifyListeners();
       }),
     );
-  }
-
-  bool _hasRealVideoTrack(Tracks tracks) {
-    return tracks.video.any((track) => track.id != 'auto' && track.id != 'no');
-  }
-
-  bool _hasRealAudioTrack(Tracks tracks) {
-    return tracks.audio.any((track) => track.id != 'auto' && track.id != 'no');
-  }
-
-  /// Chờ mpv nạp xong demuxer video trước khi gắn audio DASH rời.
-  /// Nếu gắn audio ngay sau `open`, lệnh có thể bị reset bởi quá trình load video.
-  Future<void> _waitForPrimaryVideoTrack() async {
-    if (_hasRealVideoTrack(player.state.tracks)) return;
-    await player.stream.tracks
-        .firstWhere(_hasRealVideoTrack)
-        .timeout(const Duration(seconds: 10));
-  }
-
-  Future<void> _attachBilibiliAudio(String audioUrl) async {
-    if (audioUrl.isEmpty || _isDisposed) return;
-
-    Object? lastError;
-    for (var attempt = 1; attempt <= 3; attempt++) {
-      try {
-        await player.setAudioTrack(
-          AudioTrack.uri(audioUrl, title: 'Bilibili DASH audio'),
-        );
-
-        if (!_hasRealAudioTrack(player.state.tracks)) {
-          await player.stream.tracks
-              .firstWhere(_hasRealAudioTrack)
-              .timeout(const Duration(seconds: 4));
-        }
-        return;
-      } catch (error) {
-        lastError = error;
-        if (attempt < 3) {
-          await Future<void>.delayed(Duration(milliseconds: 250 * attempt));
-        }
-      }
-    }
-
-    throw StateError('Không thể gắn audio DASH Bilibili: $lastError');
   }
 
   /// Chờ cho đến khi media được nạp xong và xác định được độ dài / kích thước
@@ -205,48 +327,106 @@ class AppPlayerController extends ChangeNotifier {
     Duration timeout = const Duration(seconds: 25),
   }) async {
     if (_value.isInitialized && _value.duration > Duration.zero) return;
+    if (!_isDisposed && player.state.duration > Duration.zero) {
+      _completeInitializedIfReady(player.state.duration);
+      return;
+    }
     try {
       await _initCompleter.future.timeout(timeout);
     } catch (_) {
-      // Nếu timeout mà player đã đọc được duration hợp lệ từ stream mpv thì chấp nhận
       if (!_isDisposed && player.state.duration > Duration.zero) {
-        _value = _value.copyWith(
-          duration: player.state.duration,
-          isInitialized: true,
-        );
-        notifyListeners();
+        _completeInitializedIfReady(player.state.duration);
         return;
       }
-      // Ngược lại, nếu hết thời gian mà duration vẫn = 0 (do nghẽn tải metadata MP4 lớn hoặc link chết),
-      // ném TimeoutException để caller biết mà tự động chuyển sang luồng dự phòng (DASH)
       throw TimeoutException(
         'Không tải được thông tin video trong thời gian quy định (${timeout.inSeconds}s)',
       );
     }
   }
 
-  /// Phát luồng Bilibili DASH (Video và Audio phân đoạn song song)
+  /// Phát luồng Bilibili DASH bằng `edl://` hợp nhất video & audio ngay từ bước mở stream.
   Future<void> openBilibiliDash({
     required String videoUrl,
     required String audioUrl,
     Map<String, String> headers = const {},
+    Duration? startPosition,
+    bool play = false,
   }) async {
-    if (headers.isNotEmpty && player.platform is NativePlayer) {
-      final headerStr = headers.entries
-          .map((e) => '${e.key}: ${e.value}')
-          .join('\r\n');
-      final nativePlayer = player.platform as NativePlayer;
-      await nativePlayer.setProperty('http-header-fields', headerStr);
+    if (_isDisposed) return;
+    await _applyStreamBufferProperties(isLocalFile: false);
+    await _applyNetworkStreamOptions(urlForHint: videoUrl, headers: headers);
+    final edlUri = buildBilibiliEdlUri(videoUrl: videoUrl, audioUrl: audioUrl);
+    await player.open(
+      Media(
+        edlUri,
+        httpHeaders: headers.isEmpty ? null : headers,
+        start: (startPosition != null && startPosition > Duration.zero)
+            ? startPosition
+            : null,
+      ),
+      play: play,
+    );
+  }
+
+  /// Thử lần lượt các cặp DASH CDN dự phòng rồi fallback sang `durl` trên CÙNG một instance Player
+  /// (tránh tạo/hủy nhiều VideoController gây nghẽn MediaCodec dẫn tới đen màn hình còn tiếng).
+  Future<String> openBilibiliCandidates({
+    List<({String videoUrl, String audioUrl})> dashPairs = const [],
+    List<String> fallbackMuxedUrls = const [],
+    String? fallbackMuxedEdl,
+    Map<String, String> headers = const {},
+    Duration? startPosition,
+    bool play = false,
+    Duration perCandidateTimeout = const Duration(seconds: 10),
+  }) async {
+    Object? lastError;
+
+    for (final pair in dashPairs) {
+      if (_isDisposed) break;
+      try {
+        _resetCompleterAndState();
+        await openBilibiliDash(
+          videoUrl: pair.videoUrl,
+          audioUrl: pair.audioUrl,
+          headers: headers,
+          startPosition: startPosition,
+          play: play,
+        );
+        await initialize(timeout: perCandidateTimeout);
+        if (_value.hasError && player.state.duration <= Duration.zero) {
+          throw StateError(_value.errorDescription ?? 'DASH playback failed');
+        }
+        return pair.videoUrl;
+      } catch (e) {
+        lastError = e;
+      }
     }
 
-    // Nạp luồng video chính
-    await player.open(Media(videoUrl, httpHeaders: headers), play: false);
+    final muxCandidates = <String>[
+      if (fallbackMuxedEdl != null && fallbackMuxedEdl.isNotEmpty)
+        fallbackMuxedEdl,
+      ...fallbackMuxedUrls.where((u) => u.trim().isNotEmpty),
+    ];
 
-    // Chờ video load ổn định rồi mới ghép audio để tránh mpv reset mất track.
-    if (audioUrl.isNotEmpty && player.platform is NativePlayer) {
-      await _waitForPrimaryVideoTrack();
-      await _attachBilibiliAudio(audioUrl);
+    for (final url in muxCandidates) {
+      if (_isDisposed) break;
+      try {
+        _resetCompleterAndState();
+        await openNetwork(
+          url,
+          headers: headers,
+          startPosition: startPosition,
+          play: play,
+        );
+        await initialize(timeout: perCandidateTimeout);
+        return url;
+      } catch (e) {
+        lastError = e;
+      }
     }
+
+    throw lastError ??
+        StateError('Không thể khởi tạo bất kỳ luồng phát Bilibili nào.');
   }
 
   /// Chuyển đổi nguồn phát media mà không cần hủy controller hay tái tạo texture
@@ -256,6 +436,10 @@ class AppPlayerController extends ChangeNotifier {
     Uri? contentUri,
     String? dashVideoUrl,
     String? dashAudioUrl,
+    List<({String videoUrl, String audioUrl})>? bilibiliDashPairs,
+    List<String> bilibiliFallbackUrls = const [],
+    String? bilibiliFallbackEdl,
+    Duration? startPosition,
     String? decryptionKey,
     Map<String, String> headers = const {},
     bool play = false,
@@ -266,47 +450,22 @@ class AppPlayerController extends ChangeNotifier {
       await player.pause();
     } catch (_) {}
 
-    // Cấu hình giải mã CENC (AES-128-CTR) bằng phần cứng qua FFmpeg nếu có key
-    if (player.platform is NativePlayer) {
-      try {
-        final native = player.platform as NativePlayer;
-        final lavfOptions = <String>[
-          'seg_max_retry=3',
-          'strict=experimental',
-          'allowed_extensions=ALL',
-          'protocol_whitelist=[http,https,tcp,tls,crypto,data,file]',
-        ];
-        if (decryptionKey != null && decryptionKey.isNotEmpty) {
-          lavfOptions.add('decryption_key=$decryptionKey');
-        }
-        await native.setProperty('demuxer-lavf-o', lavfOptions.join(','));
-        await native.setProperty('network-timeout', '20');
-      } catch (_) {}
-    }
-
-    // Mỗi nguồn media phải có vòng đời khởi tạo riêng. Giữ lại duration,
-    // kích thước hoặc Completer của nguồn trước sẽ khiến UI hiển thị sai tỷ lệ,
-    // thanh tiến trình cũ và initialize() trả về quá sớm.
-    _initCompleter = Completer<void>();
-    _value = AppVideoPlayerValue(playbackSpeed: _value.playbackSpeed);
-    notifyListeners();
-
     if (silentStandby) {
+      _inSilentStandby = true;
       try {
         await player.setVolume(0.0);
         if (player.platform is NativePlayer) {
           final native = player.platform as NativePlayer;
           await native.setProperty('mute', 'yes');
           await native.setProperty('aid', 'no');
-          await native.setProperty('demuxer-readahead-secs', '1');
         }
         await player.setAudioTrack(AudioTrack.no());
       } catch (_) {}
-    } else {
+    } else if (_inSilentStandby) {
+      _inSilentStandby = false;
       try {
         if (player.platform is NativePlayer) {
           final native = player.platform as NativePlayer;
-          await native.setProperty('demuxer-readahead-secs', '10');
           await native.setProperty('mute', 'no');
           await native.setProperty('aid', 'auto');
         }
@@ -315,11 +474,35 @@ class AppPlayerController extends ChangeNotifier {
       } catch (_) {}
     }
 
+    final isLocal = file != null || contentUri != null;
+    await _applyStreamBufferProperties(
+      isLocalFile: isLocal,
+      silentStandby: silentStandby,
+    );
+
+    if ((bilibiliDashPairs != null && bilibiliDashPairs.isNotEmpty) ||
+        (bilibiliFallbackUrls.isNotEmpty) ||
+        (bilibiliFallbackEdl != null && bilibiliFallbackEdl.isNotEmpty)) {
+      await openBilibiliCandidates(
+        dashPairs: bilibiliDashPairs ?? const [],
+        fallbackMuxedUrls: bilibiliFallbackUrls,
+        fallbackMuxedEdl: bilibiliFallbackEdl,
+        headers: headers,
+        startPosition: startPosition,
+        play: play,
+      );
+      return;
+    }
+
+    _resetCompleterAndState();
+
     if (dashVideoUrl != null && dashVideoUrl.isNotEmpty) {
       await openBilibiliDash(
         videoUrl: dashVideoUrl,
         audioUrl: dashAudioUrl ?? '',
         headers: headers,
+        startPosition: startPosition,
+        play: play,
       );
     } else if (file != null) {
       await openFile(file, play: play);
@@ -330,6 +513,7 @@ class AppPlayerController extends ChangeNotifier {
         networkUrl,
         headers: headers,
         decryptionKey: decryptionKey,
+        startPosition: startPosition,
         play: play,
       );
     }
@@ -349,28 +533,13 @@ class AppPlayerController extends ChangeNotifier {
     if (_isDisposed) return;
 
     if (player.state.duration > Duration.zero) {
-      _value = _value.copyWith(
-        duration: player.state.duration,
-        isInitialized: true,
-      );
-      if (!_initCompleter.isCompleted) {
-        _initCompleter.complete();
-      }
-      notifyListeners();
+      _completeInitializedIfReady(player.state.duration);
     } else {
       unawaited(
         player.stream.duration
             .firstWhere((d) => d > Duration.zero)
-            .timeout(const Duration(seconds: 4))
-            .then((dur) {
-              if (!_isDisposed) {
-                _value = _value.copyWith(duration: dur, isInitialized: true);
-                if (!_initCompleter.isCompleted) {
-                  _initCompleter.complete();
-                }
-                notifyListeners();
-              }
-            })
+            .timeout(const Duration(seconds: 6))
+            .then(_completeInitializedIfReady)
             .catchError((_) {}),
       );
     }
@@ -386,10 +555,11 @@ class AppPlayerController extends ChangeNotifier {
     PlaylistMode playlistMode = PlaylistMode.loop,
   }) async {
     if (_isDisposed) return;
+    _inSilentStandby = false;
     try {
+      await _applyStreamBufferProperties(isLocalFile: false);
       if (player.platform is NativePlayer) {
         final native = player.platform as NativePlayer;
-        await native.setProperty('demuxer-readahead-secs', '10');
         await native.setProperty('mute', 'no');
         await native.setProperty('aid', 'auto');
       }
@@ -406,59 +576,64 @@ class AppPlayerController extends ChangeNotifier {
   /// Tạm dừng và tắt tiếng hoàn toàn (đưa vào trạng thái standby yên lặng)
   Future<void> muteAndPause() async {
     if (_isDisposed) return;
+    _inSilentStandby = true;
     try {
       await player.pause();
       await setVolume(0.0);
+      await _applyStreamBufferProperties(
+        isLocalFile: false,
+        silentStandby: true,
+      );
       if (player.platform is NativePlayer) {
         final native = player.platform as NativePlayer;
         await native.setProperty('mute', 'yes');
         await native.setProperty('aid', 'no');
-        await native.setProperty('demuxer-readahead-secs', '1');
       }
       await player.setAudioTrack(AudioTrack.no());
     } catch (_) {}
   }
 
-  /// Phát video qua link mạng thông thường (MP4, HLS/M3U8)
+  /// Phát video qua link mạng thông thường (MP4, HLS/M3U8, Bilibili durl EDL)
   Future<void> openNetwork(
     String url, {
     Map<String, String> headers = const {},
     String? decryptionKey,
+    Duration? startPosition,
     bool play = false,
   }) async {
-    if (player.platform is NativePlayer) {
-      final nativePlayer = player.platform as NativePlayer;
-      if (headers.isNotEmpty) {
-        final headerStr = headers.entries
-            .map((e) => '${e.key}: ${e.value}')
-            .join('\r\n');
-        await nativePlayer.setProperty('http-header-fields', headerStr);
-      } else {
-        await nativePlayer.setProperty('http-header-fields', '');
-      }
-      final lavfOptions = <String>[
-        'seg_max_retry=3',
-        'strict=experimental',
-        'allowed_extensions=ALL',
-        'protocol_whitelist=[http,https,tcp,tls,crypto,data,file]',
-      ];
-      if (decryptionKey != null && decryptionKey.isNotEmpty) {
-        lavfOptions.add('decryption_key=$decryptionKey');
-      }
-      await nativePlayer.setProperty('demuxer-lavf-o', lavfOptions.join(','));
-      await nativePlayer.setProperty('network-timeout', '20');
-    }
-    await player.open(Media(url, httpHeaders: headers), play: play);
+    if (_isDisposed) return;
+    await _applyStreamBufferProperties(isLocalFile: false);
+    await _applyNetworkStreamOptions(
+      urlForHint: url,
+      headers: headers,
+      decryptionKey: decryptionKey,
+    );
+    await player.open(
+      Media(
+        url,
+        httpHeaders: headers.isEmpty ? null : headers,
+        start: (startPosition != null && startPosition > Duration.zero)
+            ? startPosition
+            : null,
+      ),
+      play: play,
+    );
   }
 
   /// Phát file video cục bộ trên máy
   Future<void> openFile(File file, {bool play = false}) async {
+    if (_isDisposed) return;
+    await _applyStreamBufferProperties(isLocalFile: true);
+    await _applyNetworkStreamOptions();
     final uri = Uri.file(file.path);
     await player.open(Media(uri.toString()), play: play);
   }
 
   /// Phát Content URI (Android)
   Future<void> openContentUri(Uri uri, {bool play = false}) async {
+    if (_isDisposed) return;
+    await _applyStreamBufferProperties(isLocalFile: true);
+    await _applyNetworkStreamOptions();
     await player.open(Media(uri.toString()), play: play);
   }
 

@@ -901,7 +901,41 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   }
 
   AppPlayerController _createPlayerController() {
-    return AppPlayerController(bufferSizeMb: _settings.playerBufferSizeMb);
+    return AppPlayerController(
+      bufferSizeMb: _settings.playerBufferSizeMb,
+      hardwareDecode: _settings.bilibiliHardwareDecode,
+    );
+  }
+
+  ({
+    List<({String videoUrl, String audioUrl})> dashPairs,
+    List<String> fallbackUrls,
+    String? fallbackEdl,
+  }) _extractBilibiliMediaCandidates(BilibiliPlaybackPlan plan) {
+    final dashPairs = plan.dash
+            ?.buildCandidatePairs(maxPairs: 4)
+            .map((p) => (videoUrl: p.videoUrl, audioUrl: p.audioUrl))
+            .toList() ??
+        const <({String videoUrl, String audioUrl})>[];
+    String? fallbackEdl;
+    if (plan.muxedSegments.length > 1) {
+      fallbackEdl = AppPlayerController.buildMultiPartEdlUri(
+        plan.muxedSegments
+            .where((s) => s.urls.isNotEmpty)
+            .map((s) => (url: s.urls.first, durationSec: s.durationSec))
+            .toList(),
+      );
+    }
+    final fallbackUrls = plan.muxedUrls.isNotEmpty
+        ? plan.muxedUrls
+        : (plan.muxedSegments.isNotEmpty
+            ? plan.muxedSegments.first.urls
+            : const <String>[]);
+    return (
+      dashPairs: dashPairs,
+      fallbackUrls: fallbackUrls,
+      fallbackEdl: fallbackEdl,
+    );
   }
 
   Future<void> _prepareControllerForMedia({
@@ -911,24 +945,52 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     Map<String, String> httpHeaders = const {},
     String? dashVideoUrl,
     String? dashAudioUrl,
+    BilibiliPlaybackPlan? bilibiliPlan,
+    Duration? startPosition,
+    bool play = false,
   }) async {
     final existing = _controller;
+    final biliCandidates = bilibiliPlan != null
+        ? _extractBilibiliMediaCandidates(bilibiliPlan)
+        : null;
     if (existing != null && !existing.isDisposed) {
       try {
-        if (dashVideoUrl != null && dashVideoUrl.isNotEmpty) {
+        if (biliCandidates != null) {
+          await existing.switchMedia(
+            bilibiliDashPairs: biliCandidates.dashPairs,
+            bilibiliFallbackUrls: biliCandidates.fallbackUrls,
+            bilibiliFallbackEdl: biliCandidates.fallbackEdl,
+            startPosition: startPosition,
+            headers: bilibiliPlan!.headers,
+            play: play,
+          );
+          _setCurrentLiveAudioSource(
+            _buildLiveAudioSource(
+              dashVideoUrl: bilibiliPlan.dash?.videoUrl,
+              dashAudioUrl: bilibiliPlan.dash?.audioUrls.firstOrNull,
+              networkUrls: biliCandidates.fallbackUrls,
+              headers: bilibiliPlan.headers,
+            ),
+          );
+          return;
+        } else if (dashVideoUrl != null && dashVideoUrl.isNotEmpty) {
           await existing.switchMedia(
             dashVideoUrl: dashVideoUrl,
             dashAudioUrl: dashAudioUrl ?? '',
+            startPosition: startPosition,
             headers: httpHeaders,
+            play: play,
           );
         } else if (file != null) {
-          await existing.switchMedia(file: file);
+          await existing.switchMedia(file: file, play: play);
         } else if (contentUri != null) {
-          await existing.switchMedia(contentUri: contentUri);
+          await existing.switchMedia(contentUri: contentUri, play: play);
         } else if (networkUrls.isNotEmpty) {
           await existing.switchMedia(
             networkUrl: networkUrls.first,
             headers: httpHeaders,
+            startPosition: startPosition,
+            play: play,
           );
         }
         _setCurrentLiveAudioSource(
@@ -951,12 +1013,38 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       }
     }
 
-    if (dashVideoUrl != null && dashVideoUrl.isNotEmpty) {
+    if (biliCandidates != null && bilibiliPlan != null) {
+      final c = _createPlayerController();
+      try {
+        await c.openBilibiliCandidates(
+          dashPairs: biliCandidates.dashPairs,
+          fallbackMuxedUrls: biliCandidates.fallbackUrls,
+          fallbackMuxedEdl: biliCandidates.fallbackEdl,
+          headers: bilibiliPlan.headers,
+          startPosition: startPosition,
+          play: play,
+        );
+      } catch (_) {
+        c.dispose();
+        rethrow;
+      }
+      _controller = c;
+      _setCurrentLiveAudioSource(
+        _buildLiveAudioSource(
+          dashVideoUrl: bilibiliPlan.dash?.videoUrl,
+          dashAudioUrl: bilibiliPlan.dash?.audioUrls.firstOrNull,
+          networkUrls: biliCandidates.fallbackUrls,
+          headers: bilibiliPlan.headers,
+        ),
+      );
+    } else if (dashVideoUrl != null && dashVideoUrl.isNotEmpty) {
       final c = _createPlayerController();
       await c.openBilibiliDash(
         videoUrl: dashVideoUrl,
         audioUrl: dashAudioUrl ?? '',
         headers: httpHeaders,
+        startPosition: startPosition,
+        play: play,
       );
       await c.initialize();
       _controller = c;
@@ -969,13 +1057,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       );
     } else if (file != null) {
       final c = _createPlayerController();
-      await c.openFile(file);
+      await c.openFile(file, play: play);
       await c.initialize();
       _controller = c;
       _setCurrentLiveAudioSource(_buildLiveAudioSource(file: file));
     } else if (contentUri != null) {
       final c = _createPlayerController();
-      await c.openContentUri(contentUri);
+      await c.openContentUri(contentUri, play: play);
       await c.initialize();
       _controller = c;
       _setCurrentLiveAudioSource(_buildLiveAudioSource(contentUri: contentUri));
@@ -1042,84 +1130,30 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           playableUrls = [cached.path];
           await _prepareControllerForMedia(file: cached);
         } else {
-          _currentQualityKey = _settings.preferredVideoQuality;
-          final useMuxed = _settings.bilibiliStreamMode == 'muxed';
-          bool streamSuccess = false;
-
-          if (useMuxed) {
-            try {
-              playableUrls = await resolver.getMuxedVideoUrls(
-                details,
-                _settings.bilibiliSessData,
-                _settings.preferredVideoQuality,
-              );
-              targetPath = playableUrls.first;
-              httpHeaders = BilibiliResolver.streamHeaders(
-                _settings.bilibiliSessData,
-              );
-              await _prepareControllerForMedia(
-                networkUrls: playableUrls,
-                httpHeaders: httpHeaders,
-              );
-              if (_controller != null && _controller!.value.duration > Duration.zero) {
-                streamSuccess = true;
-              } else {
-                debugPrint('[Player] Luồng Muxed Bilibili không lấy được duration, tự động fallback sang DASH');
-              }
-            } catch (e) {
-              debugPrint('[Player] Lỗi nạp luồng Muxed Bilibili, dùng fallback DASH: $e');
-            }
-
-            if (!streamSuccess) {
-              try {
-                final dash = await resolver.getDashStream(
-                  details,
-                  _settings.bilibiliSessData,
-                  _settings.preferredVideoQuality,
-                );
-                await _prepareControllerForMedia(
-                  dashVideoUrl: dash.videoUrl,
-                  dashAudioUrl: dash.audioUrl,
-                  httpHeaders: dash.headers,
-                );
-                streamSuccess = true;
-              } catch (e) {
-                debugPrint('[Player] Lỗi nạp fallback DASH Bilibili: $e');
-              }
-            }
-          } else {
-            try {
-              final dash = await resolver.getDashStream(
-                details,
-                _settings.bilibiliSessData,
-                _settings.preferredVideoQuality,
-              );
-              await _prepareControllerForMedia(
-                dashVideoUrl: dash.videoUrl,
-                dashAudioUrl: dash.audioUrl,
-                httpHeaders: dash.headers,
-              );
-              streamSuccess = true;
-            } catch (e) {
-              debugPrint('[Player] Lỗi nạp luồng DASH Bilibili, dùng fallback Muxed: $e');
-            }
-
-            if (!streamSuccess) {
-              playableUrls = await resolver.getMuxedVideoUrls(
-                details,
-                _settings.bilibiliSessData,
-                _settings.preferredVideoQuality,
-              );
-              targetPath = playableUrls.first;
-              httpHeaders = BilibiliResolver.streamHeaders(
-                _settings.bilibiliSessData,
-              );
-              await _prepareControllerForMedia(
-                networkUrls: playableUrls,
-                httpHeaders: httpHeaders,
-              );
-            }
+          final preferredQn = BilibiliResolver.normalizeQualityCode(
+            _settings.bilibiliPreferredQuality.isNotEmpty
+                ? _settings.bilibiliPreferredQuality
+                : _settings.preferredVideoQuality,
+          );
+          _currentQualityKey = preferredQn;
+          final plan = await resolver.resolvePlaybackPlan(
+            details,
+            cookie: _settings.bilibiliSessData,
+            quality: preferredQn,
+            cdn: BilibiliCdnService.fromCode(_settings.bilibiliCdnService),
+          );
+          targetPath = plan.dash?.videoUrl ??
+              (plan.muxedUrls.isNotEmpty ? plan.muxedUrls.first : targetPath);
+          if (plan.muxedUrls.isNotEmpty) {
+            playableUrls = plan.muxedUrls;
           }
+          httpHeaders = plan.headers;
+          await _prepareControllerForMedia(
+            bilibiliPlan: plan,
+            startPosition: startPosMs > 0
+                ? Duration(milliseconds: startPosMs)
+                : null,
+          );
         }
         // Trì hoãn nạp dữ liệu phụ trong nền sau khi video đã sẵn sàng phát (tránh nghẽn mạng)
         unawaited(_loadRelatedVideos(details.bvid));
@@ -1319,12 +1353,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         }
       }
 
-      // Khôi phục vị trí xem dở trước khi cho video chạy (tránh bị nhảy tiếng từ giây 0)
+      // Khôi phục vị trí xem dở trước khi cho video chạy (bỏ qua seek thừa nếu player đã mở ngay tại vị trí cũ)
       if (shouldRestorePosition) {
         _hasRestoredInitialPosition = true;
         try {
+          final currentAtMs = _controller!.value.position.inMilliseconds;
           await Future.wait([
-            _controller!.seekTo(Duration(milliseconds: resumePositionMs)),
+            if ((currentAtMs - resumePositionMs).abs() > 2000)
+              _controller!.seekTo(Duration(milliseconds: resumePositionMs)),
             _ttsScheduler.onSeek(resumePositionMs),
           ]);
         } catch (error) {
@@ -2323,11 +2359,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
   Future<void> _switchBilibiliQuality(String newQuality) async {
     final details = _bilibiliDetails;
-    final controller = _controller;
-    if (details == null || controller == null) return;
+    if (details == null) return;
 
+    final previousController = _controller;
     final currentPositionMs = _currentPosMs;
-    final wasPlaying = controller.value.isPlaying;
+    final wasPlaying = previousController?.value.isPlaying ?? true;
+    final normalizedQn = BilibiliResolver.normalizeQualityCode(newQuality);
 
     setState(() {
       _isSwitchingQuality = true;
@@ -2335,109 +2372,65 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
     try {
       final resolver = BilibiliResolver();
-      AppPlayerController newController;
-      String newUrl = _currentVideoPath;
+      final plan = await resolver.resolvePlaybackPlan(
+        details,
+        cookie: _settings.bilibiliSessData,
+        quality: normalizedQn,
+        cdn: BilibiliCdnService.fromCode(_settings.bilibiliCdnService),
+      );
+      if (!mounted) return;
 
-      final useMuxed = _settings.bilibiliStreamMode == 'muxed';
+      final startPos =
+          currentPositionMs > 0 ? Duration(milliseconds: currentPositionMs) : null;
 
-      if (useMuxed) {
-        try {
-          final urls = await resolver.getMuxedVideoUrls(
-            details,
-            _settings.bilibiliSessData,
-            newQuality,
-          );
-          if (urls.isEmpty) throw Exception('Không lấy được luồng video cho chất lượng này');
-          newUrl = urls.first;
-          final headers = BilibiliResolver.streamHeaders(_settings.bilibiliSessData);
-          newController = await _initializeNetworkController(
-            urls,
-            headers,
-          );
-        } catch (_) {
-          final dash = await resolver.getDashStream(
-            details,
-            _settings.bilibiliSessData,
-            newQuality,
-          );
-          newController = _createPlayerController();
-          await newController.openBilibiliDash(
-            videoUrl: dash.videoUrl,
-            audioUrl: dash.audioUrl,
-            headers: dash.headers,
-          );
-          await newController.initialize();
-          newUrl = dash.videoUrl;
+      await _prepareControllerForMedia(
+        bilibiliPlan: plan,
+        startPosition: startPos,
+        play: wasPlaying,
+      );
+
+      final activeController = _controller;
+      if (!mounted || activeController == null) {
+        if (mounted) {
+          setState(() => _isSwitchingQuality = false);
         }
-      } else {
-        try {
-          final dash = await resolver.getDashStream(
-            details,
-            _settings.bilibiliSessData,
-            newQuality,
-          );
-          newController = _createPlayerController();
-          await newController.openBilibiliDash(
-            videoUrl: dash.videoUrl,
-            audioUrl: dash.audioUrl,
-            headers: dash.headers,
-          );
-          await newController.initialize();
-          newUrl = dash.videoUrl;
-        } catch (_) {
-          final urls = await resolver.getMuxedVideoUrls(
-            details,
-            _settings.bilibiliSessData,
-            newQuality,
-          );
-          if (urls.isEmpty) throw Exception('Không lấy được luồng video cho chất lượng này');
-          newUrl = urls.first;
-          final headers = BilibiliResolver.streamHeaders(_settings.bilibiliSessData);
-          newController = await _initializeNetworkController(
-            urls,
-            headers,
-          );
-        }
-      }
-
-      _controller?.removeListener(_onPlayerUpdate);
-      await _controller?.pause();
-      _controller?.dispose();
-
-      if (!mounted) {
-        newController.dispose();
         return;
       }
 
-      await newController.seekTo(Duration(milliseconds: currentPositionMs));
-      if (wasPlaying) {
-        await newController.play();
+      if (currentPositionMs > 2000 &&
+          (activeController.value.position.inMilliseconds - currentPositionMs)
+                  .abs() >
+              2500) {
+        try {
+          await activeController.seekTo(Duration(milliseconds: currentPositionMs));
+        } catch (_) {}
+      }
+
+      if (wasPlaying && !activeController.value.isPlaying) {
+        await activeController.play();
       }
       if (_playbackSpeed != 1.0) {
         try {
-          await newController.setPlaybackSpeed(_playbackSpeed);
+          await activeController.setPlaybackSpeed(_playbackSpeed);
         } catch (_) {}
       }
-      final prevPath = _currentVideoPath;
-      _settings.preferredVideoQuality = newQuality;
+
+      final newUrl = plan.dash?.videoUrl ??
+          (plan.muxedUrls.isNotEmpty ? plan.muxedUrls.first : _currentVideoPath);
+      _settings.preferredVideoQuality = normalizedQn;
+      _settings.bilibiliPreferredQuality = normalizedQn;
+
       setState(() {
-        _controller = newController;
         _currentVideoPath = newUrl;
-        _currentQualityKey = newQuality;
+        _currentQualityKey = normalizedQn;
         _isSwitchingQuality = false;
       });
-      if (_currentLiveAudioSource == null ||
-          _currentLiveAudioSource!.mediaPath == prevPath) {
-        _setCurrentLiveAudioSource(
-          LiveAudioSource(
-            mediaPath: newUrl,
-            headers: BilibiliResolver.streamHeaders(_settings.bilibiliSessData),
-            sourceLabel: _currentTitle,
-          ),
-        );
-      }
 
-      _controller!.addListener(_onPlayerUpdate);
+      if (!identical(previousController, activeController)) {
+        previousController?.removeListener(_onPlayerUpdate);
+      }
+      activeController.removeListener(_onPlayerUpdate);
+      activeController.addListener(_onPlayerUpdate);
       _syncTtsWithVideo();
 
       if (mounted) {
@@ -7370,7 +7363,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                     iconColor: const Color(0xFF00AEEC),
                                     tooltip: 'Cài đặt Bilibili',
                                     onPressed: () async {
-                                      final oldStreamMode = _settings.bilibiliStreamMode;
+                                      final oldCdn = _settings.bilibiliCdnService;
+                                      final oldHwDecode = _settings.bilibiliHardwareDecode;
+                                      final oldQuality = _currentQualityKey;
                                       await BilibiliSettingsSheet.show(
                                         context,
                                         onRecreateSubtitles: () {
@@ -7380,12 +7375,26 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                           );
                                         },
                                       );
-                                      if (mounted) {
-                                        if (oldStreamMode != _settings.bilibiliStreamMode && _bilibiliDetails != null) {
-                                          _switchBilibiliQuality(_currentQualityKey);
-                                        } else {
-                                          setState(() {});
+                                      if (!mounted) return;
+                                      final nextQuality = BilibiliResolver.normalizeQualityCode(
+                                        _settings.bilibiliPreferredQuality.isNotEmpty
+                                            ? _settings.bilibiliPreferredQuality
+                                            : _settings.preferredVideoQuality,
+                                      );
+                                      final needReload = _bilibiliDetails != null &&
+                                          (oldCdn != _settings.bilibiliCdnService ||
+                                              oldHwDecode != _settings.bilibiliHardwareDecode ||
+                                              oldQuality != nextQuality);
+                                      if (needReload) {
+                                        if (oldHwDecode != _settings.bilibiliHardwareDecode) {
+                                          final stale = _controller;
+                                          _controller = null;
+                                          stale?.removeListener(_onPlayerUpdate);
+                                          stale?.dispose();
                                         }
+                                        _switchBilibiliQuality(nextQuality);
+                                      } else {
+                                        setState(() {});
                                       }
                                     },
                                   ),
