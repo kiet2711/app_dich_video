@@ -86,7 +86,7 @@ class VideoPlayerScreen extends StatefulWidget {
 class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     with WidgetsBindingObserver {
   static const _playbackSpeeds = <double>[0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
-  static const _stallThreshold = Duration(milliseconds: 1200);
+  static const _stallThreshold = Duration(milliseconds: 1800);
   static const _positionSaveInterval = Duration(seconds: 3);
 
   bool _isSwitchingQuality = false;
@@ -5342,23 +5342,41 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       return false;
     }
 
-    // Video đang trong trạng thái Phát (isPlaying = true) nhưng vị trí video KHÔNG chạy trong ít nhất 1.2s -> Thực sự bị khựng lag chờ mạng
-    final stalled = now.difference(_lastPositionAdvanceAt) >= _stallThreshold;
+    // Dùng tín hiệu `isBuffering` thực của mpv kết hợp thời gian đứng hình để không nháy vòng xoay giả.
+    final stallElapsed = now.difference(_lastPositionAdvanceAt);
+    final stalled =
+        (value.isBuffering &&
+            stallElapsed >= const Duration(milliseconds: 900)) ||
+        stallElapsed >= _stallThreshold;
     if (stalled == _isPlaybackStalled) return false;
     _isPlaybackStalled = stalled;
     return true;
   }
 
   void _monitorPlaybackStall() {
-    if (!mounted || _controller?.value.isInitialized != true) return;
-    if (_refreshPlaybackStall(DateTime.now())) {
+    final controller = _controller;
+    if (!mounted || controller == null || !controller.value.isInitialized) return;
+    final now = DateTime.now();
+    if (_refreshPlaybackStall(now)) {
       setState(() {});
       _syncTtsWithVideo();
     }
+    if ((_bilibiliDetails != null || BilibiliResolver.isBilibiliUrl(_sourceVideoUrl)) &&
+        _isPlaybackStalled &&
+        controller.hasBackupBilibiliCdn &&
+        now.difference(_lastPositionAdvanceAt) >= const Duration(seconds: 6)) {
+      unawaited(
+        controller.failoverNextBilibiliCdn().then((switched) {
+          if (switched && mounted) {
+            _lastPositionAdvanceAt = DateTime.now();
+          }
+        }),
+      );
+    }
     if (widget.dramaDetail != null && !_isDowngradingHongguo) {
-      final hasErr = _controller?.value.hasError ?? false;
+      final hasErr = controller.value.hasError;
       final longStall = _isPlaybackStalled &&
-          DateTime.now().difference(_lastPositionAdvanceAt) >=
+          now.difference(_lastPositionAdvanceAt) >=
               const Duration(seconds: 20);
       if ((hasErr || longStall) && _hongguoDowngradeAttempts < 2) {
         unawaited(

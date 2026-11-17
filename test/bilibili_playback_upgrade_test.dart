@@ -114,7 +114,7 @@ void main() {
       const akamai = 'https://upos-hz-mirrorakam.akamaized.net/upgcxcode/1/2/v.m4s?hdnts=sig';
 
       final autoRanked = BilibiliResolver.rankCdnUrls(
-        [mcdn, uposCos, akamai],
+        [mcdn, akamai, uposCos],
         cdn: BilibiliCdnService.auto,
       );
       expect(autoRanked, [uposCos, akamai, mcdn]);
@@ -243,11 +243,19 @@ void main() {
       expect(plan.dash!.videoCodec, startsWith('avc1'));
       expect(
         plan.dash!.videoUrl,
-        'https://upos-hz-mirrorakam.akamaized.net/upgcxcode/v.m4s?hdnts=ok',
+        'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/v.m4s?e=1',
       );
       expect(
         plan.dash!.audioUrl,
-        'https://upos-hz-mirrorakam.akamaized.net/audio.m4s',
+        'https://upos-sz-mirrorali.bilivideo.com/audio.m4s',
+      );
+      expect(
+        plan.dash!.videoUrls,
+        [
+          'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/v.m4s?e=1',
+          'https://upos-hz-mirrorakam.akamaized.net/upgcxcode/v.m4s?hdnts=ok',
+          'https://bad.mcdn.bilivideo.cn/v1/resource/v.m4s?os=mcdn',
+        ],
       );
       expect(plan.dash!.buildCandidatePairs().length, 3);
       expect(plan.headers['Referer'], 'https://www.bilibili.com/');

@@ -10,6 +10,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 class AppVideoPlayerValue {
   final bool isInitialized;
   final bool isPlaying;
+  final bool isBuffering;
   final Duration position;
   final Duration duration;
   final Size size;
@@ -21,6 +22,7 @@ class AppVideoPlayerValue {
   const AppVideoPlayerValue({
     this.isInitialized = false,
     this.isPlaying = false,
+    this.isBuffering = false,
     this.position = Duration.zero,
     this.duration = Duration.zero,
     this.size = const Size(1920, 1080),
@@ -33,6 +35,7 @@ class AppVideoPlayerValue {
   AppVideoPlayerValue copyWith({
     bool? isInitialized,
     bool? isPlaying,
+    bool? isBuffering,
     Duration? position,
     Duration? duration,
     Size? size,
@@ -44,6 +47,7 @@ class AppVideoPlayerValue {
     return AppVideoPlayerValue(
       isInitialized: isInitialized ?? this.isInitialized,
       isPlaying: isPlaying ?? this.isPlaying,
+      isBuffering: isBuffering ?? this.isBuffering,
       position: position ?? this.position,
       duration: duration ?? this.duration,
       size: size ?? this.size,
@@ -68,6 +72,11 @@ class AppPlayerController extends ChangeNotifier {
   final List<StreamSubscription> _subscriptions = [];
   bool _isDisposed = false;
   bool _inSilentStandby = false;
+  bool _isFailoveringCdn = false;
+  List<({String videoUrl, String audioUrl})> _activeDashPairs = const [];
+  Map<String, String> _activeDashHeaders = const {};
+  int _activeDashPairIndex = 0;
+  DateTime? _lastFailoverAt;
   bool get isDisposed => _isDisposed;
   Completer<void> _initCompleter = Completer<void>();
   late final Future<void> _baseOptionsFuture;
@@ -144,7 +153,9 @@ class AppPlayerController extends ChangeNotifier {
         await native.setProperty('force-window', 'no');
         await native.setProperty('autosync', '30');
       }
-      await native.setProperty('video-sync', 'display-resample');
+      // Dùng đồng bộ theo đồng hồ audio (mặc định ổn định của mpv cho Android 90/120Hz),
+      // tránh `display-resample` giật frame khi không có override display-fps.
+      await native.setProperty('video-sync', 'audio');
       await native.setProperty('hr-seek', 'yes');
       // Cho phép bỏ qua frame trung gian khi tua xa để thanh tua phản hồi tức thì, không đứng hình.
       await native.setProperty('hr-seek-framedrop', 'yes');
@@ -163,18 +174,22 @@ class AppPlayerController extends ChangeNotifier {
         await native.setProperty('cache', 'no');
         return;
       }
-      final forwardMb = _bufferSizeMb.clamp(16, 64);
-      final backMb = (_bufferSizeMb ~/ 2).clamp(8, 32);
+      final forwardMb = _bufferSizeMb.clamp(24, 64);
+      final backMb = (_bufferSizeMb ~/ 2).clamp(12, 32);
       await native.setProperty('cache', 'yes');
-      await native.setProperty('cache-secs', silentStandby ? '6' : '20');
+      // Giữ cache thuần trên RAM, tắt cache-on-disk để tránh khựng I/O bộ nhớ flash điện thoại.
+      await native.setProperty('cache-on-disk', 'no');
+      // KHÔNG đặt `demuxer-readahead-secs` riêng vì sẽ ghi đè `cache-secs`.
+      // Để `hysteresis = 3s` trên `cache-secs = 30s` để mpv luôn nạp gối đầu liên tục ở mức 27s-30s,
+      // không để cạn sát 0s rồi mới kéo lại mỗi vài giây.
+      await native.setProperty('cache-secs', silentStandby ? '6' : '30');
       await native.setProperty(
         'demuxer-hysteresis-secs',
-        silentStandby ? '3' : '12',
+        silentStandby ? '2' : '3',
       );
-      await native.setProperty(
-        'demuxer-readahead-secs',
-        silentStandby ? '1' : '12',
-      );
+      await native.setProperty('cache-pause', 'yes');
+      await native.setProperty('cache-pause-initial', 'yes');
+      await native.setProperty('cache-pause-wait', silentStandby ? '0.5' : '1.0');
       await native.setProperty(
         'demuxer-max-bytes',
         '${forwardMb * 1024 * 1024}',
@@ -227,9 +242,15 @@ class AppPlayerController extends ChangeNotifier {
           lavfOptions.add('decryption_key=$decryptionKey');
         }
         await native.setProperty('demuxer-lavf-o', lavfOptions.join(','));
+      } else if (lowerUrl.startsWith('http://') ||
+          lowerUrl.startsWith('https://')) {
+        // Tự động nối lại HTTP Range nếu CDN rớt kết nối giữa chừng thay vì khựng đứng chờ timeout.
+        await native.setProperty(
+          'demuxer-lavf-o',
+          'reconnect=1,reconnect_streamed=1,reconnect_on_network_error=1,reconnect_delay_max=2,reconnect_max_retries=5',
+        );
       } else {
-        // Không áp tùy chọn HLS/experimental lên Bilibili DASH fMP4 để tìm kiếm keyframe/range mượt hơn.
-        await native.setProperty('demuxer-lavf-o', 'seg_max_retry=3');
+        await native.setProperty('demuxer-lavf-o', '');
       }
     } catch (_) {}
   }
@@ -306,6 +327,14 @@ class AppPlayerController extends ChangeNotifier {
     );
 
     _subscriptions.add(
+      player.stream.buffering.listen((buffering) {
+        if (_isDisposed || _value.isBuffering == buffering) return;
+        _value = _value.copyWith(isBuffering: buffering);
+        notifyListeners();
+      }),
+    );
+
+    _subscriptions.add(
       player.stream.rate.listen((rate) {
         if (_isDisposed || _value.playbackSpeed == rate) return;
         _value = _value.copyWith(playbackSpeed: rate);
@@ -316,10 +345,58 @@ class AppPlayerController extends ChangeNotifier {
     _subscriptions.add(
       player.stream.error.listen((err) {
         if (_isDisposed || err.trim().isEmpty) return;
+        final lower = err.toLowerCase();
+        final isTransientNetErr =
+            lower.contains('tcp:') ||
+            lower.contains('ffurl_read') ||
+            lower.contains('failed to open https://') ||
+            lower.contains('can not open external file');
+        if (isTransientNetErr && hasBackupBilibiliCdn) {
+          unawaited(failoverNextBilibiliCdn());
+          return;
+        }
         _value = _value.copyWith(hasError: true, errorDescription: err);
         notifyListeners();
       }),
     );
+  }
+
+  bool get hasBackupBilibiliCdn =>
+      _activeDashPairs.length > 1 &&
+      _activeDashPairIndex + 1 < _activeDashPairs.length;
+
+  /// Tự động chuyển sang cặp CDN Bilibili dự phòng ngay tại vị trí đang xem nếu CDN hiện tại đứt TCP hoặc khựng quá lâu.
+  Future<bool> failoverNextBilibiliCdn() async {
+    if (_isDisposed || _isFailoveringCdn || !hasBackupBilibiliCdn) {
+      return false;
+    }
+    final now = DateTime.now();
+    if (_lastFailoverAt != null &&
+        now.difference(_lastFailoverAt!) < const Duration(seconds: 4)) {
+      return false;
+    }
+    _isFailoveringCdn = true;
+    _lastFailoverAt = now;
+    try {
+      final nextIndex = _activeDashPairIndex + 1;
+      if (nextIndex >= _activeDashPairs.length) return false;
+      final pair = _activeDashPairs[nextIndex];
+      final resumePos = player.state.position;
+      final wasPlaying = player.state.playing || _value.isPlaying;
+      _activeDashPairIndex = nextIndex;
+      await openBilibiliDash(
+        videoUrl: pair.videoUrl,
+        audioUrl: pair.audioUrl,
+        headers: _activeDashHeaders,
+        startPosition: resumePos > Duration.zero ? resumePos : null,
+        play: wasPlaying,
+      );
+      return true;
+    } catch (_) {
+      return false;
+    } finally {
+      _isFailoveringCdn = false;
+    }
   }
 
   /// Chờ cho đến khi media được nạp xong và xác định được độ dài / kích thước
@@ -380,9 +457,14 @@ class AppPlayerController extends ChangeNotifier {
     Duration perCandidateTimeout = const Duration(seconds: 10),
   }) async {
     Object? lastError;
+    _activeDashPairs = List.unmodifiable(dashPairs);
+    _activeDashHeaders = Map.unmodifiable(headers);
+    _activeDashPairIndex = 0;
 
-    for (final pair in dashPairs) {
+    for (var i = 0; i < dashPairs.length; i++) {
       if (_isDisposed) break;
+      final pair = dashPairs[i];
+      _activeDashPairIndex = i;
       try {
         _resetCompleterAndState();
         await openBilibiliDash(
@@ -401,6 +483,9 @@ class AppPlayerController extends ChangeNotifier {
         lastError = e;
       }
     }
+
+    _activeDashPairs = const [];
+    _activeDashPairIndex = 0;
 
     final muxCandidates = <String>[
       if (fallbackMuxedEdl != null && fallbackMuxedEdl.isNotEmpty)
@@ -602,6 +687,8 @@ class AppPlayerController extends ChangeNotifier {
     bool play = false,
   }) async {
     if (_isDisposed) return;
+    _activeDashPairs = const [];
+    _activeDashPairIndex = 0;
     await _applyStreamBufferProperties(isLocalFile: false);
     await _applyNetworkStreamOptions(
       urlForHint: url,
@@ -623,6 +710,8 @@ class AppPlayerController extends ChangeNotifier {
   /// Phát file video cục bộ trên máy
   Future<void> openFile(File file, {bool play = false}) async {
     if (_isDisposed) return;
+    _activeDashPairs = const [];
+    _activeDashPairIndex = 0;
     await _applyStreamBufferProperties(isLocalFile: true);
     await _applyNetworkStreamOptions();
     final uri = Uri.file(file.path);
@@ -632,6 +721,8 @@ class AppPlayerController extends ChangeNotifier {
   /// Phát Content URI (Android)
   Future<void> openContentUri(Uri uri, {bool play = false}) async {
     if (_isDisposed) return;
+    _activeDashPairs = const [];
+    _activeDashPairIndex = 0;
     await _applyStreamBufferProperties(isLocalFile: true);
     await _applyNetworkStreamOptions();
     await player.open(Media(uri.toString()), play: play);

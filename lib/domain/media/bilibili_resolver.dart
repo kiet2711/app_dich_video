@@ -131,11 +131,12 @@ class BilibiliSubtitleInfo {
 }
 
 enum BilibiliCdnService {
-  auto('auto', 'Tự động (Né MCDN)', null),
-  akamai('akamai', 'Akamai CDN (Quốc tế nhanh)', 'upos-hz-mirrorakam.akamaized.net'),
+  auto('auto', 'Tự động (Ưu tiên UPOS · Né MCDN/Akamai chậm)', null),
+  cosov('cosov', 'Tencent COS OV (Khuyên dùng VN)', 'upos-sz-mirrorcosov.bilivideo.com'),
+  hw('hw', 'Huawei Cloud CDN', 'upos-sz-mirrorhw.bilivideo.com'),
   ali('ali', 'Aliyun CDN', 'upos-sz-mirrorali.bilivideo.com'),
   cos('cos', 'Tencent COS CDN', 'upos-sz-mirrorcos.bilivideo.com'),
-  hw('hw', 'Huawei Cloud CDN', 'upos-sz-mirrorhw.bilivideo.com'),
+  akamai('akamai', 'Akamai CDN (Quốc tế)', 'upos-hz-mirrorakam.akamaized.net'),
   origin('origin', 'Gốc Bilibili trả về', null);
 
   final String code;
@@ -1348,13 +1349,16 @@ class BilibiliResolver {
     if (input.isEmpty) return const [];
     if (cdn == BilibiliCdnService.origin) return input;
 
-    final nonMcdn = <String>[];
+    final nonMcdnDirect = <String>[];
+    final nonMcdnAkamai = <String>[];
     final mcdn = <String>[];
     for (final url in input) {
       if (isMcdnUrl(url)) {
         mcdn.add(url);
+      } else if (url.toLowerCase().contains('akamaized.net')) {
+        nonMcdnAkamai.add(url);
       } else {
-        nonMcdn.add(url);
+        nonMcdnDirect.add(url);
       }
     }
 
@@ -1367,29 +1371,36 @@ class BilibiliResolver {
     }
 
     if (cdn == BilibiliCdnService.akamai) {
-      for (final url in nonMcdn) {
+      for (final url in nonMcdnAkamai) {
         if (Uri.tryParse(url)?.host == BilibiliCdnService.akamai.mirrorHost) {
           addUnique(url);
         }
       }
+      for (final url in nonMcdnAkamai) {
+        addUnique(url);
+      }
     } else if (cdn.mirrorHost != null) {
-      for (final url in nonMcdn) {
+      for (final url in nonMcdnDirect) {
         final uri = Uri.tryParse(url);
         if (uri != null &&
             url.contains('/upgcxcode/') &&
-            !uri.host.contains('akamaized.net') &&
             !uri.queryParameters.containsKey('hdnts')) {
           addUnique(uri.replace(host: cdn.mirrorHost).toString());
         }
       }
     }
 
-    for (final url in nonMcdn) {
+    // Thực nghiệm từ VN: `upos-sz-mirror*` của Bilibili truyền tải ổn định, ít rớt TCP hơn hẳn Akamai,
+    // nên chế độ Auto luôn ưu tiên UPOS trực tiếp trước rồi mới tới Akamai và sau cùng mới tới MCDN.
+    for (final url in nonMcdnDirect) {
+      addUnique(url);
+    }
+    for (final url in nonMcdnAkamai) {
       addUnique(url);
     }
 
     // Nếu không có mirror UPOS nào mà chỉ có PCDN `/v1/resource`, bọc qua proxy-tf chính thức trước rồi mới tới mcdn gốc.
-    if (nonMcdn.isEmpty) {
+    if (nonMcdnDirect.isEmpty && nonMcdnAkamai.isEmpty) {
       for (final url in mcdn) {
         if (_mcdnResourceRegex.hasMatch(url)) {
           addUnique(
