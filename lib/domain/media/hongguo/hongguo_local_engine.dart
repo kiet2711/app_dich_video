@@ -266,15 +266,16 @@ class HongguoLocalEngine {
       ),
     ];
 
-    // 2. Nếu chưa có luồng hợp lệ hoặc đang ép H.264 mà ladder chưa có H.264 -> gọi fallback_api.
+    // 2. Nếu chưa có luồng hợp lệ hoặc thiết bị/người dùng cần H.264 mà ladder chưa có H.264 -> gọi fallback_api.
     final hasH264 = renditions.any((r) => !r.isBytevc1);
-    if ((renditions.isEmpty || (forceH264 && !hasH264)) &&
+    final needH264 = forceH264 || !effectiveSupport.hevcSupported;
+    if ((renditions.isEmpty || (needH264 && !hasH264)) &&
         fallbackInfo.url.isNotEmpty) {
       final extra = await _fetchFallbackApiRenditions(
         cleanVideoId,
         fallbackInfo.url,
         fallbackKeySeedB64: fallbackInfo.keySeedB64,
-        forceH264: forceH264,
+        forceH264: needH264,
       );
       renditions.addAll(extra);
     }
@@ -648,10 +649,17 @@ class HongguoLocalEngine {
 
     final renditions = <HongguoRendition>[];
     for (final item in entries) {
+      final videoMeta = item['video_meta'] is Map
+          ? item['video_meta'] as Map
+          : null;
       final codecRaw = (item['codec_type'] ??
-              item['vtype'] ??
+              videoMeta?['codec_type'] ??
               item['codec'] ??
+              videoMeta?['codec'] ??
               item['video_codec'] ??
+              videoMeta?['video_codec'] ??
+              item['vtype'] ??
+              videoMeta?['vtype'] ??
               'h264')
           .toString()
           .toLowerCase();
@@ -675,41 +683,82 @@ class HongguoLocalEngine {
       );
       if (mainUrl.isEmpty) continue;
 
+      final backupList = item['backup_url_list'];
+      final backupListFirst =
+          (backupList is List && backupList.isNotEmpty)
+              ? backupList.first?.toString() ?? ''
+              : '';
       final backupUrl = _decodeStreamUrl(
         item['backup_url_1']?.toString() ??
             item['backup_url']?.toString() ??
-            '',
+            backupListFirst,
         spadeA: spadeA,
         keySeed: keySeed,
       );
 
-      final contentKeyHex = spadeA.isNotEmpty
-          ? HongguoCencDecryptor.deriveContentKeyHex(spadeA)
-          : '';
+      var contentKeyHex = '';
+      if (spadeA.isNotEmpty) {
+        try {
+          contentKeyHex = HongguoCencDecryptor.deriveContentKeyHex(spadeA);
+        } catch (e) {
+          debugPrint('[HongguoLocalEngine] Bỏ qua stream có spade_a lỗi: $e');
+          continue;
+        }
+      }
+
+      final definition = (item['definition'] ??
+              videoMeta?['definition'] ??
+              item['quality_desc'] ??
+              videoMeta?['quality_desc'] ??
+              '')
+          .toString()
+          .trim();
 
       renditions.add(
         HongguoRendition(
           vid: vid,
-          definition: item['definition']?.toString() ?? '720p',
+          definition: definition,
           codec: codecRaw,
           mainUrl: mainUrl,
           backupUrl: backupUrl,
           spadeA: spadeA,
           contentKeyHex: contentKeyHex,
-          width: (item['vwidth'] as num?)?.toInt() ??
-              (item['width'] as num?)?.toInt() ??
-              0,
-          height: (item['vheight'] as num?)?.toInt() ??
-              (item['height'] as num?)?.toInt() ??
-              0,
-          bitrate: (item['bitrate'] as num?)?.toInt() ?? 0,
-          fps: (item['fps'] as num?)?.toInt() ?? 0,
-          sizeBytes: (item['size'] as num?)?.toInt() ?? 0,
+          width: _parseIntField(
+            item['vwidth'] ??
+                item['width'] ??
+                videoMeta?['vwidth'] ??
+                videoMeta?['width'],
+          ),
+          height: _parseIntField(
+            item['vheight'] ??
+                item['height'] ??
+                videoMeta?['vheight'] ??
+                videoMeta?['height'],
+          ),
+          bitrate: _parseIntField(
+            item['bitrate'] ??
+                item['real_bitrate'] ??
+                videoMeta?['bitrate'] ??
+                videoMeta?['real_bitrate'],
+          ),
+          fps: _parseIntField(
+            item['fps'] ??
+                item['float_fps'] ??
+                videoMeta?['fps'] ??
+                videoMeta?['float_fps'],
+          ),
+          sizeBytes: _parseIntField(item['size'] ?? videoMeta?['size']),
           isDrmProtected: contentKeyHex.isNotEmpty,
         ),
       );
     }
     return renditions;
+  }
+
+  static int _parseIntField(dynamic raw) {
+    if (raw == null) return 0;
+    if (raw is num) return raw.round();
+    return double.tryParse(raw.toString().trim())?.round() ?? 0;
   }
 
   static Future<List<HongguoRendition>> _fetchFallbackApiRenditions(

@@ -30,7 +30,6 @@ import '../../../domain/media/hongguo/hongguo_playback_routes.dart';
 import '../../../domain/media/hongguo/hongguo_remote_video.dart';
 import '../../../domain/media/hongguo/hongguo_similar_engine.dart';
 import '../../../domain/media/hongguo/hongguo_stream_proxy_server.dart';
-import '../hongguo_account_sheet.dart';
 import '../hongguo_related_sheet.dart';
 import '../../../domain/media/hongguo_resolver.dart';
 import '../../../domain/media/multi_thread_downloader.dart';
@@ -41,7 +40,6 @@ import '../../../domain/tts/audio_file_validator.dart';
 import '../../../domain/tts/tts_cache_helper.dart';
 import '../../../domain/tts/tts_generation_manager.dart';
 import '../../../player/app_player_controller.dart';
-import '../../../player/global_player_manager.dart';
 import '../../../player/tts_audio_scheduler.dart';
 import '../../player/dual_volume_sheet.dart';
 import '../../player/live_translate_sheet.dart';
@@ -349,6 +347,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     setState(() {
       _settings = settings;
       _preferredQuality = settings.hongguoPreferredQuality;
+      _playbackSpeed = settings.hongguoPlaybackSpeed;
       _liveTranslator?.dispose();
       _liveTranslator = _createLiveTranslator(settings);
       _isAutoNextEpisode = settings.hongguoAutoNextEpisode;
@@ -812,18 +811,31 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
                     onTap: () async {
                       Navigator.of(ctx).pop();
                       if (_preferredQuality == opt.key) return;
-                      _preferredQuality = opt.key;
+                      setState(() {
+                        _preferredQuality = opt.key;
+                      });
                       _settings?.hongguoPreferredQuality = opt.key;
                       _excludedRenditionKeys.clear();
                       _downgradeAttempts = 0;
+                      _disposeStandbyPlayer();
+                      _preloadedSources.clear();
                       if (_currentIndex >= 0 &&
                           _currentIndex < _feedItems.length) {
-                        final item = _feedItems[_currentIndex];
-                        _preloadedSources.remove(_mediaKey(item));
                         _pendingInitialSeekMs =
                             _activeController?.value.position.inMilliseconds ??
                                 0;
-                        await _activatePage(_currentIndex);
+                        await _activatePage(_currentIndex, forceReload: true);
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                'Đã chuyển chất lượng: ${opt.key == "auto" ? "Tự động theo thiết bị" : "${opt.key}P"}',
+                              ),
+                              duration: const Duration(seconds: 2),
+                            ),
+                          );
+                        }
                       }
                     },
                   );
@@ -980,11 +992,12 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     }
   }
 
-  Future<void> _activatePage(int index) async {
+  Future<void> _activatePage(int index, {bool forceReload = false}) async {
     if (!mounted || index < 0 || index >= _feedItems.length) return;
 
     final requestedMediaKey = _mediaKey(_feedItems[index]);
-    if (_activePageIndex == index &&
+    if (!forceReload &&
+        _activePageIndex == index &&
         _activeMediaKey == requestedMediaKey &&
         _activeController != null &&
         _activeController!.value.isPlaying) {
@@ -1085,9 +1098,13 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       }
 
       // 2. Lấy nguồn phát trực tiếp (ưu tiên từ bộ đệm RAM đã nạp sẵn)
-      _FeedPlaybackSource? source = _preloadedSources[mediaKey];
+      _FeedPlaybackSource? source =
+          forceReload ? null : _preloadedSources[mediaKey];
       if (source == null || source.url.isEmpty) {
-        source = await _resolveEpisodeStreamSource(item);
+        source = await _resolveEpisodeStreamSource(
+          item,
+          bypassCache: forceReload,
+        );
         if (_isActivationCurrent(
           requestId: requestId,
           feedGeneration: feedGeneration,
@@ -1113,6 +1130,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       // Gắn texture vào trang mới ngay trước khi mở media. Trạng thái loading
       // không che surface nên frame đầu hiện ngay khi player giải mã xong.
       _activeMediaKey = mediaKey;
+      _activeVideoInfo = source.videoInfo;
       setState(() {});
 
       // 3. Tuần tự hóa thao tác open trên player. Request cũ đang open sẽ kết
@@ -1234,7 +1252,10 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
   }
 
   /// Phân giải nguồn phát trực tiếp: Link CDN ByteDance + CENC Decryption Key (Giải mã phần cứng qua FFmpeg Native)
-  Future<_FeedPlaybackSource> _resolveEpisodeStreamSource(FeedDramaPageItem item) async {
+  Future<_FeedPlaybackSource> _resolveEpisodeStreamSource(
+    FeedDramaPageItem item, {
+    bool bypassCache = false,
+  }) async {
     // 0. Đảm bảo item có vid thật trước khi gọi API
     if (item.vid.isEmpty ||
         item.vid == item.detail.seriesId ||
@@ -1266,23 +1287,25 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     }
 
     // 1. Kiểm tra cache hoàn chỉnh trên máy nếu có
-    try {
-      final cached = await VideoCacheManager.findCachedFile(
-        url: '',
-        seriesId: item.detail.seriesId,
-        episodeIndex: item.episodeIndex,
-      );
-      if (cached != null &&
-          cached.existsSync() &&
-          cached.lengthSync() > 1024 * 50) {
-        return _FeedPlaybackSource(
-          url: cached.path,
-          vid: item.vid,
+    if (!bypassCache) {
+      try {
+        final cached = await VideoCacheManager.findCachedFile(
+          url: '',
           seriesId: item.detail.seriesId,
           episodeIndex: item.episodeIndex,
         );
-      }
-    } catch (_) {}
+        if (cached != null &&
+            cached.existsSync() &&
+            cached.lengthSync() > 1024 * 50) {
+          return _FeedPlaybackSource(
+            url: cached.path,
+            vid: item.vid,
+            seriesId: item.detail.seriesId,
+            episodeIndex: item.episodeIndex,
+          );
+        }
+      } catch (_) {}
+    }
 
     // 2. ƯU TIÊN SỐ 1 TUYỆT ĐỐI: Phân giải trực tiếp từ ByteDance API (720p/1080p, giải mã FFmpeg native)
     try {
@@ -1291,7 +1314,6 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         preferredQuality: _preferredQuality,
         excludedRenditionKeys: _excludedRenditionKeys,
       );
-      _activeVideoInfo = info;
       if (info.realMainUrl.isNotEmpty) {
         if (info.isDrmProtected) {
           HongguoStreamProxyServer.instance.registerVideoInfo(
@@ -2166,16 +2188,37 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     });
   }
 
-  /// Chuyển đổi tốc độ phát video
-  void _cyclePlaybackSpeed() {
+  static const List<double> _feedPlaybackSpeeds = <double>[
+    0.5,
+    0.75,
+    1.0,
+    1.25,
+    1.5,
+    2.0,
+  ];
+
+  String _formatPlaybackSpeed(double speed) {
+    return speed == speed.truncateToDouble()
+        ? '${speed.toStringAsFixed(1)}x'
+        : '${speed}x';
+  }
+
+  Future<void> _applyPlaybackSpeed(double speed) async {
     HapticFeedback.lightImpact();
-    final speeds = [1.0, 1.25, 1.5, 2.0, 0.75];
-    final currentIdx = speeds.indexOf(_playbackSpeed);
-    final nextSpeed = speeds[(currentIdx + 1) % speeds.length];
     setState(() {
-      _playbackSpeed = nextSpeed;
+      _playbackSpeed = speed;
     });
-    _activeController?.player.setRate(nextSpeed);
+    _settings?.hongguoPlaybackSpeed = speed;
+    await _activeController?.player.setRate(speed);
+    if (_isTtsActive && _ttsScheduler != null && _activeController != null) {
+      _ttsScheduler!.onVideoStateUpdate(
+        positionMs: _currentPos.inMilliseconds,
+        isPlaying: _activeController!.value.isPlaying && !_isManuallyPaused,
+        isBuffering: _isPlayerBuffering,
+        isScrubbing: _isScrubbing,
+        playbackSpeed: speed,
+      );
+    }
     _liveTranslator?.onVideoStateUpdate(
       positionMs: _currentPos.inMilliseconds,
       isPlaying: _waitingLiveWarmupResume
@@ -2184,7 +2227,71 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
               !_isManuallyPaused),
       isBuffering: _isPlayerBuffering,
       isScrubbing: _isScrubbing,
-      playbackSpeed: nextSpeed,
+      playbackSpeed: speed,
+    );
+  }
+
+  /// Mở bộ chọn tốc độ phát video dạng Bottom Sheet
+  Future<void> _showFeedSpeedSheet() async {
+    HapticFeedback.lightImpact();
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF181A22),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Chọn tốc độ phát',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                ..._feedPlaybackSpeeds.map((speed) {
+                  final selected = (_playbackSpeed - speed).abs() < 0.01;
+                  final label = _formatPlaybackSpeed(speed);
+                  return ListTile(
+                    dense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                    leading: Icon(
+                      selected
+                          ? Icons.radio_button_checked
+                          : Icons.radio_button_off,
+                      color:
+                          selected ? AppColors.primaryEmerald : Colors.white54,
+                    ),
+                    title: Text(
+                      speed == 1.0 ? '$label (Mặc định)' : label,
+                      style: TextStyle(
+                        color: selected
+                            ? AppColors.primaryEmerald
+                            : Colors.white,
+                        fontWeight:
+                            selected ? FontWeight.w700 : FontWeight.normal,
+                      ),
+                    ),
+                    onTap: () async {
+                      Navigator.of(ctx).pop();
+                      if (selected) return;
+                      await _applyPlaybackSpeed(speed);
+                    },
+                  );
+                }),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -2207,25 +2314,6 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       ]);
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     }
-  }
-
-  /// Mở màn hình dịch chính thức có phụ đề & lồng tiếng AI
-  void _openTranslationPlayer(FeedDramaPageItem item) {
-    HapticFeedback.mediumImpact();
-    _activeController?.player.pause();
-
-    final dramaTitle =
-        OfflineMlKitTranslator.getCachedTitle(item.detail.title) ??
-        item.detail.title;
-
-    GlobalPlayerManager.instance.openPlayer(
-      videoPath: item.vid,
-      title: '$dramaTitle - Tập ${item.episodeIndex}',
-      document: SubtitleDocument(),
-      dramaDetail: item.detail,
-      currentEpisodeIndex: item.episodeIndex,
-      initialTtsEnabled: true,
-    );
   }
 
   /// Chuyển từ chế độ Khám phá sang Chế độ Xem trọn bộ của phim được chọn
@@ -2895,7 +2983,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
             // Nút điều chỉnh tốc độ phát
             GestureDetector(
               behavior: HitTestBehavior.opaque,
-              onTap: _cyclePlaybackSpeed,
+              onTap: _showFeedSpeedSheet,
               child: Container(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 12,
@@ -2907,7 +2995,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
                   border: Border.all(color: Colors.white24, width: 0.8),
                 ),
                 child: Text(
-                  '${_playbackSpeed}x',
+                  _formatPlaybackSpeed(_playbackSpeed),
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 12,
@@ -2933,18 +3021,19 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         left: 12,
         right: 12,
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            // Nút Back + Tiêu đề tập: `< 第N集`
+            // Nút Back + Tiêu đề tập: `< Tập N`
             GestureDetector(
+              behavior: HitTestBehavior.opaque,
               onTap: _handleBackNavigation,
               child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 6,
-                ),
+                height: 32,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                alignment: Alignment.center,
                 decoration: BoxDecoration(
                   color: Colors.black.withValues(alpha: 0.35),
-                  borderRadius: BorderRadius.circular(20),
+                  borderRadius: BorderRadius.circular(16),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
@@ -2952,14 +3041,14 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
                     const Icon(
                       Icons.arrow_back_ios_new_rounded,
                       color: Colors.white,
-                      size: 16,
+                      size: 15,
                     ),
-                    const SizedBox(width: 6),
+                    const SizedBox(width: 5),
                     Text(
                       'Tập $currentEpNum',
                       style: const TextStyle(
                         color: Colors.white,
-                        fontSize: 15,
+                        fontSize: 14,
                         fontWeight: FontWeight.bold,
                         shadows: [Shadow(color: Colors.black, blurRadius: 4)],
                       ),
@@ -2971,14 +3060,14 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
             const Spacer(),
 
-            // Nút Tốc độ phát: `⏱ 1.0x`
+            // Nút Tốc độ phát: `⏱ 1.0x` (Mở bảng chọn tốc độ)
             GestureDetector(
-              onTap: _cyclePlaybackSpeed,
+              behavior: HitTestBehavior.opaque,
+              onTap: _showFeedSpeedSheet,
               child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 5,
-                ),
+                height: 32,
+                padding: const EdgeInsets.symmetric(horizontal: 11),
+                alignment: Alignment.center,
                 decoration: BoxDecoration(
                   color: Colors.black.withValues(alpha: 0.45),
                   borderRadius: BorderRadius.circular(16),
@@ -2994,7 +3083,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
                     ),
                     const SizedBox(width: 4),
                     Text(
-                      '${_playbackSpeed}x',
+                      _formatPlaybackSpeed(_playbackSpeed),
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 12,
@@ -3006,16 +3095,16 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
               ),
             ),
 
-            const SizedBox(width: 6),
+            const SizedBox(width: 8),
 
             // Nút chọn Chất lượng (1080P / 720P / 480P / 360P / Tự động)
             GestureDetector(
+              behavior: HitTestBehavior.opaque,
               onTap: _showFeedQualitySheet,
               child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 9,
-                  vertical: 5,
-                ),
+                height: 32,
+                padding: const EdgeInsets.symmetric(horizontal: 11),
+                alignment: Alignment.center,
                 decoration: BoxDecoration(
                   color: Colors.black.withValues(alpha: 0.45),
                   borderRadius: BorderRadius.circular(16),
@@ -3027,9 +3116,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
                     const Icon(
                       Icons.high_quality_rounded,
                       color: AppColors.primaryEmerald,
-                      size: 14,
+                      size: 15,
                     ),
-                    const SizedBox(width: 3),
+                    const SizedBox(width: 4),
                     Text(
                       _activeVideoInfo?.selectedRendition?.qualityLabel ??
                           (_preferredQuality == 'auto'
@@ -3037,118 +3126,13 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
                               : '${_preferredQuality}P'),
                       style: const TextStyle(
                         color: Colors.white,
-                        fontSize: 11.5,
+                        fontSize: 12,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
                   ],
                 ),
               ),
-            ),
-
-            const SizedBox(width: 6),
-
-            // Nút Tài khoản Cloud
-            ValueListenableBuilder<HongguoCloudAccountState>(
-              valueListenable: HongguoCloudAccountService.instance.state,
-              builder: (_, cloudState, _) {
-                return GestureDetector(
-                  onTap: () => HongguoAccountSheet.show(context),
-                  child: Container(
-                    padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.45),
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: cloudState.isLoggedIn
-                            ? AppColors.primaryEmerald
-                            : Colors.white24,
-                        width: 0.8,
-                      ),
-                    ),
-                    child: Icon(
-                      cloudState.isLoggedIn
-                          ? Icons.account_circle_rounded
-                          : Icons.account_circle_outlined,
-                      color: cloudState.isLoggedIn
-                          ? AppColors.primaryEmerald
-                          : Colors.white,
-                      size: 16,
-                    ),
-                  ),
-                );
-              },
-            ),
-
-            const SizedBox(width: 8),
-
-            // Nút More Options: `⋮`
-            PopupMenuButton<String>(
-              icon: Container(
-                padding: const EdgeInsets.all(6),
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.45),
-                  shape: BoxShape.circle,
-                  border: Border.all(color: Colors.white24, width: 0.6),
-                ),
-                child: const Icon(
-                  Icons.more_vert_rounded,
-                  color: Colors.white,
-                  size: 18,
-                ),
-              ),
-              color: const Color(0xFF22242A),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              onSelected: (val) {
-                if (val == 'translate') {
-                  if (_currentIndex >= 0 && _currentIndex < _feedItems.length) {
-                    _openTranslationPlayer(_feedItems[_currentIndex]);
-                  }
-                } else if (val == 'speed') {
-                  _cyclePlaybackSpeed();
-                }
-              },
-              itemBuilder: (ctx) => [
-                const PopupMenuItem(
-                  value: 'translate',
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.translate_rounded,
-                        color: AppColors.primaryEmerald,
-                        size: 18,
-                      ),
-                      SizedBox(width: 10),
-                      Text(
-                        'Dịch & Lồng tiếng AI',
-                        style: TextStyle(color: Colors.white, fontSize: 13),
-                      ),
-                    ],
-                  ),
-                ),
-                PopupMenuItem(
-                  value: 'speed',
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.speed_rounded,
-                        color: Colors.white70,
-                        size: 18,
-                      ),
-                      const SizedBox(width: 10),
-                      Text(
-                        'Đổi tốc độ: ${_playbackSpeed}x',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
             ),
           ],
         ),

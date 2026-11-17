@@ -245,6 +245,102 @@ void main() {
       expect(info.ladder?.availableQualityTiers, <String>['1080', '720']);
       expect(HongguoLocalEngine.getCachedDurationMs('987654321'), 104000);
     });
+
+    test('parses v5 list renditions with nested video_meta and selects 1080p over 360p', () async {
+      final devDio = Dio();
+      devDio.httpClientAdapter = _FakeAdapter((options) async {
+        return ResponseBody.fromString(
+          jsonEncode(<String, dynamic>{
+            'device_id_str': '7491111111111111111',
+            'install_id_str': '7492222222222222222',
+          }),
+          200,
+        );
+      });
+      HongguoDeviceService.instance.setDioForTesting(devDio);
+
+      final apiDio = Dio();
+      apiDio.httpClientAdapter = _FakeAdapter((options) async {
+        final model = <String, dynamic>{
+          'video_duration': 178.8,
+          'video_list': <Map<String, dynamic>>[
+            <String, dynamic>{
+              'main_url': 'https://cdn.example.com/360.mp4',
+              'backup_url': 'https://cdn-b.example.com/360.mp4',
+              'video_meta': <String, dynamic>{
+                'definition': '360p',
+                'vtype': 'mp4',
+                'vwidth': 360,
+                'vheight': 640,
+                'bitrate': 185604,
+                'codec_type': 'bytevc1',
+                'size': 4246436,
+                'fps': 25,
+              },
+            },
+            <String, dynamic>{
+              'main_url': 'https://cdn.example.com/480.mp4',
+              'video_meta': <String, dynamic>{
+                'definition': '480p',
+                'vtype': 'mp4',
+                'vwidth': 480,
+                'vheight': 854,
+                'bitrate': 254713,
+                'codec_type': 'bytevc1',
+              },
+            },
+            <String, dynamic>{
+              'main_url': 'https://cdn.example.com/720.mp4',
+              'video_meta': <String, dynamic>{
+                'definition': '720p',
+                'vtype': 'mp4',
+                'vwidth': 720,
+                'vheight': 1280,
+                'bitrate': 322842,
+                'codec_type': 'bytevc1',
+              },
+            },
+            <String, dynamic>{
+              'main_url': 'https://cdn.example.com/1080.mp4',
+              'video_meta': <String, dynamic>{
+                'definition': '1080p',
+                'vtype': 'mp4',
+                'vwidth': 1080,
+                'vheight': 1920,
+                'bitrate': 576221,
+                'codec_type': 'bytevc1',
+              },
+            },
+          ],
+        };
+        return ResponseBody.fromString(
+          jsonEncode(<String, dynamic>{
+            'code': 0,
+            'data': <String, dynamic>{
+              '1004': <String, dynamic>{
+                '7699685725448457241': <String, dynamic>{'video_model': model},
+              },
+            },
+          }),
+          200,
+        );
+      });
+      HongguoLocalEngine.setDioForTesting(apiDio);
+
+      final infoAuto = await HongguoLocalEngine.resolveVideoInfo(
+        '7699685725448457241',
+        preferredQuality: 'auto',
+      );
+      expect(
+        infoAuto.ladder?.availableQualityTiers,
+        <String>['1080', '720', '480', '360'],
+      );
+      expect(infoAuto.selectedRendition?.qualityTier, 1080);
+      expect(infoAuto.selectedRendition?.normalizedCodec, 'bytevc1');
+      expect(infoAuto.selectedRendition?.width, 1080);
+      expect(infoAuto.selectedRendition?.height, 1920);
+      expect(infoAuto.realMainUrl, 'https://cdn.example.com/1080.mp4');
+    });
   });
 }
 
