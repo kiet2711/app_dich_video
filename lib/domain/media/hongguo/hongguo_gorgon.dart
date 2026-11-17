@@ -42,13 +42,15 @@ class HongguoGorgon {
   /// Tính x-ss-stub (MD5 uppercase) từ body
   static String calculateStub(dynamic body) {
     if (body == null) return '';
-    String str;
-    if (body is String) {
-      str = body;
+    final List<int> bytes;
+    if (body is List<int>) {
+      bytes = body;
+    } else if (body is String) {
+      bytes = utf8.encode(body);
     } else {
-      str = jsonEncode(body);
+      bytes = utf8.encode(jsonEncode(body));
     }
-    return md5.convert(utf8.encode(str)).toString().toUpperCase();
+    return md5.convert(bytes).toString().toUpperCase();
   }
 
   /// Sinh chữ ký X-Gorgon

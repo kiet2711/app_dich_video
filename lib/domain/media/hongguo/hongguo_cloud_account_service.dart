@@ -281,11 +281,12 @@ class HongguoCloudAccountService {
       state.value = state.value.copyWith(profile: profile);
     } catch (e) {
       if (gen != state.value.generation) return;
+      final isNotProvisioned = e is HongguoAccountNotProvisionedException;
       state.value = state.value.copyWith(
-        isLoading: false,
+        isLoading: !isNotProvisioned,
         lastError: _sanitizeError(e),
       );
-      if (e is HongguoAccountNotProvisionedException) return;
+      if (isNotProvisioned) return;
     }
 
     await Future.wait<void>(<Future<void>>[
@@ -433,12 +434,20 @@ class HongguoCloudAccountService {
             .toString()
             .trim();
         if (id.isEmpty) continue;
-        final title =
-            (item['series_title'] ?? video['title'] ?? item['book_name'] ?? '')
-                .toString();
-        final cover =
-            (video['series_cover'] ?? video['thumb_url'] ?? item['thumb_url'] ?? '')
-                .toString();
+        final title = (item['series_title'] ??
+                video['series_title'] ??
+                video['title'] ??
+                item['book_name'] ??
+                '')
+            .toString();
+        final cover = (item['series_cover_url'] ??
+                video['cover'] ??
+                video['cover_url'] ??
+                video['series_cover'] ??
+                video['thumb_url'] ??
+                item['thumb_url'] ??
+                '')
+            .toString();
         final epCnt = _readEpisodeCount(video) > 0
             ? _readEpisodeCount(video)
             : _readEpisodeCount(item);
@@ -782,44 +791,71 @@ class HongguoCloudAccountService {
     bool gzipBody = false,
   }) async {
     final device = await HongguoDeviceService.instance.getOrRegisterDevice();
-    final effectiveDid =
-        creds.deviceId.isNotEmpty ? creds.deviceId : device.deviceId;
-    final effectiveIid =
-        creds.installId.isNotEmpty ? creds.installId : device.installId;
+    final effectiveDid = (creds.deviceId.isNotEmpty && creds.deviceId != '0')
+        ? creds.deviceId
+        : device.deviceId;
+    final effectiveIid = (creds.installId.isNotEmpty && creds.installId != '0')
+        ? creds.installId
+        : device.installId;
+
+    final isPost = jsonBody != null;
+    final List<int>? wireBytes;
+    if (isPost) {
+      final rawBytes = utf8.encode(jsonEncode(jsonBody));
+      wireBytes = gzipBody ? gzip.encode(rawBytes) : rawBytes;
+    } else {
+      wireBytes = null;
+    }
+
+    // Đồng bộ tham số thiết bị chuẩn (aid=8662, app_name=novelread, version...)
+    // theo CloudAccount.kt; thiếu các tham số này server trả mã 100103.
+    final versionCode = isPost ? '73932' : '72232';
+    final versionName = isPost ? '7.3.9.32' : '7.2.2.32';
+    final mergedQuery = <String, String>{
+      ...HongguoV5Constants.v3DeviceDefaults,
+      'version_code': versionCode,
+      'manifest_version_code': versionCode,
+      'update_version_code': versionCode,
+      'pv_player': versionCode,
+      'version_name': versionName,
+      'device_id': effectiveDid,
+      'iid': effectiveIid,
+      ...query,
+    };
 
     final baseUri = Uri.parse('$apiBase$path').replace(
-      queryParameters: query.isEmpty ? null : query,
+      queryParameters: mergedQuery,
     );
 
     final signed = HongguoSixgodSigner.signRequest(
       url: baseUri.toString(),
-      body: jsonBody ?? '',
+      body: wireBytes,
       deviceId: effectiveDid,
       installId: effectiveIid,
       includeHelios: true,
+      versionName: versionName,
+      userAgentOverride:
+          isPost ? HongguoV5Constants.videoUa : HongguoV5Constants.appUa,
     );
 
     final headers = <String, String>{
       ...signed.headers,
-      'User-Agent': HongguoV5Constants.appUa,
       'Cookie': creds.cookie,
       'Accept-Encoding': 'gzip',
     };
 
     final Response<String> res;
-    if (jsonBody != null) {
-      final rawBytes = utf8.encode(jsonEncode(jsonBody));
-      final payloadBytes = gzipBody ? gzip.encode(rawBytes) : rawBytes;
+    if (wireBytes != null) {
       if (gzipBody) {
         headers['Content-Encoding'] = 'gzip';
       }
       res = await _dio.post<String>(
         signed.signedUrl,
-        data: Stream<List<int>>.fromIterable(<List<int>>[payloadBytes]),
+        data: Stream<List<int>>.fromIterable(<List<int>>[wireBytes]),
         options: Options(
           headers: <String, dynamic>{
             ...headers,
-            Headers.contentLengthHeader: payloadBytes.length,
+            Headers.contentLengthHeader: wireBytes.length,
           },
           responseType: ResponseType.plain,
         ),

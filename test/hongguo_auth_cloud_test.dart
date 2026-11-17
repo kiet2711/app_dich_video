@@ -1,6 +1,8 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -8,6 +10,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:capsub_flutter/domain/media/hongguo/hongguo_auth_service.dart';
 import 'package:capsub_flutter/domain/media/hongguo/hongguo_cloud_account_service.dart';
 import 'package:capsub_flutter/domain/media/hongguo/hongguo_device_service.dart';
+import 'package:capsub_flutter/domain/media/hongguo/hongguo_gorgon.dart';
+import 'package:capsub_flutter/domain/media/hongguo/hongguo_sixgod_signer.dart';
+import 'package:capsub_flutter/domain/media/hongguo/hongguo_v5_constants.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -408,6 +413,129 @@ void main() {
         () => cloud.fetchProfile(creds),
         throwsA(isA<HongguoAccountNotProvisionedException>()),
       );
+    });
+
+    test('GET and gzip POST cloud requests include device params, valid stub, and clean UA', () async {
+      final capturedRequests = <({
+        String path,
+        String method,
+        Map<String, String> query,
+        Map<String, dynamic> headers,
+        List<int> bodyBytes,
+      })>[];
+
+      final dio = Dio();
+      dio.httpClientAdapter = _MockAdapter((options) async {
+        final rawBytes = options.data is Stream<List<int>>
+            ? await (options.data as Stream<List<int>>).expand((e) => e).toList()
+            : const <int>[];
+        capturedRequests.add((
+          path: options.uri.path,
+          method: options.method,
+          query: Map<String, String>.from(options.uri.queryParameters),
+          headers: Map<String, dynamic>.from(options.headers),
+          bodyBytes: rawBytes,
+        ));
+        if (options.uri.path == '/reading/user/info/v1/') {
+          return ResponseBody.fromString(
+            jsonEncode(<String, dynamic>{
+              'code': 0,
+              'data': <String, dynamic>{
+                'biz_user_id': 'biz_1',
+                'user_name': 'Tester',
+              },
+            }),
+            200,
+          );
+        }
+        if (options.uri.path == '/reading/user/subscribe/list/v0/') {
+          return ResponseBody.fromString(
+            jsonEncode(<String, dynamic>{
+              'code': 0,
+              'data': <String, dynamic>{
+                'subscribe_items': <Map<String, dynamic>>[
+                  <String, dynamic>{
+                    'subscribe_data': <String, dynamic>{
+                      'series_id': '999',
+                      'title': 'Reserved',
+                    },
+                  },
+                ],
+              },
+            }),
+            200,
+          );
+        }
+        return ResponseBody.fromString('{"code":0}', 200);
+      });
+
+      final cloud = HongguoCloudAccountService.instance;
+      cloud.setDioForTesting(dio);
+      await cloud.onLoginSucceeded(creds);
+      final reservedOk = await cloud.reserveSeries('999');
+      expect(reservedOk, isTrue);
+
+      final profileReq = capturedRequests
+          .firstWhere((r) => r.path == '/reading/user/info/v1/');
+      expect(profileReq.method, 'GET');
+      expect(profileReq.query['aid'], '8662');
+      expect(profileReq.query['app_name'], 'novelread');
+      expect(profileReq.query['version_code'], '72232');
+      expect(profileReq.query['version_name'], '7.2.2.32');
+      expect(profileReq.query['device_id'], creds.deviceId);
+      expect(profileReq.query['iid'], creds.installId);
+      expect(profileReq.headers['user-agent'], HongguoV5Constants.appUa);
+      expect(profileReq.headers.containsKey('User-Agent'), isFalse);
+      expect(profileReq.headers.containsKey('x-ss-stub'), isFalse);
+
+      final reservePostReq = capturedRequests.firstWhere(
+        (r) => r.path == '/reading/bookapi/search/uncover_subscribe/v1/',
+      );
+      expect(reservePostReq.method, 'POST');
+      expect(reservePostReq.query['aid'], '8662');
+      expect(reservePostReq.query['version_code'], '73932');
+      expect(reservePostReq.query['version_name'], '7.3.9.32');
+      expect(reservePostReq.headers['user-agent'], HongguoV5Constants.videoUa);
+      expect(reservePostReq.headers['Content-Encoding'], 'gzip');
+      expect(
+        reservePostReq.headers['x-ss-stub'],
+        md5.convert(reservePostReq.bodyBytes).toString().toUpperCase(),
+      );
+      final decodedJson = jsonDecode(
+        utf8.decode(gzip.decode(reservePostReq.bodyBytes)),
+      ) as Map<String, dynamic>;
+      expect(decodedJson['item_id'], 999);
+    });
+
+    test('SixgodSigner handles null GET body and raw binary byte body consistently', () {
+      final getSigned = HongguoSixgodSigner.signRequest(
+        url: 'https://api5-normal-sinfonlinea.fqnovel.com/reading/user/info/v1/?aid=8662',
+        body: null,
+        includeHelios: true,
+        versionName: '7.2.2.32',
+        userAgentOverride: HongguoV5Constants.appUa,
+      );
+      expect(getSigned.bodyBytes, isEmpty);
+      expect(getSigned.headers.containsKey('x-ss-stub'), isFalse);
+      expect(getSigned.headers.containsKey('content-type'), isFalse);
+      expect(getSigned.headers['user-agent'], HongguoV5Constants.appUa);
+
+      final rawBytes = Uint8List.fromList(gzip.encode(utf8.encode('{"ok":true}')));
+      final postSigned = HongguoSixgodSigner.signRequest(
+        url: 'https://api5-normal-sinfonlinea.fqnovel.com/reading/bookapi/search/uncover_subscribe/v1/?aid=8662',
+        body: rawBytes,
+        includeHelios: true,
+      );
+      expect(postSigned.bodyBytes, rawBytes);
+      expect(
+        HongguoGorgon.calculateStub(rawBytes),
+        md5.convert(rawBytes).toString().toUpperCase(),
+      );
+      expect(
+        postSigned.headers['x-ss-stub'],
+        md5.convert(rawBytes).toString().toUpperCase(),
+      );
+      expect(postSigned.headers['content-type'], 'application/json; charset=UTF-8');
     });
   });
 }

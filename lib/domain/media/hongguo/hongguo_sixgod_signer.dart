@@ -62,11 +62,13 @@ class HongguoSixgodSigner {
   /// Xác định nhánh F13 dùng để sinh X-Medusa.
   static int calculateSignatureBranch({
     required String query,
-    required List<int> bodyBytes,
+    required List<int>? bodyBytes,
     required int khronos,
   }) {
     final querySm3 = HongguoSm3.hash(utf8.encode(query));
-    final bodyMd5 = md5.convert(bodyBytes).bytes;
+    final bodyMd5 = (bodyBytes != null)
+        ? md5.convert(bodyBytes).bytes
+        : Uint8List(16);
     final timestamp = ByteData(4)..setUint32(0, khronos, Endian.little);
 
     var iv = _getIv(0x20230928, querySm3);
@@ -84,9 +86,33 @@ class HongguoSixgodSigner {
     String? installId,
     String? deviceToken,
     bool includeHelios = false,
+    String? versionName,
+    String? deviceType,
+    String? userAgentOverride,
   }) {
-    final bodyJsonStr = jsonEncode(body);
-    final bodyBytes = utf8.encode(bodyJsonStr);
+    final List<int>? wireBodyBytes;
+    if (body == null) {
+      wireBodyBytes = null;
+    } else if (body is List<int>) {
+      wireBodyBytes = body;
+    } else if (body is String) {
+      wireBodyBytes = utf8.encode(body);
+    } else {
+      wireBodyBytes = utf8.encode(jsonEncode(body));
+    }
+
+    final effectiveVersionName =
+        (versionName != null && versionName.isNotEmpty)
+            ? versionName
+            : defaultVersionName;
+    final effectiveDeviceType =
+        (deviceType != null && deviceType.isNotEmpty)
+            ? deviceType
+            : defaultDeviceType;
+    final effectiveUserAgent =
+        (userAgentOverride != null && userAgentOverride.isNotEmpty)
+            ? userAgentOverride
+            : userAgent;
 
     final uri = Uri.parse(url);
     final queryMap = Map<String, String>.from(uri.queryParameters);
@@ -117,7 +143,7 @@ class HongguoSixgodSigner {
           .join('&');
       if (calculateSignatureBranch(
             query: encodedQuery,
-            bodyBytes: bodyBytes,
+            bodyBytes: wireBodyBytes,
             khronos: khronos,
           ) !=
           1) {
@@ -126,7 +152,7 @@ class HongguoSixgodSigner {
     }
     if (calculateSignatureBranch(
           query: encodedQuery,
-          bodyBytes: bodyBytes,
+          bodyBytes: wireBodyBytes,
           khronos: khronos,
         ) ==
         1) {
@@ -139,7 +165,7 @@ class HongguoSixgodSigner {
     final xgRand = Random().nextInt(0xFFFF);
 
     final gorgon = HongguoGorgon.encryptGorgon(
-      body: body,
+      body: wireBodyBytes,
       query: encodedQuery,
       khronos: khronos,
       xgRand: xgRand,
@@ -151,14 +177,14 @@ class HongguoSixgodSigner {
 
     final medusa = HongguoMedusa.genMedusa(
       query: encodedQuery,
-      body: body,
+      body: wireBodyBytes,
       khronos: khronos,
       deviceId: effectiveDeviceId,
-      versionName: defaultVersionName,
-      deviceType: defaultDeviceType,
+      versionName: effectiveVersionName,
+      deviceType: effectiveDeviceType,
     );
 
-    final stub = HongguoGorgon.calculateStub(body);
+    final stub = HongguoGorgon.calculateStub(wireBodyBytes);
 
     final ladonBd = ByteData(4);
     ladonBd.setUint32(0, khronos, Endian.big);
@@ -169,9 +195,10 @@ class HongguoSixgodSigner {
     final argus = base64Encode(argusBd.buffer.asUint8List());
 
     final headers = <String, String>{
-      'user-agent': userAgent,
+      'user-agent': effectiveUserAgent,
       'accept': 'application/json; charset=utf-8,application/x-protobuf',
-      'content-type': 'application/json; charset=UTF-8',
+      if (wireBodyBytes != null)
+        'content-type': 'application/json; charset=UTF-8',
       'x-xs-from-web': '0',
       'x-ss-req-ticket': requestTicket.toString(),
       'x-tt-request-tag': 't=0;n=0',
@@ -191,7 +218,7 @@ class HongguoSixgodSigner {
     return SignedRequestResult(
       signedUrl: baseSignedUrl,
       headers: headers,
-      bodyBytes: bodyBytes,
+      bodyBytes: wireBodyBytes ?? const <int>[],
     );
   }
 }
