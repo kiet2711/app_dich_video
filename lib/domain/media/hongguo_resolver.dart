@@ -1567,7 +1567,13 @@ class HongguoResolver {
 
     final epCount =
         int.tryParse(
-          (raw['episode_cnt'] ?? raw['episodeCount'] ?? 0).toString(),
+          (raw['episode_cnt'] ??
+                  raw['episode_count'] ??
+                  raw['total_episode_cnt'] ??
+                  raw['series_episode_cnt'] ??
+                  raw['episodeCount'] ??
+                  0)
+              .toString(),
         ) ??
         0;
     final intro = _cleanJsonString(

@@ -2312,9 +2312,10 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
   @override
   Widget build(BuildContext context) {
     final detail = widget.detail;
-    final total = detail.episodes.isNotEmpty
+    final maxKnown = detail.episodes.length > detail.totalEpisodes
         ? detail.episodes.length
-        : (detail.totalEpisodes > 0 ? detail.totalEpisodes : 1);
+        : detail.totalEpisodes;
+    final total = maxKnown > 0 ? maxKnown : 1;
 
     final totalChunks = (total / _chunkSize).ceil();
 

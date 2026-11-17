@@ -3,11 +3,9 @@ import 'package:flutter/services.dart';
 
 import '../../data/model/voice_model.dart';
 import '../../data/repository/settings_repository.dart';
-import '../../domain/media/hongguo/hongguo_cloud_account_service.dart';
 import '../../domain/media/hongguo/hongguo_codec_capabilities.dart';
 import '../theme/app_theme.dart';
 import '../tts/voice_selector_sheet.dart';
-import 'hongguo_account_sheet.dart';
 
 class HongguoSettingsSheet extends StatefulWidget {
   const HongguoSettingsSheet({super.key});
@@ -31,7 +29,6 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
 
   String _translationMode = 'api_online';
   String _videoResolverEngine = 'local';
-  String _preferredQuality = '1080';
   VoiceItem _selectedVoice = VoicePresets.defaultVoice;
   bool _autoPlay = true;
   int _prefetchCount = 1;
@@ -52,7 +49,6 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
       _settings = s;
       _translationMode = s.hongguoTranslationMode;
       _videoResolverEngine = s.hongguoVideoResolverEngine;
-      _preferredQuality = s.hongguoPreferredQuality;
       _selectedVoice = VoicePresets.vietnameseVoices.firstWhere(
         (v) => v.voiceType == s.hongguoSelectedTtsVoice,
         orElse: () => VoicePresets.defaultVoice,
@@ -92,7 +88,6 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
     if (_settings != null) {
       _settings!.hongguoTranslationMode = _translationMode;
       _settings!.hongguoVideoResolverEngine = _videoResolverEngine;
-      _settings!.hongguoPreferredQuality = _preferredQuality;
       _settings!.hongguoSelectedTtsVoice = _selectedVoice.voiceType;
       _settings!.autoPlayNextEpisode = _autoPlay;
       _settings!.prefetchEpisodeCount = _prefetchCount;
@@ -267,103 +262,6 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
                           });
                         },
                       ),
-                    ),
-                    const SizedBox(height: 16),
-                    const Text(
-                      'Chất lượng phát & Tài khoản Hồng Quả',
-                      style: TextStyle(
-                        color: AppColors.textPrimary,
-                        fontSize: 13.5,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: const <({String key, String label})>[
-                        (key: '1080', label: '1080P FHD'),
-                        (key: '720', label: '720P HD'),
-                        (key: '480', label: '480P SD'),
-                        (key: '360', label: '360P Tiết kiệm'),
-                        (key: 'auto', label: 'Tự động'),
-                      ].map((opt) {
-                        final selected = _preferredQuality == opt.key;
-                        return ChoiceChip(
-                          label: Text(opt.label),
-                          selected: selected,
-                          onSelected: (_) {
-                            HapticFeedback.selectionClick();
-                            setState(() => _preferredQuality = opt.key);
-                          },
-                          selectedColor:
-                              AppColors.primaryEmerald.withValues(alpha: 0.25),
-                          labelStyle: TextStyle(
-                            color: selected
-                                ? AppColors.primaryEmerald
-                                : AppColors.textSecondary,
-                            fontSize: 12.5,
-                            fontWeight:
-                                selected ? FontWeight.w700 : FontWeight.w500,
-                          ),
-                        );
-                      }).toList(growable: false),
-                    ),
-                    const SizedBox(height: 10),
-                    ValueListenableBuilder<HongguoCloudAccountState>(
-                      valueListenable:
-                          HongguoCloudAccountService.instance.state,
-                      builder: (context, cloudState, _) {
-                        return Card(
-                          color: Colors.white.withValues(alpha: 0.04),
-                          margin: EdgeInsets.zero,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            side: BorderSide(
-                              color: cloudState.isLoggedIn
-                                  ? AppColors.primaryEmerald
-                                      .withValues(alpha: 0.5)
-                                  : Colors.white12,
-                            ),
-                          ),
-                          child: ListTile(
-                            dense: true,
-                            leading: Icon(
-                              cloudState.isLoggedIn
-                                  ? Icons.cloud_done_rounded
-                                  : Icons.account_circle_outlined,
-                              color: cloudState.isLoggedIn
-                                  ? AppColors.primaryEmerald
-                                  : Colors.white70,
-                            ),
-                            title: Text(
-                              cloudState.isLoggedIn
-                                  ? (cloudState.profile?.userName ??
-                                      'Đã đăng nhập Hồng Quả')
-                                  : 'Tài khoản Đám mây Hồng Quả',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 13.5,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            subtitle: Text(
-                              cloudState.isLoggedIn
-                                  ? 'Lịch sử (${cloudState.history.length}) • Yêu thích (${cloudState.favorites.length})'
-                                  : 'Quét QR hoặc SMS để đồng bộ lịch sử & yêu thích',
-                              style: const TextStyle(
-                                color: AppColors.textMuted,
-                                fontSize: 11.5,
-                              ),
-                            ),
-                            trailing: const Icon(
-                              Icons.chevron_right_rounded,
-                              color: Colors.white54,
-                            ),
-                            onTap: () => HongguoAccountSheet.show(context),
-                          ),
-                        );
-                      },
                     ),
                     const SizedBox(height: 8),
                     Align(

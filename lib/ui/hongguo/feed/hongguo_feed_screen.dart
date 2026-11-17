@@ -754,6 +754,34 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     }
   }
 
+  Future<void> _selectFeedQuality(String qualityKey) async {
+    if (_preferredQuality == qualityKey) return;
+    setState(() {
+      _preferredQuality = qualityKey;
+    });
+    _settings?.hongguoPreferredQuality = qualityKey;
+    _excludedRenditionKeys.clear();
+    _downgradeAttempts = 0;
+    _disposeStandbyPlayer();
+    _preloadedSources.clear();
+    if (_currentIndex >= 0 && _currentIndex < _feedItems.length) {
+      _pendingInitialSeekMs =
+          _activeController?.value.position.inMilliseconds ?? 0;
+      await _activatePage(_currentIndex, forceReload: true);
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Đã chuyển chất lượng: ${qualityKey == "auto" ? "Tự động theo thiết bị" : "${qualityKey}P"}',
+            ),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    }
+  }
+
   /// Mở bộ chọn chất lượng stream ngay trên màn hình Feed.
   Future<void> _showFeedQualitySheet() async {
     final availableTiers = _activeVideoInfo?.ladder?.availableQualityTiers ??
@@ -810,33 +838,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
                     ),
                     onTap: () async {
                       Navigator.of(ctx).pop();
-                      if (_preferredQuality == opt.key) return;
-                      setState(() {
-                        _preferredQuality = opt.key;
-                      });
-                      _settings?.hongguoPreferredQuality = opt.key;
-                      _excludedRenditionKeys.clear();
-                      _downgradeAttempts = 0;
-                      _disposeStandbyPlayer();
-                      _preloadedSources.clear();
-                      if (_currentIndex >= 0 &&
-                          _currentIndex < _feedItems.length) {
-                        _pendingInitialSeekMs =
-                            _activeController?.value.position.inMilliseconds ??
-                                0;
-                        await _activatePage(_currentIndex, forceReload: true);
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                'Đã chuyển chất lượng: ${opt.key == "auto" ? "Tự động theo thiết bị" : "${opt.key}P"}',
-                              ),
-                              duration: const Duration(seconds: 2),
-                            ),
-                          );
-                        }
-                      }
+                      await _selectFeedQuality(opt.key);
                     },
                   );
                 }),
@@ -874,10 +876,16 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
           durationMs: durMs,
           updatedAtMs: DateTime.now().millisecondsSinceEpoch,
         ),
-        episodeCount: item.detail.totalEpisodes > 0
-            ? item.detail.totalEpisodes
-            : item.detail.episodes.length,
+        episodeCount: math.max(
+          item.detail.totalEpisodes,
+          item.detail.episodes.length,
+        ),
       );
+      if (!_isDramaEpisodeMode &&
+          item.detail.totalEpisodes <= 1 &&
+          item.detail.episodes.length <= 1) {
+        unawaited(_refreshMissingEpisodeCount(index));
+      }
     }
 
     if (!_isDramaEpisodeMode && index >= 0 && index < _feedItems.length) {
@@ -1054,7 +1062,8 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       // 1. Đảm bảo item có đầy đủ danh sách tập và vid thật của ByteDance trước khi nạp
       if (item.vid.isEmpty ||
           item.vid == item.detail.seriesId ||
-          item.detail.episodes.isEmpty) {
+          item.detail.episodes.isEmpty ||
+          item.detail.episodes.length < item.episodeIndex) {
         try {
           final fullDetail = await _resolver.getDramaDetail(
             item.detail.seriesId,
@@ -1259,7 +1268,8 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     // 0. Đảm bảo item có vid thật trước khi gọi API
     if (item.vid.isEmpty ||
         item.vid == item.detail.seriesId ||
-        item.detail.episodes.isEmpty) {
+        item.detail.episodes.isEmpty ||
+        item.detail.episodes.length < item.episodeIndex) {
       try {
         final fullDetail = await _resolver.getDramaDetail(item.detail.seriesId);
         if (fullDetail.episodes.isNotEmpty) {
@@ -2295,6 +2305,285 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     );
   }
 
+  Future<void> _refreshMissingEpisodeCount(int index) async {
+    if (index < 0 || index >= _feedItems.length) return;
+    final item = _feedItems[index];
+    final seriesId = item.detail.seriesId;
+    if (seriesId.isEmpty) return;
+    try {
+      final fullDetail = await _resolver.getDramaDetail(seriesId);
+      if (!mounted) return;
+      final resolvedTotal = math.max(
+        fullDetail.episodes.length,
+        fullDetail.totalEpisodes,
+      );
+      if (resolvedTotal <= 1) return;
+      final idx = _feedItems.indexWhere(
+        (it) => it.detail.seriesId == seriesId && it.episodeIndex == item.episodeIndex,
+      );
+      if (idx == -1) return;
+      final epIdx = item.episodeIndex.clamp(1, fullDetail.episodes.length);
+      final realVid = fullDetail.episodes.isNotEmpty
+          ? fullDetail.episodes[epIdx - 1].vid
+          : item.vid;
+      setState(() {
+        _feedItems[idx] = FeedDramaPageItem(
+          detail: fullDetail,
+          episodeIndex: item.episodeIndex,
+          vid: realVid.isNotEmpty ? realVid : item.vid,
+        );
+      });
+    } catch (_) {}
+  }
+
+  /// Mở bảng cài đặt nhanh khi nhấn giữ vào video (chỉ gồm Tốc độ & Chất lượng).
+  Future<void> _showFeedQuickSettingsSheet() async {
+    HapticFeedback.mediumImpact();
+    final rawTiers = _activeVideoInfo?.ladder?.availableQualityTiers ??
+        const <String>['1080', '720', '480', '360'];
+    final ascTiers = List<String>.from(rawTiers)
+      ..sort(
+        (a, b) => (int.tryParse(a) ?? 0).compareTo(int.tryParse(b) ?? 0),
+      );
+    final qualityOptions = <({String key, String label})>[
+      for (final t in ascTiers) (key: t, label: '${t}P'),
+      const (key: 'auto', label: 'Tự động'),
+    ];
+
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF181A22),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (sheetCtx, setSheetState) {
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 38,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 14),
+                      decoration: BoxDecoration(
+                        color: Colors.white24,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF21242D),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: Colors.white10),
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // 1. Tốc độ phát
+                          Row(
+                            children: [
+                              const Icon(
+                                Icons.speed_rounded,
+                                color: Colors.white,
+                                size: 18,
+                              ),
+                              const SizedBox(width: 8),
+                              const Text(
+                                'Tốc độ phát',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const Spacer(),
+                              Text(
+                                _formatPlaybackSpeed(_playbackSpeed),
+                                style: const TextStyle(
+                                  color: AppColors.primaryEmerald,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF15171E),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Row(
+                              children: _feedPlaybackSpeeds.map((speed) {
+                                final selected =
+                                    (_playbackSpeed - speed).abs() < 0.01;
+                                return Expanded(
+                                  child: GestureDetector(
+                                    behavior: HitTestBehavior.opaque,
+                                    onTap: () async {
+                                      if (selected) return;
+                                      await _applyPlaybackSpeed(speed);
+                                      if (sheetCtx.mounted) {
+                                        setSheetState(() {});
+                                      }
+                                    },
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 8,
+                                      ),
+                                      alignment: Alignment.center,
+                                      decoration: BoxDecoration(
+                                        color: selected
+                                            ? AppColors.primaryEmerald
+                                                .withValues(alpha: 0.22)
+                                            : Colors.transparent,
+                                        borderRadius: BorderRadius.circular(8),
+                                        border: selected
+                                            ? Border.all(
+                                                color: AppColors.primaryEmerald
+                                                    .withValues(alpha: 0.7),
+                                                width: 0.8,
+                                              )
+                                            : null,
+                                      ),
+                                      child: FittedBox(
+                                        fit: BoxFit.scaleDown,
+                                        child: Text(
+                                          _formatPlaybackSpeed(speed),
+                                          maxLines: 1,
+                                          style: TextStyle(
+                                            color: selected
+                                                ? AppColors.primaryEmerald
+                                                : Colors.white70,
+                                            fontSize: 12,
+                                            fontWeight: selected
+                                                ? FontWeight.w700
+                                                : FontWeight.w500,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              }).toList(growable: false),
+                            ),
+                          ),
+
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 14),
+                            child: Divider(height: 1, color: Colors.white10),
+                          ),
+
+                          // 2. Chất lượng phát
+                          Row(
+                            children: [
+                              const Icon(
+                                Icons.high_quality_rounded,
+                                color: Colors.white,
+                                size: 18,
+                              ),
+                              const SizedBox(width: 8),
+                              const Text(
+                                'Chất lượng phát',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const Spacer(),
+                              Text(
+                                _preferredQuality == 'auto'
+                                    ? (_activeVideoInfo
+                                            ?.selectedRendition?.qualityLabel ??
+                                        'Tự động')
+                                    : '${_preferredQuality}P',
+                                style: const TextStyle(
+                                  color: AppColors.primaryEmerald,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF15171E),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Row(
+                              children: qualityOptions.map((opt) {
+                                final selected = _preferredQuality == opt.key;
+                                return Expanded(
+                                  child: GestureDetector(
+                                    behavior: HitTestBehavior.opaque,
+                                    onTap: () async {
+                                      Navigator.of(ctx).pop();
+                                      await _selectFeedQuality(opt.key);
+                                    },
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 8,
+                                      ),
+                                      alignment: Alignment.center,
+                                      decoration: BoxDecoration(
+                                        color: selected
+                                            ? AppColors.primaryEmerald
+                                                .withValues(alpha: 0.22)
+                                            : Colors.transparent,
+                                        borderRadius: BorderRadius.circular(8),
+                                        border: selected
+                                            ? Border.all(
+                                                color: AppColors.primaryEmerald
+                                                    .withValues(alpha: 0.7),
+                                                width: 0.8,
+                                              )
+                                            : null,
+                                      ),
+                                      child: FittedBox(
+                                        fit: BoxFit.scaleDown,
+                                        child: Text(
+                                          opt.label,
+                                          maxLines: 1,
+                                          style: TextStyle(
+                                            color: selected
+                                                ? AppColors.primaryEmerald
+                                                : Colors.white70,
+                                            fontSize: 12,
+                                            fontWeight: selected
+                                                ? FontWeight.w700
+                                                : FontWeight.w500,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              }).toList(growable: false),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   /// Xoay toàn màn hình ngang (Landscape Fullscreen)
   void _toggleLandscapeFullscreen() {
     HapticFeedback.mediumImpact();
@@ -2749,6 +3038,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
             },
             onDoubleTapDown: (details) =>
                 _onDoubleTapAt(details.globalPosition),
+            onLongPress: _showFeedQuickSettingsSheet,
           ),
         ),
 
@@ -3272,9 +3562,10 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     final title =
         OfflineMlKitTranslator.getCachedTitle(item.detail.title) ??
         item.detail.title;
-    final total = item.detail.episodes.isNotEmpty
-        ? item.detail.episodes.length
-        : (item.detail.totalEpisodes > 0 ? item.detail.totalEpisodes : 1);
+    final total = math.max(
+      1,
+      math.max(item.detail.episodes.length, item.detail.totalEpisodes),
+    );
 
     final bottomPadding = MediaQuery.of(context).padding.bottom + 26;
 
@@ -5756,9 +6047,10 @@ class _ByteDanceEpisodePickerSheetState
 
   @override
   Widget build(BuildContext context) {
-    final total = _currentDetail.episodes.isNotEmpty
-        ? _currentDetail.episodes.length
-        : (_currentDetail.totalEpisodes > 0 ? _currentDetail.totalEpisodes : 1);
+    final total = math.max(
+      1,
+      math.max(_currentDetail.episodes.length, _currentDetail.totalEpisodes),
+    );
 
     final rangeCount = (total / _episodesPerRange).ceil();
     final title =
