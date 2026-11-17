@@ -336,6 +336,49 @@ class BilibiliAnimeItem {
   }
 }
 
+/// Một mục trong lịch sử xem đồng bộ trực tiếp từ app/web Bilibili gốc.
+class BilibiliWatchHistoryEntry {
+  final BilibiliAnimeItem item;
+  final int progressSeconds; // -1 nghĩa là đã xem hết
+  final int viewAtSeconds;
+  final String showTitle;
+  final String business; // 'archive' | 'pgc'
+
+  const BilibiliWatchHistoryEntry({
+    required this.item,
+    this.progressSeconds = 0,
+    this.viewAtSeconds = 0,
+    this.showTitle = '',
+    this.business = 'archive',
+  });
+
+  bool get isCompleted => progressSeconds == -1;
+
+  int get resumePositionMs =>
+      progressSeconds > 0 ? progressSeconds * 1000 : 0;
+
+  double get progressFraction {
+    if (isCompleted) return 1.0;
+    final dur = item.durationSeconds;
+    if (dur <= 0 || progressSeconds <= 0) return 0.0;
+    return (progressSeconds / dur).clamp(0.0, 1.0);
+  }
+}
+
+class BilibiliWatchHistoryPage {
+  final List<BilibiliWatchHistoryEntry> items;
+  final int nextMax;
+  final int nextViewAt;
+  final bool hasMore;
+
+  const BilibiliWatchHistoryPage({
+    this.items = const [],
+    this.nextMax = 0,
+    this.nextViewAt = 0,
+    this.hasMore = false,
+  });
+}
+
 class BilibiliTimelineDay {
   final int dayOfWeek; // 1 = Thứ Hai, 7 = Chủ Nhật
   final String dayName;
@@ -2488,45 +2531,106 @@ class BilibiliResolver {
     int pageSize = 20,
     String cookie = '',
   }) async {
-    if (cookie.trim().isEmpty) return const [];
+    final page = await getWatchHistoryPage(
+      pageSize: pageSize,
+      type: 'archive',
+      cookie: cookie,
+    );
+    return page.items.map((e) => e.item).toList(growable: false);
+  }
+
+  /// Lấy một trang lịch sử xem đồng bộ từ tài khoản Bilibili gốc kèm con trỏ `max`/`view_at`
+  /// và tiến độ xem (`progress` giây, `-1` là đã xem hết).
+  Future<BilibiliWatchHistoryPage> getWatchHistoryPage({
+    int pageSize = 20,
+    int max = 0,
+    int viewAt = 0,
+    String type = 'all',
+    String cookie = '',
+  }) async {
+    if (cookie.trim().isEmpty) return const BilibiliWatchHistoryPage();
     try {
       final response = await dio.get<Map<String, dynamic>>(
         'https://api.bilibili.com/x/web-interface/history/cursor',
-        queryParameters: {
+        queryParameters: <String, dynamic>{
           'ps': '$pageSize',
-          'type': 'archive',
+          'type': type,
+          'max': '$max',
+          'view_at': '$viewAt',
         },
         options: Options(headers: requestHeaders(cookie)),
       );
       final json = response.data ?? const <String, dynamic>{};
-      if ((json['code'] as num?)?.toInt() != 0) return const [];
-      final list = json['data']?['list'] as List<dynamic>? ?? const [];
-      final results = <BilibiliAnimeItem>[];
+      if ((json['code'] as num?)?.toInt() != 0) {
+        return const BilibiliWatchHistoryPage();
+      }
+      final data = json['data'] as Map? ?? const <String, dynamic>{};
+      final cursorMap = data['cursor'] as Map?;
+      final nextMax = _parseUnixSec(cursorMap?['max']);
+      final nextViewAt = _parseUnixSec(cursorMap?['view_at']);
+
+      final list = data['list'] as List<dynamic>? ?? const [];
+      final results = <BilibiliWatchHistoryEntry>[];
       for (final raw in list) {
         if (raw is! Map) continue;
         final item = Map<String, dynamic>.from(raw);
         final history = item['history'] as Map?;
-        final bvid = (history?['bvid'] ?? item['bvid'])?.toString() ?? '';
+        final business = (history?['business'] ?? '').toString().trim();
+        final bvid = (history?['bvid'] ?? item['bvid'])?.toString().trim() ?? '';
+        final epId = _parseUnixSec(history?['epid']);
+        final oid = _parseUnixSec(history?['oid']);
+        final hasPlayableTarget = bvid.isNotEmpty || (business == 'pgc' && epId > 0);
+        if (!hasPlayableTarget) continue;
+
         final title = _stripHtml(item['title']?.toString() ?? '');
         if (title.isEmpty) continue;
+
         final durationSec = _parseUnixSec(item['duration']);
+        final viewAtSec = _parseUnixSec(item['view_at']);
+        final progressSec = _parseUnixSec(item['progress']);
+        final showTitle = (item['show_title'] ?? '').toString().trim();
+        final rawCover = (item['cover']?.toString() ?? '').trim().isNotEmpty
+            ? item['cover'].toString()
+            : ((item['covers'] is List && (item['covers'] as List).isNotEmpty)
+                ? (item['covers'] as List).first.toString()
+                : '');
+
+        final animeItem = BilibiliAnimeItem(
+          title: title,
+          cover: _normalizeCoverUrl(rawCover),
+          bvid: bvid.isNotEmpty ? bvid : null,
+          epId: epId > 0 ? epId : null,
+          seasonId: business == 'pgc' && oid > 0 ? oid : null,
+          author: (item['author_name'] ?? '').toString(),
+          upFace: _normalizeCoverUrl(item['author_face']?.toString() ?? ''),
+          badge: (item['badge'] ?? item['tag_name'] ?? '').toString(),
+          durationSeconds: durationSec,
+          durationText: durationSec > 0
+              ? BilibiliAnimeItem.formatDuration(durationSec)
+              : '',
+          pubdate: viewAtSec,
+        );
+
         results.add(
-          BilibiliAnimeItem(
-            title: title,
-            cover: _normalizeCoverUrl(item['cover']?.toString() ?? ''),
-            bvid: bvid.isNotEmpty ? bvid : null,
-            author: item['author_name']?.toString() ?? '',
-            upFace: _normalizeCoverUrl(item['author_face']?.toString() ?? ''),
-            badge: item['tag_name']?.toString() ?? '',
-            durationSeconds: durationSec,
-            durationText: durationSec > 0 ? BilibiliAnimeItem.formatDuration(durationSec) : '',
-            pubdate: _parseUnixSec(item['view_at']),
+          BilibiliWatchHistoryEntry(
+            item: animeItem,
+            progressSeconds: progressSec,
+            viewAtSeconds: viewAtSec,
+            showTitle: showTitle,
+            business: business.isNotEmpty ? business : 'archive',
           ),
         );
       }
-      return results;
+
+      final hasMore = list.length >= pageSize && (nextMax > 0 || nextViewAt > 0);
+      return BilibiliWatchHistoryPage(
+        items: results,
+        nextMax: nextMax,
+        nextViewAt: nextViewAt,
+        hasMore: hasMore,
+      );
     } catch (_) {
-      return const [];
+      return const BilibiliWatchHistoryPage();
     }
   }
 

@@ -188,5 +188,101 @@ void main() {
       rethrow;
     }
   });
+
+  test('getWatchHistoryPage returns empty page when cookie is empty', () async {
+    final resolver = BilibiliResolver();
+    final page = await resolver.getWatchHistoryPage(cookie: '   ');
+    expect(page.items, isEmpty);
+    expect(page.hasMore, isFalse);
+  });
+
+  test('getWatchHistoryPage parses archive & pgc history with cursor and resume progress', () async {
+    final dio = Dio();
+    dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (options, handler) {
+          expect(options.uri.path, '/x/web-interface/history/cursor');
+          expect(options.queryParameters['type'], 'all');
+          expect(options.queryParameters['ps'], '2');
+          handler.resolve(
+            Response(
+              requestOptions: options,
+              statusCode: 200,
+              data: <String, dynamic>{
+                'code': 0,
+                'data': <String, dynamic>{
+                  'cursor': <String, dynamic>{
+                    'max': 170000111,
+                    'view_at': 170000222,
+                  },
+                  'list': [
+                    <String, dynamic>{
+                      'title': '<em>First</em> Anime',
+                      'cover': '//i0.hdslb.com/bfs/archive/a.jpg',
+                      'duration': 600,
+                      'progress': 125,
+                      'view_at': 170000900,
+                      'author_name': 'UP_One',
+                      'author_face': '//i0.hdslb.com/bfs/face/up.jpg',
+                      'tag_name': 'Anime',
+                      'history': <String, dynamic>{
+                        'business': 'archive',
+                        'bvid': 'BV1TEST0001',
+                        'oid': 1001,
+                      },
+                    },
+                    <String, dynamic>{
+                      'title': 'Bangumi Series',
+                      'covers': ['https://i0.hdslb.com/bfs/bangumi/b.jpg'],
+                      'show_title': '第3话 决战',
+                      'duration': 1440,
+                      'progress': -1,
+                      'view_at': 170000800,
+                      'badge': '番剧',
+                      'history': <String, dynamic>{
+                        'business': 'pgc',
+                        'epid': 555666,
+                        'oid': 9988,
+                      },
+                    },
+                  ],
+                },
+              },
+            ),
+          );
+        },
+      ),
+    );
+
+    final resolver = BilibiliResolver(dio: dio);
+    final page = await resolver.getWatchHistoryPage(
+      pageSize: 2,
+      cookie: 'SESSDATA=fake_cookie',
+    );
+
+    expect(page.hasMore, isTrue);
+    expect(page.nextMax, 170000111);
+    expect(page.nextViewAt, 170000222);
+    expect(page.items, hasLength(2));
+
+    final first = page.items[0];
+    expect(first.business, 'archive');
+    expect(first.item.title, 'First Anime');
+    expect(first.item.bvid, 'BV1TEST0001');
+    expect(first.item.cover, 'https://i0.hdslb.com/bfs/archive/a.jpg');
+    expect(first.progressSeconds, 125);
+    expect(first.resumePositionMs, 125000);
+    expect(first.isCompleted, isFalse);
+    expect(first.progressFraction, closeTo(125 / 600, 0.001));
+
+    final second = page.items[1];
+    expect(second.business, 'pgc');
+    expect(second.item.epId, 555666);
+    expect(second.item.seasonId, 9988);
+    expect(second.showTitle, '第3话 决战');
+    expect(second.isCompleted, isTrue);
+    expect(second.resumePositionMs, 0);
+    expect(second.progressFraction, 1.0);
+  });
 }
 

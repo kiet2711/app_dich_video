@@ -783,241 +783,14 @@ class _HongguoScreenState extends State<HongguoScreen> {
 
     return Scaffold(
       backgroundColor: AppColors.darkBackground,
-      appBar: AppBar(
-        backgroundColor: AppColors.darkSurface,
-        elevation: 0,
-        centerTitle: false,
-        title: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: Colors.redAccent.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Icon(
-                Icons.local_fire_department_rounded,
-                color: Colors.redAccent,
-                size: 20,
-              ),
-            ),
-            const SizedBox(width: 10),
-            const Text(
-              'Phim Ngắn Hồng Quả',
-              style: TextStyle(
-                fontSize: 17,
-                fontWeight: FontWeight.bold,
-                color: AppColors.textPrimary,
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(
-              Icons.auto_awesome_rounded,
-              color: AppColors.primaryEmerald,
-            ),
-            tooltip: 'Trợ lý AI tìm phim (Gemini Live)',
-            onPressed: _openAssistantSheet,
-          ),
-          IconButton(
-            icon: const Icon(
-              Icons.swipe_vertical_rounded,
-              color: Colors.amberAccent,
-            ),
-            tooltip: 'Lướt Shorts Khám Phá (Xem thử siêu tốc)',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (ctx) => const HongguoFeedScreen(),
-                ),
-              );
-            },
-          ),
-          IconButton(
-            icon: Icon(
-              Icons.translate_rounded,
-              color: _isTranslationEnabled
-                  ? AppColors.primaryEmerald
-                  : AppColors.textMuted,
-            ),
-            tooltip: _isTranslationEnabled
-                ? 'Tắt dịch tiếng Việt'
-                : 'Bật dịch tiếng Việt (Tên & Giới thiệu)',
-            onPressed: _toggleTranslation,
-          ),
-          ValueListenableBuilder<HongguoCloudAccountState>(
-            valueListenable: HongguoCloudAccountService.instance.state,
-            builder: (ctx, cloudState, _) {
-              return IconButton(
-                tooltip: cloudState.isLoggedIn
-                    ? 'Tài khoản Hồng Quả (${cloudState.profile?.userName ?? "Đã đăng nhập"})'
-                    : 'Đăng nhập Tài khoản Hồng Quả',
-                onPressed: () {
-                  HapticFeedback.lightImpact();
-                  HongguoAccountSheet.show(
-                    context,
-                    onOpenSeries: (seriesId, {int episodeIndex = 1, int positionMs = 0}) {
-                      _openDramaDetail(
-                        HongguoDramaItem(
-                          seriesId: seriesId,
-                          title: '',
-                          cover: '',
-                          episodeCount: 0,
-                        ),
-                      );
-                    },
-                  );
-                },
-                icon: Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    Icon(
-                      cloudState.isLoggedIn
-                          ? Icons.account_circle_rounded
-                          : Icons.account_circle_outlined,
-                      color: cloudState.isLoggedIn
-                          ? AppColors.primaryEmerald
-                          : AppColors.textSecondary,
-                    ),
-                    if (cloudState.isLoggedIn)
-                      Positioned(
-                        right: -1,
-                        top: -1,
-                        child: Container(
-                          width: 8,
-                          height: 8,
-                          decoration: BoxDecoration(
-                            color: AppColors.primaryEmerald,
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: AppColors.darkSurface,
-                              width: 1.5,
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              );
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.settings_rounded, color: AppColors.textSecondary),
-            tooltip: 'Cài đặt tự chuyển tập & dịch ngầm',
-            onPressed: _showHongguoSettingsSheet,
-          ),
-        ],
-      ),
       body: SafeArea(
         child: Column(
           children: [
-            // 1. THANH TÌM KIẾM & DÁN LINK NHANH
-            Padding(
-              padding: const EdgeInsets.fromLTRB(14, 8, 14, 6),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: AppColors.darkSurfaceVariant,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppColors.cardBorder),
-                ),
-                child: TextField(
-                  controller: _searchController,
-                  textInputAction: TextInputAction.search,
-                  onChanged: (_) => setState(() {}),
-                  onSubmitted: _performSearch,
-                  style: const TextStyle(
-                    color: AppColors.textPrimary,
-                    fontSize: 14,
-                  ),
-                  decoration: InputDecoration(
-                    hintText: 'Tìm kiếm phim hoặc dán link chia sẻ...',
-                    hintStyle: const TextStyle(
-                      color: AppColors.textMuted,
-                      fontSize: 13,
-                    ),
-                    prefixIcon: IconButton(
-                      icon: const Icon(
-                        Icons.search_rounded,
-                        color: AppColors.textSecondary,
-                        size: 20,
-                      ),
-                      tooltip: 'Tìm kiếm',
-                      onPressed: () => _performSearch(),
-                    ),
-                    suffixIcon: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (_searchController.text.isNotEmpty) ...[
-                          IconButton(
-                            visualDensity: VisualDensity.compact,
-                            constraints: const BoxConstraints(
-                              minWidth: 32,
-                              minHeight: 32,
-                            ),
-                            icon: const Icon(
-                              Icons.close_rounded,
-                              size: 18,
-                              color: AppColors.textMuted,
-                            ),
-                            onPressed: () {
-                              _searchController.clear();
-                              _loadDramas();
-                            },
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.only(right: 4),
-                            child: InkWell(
-                              onTap: () => _performSearch(),
-                              borderRadius: BorderRadius.circular(8),
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 6,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: AppColors.primaryEmerald,
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: const Text(
-                                  'Tìm',
-                                  style: TextStyle(
-                                    color: Colors.black,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                        IconButton(
-                          visualDensity: VisualDensity.compact,
-                          constraints: const BoxConstraints(
-                            minWidth: 36,
-                            minHeight: 36,
-                          ),
-                          icon: const Icon(
-                            Icons.paste_rounded,
-                            size: 18,
-                            color: AppColors.primaryEmerald,
-                          ),
-                          tooltip: 'Dán link từ Clipboard',
-                          onPressed: _pasteFromClipboard,
-                        ),
-                      ],
-                    ),
-                    border: InputBorder.none,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 12,
-                    ),
-                  ),
-                ),
-              ),
-            ),
+            // 1. THANH HEADER TRÊN CÙNG GIỐNG TAB BILIBILI
+            // (Avatar đăng nhập | Thanh tìm kiếm | Feed | Cài đặt)
+            _buildHeaderSection(),
+
+            const SizedBox(height: 6),
 
             // 2. THANH 3 TAB CẤP 1 GỌN GÀNG (ĐỀ XUẤT | KHO LỌC SÂU | BẢNG XẾP HẠNG)
             _buildPrimaryTabBar(),
@@ -1058,51 +831,259 @@ class _HongguoScreenState extends State<HongguoScreen> {
               ),
             ),
 
-            // 5. THANH PHÂN TRANG HOẶC XEM THÊM
-            if (!_isAiResultMode &&
-                (_isSearchMode || _primaryTab != 'discover') &&
-                (_totalPages > 1 || _currentPage > 1))
-              _buildPaginationBar(),
-            if (!_isAiResultMode &&
-                !_isSearchMode &&
-                _primaryTab == 'discover')
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                decoration: const BoxDecoration(
-                  color: AppColors.darkSurface,
-                  border: Border(top: BorderSide(color: AppColors.cardBorder)),
-                ),
-                child: SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: _isLoading ? null : _loadNextDiscoverBatch,
-                    icon: const Icon(Icons.auto_awesome_rounded, size: 18),
-                    label: Text(
-                      _discoverScope == 'all'
-                          ? 'Tải thêm đề xuất mới từ Hồng Quả'
-                          : 'Tải thêm ${HongguoGenreKind.fromAny(_discoverScope).label} mới',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13,
-                      ),
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor:
-                          AppColors.primaryEmerald.withValues(alpha: 0.15),
-                      foregroundColor: AppColors.primaryEmerald,
-                      side: const BorderSide(color: AppColors.primaryEmerald),
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      elevation: 0,
-                    ),
-                  ),
-                ),
-              ),
+            // 5. THANH DƯỚI CÙNG (TẢI THÊM ĐỀ XUẤT THU GỌN / PHÂN TRANG + DỊCH TIÊU ĐỀ)
+            _buildBottomActionBar(),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildHeaderSection() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 8, 8, 6),
+      color: AppColors.darkSurface,
+      child: Row(
+        children: [
+          // Ảnh đại diện đăng nhập bên trái (giống tab Bilibili)
+          ValueListenableBuilder<HongguoCloudAccountState>(
+            valueListenable: HongguoCloudAccountService.instance.state,
+            builder: (ctx, cloudState, _) {
+              final avatarUrl =
+                  (cloudState.profile?.avatarUrl ?? '').isNotEmpty
+                      ? cloudState.profile!.avatarUrl
+                      : (cloudState.credentials?.avatarUrl ?? '');
+              final isLoggedIn = cloudState.isLoggedIn;
+              final displayName = cloudState.profile?.userName ??
+                  cloudState.credentials?.userName ??
+                  'Đã đăng nhập';
+              return Tooltip(
+                message: isLoggedIn
+                    ? 'Tài khoản Hồng Quả ($displayName)'
+                    : 'Đăng nhập Tài khoản Hồng Quả',
+                child: InkWell(
+                  onTap: () {
+                    HapticFeedback.lightImpact();
+                    HongguoAccountSheet.show(
+                      context,
+                      onOpenSeries: (
+                        seriesId, {
+                        int episodeIndex = 1,
+                        int positionMs = 0,
+                      }) {
+                        _openDramaDetail(
+                          HongguoDramaItem(
+                            seriesId: seriesId,
+                            title: '',
+                            cover: '',
+                            episodeCount: 0,
+                          ),
+                        );
+                      },
+                    );
+                  },
+                  borderRadius: BorderRadius.circular(20),
+                  child: Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: AppColors.darkSurfaceVariant,
+                          border: Border.all(
+                            color: isLoggedIn
+                                ? AppColors.primaryEmerald
+                                : Colors.white24,
+                            width: 1.5,
+                          ),
+                        ),
+                        clipBehavior: Clip.antiAlias,
+                        child: avatarUrl.isNotEmpty
+                            ? Image.network(
+                                avatarUrl,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, _, _) => Icon(
+                                  Icons.account_circle_rounded,
+                                  color: isLoggedIn
+                                      ? AppColors.primaryEmerald
+                                      : Colors.white70,
+                                  size: 32,
+                                ),
+                              )
+                            : Icon(
+                                Icons.account_circle_rounded,
+                                color: isLoggedIn
+                                    ? AppColors.primaryEmerald
+                                    : Colors.white70,
+                                size: 32,
+                              ),
+                      ),
+                      if (isLoggedIn)
+                        Positioned(
+                          right: -1,
+                          bottom: -1,
+                          child: Container(
+                            width: 10,
+                            height: 10,
+                            decoration: BoxDecoration(
+                              color: AppColors.primaryEmerald,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: AppColors.darkSurface,
+                                width: 1.5,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+          const SizedBox(width: 8),
+
+          // Thanh tìm kiếm bo tròn bên cạnh avatar (giống tab Bilibili)
+          Expanded(
+            child: Container(
+              height: 38,
+              decoration: BoxDecoration(
+                color: AppColors.darkSurfaceVariant,
+                borderRadius: BorderRadius.circular(19),
+                border: Border.all(color: AppColors.cardBorder),
+              ),
+              child: Row(
+                children: [
+                  const SizedBox(width: 10),
+                  GestureDetector(
+                    onTap: () => _performSearch(),
+                    child: const Icon(
+                      Icons.search_rounded,
+                      color: AppColors.textSecondary,
+                      size: 18,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: TextField(
+                      controller: _searchController,
+                      textInputAction: TextInputAction.search,
+                      onChanged: (_) => setState(() {}),
+                      onSubmitted: _performSearch,
+                      style: const TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 13,
+                      ),
+                      decoration: const InputDecoration(
+                        hintText: 'Tìm phim hoặc dán link...',
+                        hintStyle: TextStyle(
+                          color: AppColors.textMuted,
+                          fontSize: 12.5,
+                        ),
+                        border: InputBorder.none,
+                        isDense: true,
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                    ),
+                  ),
+                  if (_searchController.text.isNotEmpty) ...[
+                    IconButton(
+                      visualDensity: VisualDensity.compact,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: 28,
+                        minHeight: 28,
+                      ),
+                      icon: const Icon(
+                        Icons.close_rounded,
+                        size: 16,
+                        color: AppColors.textMuted,
+                      ),
+                      onPressed: () {
+                        _searchController.clear();
+                        _loadDramas();
+                      },
+                    ),
+                    InkWell(
+                      onTap: () => _performSearch(),
+                      borderRadius: BorderRadius.circular(15),
+                      child: Container(
+                        margin: const EdgeInsets.only(right: 4),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 5,
+                        ),
+                        decoration: BoxDecoration(
+                          color: AppColors.primaryEmerald,
+                          borderRadius: BorderRadius.circular(15),
+                        ),
+                        child: const Text(
+                          'Tìm',
+                          style: TextStyle(
+                            color: Colors.black,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 11.5,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.only(right: 4),
+                    constraints: const BoxConstraints(
+                      minWidth: 32,
+                      minHeight: 32,
+                    ),
+                    icon: const Icon(
+                      Icons.paste_rounded,
+                      size: 17,
+                      color: AppColors.primaryEmerald,
+                    ),
+                    tooltip: 'Dán link từ Clipboard',
+                    onPressed: _pasteFromClipboard,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 2),
+
+          // Nút Feed ở trên cùng cạnh nút Cài đặt
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+            icon: const Icon(
+              Icons.swipe_vertical_rounded,
+              color: Colors.amberAccent,
+              size: 21,
+            ),
+            tooltip: 'Lướt Shorts Khám Phá (Xem thử siêu tốc)',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (ctx) => const HongguoFeedScreen(),
+                ),
+              );
+            },
+          ),
+
+          // Nút Cài đặt bên phải
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+            icon: const Icon(
+              Icons.settings_rounded,
+              color: AppColors.textSecondary,
+              size: 21,
+            ),
+            tooltip: 'Cài đặt tự chuyển tập & dịch ngầm',
+            onPressed: _showHongguoSettingsSheet,
+          ),
+        ],
       ),
     );
   }
@@ -1826,9 +1807,19 @@ class _HongguoScreenState extends State<HongguoScreen> {
     );
   }
 
-  Widget _buildPaginationBar() {
+  Widget _buildBottomActionBar() {
+    final showPagination = !_isAiResultMode &&
+        (_isSearchMode || _primaryTab != 'discover') &&
+        (_totalPages > 1 || _currentPage > 1);
+    final showDiscoverLoadMore =
+        !_isAiResultMode && !_isSearchMode && _primaryTab == 'discover';
+
+    if (showPagination) {
+      return _buildPaginationBar();
+    }
+
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: const BoxDecoration(
         color: AppColors.darkSurface,
         border: Border(top: BorderSide(color: AppColors.cardBorder)),
@@ -1836,9 +1827,113 @@ class _HongguoScreenState extends State<HongguoScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
+          if (showDiscoverLoadMore) ...[
+            Flexible(
+              child: ElevatedButton.icon(
+                onPressed: _isLoading ? null : _loadNextDiscoverBatch,
+                icon: const Icon(Icons.auto_awesome_rounded, size: 15),
+                label: Text(
+                  _discoverScope == 'all'
+                      ? 'Tải thêm đề xuất'
+                      : 'Thêm ${HongguoGenreKind.fromAny(_discoverScope).label}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12,
+                  ),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor:
+                      AppColors.primaryEmerald.withValues(alpha: 0.14),
+                  foregroundColor: AppColors.primaryEmerald,
+                  side: BorderSide(
+                    color: AppColors.primaryEmerald.withValues(alpha: 0.7),
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 7,
+                  ),
+                  minimumSize: const Size(0, 34),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  elevation: 0,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+          ] else
+            const Spacer(),
+          _buildTranslateToggleButton(compact: false),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTranslateToggleButton({required bool compact}) {
+    final enabled = _isTranslationEnabled;
+    final color = enabled ? AppColors.primaryEmerald : AppColors.textMuted;
+    return Tooltip(
+      message: enabled
+          ? 'Tắt dịch tiếng Việt'
+          : 'Bật dịch tiếng Việt (Tên & Giới thiệu)',
+      child: InkWell(
+        onTap: _toggleTranslation,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          height: 34,
+          padding: EdgeInsets.symmetric(horizontal: compact ? 9 : 11),
+          decoration: BoxDecoration(
+            color: enabled
+                ? AppColors.primaryEmerald.withValues(alpha: 0.14)
+                : AppColors.darkSurfaceVariant,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: enabled
+                  ? AppColors.primaryEmerald.withValues(alpha: 0.55)
+                  : AppColors.cardBorder,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                enabled ? Icons.translate_rounded : Icons.translate_outlined,
+                color: color,
+                size: 16,
+              ),
+              if (!compact) ...[
+                const SizedBox(width: 6),
+                Text(
+                  enabled ? 'Dịch: BẬT' : 'Dịch: TẮT',
+                  style: TextStyle(
+                    color: enabled ? AppColors.primaryEmerald : AppColors.textSecondary,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPaginationBar() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: const BoxDecoration(
+        color: AppColors.darkSurface,
+        border: Border(top: BorderSide(color: AppColors.cardBorder)),
+      ),
+      child: Row(
+        children: [
           OutlinedButton.icon(
             icon: const Icon(Icons.arrow_back_ios_rounded, size: 12),
-            label: const Text('Trang trước'),
+            label: const Text('Trước', style: TextStyle(fontSize: 12)),
             style: OutlinedButton.styleFrom(
               foregroundColor: _currentPage > 1
                   ? AppColors.primaryEmerald
@@ -1848,30 +1943,36 @@ class _HongguoScreenState extends State<HongguoScreen> {
                     ? AppColors.primaryEmerald.withValues(alpha: 0.5)
                     : AppColors.cardBorder,
               ),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              minimumSize: const Size(0, 34),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
             onPressed:
                 _currentPage > 1 ? () => _goToPage(_currentPage - 1) : null,
           ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(
-              color: AppColors.darkSurfaceVariant,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: AppColors.cardBorder),
-            ),
-            child: Text(
-              'Trang $_currentPage / $_totalPages',
-              style: const TextStyle(
-                color: AppColors.textPrimary,
-                fontSize: 12.5,
-                fontWeight: FontWeight.w600,
+          const SizedBox(width: 6),
+          Expanded(
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: AppColors.darkSurfaceVariant,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppColors.cardBorder),
+                ),
+                child: Text(
+                  '$_currentPage / $_totalPages',
+                  style: const TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ),
             ),
           ),
-          OutlinedButton.icon(
-            icon: const Icon(Icons.arrow_forward_ios_rounded, size: 12),
-            label: const Text('Trang sau'),
+          const SizedBox(width: 6),
+          OutlinedButton(
             style: OutlinedButton.styleFrom(
               foregroundColor: _currentPage < _totalPages
                   ? AppColors.primaryEmerald
@@ -1881,12 +1982,24 @@ class _HongguoScreenState extends State<HongguoScreen> {
                     ? AppColors.primaryEmerald.withValues(alpha: 0.5)
                     : AppColors.cardBorder,
               ),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              minimumSize: const Size(0, 34),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
             onPressed: _currentPage < _totalPages
                 ? () => _goToPage(_currentPage + 1)
                 : null,
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('Sau', style: TextStyle(fontSize: 12)),
+                SizedBox(width: 4),
+                Icon(Icons.arrow_forward_ios_rounded, size: 12),
+              ],
+            ),
           ),
+          const SizedBox(width: 8),
+          _buildTranslateToggleButton(compact: true),
         ],
       ),
     );

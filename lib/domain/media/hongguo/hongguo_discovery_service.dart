@@ -440,7 +440,13 @@ class HongguoDiscoverySelection {
   );
 
   /// Tạo payload JSON gửi cho `/reading/distribution/category/landpage/v/`.
-  Map<String, dynamic> toRequestBody({HongguoDiscoveryCursor? cursor, Set<String>? filterIds}) {
+  /// Khi [useDefaultFeedSort] = true (dùng cho Feed `Mạn kịch` / `Người thật`),
+  /// giữ `sort: []` giống `RecommendationFeed.kt` để lấy luồng đề xuất tự nhiên của kênh.
+  Map<String, dynamic> toRequestBody({
+    HongguoDiscoveryCursor? cursor,
+    Set<String>? filterIds,
+    bool useDefaultFeedSort = false,
+  }) {
     final selectItems = <String, dynamic>{
       'genre': <String>[genreKind.id],
     };
@@ -451,7 +457,9 @@ class HongguoDiscoverySelection {
       }
       final val = filters[type];
       if (type == 'sort' && (val == null || val.isEmpty)) {
-        selectItems[type] = const <String>['hot_score'];
+        selectItems[type] = useDefaultFeedSort
+            ? const <String>[]
+            : const <String>['hot_score'];
       } else {
         selectItems[type] = (val != null && val.isNotEmpty)
             ? <String>[val]
@@ -1217,10 +1225,15 @@ class HongguoDiscoveryService {
     HongguoDiscoverySelection selection, {
     HongguoDiscoveryCursor? cursor,
     Set<String>? seenIds,
+    bool useDefaultFeedSort = false,
   }) async {
     final creds = HongguoCloudAccountService.instance.state.value.credentials;
     final cachedDevice = await _safeGetDevice();
-    final bodyObj = selection.toRequestBody(cursor: cursor, filterIds: seenIds);
+    final bodyObj = selection.toRequestBody(
+      cursor: cursor,
+      filterIds: seenIds,
+      useDefaultFeedSort: useDefaultFeedSort,
+    );
 
     final baseParams = _baseAppParams(
       versionCode: '73532',
@@ -1239,12 +1252,12 @@ class HongguoDiscoveryService {
         deviceId: cachedDevice?.deviceId,
         installId: cachedDevice?.installId,
         includeHelios: true,
+        userAgentOverride:
+            HongguoV5Constants.appUa.replaceAll('72232', '73532'),
       );
 
       final headers = <String, String>{
         ...signed.headers,
-        'User-Agent': HongguoV5Constants.appUa.replaceAll('72232', '73532'),
-        'Content-Type': 'application/json; charset=utf-8',
         'Accept': 'application/json',
         'Accept-Language': 'zh-CN,zh;q=0.9',
         'X-XS-From-Web': '0',
@@ -1488,7 +1501,7 @@ class HongguoDiscoveryService {
         'Sdk-Version': '2',
         'Accept-Language': 'zh-CN,zh;q=0.9',
       };
-      if (useCookie) {
+      if (useCookie && !activeCursor.unsignedFallback) {
         headers['Cookie'] = creds.cookie;
       }
 

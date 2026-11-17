@@ -13,6 +13,7 @@ import '../../player/global_player_manager.dart';
 import '../../data/model/watch_later_item.dart';
 import '../../data/repository/watch_later_repository.dart';
 import '../theme/app_theme.dart';
+import 'bilibili_account_sheet.dart';
 import 'bilibili_assistant_controller.dart';
 import 'bilibili_assistant_sheet.dart';
 import 'bilibili_settings_sheet.dart';
@@ -405,7 +406,10 @@ class _BilibiliScreenState extends State<BilibiliScreen>
   }
 
   // =================== PLAY VIDEO ===================
-  Future<void> _playVideo(BilibiliAnimeItem item) async {
+  Future<void> _playVideo(
+    BilibiliAnimeItem item, {
+    int overrideInitialPositionMs = 0,
+  }) async {
     final playUrl = item.targetPlayUrl;
     if (playUrl.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -414,7 +418,7 @@ class _BilibiliScreenState extends State<BilibiliScreen>
       return;
     }
 
-    int initialPositionMs = 0;
+    int initialPositionMs = overrideInitialPositionMs;
     try {
       final repo = await HistoryRepository.getInstance();
       final historyItem = repo.getHistory().where((h) {
@@ -427,7 +431,9 @@ class _BilibiliScreenState extends State<BilibiliScreen>
       }).firstOrNull;
       if (historyItem != null && historyItem.lastPositionMs > 0) {
         if (historyItem.durationMs <= 0 || historyItem.lastPositionMs < historyItem.durationMs * 0.95) {
-          initialPositionMs = historyItem.lastPositionMs;
+          if (historyItem.lastPositionMs > initialPositionMs) {
+            initialPositionMs = historyItem.lastPositionMs;
+          }
         }
       }
     } catch (_) {}
@@ -758,64 +764,84 @@ class _BilibiliScreenState extends State<BilibiliScreen>
     );
   }
 
+  Future<void> _refreshAccountFromStorage() async {
+    final settings = await SettingsRepository.getInstance();
+    if (!mounted) return;
+    final cookie = settings.bilibiliSessData;
+    setState(() {
+      _bilibiliCookie = cookie;
+      if (cookie.isEmpty) {
+        _userProfile = null;
+      }
+    });
+    _assistantController.updateCookie(cookie);
+    if (cookie.isNotEmpty) {
+      _fetchProfile(cookie);
+    }
+  }
+
   // =================== HEADER SECTION ===================
   Widget _buildHeaderSection() {
     final avatar = _userProfile?.avatar ?? '';
     final isLogin = _userProfile?.isLogin ?? false;
 
     return Container(
-      padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
+      padding: const EdgeInsets.fromLTRB(12, 10, 8, 6),
       color: const Color(0xFF17181F),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              // User Avatar on Left (tap -> opens Bilibili settings/login)
-              InkWell(
-                onTap: () async {
-                  await BilibiliSettingsSheet.show(context);
-                  final settings = await SettingsRepository.getInstance();
-                  if (mounted) {
-                    setState(() {
-                      _bilibiliCookie = settings.bilibiliSessData;
-                    });
-                    _assistantController.updateCookie(_bilibiliCookie);
-                    if (_bilibiliCookie.isNotEmpty) {
-                      _fetchProfile(_bilibiliCookie);
-                    }
-                  }
-                },
-                borderRadius: BorderRadius.circular(20),
-                child: Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: isLogin ? const Color(0xFFFB7299) : Colors.white24,
-                      width: 1.5,
+              // User Avatar on Left (tap -> opens Bilibili account & synced history)
+              Tooltip(
+                message: isLogin
+                    ? 'Tài khoản Bilibili (${_userProfile?.uname ?? "Đã đăng nhập"})'
+                    : 'Đăng nhập & Lịch sử Bilibili',
+                child: InkWell(
+                  onTap: () async {
+                    await BilibiliAccountSheet.show(
+                      context,
+                      translateTitles: _isTranslateEnabled,
+                      onAccountChanged: () => unawaited(_refreshAccountFromStorage()),
+                      onOpenVideo: (entry) => _playVideo(
+                        entry.item,
+                        overrideInitialPositionMs: entry.resumePositionMs,
+                      ),
+                    );
+                    await _refreshAccountFromStorage();
+                  },
+                  borderRadius: BorderRadius.circular(20),
+                  child: Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: isLogin ? const Color(0xFFFB7299) : Colors.white24,
+                        width: 1.5,
+                      ),
                     ),
-                  ),
-                  clipBehavior: Clip.antiAlias,
-                  child: avatar.isNotEmpty
-                      ? Image.network(
-                          avatar,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, _, _) => const Icon(
+                    clipBehavior: Clip.antiAlias,
+                    child: avatar.isNotEmpty
+                        ? Image.network(
+                            avatar,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, _, _) => const Icon(
+                              Icons.account_circle_rounded,
+                              color: Colors.white70,
+                              size: 32,
+                            ),
+                          )
+                        : const Icon(
                             Icons.account_circle_rounded,
                             color: Colors.white70,
                             size: 32,
                           ),
-                        )
-                      : const Icon(
-                          Icons.account_circle_rounded,
-                          color: Colors.white70,
-                          size: 32,
-                        ),
+                  ),
                 ),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 8),
 
               // Rounded Search Pill (matching screenshot Q 重生回到高中时代)
               Expanded(
@@ -881,54 +907,31 @@ class _BilibiliScreenState extends State<BilibiliScreen>
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
-
-              // Bilibili AI Assistant shortcut button
-              AnimatedBuilder(
-                animation: _assistantController,
-                builder: (context, _) {
-                  final connected = _assistantController.connectionState ==
-                      AssistantConnectionState.ready;
-                  return IconButton(
-                    onPressed: _openAssistantSheet,
-                    tooltip: 'Trợ lý AI Bilibili',
-                    icon: Stack(
-                      clipBehavior: Clip.none,
-                      children: [
-                        Icon(
-                          Icons.auto_awesome_rounded,
-                          color: connected
-                              ? const Color(0xFF00AEEC)
-                              : Colors.white70,
-                          size: 22,
-                        ),
-                        if (connected)
-                          Positioned(
-                            right: -2,
-                            top: -2,
-                            child: Container(
-                              width: 7,
-                              height: 7,
-                              decoration: const BoxDecoration(
-                                color: AppColors.primaryEmerald,
-                                shape: BoxShape.circle,
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-                  );
-                },
-              ),
+              const SizedBox(width: 2),
 
               // Translation toggle button
               IconButton(
                 onPressed: _toggleTranslateEnabled,
+                visualDensity: VisualDensity.compact,
+                constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                 tooltip: _isTranslateEnabled ? 'Dịch tiêu đề: Đang BẬT' : 'Dịch tiêu đề: Đang TẮT',
                 icon: Icon(
                   _isTranslateEnabled ? Icons.translate_rounded : Icons.translate_outlined,
                   color: _isTranslateEnabled ? const Color(0xFFFB7299) : Colors.white54,
-                  size: 22,
+                  size: 21,
+                ),
+              ),
+
+              // Dedicated Settings button on right (separated from Account)
+              IconButton(
+                onPressed: () => BilibiliSettingsSheet.show(context),
+                visualDensity: VisualDensity.compact,
+                constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                tooltip: 'Cài đặt Bilibili',
+                icon: const Icon(
+                  Icons.settings_rounded,
+                  color: Colors.white70,
+                  size: 21,
                 ),
               ),
             ],

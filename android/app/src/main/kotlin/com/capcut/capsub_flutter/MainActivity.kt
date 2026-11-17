@@ -1308,16 +1308,24 @@ class MainActivity : FlutterActivity() {
                 var packet: PcmPacket? = null
                 synchronized(queueLock) {
                     while (!disposed && (paused || queue.isEmpty())) {
-                        if (!paused && queue.isEmpty() && reportedPlaying) {
-                            val remaining = estimateRemainingBufferedFrames()
-                            if (remaining <= 0L) {
-                                updatePlayingStateLocked(forcePlaying = false)
-                                queueLock.wait()
+                        try {
+                            if (!paused && queue.isEmpty() && reportedPlaying) {
+                                val remaining = estimateRemainingBufferedFrames()
+                                if (remaining <= 0L) {
+                                    updatePlayingStateLocked(forcePlaying = false)
+                                    queueLock.wait()
+                                } else {
+                                    queueLock.wait(80L)
+                                }
                             } else {
-                                queueLock.wait(80L)
+                                queueLock.wait()
                             }
-                        } else {
-                            queueLock.wait()
+                        } catch (_: InterruptedException) {
+                            if (disposed) {
+                                return
+                            }
+                            Thread.currentThread().interrupt()
+                            break
                         }
                     }
                     if (!disposed && queue.isNotEmpty() && !paused) {

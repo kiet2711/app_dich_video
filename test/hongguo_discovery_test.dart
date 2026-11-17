@@ -1,7 +1,11 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:capsub_flutter/data/model/watch_later_item.dart';
+import 'package:capsub_flutter/data/repository/watch_later_repository.dart';
+import 'package:capsub_flutter/domain/media/hongguo/hongguo_cloud_account_service.dart';
 import 'package:capsub_flutter/domain/media/hongguo/hongguo_discovery_service.dart';
 import 'package:capsub_flutter/domain/media/hongguo/hongguo_similar_engine.dart';
 import 'package:capsub_flutter/domain/media/hongguo_resolver.dart';
@@ -29,6 +33,7 @@ class _FakeDiscoveryService extends HongguoDiscoveryService {
     HongguoDiscoveryCursor? cursor,
     Set<String>? seenIds,
     bool forceRefresh = false,
+    bool useDefaultFeedSort = false,
   }) async {
     recordedSelections.add(selection);
     final items = discoveryItemsByGenre[selection.genreKind.id] ?? const [];
@@ -552,6 +557,73 @@ void main() {
         'cate_4',
       );
       expect(fakeDiscovery.recordedSelections.first.valueOf('gender'), '0');
+    });
+
+    test('Feed channel request uses default empty sort while library uses hot_score', () {
+      const comicSel = HongguoDiscoverySelection(
+        genreKind: HongguoGenreKind.comicSeries,
+      );
+      final feedBody = comicSel.toRequestBody(useDefaultFeedSort: true);
+      expect(feedBody['req_scene'], 'comic_series');
+      expect((feedBody['select_items'] as Map)['sort'], isEmpty);
+
+      final libraryBody = comicSel.toRequestBody(useDefaultFeedSort: false);
+      expect((libraryBody['select_items'] as Map)['sort'], ['hot_score']);
+
+      const realSel = HongguoDiscoverySelection(
+        genreKind: HongguoGenreKind.realPlay,
+      );
+      final realFeedBody = realSel.toRequestBody(useDefaultFeedSort: true);
+      expect(realFeedBody['req_scene'], 'default');
+      expect((realFeedBody['select_items'] as Map)['genre'], ['short_play']);
+      expect((realFeedBody['select_items'] as Map)['sort'], isEmpty);
+    });
+
+    test('getFollowFeedList merges Hongguo watch-later seeds and related recommendations', () async {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      HongguoCloudAccountService.instance.resetForTesting();
+
+      final repo = await WatchLaterRepository.getInstance();
+      await repo.addItem(
+        const WatchLaterItem(
+          id: 'hg_777001',
+          title: 'Bộ đang theo dõi',
+          source: 'hongguo',
+          targetUrl: '777001',
+          seriesId: '777001',
+          totalEpisodes: 50,
+          addedAt: 1000,
+        ),
+      );
+      await repo.addItem(
+        const WatchLaterItem(
+          id: 'bili_BV1xx',
+          title: 'Bilibili ignore',
+          source: 'bilibili',
+          targetUrl: 'https://www.bilibili.com/video/BV1xx',
+          addedAt: 2000,
+        ),
+      );
+
+      final fakeDiscovery = _FakeDiscoveryService();
+      HongguoSimilarEngine.instance.setDiscoveryServiceForTest(fakeDiscovery);
+      fakeDiscovery.relatedResult = const HongguoRelatedBundle(
+        similarDramas: [
+          HongguoDramaItem(
+            seriesId: '888001',
+            title: 'Liên quan theo dõi',
+            cover: '',
+            episodeCount: 60,
+          ),
+        ],
+      );
+
+      final followRes = await HongguoSimilarEngine.instance.getFollowFeedList();
+      final ids = followRes.items.map((e) => e.seriesId).toList();
+      expect(followRes.directFollowCount, 1);
+      expect(ids, containsAll(['777001', '888001']));
+      expect(ids, isNot(contains('bili_BV1xx')));
     });
   });
 }

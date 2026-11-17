@@ -4,7 +4,9 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../data/repository/watch_later_repository.dart';
 import '../hongguo_resolver.dart';
+import 'hongguo_cloud_account_service.dart';
 import 'hongguo_discovery_service.dart';
 
 /// Model đại diện cho một Tag / Thể loại phim Hồng Quả
@@ -49,6 +51,19 @@ class SimilarBundleResult {
   const SimilarBundleResult({
     this.seasons = const <HongguoRelatedSeasonItem>[],
     this.similar = const <SimilarDramaResult>[],
+  });
+}
+
+/// Kết quả feed tab Quan tâm (kèm số lượng phim trực tiếp từ tủ theo dõi/yêu thích).
+class HongguoFollowFeedResult {
+  final List<HongguoDramaItem> items;
+  final int directFollowCount;
+  final bool isCloudLoggedIn;
+
+  const HongguoFollowFeedResult({
+    this.items = const <HongguoDramaItem>[],
+    this.directFollowCount = 0,
+    this.isCloudLoggedIn = false,
   });
 }
 
@@ -482,6 +497,123 @@ class HongguoSimilarEngine {
     }
 
     return result;
+  }
+
+  /// Lấy luồng phim cho tab Quan tâm (`关注`):
+  /// 1. Tổng hợp phim Yêu thích Cloud, Đặt trước đã lên sóng và Tủ Xem sau Hồng Quả.
+  /// 2. Mở rộng tiếp bằng đề xuất liên quan chính thức (`/reading/bookapi/plan/v:version/`)
+  ///    từ chính các phim đang theo dõi; bổ sung Đề xuất cá nhân hóa khi danh sách ít.
+  Future<HongguoFollowFeedResult> getFollowFeedList({
+    Set<String>? excludedSeriesIds,
+    int seedOffset = 0,
+  }) async {
+    final excluded = <String>{...?excludedSeriesIds};
+    final result = <HongguoDramaItem>[];
+    final localSeen = <String>{...excluded};
+    final seedIds = <String>[];
+    final numericId = RegExp(r'^[0-9]{1,30}$');
+
+    final cloud = HongguoCloudAccountService.instance;
+    final isLoggedIn = cloud.state.value.isLoggedIn;
+    if (isLoggedIn && cloud.state.value.favorites.isEmpty) {
+      try {
+        await cloud.refreshFavorites();
+      } catch (_) {}
+    }
+
+    final state = cloud.state.value;
+    void collectSeed(String id, HongguoDramaItem item) {
+      if (!numericId.hasMatch(id)) return;
+      if (!seedIds.contains(id)) seedIds.add(id);
+      if (localSeen.add(id)) {
+        result.add(item);
+      }
+    }
+
+    for (final fav in state.favorites) {
+      collectSeed(
+        fav.seriesId,
+        HongguoDramaItem(
+          seriesId: fav.seriesId,
+          title: fav.title,
+          cover: fav.cover,
+          episodeCount: fav.totalEpisodes,
+          intro: fav.badge,
+        ),
+      );
+    }
+
+    for (final res in state.onlineReservations) {
+      collectSeed(
+        res.seriesId,
+        HongguoDramaItem(
+          seriesId: res.seriesId,
+          title: res.title,
+          cover: res.cover,
+          episodeCount: 0,
+          intro: res.badge,
+        ),
+      );
+    }
+
+    try {
+      final repo = await WatchLaterRepository.getInstance();
+      for (final wl in repo.getItems()) {
+        if (!wl.isHongguo) continue;
+        final sid = (wl.seriesId?.trim().isNotEmpty == true
+                ? wl.seriesId!
+                : wl.targetUrl)
+            .replaceAll(RegExp(r'^hg_'), '')
+            .trim();
+        collectSeed(
+          sid,
+          HongguoDramaItem(
+            seriesId: sid,
+            title: wl.displayTitle,
+            cover: wl.coverUrl ?? '',
+            episodeCount: wl.totalEpisodes ?? 0,
+          ),
+        );
+      }
+    } catch (_) {}
+
+    final directCount = result.length;
+
+    // Mở rộng thêm phim tương tự sát gu từ chính các bộ người dùng đã theo dõi.
+    if (seedIds.isNotEmpty) {
+      final count = min(3, seedIds.length);
+      for (var i = 0; i < count; i++) {
+        final seed = seedIds[(seedOffset + i) % seedIds.length];
+        try {
+          final bundle = await _discovery.fetchRelatedAndSimilar(seed);
+          for (final related in bundle.similarDramas) {
+            if (localSeen.add(related.seriesId)) {
+              result.add(related);
+            }
+          }
+        } catch (_) {}
+      }
+    }
+
+    // Fallback nhẹ nếu user chưa theo dõi đủ phim để lướt liên tục không bị trống.
+    if (result.length < 10) {
+      try {
+        final extra = await getPersonalizedDiscoverList(
+          excludedSeriesIds: localSeen,
+        );
+        for (final item in extra) {
+          if (localSeen.add(item.seriesId)) {
+            result.add(item);
+          }
+        }
+      } catch (_) {}
+    }
+
+    return HongguoFollowFeedResult(
+      items: result,
+      directFollowCount: directCount,
+      isCloudLoggedIn: isLoggedIn,
+    );
   }
 
   static HongguoGenreKind _inferPreferredKindFromTags(List<String> tags) {

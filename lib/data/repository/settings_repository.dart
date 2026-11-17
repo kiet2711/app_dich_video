@@ -364,9 +364,17 @@ class SettingsRepository {
   set hongguoPreTranslateMode(String v) =>
       prefs.setString('hongguo_pre_translate_mode', v);
 
-  /// Lưu Tab hiện tại của màn hình Lướt Hồng Quả: 'trending', 'discover', 'genre'
-  String get hongguoFeedTab =>
-      prefs.getString('hongguo_feed_tab') ?? 'discover';
+  /// Lưu Tab hiện tại của màn hình Lướt Hồng Quả: 'follow', 'comic', 'real', 'discover'
+  String get hongguoFeedTab {
+    final stored = prefs.getString('hongguo_feed_tab') ?? 'discover';
+    if (stored == 'follow' ||
+        stored == 'comic' ||
+        stored == 'real' ||
+        stored == 'discover') {
+      return stored;
+    }
+    return 'discover';
+  }
   set hongguoFeedTab(String v) =>
       prefs.setString('hongguo_feed_tab', v);
 

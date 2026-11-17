@@ -31,7 +31,6 @@ import '../../../domain/media/hongguo/hongguo_remote_video.dart';
 import '../../../domain/media/hongguo/hongguo_similar_engine.dart';
 import '../../../domain/media/hongguo/hongguo_stream_proxy_server.dart';
 import '../hongguo_account_sheet.dart';
-import '../hongguo_discovery_filter_sheet.dart';
 import '../hongguo_related_sheet.dart';
 import '../../../domain/media/hongguo_resolver.dart';
 import '../../../domain/media/multi_thread_downloader.dart';
@@ -126,34 +125,38 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
   List<FeedDramaPageItem> _savedDiscoverItems = [];
   int _savedDiscoverIndex = 0;
 
-  // Quản lý các Tab khám phá: 'trending' (Thịnh hành) | 'discover' (Đề xuất cá nhân hoá) | 'genre' (Bộ lọc đa chiều)
-  String _currentFeedTab = 'discover';
-  HongguoDiscoverySelection _genreSelection = const HongguoDiscoverySelection();
-  HongguoDiscoveryCursor? _genreCursor;
-  String _selectedGenreLabel = 'Người thật';
-  int _trendingPage = 1;
+  // Quản lý 4 Tab khám phá giống app Hồng Quả gốc:
+  // 'follow' (Quan tâm) | 'comic' (Mạn kịch) | 'real' (Người thật) | 'discover' (Đề xuất)
+  static const String _tabFollow = 'follow';
+  static const String _tabComic = 'comic';
+  static const String _tabReal = 'real';
+  static const String _tabDiscover = 'discover';
+
+  String _currentFeedTab = _tabDiscover;
+  HongguoDiscoveryCursor? _comicCursor;
+  HongguoDiscoveryCursor? _realCursor;
+  HongguoDiscoverySelection? _comicSelectionOverride;
+  HongguoDiscoverySelection? _realSelectionOverride;
+  int _followSeedOffset = 0;
 
   void _saveFeedPreferences() {
     if (_settings == null || _isDramaEpisodeMode) return;
     _settings!.hongguoFeedTab = _currentFeedTab;
-    _settings!.hongguoFeedDiscoveryJson = _genreSelection.toJsonString();
-    _settings!.hongguoFeedCategory = _genreSelection.genreKind.categorySlug;
-    _settings!.hongguoFeedGenreLabel = _selectedGenreLabel;
-    _settings!.hongguoFeedZhTag =
-        _genreSelection.tagHint.isNotEmpty ? _genreSelection.tagHint : '全部';
   }
 
   // Lưu vị trí video đang xem của từng tab để khôi phục mượt mà như TikTok
   final Map<String, int> _tabCurrentIndices = {
-    'trending': 0,
-    'discover': 0,
-    'genre': 0,
+    _tabFollow: 0,
+    _tabComic: 0,
+    _tabReal: 0,
+    _tabDiscover: 0,
   };
 
   // Cache danh sách cho từng tab để chuyển qua lại mượt mà không phải tải lại
-  final List<FeedDramaPageItem> _trendingFeedItems = [];
+  final List<FeedDramaPageItem> _followFeedItems = [];
+  final List<FeedDramaPageItem> _comicFeedItems = [];
+  final List<FeedDramaPageItem> _realFeedItems = [];
   final List<FeedDramaPageItem> _discoverFeedItems = [];
-  final List<FeedDramaPageItem> _genreFeedItems = [];
 
   // Hai player luân phiên: player hiện tại phát, player dự phòng mở sẵn trang kế.
   // Mỗi trang có texture riêng nên kéo giữ giữa hai trang không phải đổi media
@@ -353,36 +356,6 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       _preTranslateMode = settings.hongguoPreTranslateMode;
       if (settings.subtitleOffsetY == 0.0) {
         settings.subtitleOffsetY = 90.0;
-      }
-
-      if (!_isDramaEpisodeMode) {
-        if (settings.hongguoFeedDiscoveryJson.isNotEmpty) {
-          _genreSelection = HongguoDiscoverySelection.fromJsonString(
-            settings.hongguoFeedDiscoveryJson,
-          );
-          _selectedGenreLabel = _genreSelection.buildSummaryLabel(
-            HongguoDiscoveryService.instance.getSelectorGroups(
-              _genreSelection.genreKind,
-            ),
-          );
-        } else {
-          final fallbackKind = HongguoGenreKind.fromAny(
-            settings.hongguoFeedCategory,
-          );
-          _genreSelection =
-              settings.hongguoFeedZhTag.isNotEmpty &&
-                  settings.hongguoFeedZhTag != '全部'
-              ? HongguoDiscoveryService.instance.resolveSelectionForTag(
-                  settings.hongguoFeedZhTag,
-                  preferredSourceCategory: fallbackKind.categorySlug,
-                )
-              : HongguoDiscoverySelection(genreKind: fallbackKind);
-          _selectedGenreLabel = _genreSelection.buildSummaryLabel(
-            HongguoDiscoveryService.instance.getSelectorGroups(
-              _genreSelection.genreKind,
-            ),
-          );
-        }
       }
     });
 
@@ -1706,59 +1679,95 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     }
   }
 
+  String _normalizeFeedTab(String key) {
+    return switch (key) {
+      _tabFollow || _tabComic || _tabReal || _tabDiscover => key,
+      _ => _tabDiscover,
+    };
+  }
+
+  String _feedTabLabel(String key) {
+    return switch (key) {
+      _tabFollow => 'Quan tâm',
+      _tabComic => 'Mạn kịch',
+      _tabReal => 'Người thật',
+      _ => 'Đề xuất',
+    };
+  }
+
+  List<FeedDramaPageItem> _cacheListForTab(String tabKey) {
+    return switch (tabKey) {
+      _tabFollow => _followFeedItems,
+      _tabComic => _comicFeedItems,
+      _tabReal => _realFeedItems,
+      _ => _discoverFeedItems,
+    };
+  }
+
+  Future<({List<HongguoDramaItem> items, HongguoDiscoveryCursor? nextCursor})>
+  _fetchChannelBatch(
+    HongguoGenreKind kind, {
+    HongguoDiscoveryCursor? cursor,
+    HongguoDiscoverySelection? overrideSelection,
+    Set<String> excludedIds = const <String>{},
+  }) async {
+    final selection =
+        overrideSelection ?? HongguoDiscoverySelection(genreKind: kind);
+    final useDefaultSort = overrideSelection == null;
+    final seenAll = <String>{
+      ...excludedIds,
+      ...?_settings?.hongguoSeenSeriesIds,
+    };
+    var page = await HongguoDiscoveryService.instance.fetchDiscovery(
+      selection,
+      cursor: cursor,
+      seenIds: seenAll,
+      useDefaultFeedSort: useDefaultSort,
+    );
+    if (page.items.isEmpty && cursor != null) {
+      page = await HongguoDiscoveryService.instance.fetchDiscovery(
+        selection,
+        seenIds: excludedIds,
+        useDefaultFeedSort: useDefaultSort,
+      );
+    }
+    return (items: page.items, nextCursor: page.nextCursor);
+  }
+
   Future<void> _loadMoreDiscoverDramas() async {
     if (_isLoadingMore) return;
     _isLoadingMore = true;
     final feedGeneration = _feedGeneration;
     final feedTab = _currentFeedTab;
     try {
+      final existingSids = _feedItems.map((e) => e.detail.seriesId).toSet();
       List<HongguoDramaItem> dramas = [];
-      if (_currentFeedTab == 'trending') {
-        _trendingPage++;
-        HongguoBrowseResult res;
-        if (_trendingPage <= 3) {
-          res = await _resolver.browseList(
-            category: 'rank/hot-drama',
-            page: _trendingPage,
-          );
-        } else if (_trendingPage <= 6) {
-          res = await _resolver.browseList(
-            category: 'rank/hot-real-drama',
-            page: _trendingPage - 3,
-          );
-        } else {
-          final pool = [
-            'category/real-drama',
-            'category/comic-drama',
-            'category/ai-drama',
-          ];
-          final cat = pool[(_trendingPage % pool.length)];
-          final p = ((_trendingPage - 6) % 20) + 1;
-          res = await _resolver.browseList(category: cat, page: p);
-        }
-        dramas = res.items;
-      } else if (_currentFeedTab == 'genre') {
-        final existingSids = _feedItems.map((e) => e.detail.seriesId).toSet();
-        final seenAll = <String>{
-          ...existingSids,
-          ...?_settings?.hongguoSeenSeriesIds,
-        };
-        var page = await HongguoDiscoveryService.instance.fetchDiscovery(
-          _genreSelection,
-          cursor: _genreCursor,
-          seenIds: seenAll,
+
+      if (feedTab == _tabFollow) {
+        final res = await HongguoSimilarEngine.instance.getFollowFeedList(
+          excludedSeriesIds: existingSids,
+          seedOffset: ++_followSeedOffset,
         );
-        if (page.items.isEmpty && _genreCursor != null) {
-          _genreCursor = null;
-          page = await HongguoDiscoveryService.instance.fetchDiscovery(
-            _genreSelection,
-            seenIds: existingSids,
-          );
-        }
-        _genreCursor = page.nextCursor;
-        dramas = page.items;
+        dramas = res.items;
+      } else if (feedTab == _tabComic) {
+        final batch = await _fetchChannelBatch(
+          HongguoGenreKind.comicSeries,
+          cursor: _comicCursor,
+          overrideSelection: _comicSelectionOverride,
+          excludedIds: existingSids,
+        );
+        _comicCursor = batch.nextCursor;
+        dramas = batch.items;
+      } else if (feedTab == _tabReal) {
+        final batch = await _fetchChannelBatch(
+          HongguoGenreKind.realPlay,
+          cursor: _realCursor,
+          overrideSelection: _realSelectionOverride,
+          excludedIds: existingSids,
+        );
+        _realCursor = batch.nextCursor;
+        dramas = batch.items;
       } else {
-        final existingSids = _feedItems.map((e) => e.detail.seriesId).toSet();
         dramas = await HongguoSimilarEngine.instance
             .getPersonalizedDiscoverList(excludedSeriesIds: existingSids);
       }
@@ -1772,23 +1781,23 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
       final seenIds = _settings?.hongguoSeenSeriesIds.toSet() ?? <String>{};
       final newItems = <FeedDramaPageItem>[];
-      final existingSids = _feedItems.map((e) => e.detail.seriesId).toSet();
+      final dedupSids = _feedItems.map((e) => e.detail.seriesId).toSet();
 
       // Ưu tiên nạp các phim chưa xem
       for (final drama in dramas) {
-        if (!existingSids.contains(drama.seriesId) &&
+        if (!dedupSids.contains(drama.seriesId) &&
             !seenIds.contains(drama.seriesId)) {
           newItems.add(_createFeedDramaItem(drama));
-          existingSids.add(drama.seriesId);
+          dedupSids.add(drama.seriesId);
         }
       }
 
       // Fallback nếu toàn bộ phim vừa lấy về đều đã xem:
       if (newItems.isEmpty) {
         for (final drama in dramas) {
-          if (!existingSids.contains(drama.seriesId)) {
+          if (!dedupSids.contains(drama.seriesId)) {
             newItems.add(_createFeedDramaItem(drama));
-            existingSids.add(drama.seriesId);
+            dedupSids.add(drama.seriesId);
           }
         }
       }
@@ -1796,13 +1805,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       if (mounted) {
         setState(() {
           _feedItems.addAll(newItems);
-          if (_currentFeedTab == 'discover') {
-            _discoverFeedItems.addAll(newItems);
-          } else if (_currentFeedTab == 'trending') {
-            _trendingFeedItems.addAll(newItems);
-          } else if (_currentFeedTab == 'genre') {
-            _genreFeedItems.addAll(newItems);
-          }
+          _cacheListForTab(_currentFeedTab).addAll(newItems);
           _isLoadingMore = false;
         });
       }
@@ -1811,8 +1814,12 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     }
   }
 
-  /// Chuyển đổi giữa 3 tab trên Top Bar: 'trending' | 'discover' | 'genre'
-  Future<void> _switchFeedTab(String tabKey, {bool forceReload = false}) async {
+  /// Chuyển đổi giữa 4 tab trên Top Bar: 'follow' | 'comic' | 'real' | 'discover'
+  Future<void> _switchFeedTab(
+    String rawTabKey, {
+    bool forceReload = false,
+  }) async {
+    final tabKey = _normalizeFeedTab(rawTabKey);
     if (_currentFeedTab == tabKey && !forceReload && _feedItems.isNotEmpty) {
       return;
     }
@@ -1822,17 +1829,16 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     _isLoadingMore = false;
 
     // 1. Lưu lại vị trí và danh sách của tab hiện tại trước khi chuyển
-    _tabCurrentIndices[_currentFeedTab] = _currentIndex;
-    if (_currentFeedTab == 'discover') {
-      _discoverFeedItems.clear();
-      _discoverFeedItems.addAll(_feedItems);
-    } else if (_currentFeedTab == 'trending') {
-      _trendingFeedItems.clear();
-      _trendingFeedItems.addAll(_feedItems);
-    } else if (_currentFeedTab == 'genre') {
-      _genreFeedItems.clear();
-      _genreFeedItems.addAll(_feedItems);
+    final prevTargetIds =
+        _cacheListForTab(tabKey).map((e) => e.detail.seriesId).toSet();
+    if (_currentFeedTab == tabKey) {
+      prevTargetIds.addAll(_feedItems.map((e) => e.detail.seriesId));
     }
+    _tabCurrentIndices[_currentFeedTab] = _currentIndex;
+    final activeCache = _cacheListForTab(_currentFeedTab);
+    activeCache
+      ..clear()
+      ..addAll(_feedItems);
 
     // Tạm dừng video và TTS ở tab cũ ngay lập tức
     unawaited(_activeController?.muteAndPause());
@@ -1842,84 +1848,75 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     setState(() {
       _currentFeedTab = tabKey;
       _isLoadingVideo = true;
+      if (forceReload) {
+        _showLoadingIndicator = true;
+      }
     });
     _saveFeedPreferences();
 
     List<FeedDramaPageItem> targetItems = [];
+    final cachedForTarget = _cacheListForTab(tabKey);
+    bool emptyDirectFollowNotice = false;
 
-    if (tabKey == 'trending') {
-      if (_trendingFeedItems.isNotEmpty && !forceReload) {
-        targetItems = _trendingFeedItems;
-      } else {
-        _tabCurrentIndices['trending'] = 0;
-        _trendingPage = forceReload ? (_trendingPage % 3) + 1 : 1;
-        _settings?.hongguoFeedTrendingPage = _trendingPage;
-
-        try {
-          final hotRes = await _resolver.browseList(
-            category: 'rank/hot-drama',
-            page: _trendingPage,
+    if (cachedForTarget.isNotEmpty && !forceReload) {
+      targetItems = cachedForTarget;
+    } else {
+      _tabCurrentIndices[tabKey] = 0;
+      try {
+        if (tabKey == _tabFollow) {
+          _followSeedOffset = forceReload ? _followSeedOffset + 1 : 0;
+          var res = await HongguoSimilarEngine.instance.getFollowFeedList(
+            excludedSeriesIds: forceReload ? prevTargetIds : null,
+            seedOffset: _followSeedOffset,
           );
-          final sorted = _prioritizeUnwatchedDramas(hotRes.items);
-          final items = <FeedDramaPageItem>[];
-          for (final drama in sorted) {
-            items.add(_createFeedDramaItem(drama));
+          if (res.items.isEmpty && forceReload) {
+            res = await HongguoSimilarEngine.instance.getFollowFeedList(
+              seedOffset: _followSeedOffset,
+            );
           }
-          targetItems = items;
-          _trendingFeedItems.clear();
-          _trendingFeedItems.addAll(items);
-        } catch (e) {
-          debugPrint('[HongguoFeedScreen] Lỗi nạp Trending: $e');
-        }
-      }
-    } else if (tabKey == 'discover') {
-      if (_discoverFeedItems.isNotEmpty && !forceReload) {
-        targetItems = _discoverFeedItems;
-      } else {
-        _tabCurrentIndices['discover'] = 0;
-        try {
-          final list = await HongguoSimilarEngine.instance
-              .getPersonalizedDiscoverList(resetCursor: forceReload);
+          emptyDirectFollowNotice =
+              res.directFollowCount == 0 && res.items.isNotEmpty;
+          targetItems = res.items.map(_createFeedDramaItem).toList();
+        } else if (tabKey == _tabComic || tabKey == _tabReal) {
+          final isComic = tabKey == _tabComic;
+          final kind = isComic
+              ? HongguoGenreKind.comicSeries
+              : HongguoGenreKind.realPlay;
+          final overrideSel =
+              isComic ? _comicSelectionOverride : _realSelectionOverride;
+          final currentCursor = isComic ? _comicCursor : _realCursor;
+
+          final batch = await _fetchChannelBatch(
+            kind,
+            cursor: forceReload ? currentCursor : null,
+            overrideSelection: overrideSel,
+            excludedIds: forceReload ? prevTargetIds : const <String>{},
+          );
+          if (isComic) {
+            _comicCursor = batch.nextCursor;
+          } else {
+            _realCursor = batch.nextCursor;
+          }
+          final sorted = _prioritizeUnwatchedDramas(batch.items);
+          targetItems = sorted.map(_createFeedDramaItem).toList();
+        } else {
+          var list = await HongguoSimilarEngine.instance
+              .getPersonalizedDiscoverList(
+                excludedSeriesIds: forceReload ? prevTargetIds : null,
+                resetCursor: false,
+              );
+          if (list.isEmpty && forceReload) {
+            list = await HongguoSimilarEngine.instance
+                .getPersonalizedDiscoverList(resetCursor: true);
+          }
           final sorted = _prioritizeUnwatchedDramas(list);
-          final items = <FeedDramaPageItem>[];
-          for (final drama in sorted) {
-            items.add(_createFeedDramaItem(drama));
-          }
-          targetItems = items;
-          _discoverFeedItems.clear();
-          _discoverFeedItems.addAll(items);
-        } catch (e) {
-          debugPrint('[HongguoFeedScreen] Lỗi nạp Discover: $e');
+          targetItems = sorted.map(_createFeedDramaItem).toList();
         }
-      }
-    } else if (tabKey == 'genre') {
-      if (_genreFeedItems.isNotEmpty && !forceReload) {
-        targetItems = _genreFeedItems;
-      } else {
-        _tabCurrentIndices['genre'] = 0;
-        _genreCursor = null;
-
-        try {
-          final seenSet = _settings?.hongguoSeenSeriesIds.toSet() ?? <String>{};
-          final pageRes = await HongguoDiscoveryService.instance.fetchDiscovery(
-            _genreSelection,
-            seenIds: seenSet,
-          );
-          _genreCursor = pageRes.nextCursor;
-          _selectedGenreLabel = _genreSelection.buildSummaryLabel(
-            pageRes.selectorGroups,
-          );
-          final sorted = _prioritizeUnwatchedDramas(pageRes.items);
-          final items = <FeedDramaPageItem>[];
-          for (final drama in sorted) {
-            items.add(_createFeedDramaItem(drama));
-          }
-          targetItems = items;
-          _genreFeedItems.clear();
-          _genreFeedItems.addAll(items);
-        } catch (e) {
-          debugPrint('[HongguoFeedScreen] Lỗi nạp Genre: $e');
-        }
+        cachedForTarget
+          ..clear()
+          ..addAll(targetItems);
+      } catch (e) {
+        debugPrint('[HongguoFeedScreen] Lỗi nạp tab $tabKey: $e');
       }
     }
 
@@ -1927,6 +1924,24 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         switchGeneration != _feedGeneration ||
         _currentFeedTab != tabKey) {
       return;
+    }
+
+    if (emptyDirectFollowNotice) {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text(
+            'Chưa có phim Yêu thích/Xem sau — đang đề xuất phim nổi bật cùng gu',
+            style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w500),
+          ),
+          backgroundColor: const Color(0xFF22242A),
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 2),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+        ),
+      );
     }
 
     if (targetItems.isNotEmpty) {
@@ -1943,34 +1958,15 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       _activePageIndex = -1;
       await _activatePage(restoredIndex);
     } else {
-      setState(() => _isLoadingVideo = false);
+      setState(() {
+        _isLoadingVideo = false;
+        _showLoadingIndicator = false;
+      });
     }
   }
 
-  /// Mở bảng Bộ lọc Thể loại Đa chiều (Kho + Phong cách + Bối cảnh + Chủ đề + Đối tượng + Sắp xếp)
-  Future<void> _openGenrePickerSheet() async {
-    final picked = await HongguoDiscoveryFilterSheet.show(
-      context,
-      initialSelection: _genreSelection,
-      accentColor: const Color(0xFFFF6A00),
-    );
-    if (!mounted || picked == null) return;
-    final groups = HongguoDiscoveryService.instance.getSelectorGroups(
-      picked.genreKind,
-    );
-    setState(() {
-      _genreSelection = picked;
-      _selectedGenreLabel = picked.buildSummaryLabel(groups);
-      _genreFeedItems.clear();
-      _genreCursor = null;
-      _tabCurrentIndices['genre'] = 0;
-    });
-    _saveFeedPreferences();
-    unawaited(_switchFeedTab('genre', forceReload: true));
-  }
-
   /// Lọc nhanh theo thể loại khi người dùng chạm vào thẻ tag trên video hoặc bảng chi tiết.
-  /// Khóa chặt hệ sinh thái đang xem (AI / Hoạt hình / Người thật), không nhảy nhầm về Người thật.
+  /// Khóa chặt hệ sinh thái đang xem (Hoạt hình -> Mạn kịch, Người thật -> Người thật).
   void _filterByTag(String tag, {HongguoDramaDetail? detail}) {
     HapticFeedback.mediumImpact();
     final activeDetail =
@@ -1980,8 +1976,12 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
             : null);
 
     var fallbackSource = activeDetail?.sourceCategory ?? '';
-    if (fallbackSource.isEmpty && _currentFeedTab == 'genre') {
-      fallbackSource = _genreSelection.genreKind.categorySlug;
+    if (fallbackSource.isEmpty) {
+      if (_currentFeedTab == _tabComic) {
+        fallbackSource = HongguoGenreKind.comicSeries.categorySlug;
+      } else if (_currentFeedTab == _tabReal) {
+        fallbackSource = HongguoGenreKind.realPlay.categorySlug;
+      }
     }
 
     final cleanZh = tag.replaceAll(RegExp(r'[\[\]#\s]'), '').trim();
@@ -1995,16 +1995,23 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       selection.genreKind,
     );
     final summaryLabel = selection.buildSummaryLabel(groups);
+    final targetTab = selection.genreKind == HongguoGenreKind.comicSeries
+        ? _tabComic
+        : _tabReal;
 
     setState(() {
-      _genreSelection = selection;
-      _selectedGenreLabel = summaryLabel;
-      _genreFeedItems.clear();
-      _genreCursor = null;
-      _tabCurrentIndices['genre'] = 0;
+      if (targetTab == _tabComic) {
+        _comicSelectionOverride = selection;
+        _comicCursor = null;
+        _comicFeedItems.clear();
+      } else {
+        _realSelectionOverride = selection;
+        _realCursor = null;
+        _realFeedItems.clear();
+      }
+      _tabCurrentIndices[targetTab] = 0;
     });
 
-    _saveFeedPreferences();
     HongguoSimilarEngine.instance.recordInterest([cleanZh], 2.0);
 
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
@@ -2029,7 +2036,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       ),
     );
 
-    _switchFeedTab('genre', forceReload: true);
+    _switchFeedTab(targetTab, forceReload: true);
   }
 
   /// Mở Bottom Sheet "Đề xuất tương tự (相关推荐)" chuẩn API ByteDance
@@ -2779,7 +2786,48 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     );
   }
 
-  /// Top Bar chuẩn giao diện ByteDance
+  /// Top Bar chuẩn 4 mục giống app Hồng Quả gốc: Quan tâm | Mạn kịch | Người thật | Đề xuất
+  void _onTopFeedTabTap(String tabKey) {
+    final alreadyActive = _currentFeedTab == tabKey;
+    if (alreadyActive) {
+      HapticFeedback.mediumImpact();
+      if (tabKey == _tabComic && _comicSelectionOverride != null) {
+        _comicSelectionOverride = null;
+        _comicCursor = null;
+      } else if (tabKey == _tabReal && _realSelectionOverride != null) {
+        _realSelectionOverride = null;
+        _realCursor = null;
+      }
+      final label = _feedTabLabel(tabKey);
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(
+                Icons.autorenew_rounded,
+                color: Color(0xFFFF6A00),
+                size: 16,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Đang làm mới $label...',
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ],
+          ),
+          backgroundColor: const Color(0xFF22242A),
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(milliseconds: 900),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+        ),
+      );
+    }
+    _switchFeedTab(tabKey, forceReload: alreadyActive);
+  }
+
   Widget _buildTopBar() {
     if (_isCleanMode) {
       return const SizedBox.shrink();
@@ -3142,36 +3190,27 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     _buildTopTabItem(
-                      label: 'Thịnh hành',
-                      isSelected: _currentFeedTab == 'trending',
-                      onTap: () => _switchFeedTab(
-                        'trending',
-                        forceReload: _currentFeedTab == 'trending',
-                      ),
+                      label: 'Quan tâm',
+                      isSelected: _currentFeedTab == _tabFollow,
+                      onTap: () => _onTopFeedTabTap(_tabFollow),
                     ),
-                    const SizedBox(width: 18),
+                    const SizedBox(width: 14),
+                    _buildTopTabItem(
+                      label: 'Mạn kịch',
+                      isSelected: _currentFeedTab == _tabComic,
+                      onTap: () => _onTopFeedTabTap(_tabComic),
+                    ),
+                    const SizedBox(width: 14),
+                    _buildTopTabItem(
+                      label: 'Người thật',
+                      isSelected: _currentFeedTab == _tabReal,
+                      onTap: () => _onTopFeedTabTap(_tabReal),
+                    ),
+                    const SizedBox(width: 14),
                     _buildTopTabItem(
                       label: 'Đề xuất',
-                      isSelected: _currentFeedTab == 'discover',
-                      onTap: () => _switchFeedTab(
-                        'discover',
-                        forceReload: _currentFeedTab == 'discover',
-                      ),
-                    ),
-                    const SizedBox(width: 18),
-                    _buildTopTabItem(
-                      label: _selectedGenreLabel.isNotEmpty
-                          ? _selectedGenreLabel
-                          : 'Bộ lọc',
-                      isSelected: _currentFeedTab == 'genre',
-                      showDropdownIcon: true,
-                      onTap: () {
-                        if (_currentFeedTab != 'genre') {
-                          _switchFeedTab('genre');
-                        } else {
-                          _openGenrePickerSheet();
-                        }
-                      },
+                      isSelected: _currentFeedTab == _tabDiscover,
+                      onTap: () => _onTopFeedTabTap(_tabDiscover),
                     ),
                   ],
                 ),
@@ -3179,68 +3218,8 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
             ),
           ),
 
-          // Nút Làm mới luồng phim (Tải loạt phim mới)
-          GestureDetector(
-            onTap: () {
-              HapticFeedback.mediumImpact();
-              _switchFeedTab(_currentFeedTab, forceReload: true);
-              ScaffoldMessenger.of(context).hideCurrentSnackBar();
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: const Row(
-                    children: [
-                      Icon(
-                        Icons.autorenew_rounded,
-                        color: Color(0xFFFF6A00),
-                        size: 16,
-                      ),
-                      SizedBox(width: 8),
-                      Text(
-                        'Đang nạp loạt trích đoạn phim mới...',
-                        style: TextStyle(fontWeight: FontWeight.w600),
-                      ),
-                    ],
-                  ),
-                  backgroundColor: const Color(0xFF22242A),
-                  behavior: SnackBarBehavior.floating,
-                  duration: const Duration(seconds: 1),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-              );
-            },
-            child: Container(
-              padding: const EdgeInsets.all(8),
-              margin: const EdgeInsets.only(right: 8),
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.35),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.refresh_rounded,
-                color: Colors.white,
-                size: 20,
-              ),
-            ),
-          ),
-
-          // Icon Search 🔍
-          GestureDetector(
-            onTap: () => Navigator.pop(context),
-            child: Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.35),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.search_rounded,
-                color: Colors.white,
-                size: 20,
-              ),
-            ),
-          ),
+          // Khoảng cân đối bên phải (bỏ nút tìm kiếm & làm mới kiểu TikTok)
+          const SizedBox(width: 34),
         ],
       ),
     );
