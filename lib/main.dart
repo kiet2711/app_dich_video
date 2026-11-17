@@ -16,9 +16,9 @@ import 'player/global_player_manager.dart';
 import 'player/pip_manager.dart';
 import 'package:media_kit/media_kit.dart';
 import 'ui/player/global_player_overlay.dart';
+import 'ui/splash/app_startup_splash.dart';
 
-Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+Future<void> _initializeAppServices() async {
   // Giới hạn bộ nhớ đệm ảnh trong RAM để tránh tràn bộ nhớ khi cuộn danh sách phim
   PaintingBinding.instance.imageCache.maximumSizeBytes = 40 * 1024 * 1024; // 40 MB max
   PaintingBinding.instance.imageCache.maximumSize = 120; // Tối đa 120 ảnh
@@ -26,11 +26,30 @@ Future<void> main() async {
   PipManager.initialize();
   final settings = await SettingsRepository.getInstance();
   await CustomFontManager.loadAllSavedFonts(settings);
+}
+
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  SystemChrome.setSystemUIOverlayStyle(
+    const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.light,
+      systemNavigationBarColor: AppColors.darkBackground,
+      systemNavigationBarIconBrightness: Brightness.light,
+    ),
+  );
   runApp(const CapSubApp());
 }
 
 class CapSubApp extends StatelessWidget {
-  const CapSubApp({super.key});
+  final bool skipSplash;
+  final Future<void> Function()? onInitialize;
+
+  const CapSubApp({
+    super.key,
+    this.skipSplash = false,
+    this.onInitialize,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -39,7 +58,12 @@ class CapSubApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: buildAppTheme(),
       routes: {
-        '/': (context) => const MainNavigation(),
+        '/': (context) => skipSplash
+            ? const MainNavigation()
+            : AppStartupSplash(
+                onInitialize: onInitialize ?? _initializeAppServices,
+                homeBuilder: (_) => const MainNavigation(),
+              ),
         '/settings': (context) => const SettingsScreen(),
         '/storage-cleaner': (context) => const StorageCleanerScreen(),
       },
