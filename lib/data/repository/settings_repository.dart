@@ -303,6 +303,27 @@ class SettingsRepository {
   set hongguoTranslateEnabled(bool v) =>
       prefs.setBool('hongguo_translate_enabled', v);
 
+  /// Tùy chọn hiện 4 nút phụ ra ngoài cột phải màn hình lướt Hồng Quả
+  bool get hongguoFeedShowLiveButton =>
+      prefs.getBool('hongguo_feed_show_live_btn') ?? false;
+  set hongguoFeedShowLiveButton(bool v) =>
+      prefs.setBool('hongguo_feed_show_live_btn', v);
+
+  bool get hongguoFeedShowSaveButton =>
+      prefs.getBool('hongguo_feed_show_save_btn') ?? false;
+  set hongguoFeedShowSaveButton(bool v) =>
+      prefs.setBool('hongguo_feed_show_save_btn', v);
+
+  bool get hongguoFeedShowSimilarButton =>
+      prefs.getBool('hongguo_feed_show_similar_btn') ?? false;
+  set hongguoFeedShowSimilarButton(bool v) =>
+      prefs.setBool('hongguo_feed_show_similar_btn', v);
+
+  bool get hongguoFeedShowHideButton =>
+      prefs.getBool('hongguo_feed_show_hide_btn') ?? false;
+  set hongguoFeedShowHideButton(bool v) =>
+      prefs.setBool('hongguo_feed_show_hide_btn', v);
+
   /// Chế độ dịch riêng của Hồng Quả: 'capcut' (CapCut Free) hoặc 'api_online' (API Online tự động xoay model & key)
   String get hongguoTranslationMode =>
       prefs.getString('hongguo_translation_mode') ?? 'capcut';

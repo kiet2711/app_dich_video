@@ -258,6 +258,10 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
   }
 
   bool _isTranslationEnabled = true;
+  bool _showLiveBtnOutside = false;
+  bool _showSaveBtnOutside = false;
+  bool _showSimilarBtnOutside = false;
+  bool _showHideBtnOutside = false;
   final Set<String> _translatingTitles = <String>{};
   final Set<String> _translatingIntros = <String>{};
   bool _showSubtitles = true;
@@ -350,6 +354,10 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     setState(() {
       _settings = settings;
       _isTranslationEnabled = settings.hongguoTranslateEnabled;
+      _showLiveBtnOutside = settings.hongguoFeedShowLiveButton;
+      _showSaveBtnOutside = settings.hongguoFeedShowSaveButton;
+      _showSimilarBtnOutside = settings.hongguoFeedShowSimilarButton;
+      _showHideBtnOutside = settings.hongguoFeedShowHideButton;
       _preferredQuality = settings.hongguoPreferredQuality;
       _playbackSpeed = settings.hongguoPlaybackSpeed;
       _liveTranslator?.dispose();
@@ -2433,9 +2441,113 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     } catch (_) {}
   }
 
-  /// Mở bảng cài đặt nhanh khi nhấn giữ vào video (Tốc độ, Chất lượng & Dịch ML Kit).
+  Future<void> _toggleWatchLater(FeedDramaPageItem item, bool isSaved) async {
+    HapticFeedback.lightImpact();
+    final repo = await WatchLaterRepository.getInstance();
+    if (isSaved) {
+      await repo.removeItem(item.detail.seriesId);
+    } else {
+      await repo.addItem(
+        WatchLaterItem(
+          id: item.detail.seriesId,
+          title: item.detail.title,
+          coverUrl: item.detail.cover,
+          source: 'hongguo',
+          targetUrl: 'https://hongguoduanju.com/player/${item.detail.seriesId}',
+          seriesId: item.detail.seriesId,
+          totalEpisodes: item.detail.totalEpisodes,
+          addedAt: DateTime.now().millisecondsSinceEpoch,
+        ),
+      );
+      HongguoSimilarEngine.instance.recordInterest(item.detail.tags, 4.0);
+    }
+  }
+
+  void _enableCleanMode() {
+    HapticFeedback.mediumImpact();
+    setState(() {
+      _isCleanMode = true;
+    });
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Row(
+          children: [
+            Icon(Icons.touch_app_rounded, color: Colors.white, size: 16),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Đã ẩn giao diện. Chạm vào màn hình để hiện lại.',
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: Colors.black87,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
+  }
+
+  Widget _buildQuickActionTile({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+    VoidCallback? onLongPress,
+    Color iconColor = Colors.white,
+    Color? highlightColor,
+    bool isActive = false,
+  }) {
+    final activeColor = highlightColor ?? iconColor;
+    return Expanded(
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        onLongPress: onLongPress,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+          decoration: BoxDecoration(
+            color: isActive
+                ? activeColor.withValues(alpha: 0.16)
+                : const Color(0xFF15171E),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: isActive
+                  ? activeColor.withValues(alpha: 0.65)
+                  : Colors.white10,
+              width: 0.8,
+            ),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, color: isActive ? activeColor : iconColor, size: 20),
+              const SizedBox(height: 4),
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: isActive ? activeColor : Colors.white70,
+                  fontSize: 10.5,
+                  fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Mở bảng cài đặt nhanh khi nhấn giữ vào video (gồm 4 tác vụ nhanh + Tốc độ, Chất lượng & Dịch ML Kit).
   Future<void> _showFeedQuickSettingsSheet() async {
     HapticFeedback.mediumImpact();
+    final currentItem =
+        (_currentIndex >= 0 && _currentIndex < _feedItems.length)
+        ? _feedItems[_currentIndex]
+        : null;
     final rawTiers = _activeVideoInfo?.ladder?.availableQualityTiers ??
         const <String>['1080', '720', '480', '360'];
     final ascTiers = List<String>.from(rawTiers)
@@ -2450,6 +2562,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: const Color(0xFF181A22),
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -2457,287 +2570,725 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         return StatefulBuilder(
           builder: (sheetCtx, setSheetState) {
             return SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 38,
-                      height: 4,
-                      margin: const EdgeInsets.only(bottom: 14),
-                      decoration: BoxDecoration(
-                        color: Colors.white24,
-                        borderRadius: BorderRadius.circular(2),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(sheetCtx).size.height * 0.82,
+                ),
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(14, 8, 14, 14),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 36,
+                        height: 4,
+                        margin: const EdgeInsets.only(bottom: 10),
+                        decoration: BoxDecoration(
+                          color: Colors.white24,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
                       ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF21242D),
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: Colors.white10),
-                      ),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // 1. Tốc độ phát
-                          Row(
-                            children: [
-                              const Icon(
-                                Icons.speed_rounded,
-                                color: Colors.white,
-                                size: 18,
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF21242D),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: Colors.white10),
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // 0. Hàng 4 tác vụ nhanh gọn: Dịch Live · Lưu lại · Tương tự · Ẩn nút
+                            if (currentItem != null) ...[
+                              Row(
+                                children: [
+                                  Builder(
+                                    builder: (_) {
+                                      final translator = _liveTranslator;
+                                      if (translator == null) {
+                                        return _buildQuickActionTile(
+                                          icon: Icons.spatial_audio_rounded,
+                                          label: 'Dịch Live',
+                                          highlightColor: const Color(
+                                            0xFF64B5F6,
+                                          ),
+                                          onTap: () {
+                                            Navigator.of(ctx).pop();
+                                            _openLiveTranslateSheet();
+                                          },
+                                          onLongPress: () {
+                                            HapticFeedback.mediumImpact();
+                                            _toggleLiveTranslate(true);
+                                            if (sheetCtx.mounted) {
+                                              setSheetState(() {});
+                                            }
+                                          },
+                                        );
+                                      }
+                                      return Expanded(
+                                        child: AnimatedBuilder(
+                                          animation: translator,
+                                          builder: (_, _) {
+                                            final isActive =
+                                                translator.isEnabled;
+                                            return Row(
+                                              children: [
+                                                _buildQuickActionTile(
+                                                  icon: Icons
+                                                      .spatial_audio_rounded,
+                                                  label: isActive
+                                                      ? '+${translator.leadSeconds.toStringAsFixed(1)}s'
+                                                      : 'Dịch Live',
+                                                  highlightColor: const Color(
+                                                    0xFF64B5F6,
+                                                  ),
+                                                  isActive: isActive,
+                                                  onTap: () {
+                                                    Navigator.of(ctx).pop();
+                                                    _openLiveTranslateSheet();
+                                                  },
+                                                  onLongPress: () {
+                                                    HapticFeedback.mediumImpact();
+                                                    _toggleLiveTranslate(
+                                                      !isActive,
+                                                    );
+                                                    if (sheetCtx.mounted) {
+                                                      setSheetState(() {});
+                                                    }
+                                                  },
+                                                ),
+                                              ],
+                                            );
+                                          },
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child:
+                                        ValueListenableBuilder<
+                                          List<WatchLaterItem>
+                                        >(
+                                          valueListenable: WatchLaterRepository
+                                              .watchLaterNotifier,
+                                          builder: (_, wlList, _) {
+                                            final isSaved = wlList.any(
+                                              (w) =>
+                                                  w.seriesId ==
+                                                  currentItem.detail.seriesId,
+                                            );
+                                            return Row(
+                                              children: [
+                                                _buildQuickActionTile(
+                                                  icon: isSaved
+                                                      ? Icons.star_rounded
+                                                      : Icons
+                                                            .star_outline_rounded,
+                                                  iconColor: isSaved
+                                                      ? const Color(0xFFFFB800)
+                                                      : Colors.white,
+                                                  highlightColor: const Color(
+                                                    0xFFFFB800,
+                                                  ),
+                                                  isActive: isSaved,
+                                                  label: isSaved
+                                                      ? 'Đã lưu'
+                                                      : 'Lưu lại',
+                                                  onTap: () =>
+                                                      _toggleWatchLater(
+                                                        currentItem,
+                                                        isSaved,
+                                                      ),
+                                                ),
+                                              ],
+                                            );
+                                          },
+                                        ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  _buildQuickActionTile(
+                                    icon: Icons.auto_awesome_motion_rounded,
+                                    iconColor: const Color(0xFF2DE1FC),
+                                    label: 'Tương tự',
+                                    onTap: () {
+                                      Navigator.of(ctx).pop();
+                                      _openSimilarDramasSheet(currentItem);
+                                    },
+                                  ),
+                                  const SizedBox(width: 8),
+                                  _buildQuickActionTile(
+                                    icon: Icons.visibility_off_outlined,
+                                    label: 'Ẩn nút',
+                                    onTap: () {
+                                      Navigator.of(ctx).pop();
+                                      _enableCleanMode();
+                                    },
+                                  ),
+                                ],
                               ),
-                              const SizedBox(width: 8),
-                              const Text(
-                                'Tốc độ phát',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              const Spacer(),
-                              Text(
-                                _formatPlaybackSpeed(_playbackSpeed),
-                                style: const TextStyle(
-                                  color: AppColors.primaryEmerald,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w700,
+                              const Padding(
+                                padding: EdgeInsets.symmetric(vertical: 10),
+                                child: Divider(
+                                  height: 1,
+                                  color: Colors.white10,
                                 ),
                               ),
                             ],
-                          ),
-                          const SizedBox(height: 10),
-                          Container(
-                            padding: const EdgeInsets.all(4),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF15171E),
-                              borderRadius: BorderRadius.circular(10),
+
+                            // 1. Tốc độ phát
+                            Row(
+                              children: [
+                                const Icon(
+                                  Icons.speed_rounded,
+                                  color: Colors.white,
+                                  size: 17,
+                                ),
+                                const SizedBox(width: 8),
+                                const Text(
+                                  'Tốc độ phát',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 13.5,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                const Spacer(),
+                                Text(
+                                  _formatPlaybackSpeed(_playbackSpeed),
+                                  style: const TextStyle(
+                                    color: AppColors.primaryEmerald,
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ],
                             ),
-                            child: Row(
-                              children: _feedPlaybackSpeeds.map((speed) {
-                                final selected =
-                                    (_playbackSpeed - speed).abs() < 0.01;
-                                return Expanded(
+                            const SizedBox(height: 8),
+                            Container(
+                              padding: const EdgeInsets.all(3),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF15171E),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Row(
+                                children: _feedPlaybackSpeeds.map((speed) {
+                                  final selected =
+                                      (_playbackSpeed - speed).abs() < 0.01;
+                                  return Expanded(
+                                    child: GestureDetector(
+                                      behavior: HitTestBehavior.opaque,
+                                      onTap: () async {
+                                        if (selected) return;
+                                        await _applyPlaybackSpeed(speed);
+                                        if (sheetCtx.mounted) {
+                                          setSheetState(() {});
+                                        }
+                                      },
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          vertical: 7,
+                                        ),
+                                        alignment: Alignment.center,
+                                        decoration: BoxDecoration(
+                                          color: selected
+                                              ? AppColors.primaryEmerald
+                                                    .withValues(alpha: 0.22)
+                                              : Colors.transparent,
+                                          borderRadius: BorderRadius.circular(
+                                            8,
+                                          ),
+                                          border: selected
+                                              ? Border.all(
+                                                  color: AppColors
+                                                      .primaryEmerald
+                                                      .withValues(alpha: 0.7),
+                                                  width: 0.8,
+                                                )
+                                              : null,
+                                        ),
+                                        child: FittedBox(
+                                          fit: BoxFit.scaleDown,
+                                          child: Text(
+                                            _formatPlaybackSpeed(speed),
+                                            maxLines: 1,
+                                            style: TextStyle(
+                                              color: selected
+                                                  ? AppColors.primaryEmerald
+                                                  : Colors.white70,
+                                              fontSize: 11.5,
+                                              fontWeight: selected
+                                                  ? FontWeight.w700
+                                                  : FontWeight.w500,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                }).toList(growable: false),
+                              ),
+                            ),
+
+                            const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 10),
+                              child: Divider(height: 1, color: Colors.white10),
+                            ),
+
+                            // 2. Chất lượng phát
+                            Row(
+                              children: [
+                                const Icon(
+                                  Icons.high_quality_rounded,
+                                  color: Colors.white,
+                                  size: 17,
+                                ),
+                                const SizedBox(width: 8),
+                                const Text(
+                                  'Chất lượng phát',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 13.5,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                const Spacer(),
+                                Text(
+                                  _preferredQuality == 'auto'
+                                      ? (_activeVideoInfo
+                                                ?.selectedRendition
+                                                ?.qualityLabel ??
+                                            'Tự động')
+                                      : '${_preferredQuality}P',
+                                  style: const TextStyle(
+                                    color: AppColors.primaryEmerald,
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            Container(
+                              padding: const EdgeInsets.all(3),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF15171E),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Row(
+                                children: qualityOptions.map((opt) {
+                                  final selected = _preferredQuality == opt.key;
+                                  return Expanded(
+                                    child: GestureDetector(
+                                      behavior: HitTestBehavior.opaque,
+                                      onTap: () async {
+                                        Navigator.of(ctx).pop();
+                                        await _selectFeedQuality(opt.key);
+                                      },
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          vertical: 7,
+                                        ),
+                                        alignment: Alignment.center,
+                                        decoration: BoxDecoration(
+                                          color: selected
+                                              ? AppColors.primaryEmerald
+                                                    .withValues(alpha: 0.22)
+                                              : Colors.transparent,
+                                          borderRadius: BorderRadius.circular(
+                                            8,
+                                          ),
+                                          border: selected
+                                              ? Border.all(
+                                                  color: AppColors
+                                                      .primaryEmerald
+                                                      .withValues(alpha: 0.7),
+                                                  width: 0.8,
+                                                )
+                                              : null,
+                                        ),
+                                        child: FittedBox(
+                                          fit: BoxFit.scaleDown,
+                                          child: Text(
+                                            opt.label,
+                                            maxLines: 1,
+                                            style: TextStyle(
+                                              color: selected
+                                                  ? AppColors.primaryEmerald
+                                                  : Colors.white70,
+                                              fontSize: 11.5,
+                                              fontWeight: selected
+                                                  ? FontWeight.w700
+                                                  : FontWeight.w500,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                }).toList(growable: false),
+                              ),
+                            ),
+
+                            const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 10),
+                              child: Divider(height: 1, color: Colors.white10),
+                            ),
+
+                            // 3. Hàng đáy gọn: nút Dịch ML Kit thu gọn + nút Cài đặt nút ngoài màn hình
+                            Row(
+                              children: [
+                                Expanded(
                                   child: GestureDetector(
                                     behavior: HitTestBehavior.opaque,
-                                    onTap: () async {
-                                      if (selected) return;
-                                      await _applyPlaybackSpeed(speed);
+                                    onTap: () {
+                                      _toggleFeedTranslation(
+                                        showSnackBar: false,
+                                      );
                                       if (sheetCtx.mounted) {
                                         setSheetState(() {});
                                       }
                                     },
                                     child: Container(
                                       padding: const EdgeInsets.symmetric(
+                                        horizontal: 10,
                                         vertical: 8,
                                       ),
-                                      alignment: Alignment.center,
                                       decoration: BoxDecoration(
-                                        color: selected
+                                        color: _isTranslationEnabled
                                             ? AppColors.primaryEmerald
-                                                .withValues(alpha: 0.22)
-                                            : Colors.transparent,
-                                        borderRadius: BorderRadius.circular(8),
-                                        border: selected
-                                            ? Border.all(
-                                                color: AppColors.primaryEmerald
-                                                    .withValues(alpha: 0.7),
-                                                width: 0.8,
-                                              )
-                                            : null,
-                                      ),
-                                      child: FittedBox(
-                                        fit: BoxFit.scaleDown,
-                                        child: Text(
-                                          _formatPlaybackSpeed(speed),
-                                          maxLines: 1,
-                                          style: TextStyle(
-                                            color: selected
-                                                ? AppColors.primaryEmerald
-                                                : Colors.white70,
-                                            fontSize: 12,
-                                            fontWeight: selected
-                                                ? FontWeight.w700
-                                                : FontWeight.w500,
-                                          ),
+                                                  .withValues(alpha: 0.16)
+                                            : const Color(0xFF15171E),
+                                        borderRadius: BorderRadius.circular(10),
+                                        border: Border.all(
+                                          color: _isTranslationEnabled
+                                              ? AppColors.primaryEmerald
+                                                    .withValues(alpha: 0.65)
+                                              : Colors.white10,
+                                          width: 0.8,
                                         ),
+                                      ),
+                                      child: Row(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                          Icon(
+                                            Icons.translate_rounded,
+                                            color: _isTranslationEnabled
+                                                ? AppColors.primaryEmerald
+                                                : Colors.white60,
+                                            size: 16,
+                                          ),
+                                          const SizedBox(width: 6),
+                                          Flexible(
+                                            child: Text(
+                                              _isTranslationEnabled
+                                                  ? 'Dịch ML Kit: Bật'
+                                                  : 'Dịch ML Kit: Tắt',
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                color: _isTranslationEnabled
+                                                    ? AppColors.primaryEmerald
+                                                    : Colors.white70,
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ),
                                   ),
-                                );
-                              }).toList(growable: false),
-                            ),
-                          ),
-
-                          const Padding(
-                            padding: EdgeInsets.symmetric(vertical: 14),
-                            child: Divider(height: 1, color: Colors.white10),
-                          ),
-
-                          // 2. Chất lượng phát
-                          Row(
-                            children: [
-                              const Icon(
-                                Icons.high_quality_rounded,
-                                color: Colors.white,
-                                size: 18,
-                              ),
-                              const SizedBox(width: 8),
-                              const Text(
-                                'Chất lượng phát',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
                                 ),
-                              ),
-                              const Spacer(),
-                              Text(
-                                _preferredQuality == 'auto'
-                                    ? (_activeVideoInfo
-                                            ?.selectedRendition?.qualityLabel ??
-                                        'Tự động')
-                                    : '${_preferredQuality}P',
-                                style: const TextStyle(
-                                  color: AppColors.primaryEmerald,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 10),
-                          Container(
-                            padding: const EdgeInsets.all(4),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF15171E),
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Row(
-                              children: qualityOptions.map((opt) {
-                                final selected = _preferredQuality == opt.key;
-                                return Expanded(
+                                const SizedBox(width: 8),
+                                Expanded(
                                   child: GestureDetector(
                                     behavior: HitTestBehavior.opaque,
-                                    onTap: () async {
+                                    onTap: () {
                                       Navigator.of(ctx).pop();
-                                      await _selectFeedQuality(opt.key);
+                                      _showFeedOutsideButtonsSettingsSheet();
                                     },
                                     child: Container(
                                       padding: const EdgeInsets.symmetric(
+                                        horizontal: 10,
                                         vertical: 8,
                                       ),
-                                      alignment: Alignment.center,
                                       decoration: BoxDecoration(
-                                        color: selected
-                                            ? AppColors.primaryEmerald
-                                                .withValues(alpha: 0.22)
-                                            : Colors.transparent,
-                                        borderRadius: BorderRadius.circular(8),
-                                        border: selected
-                                            ? Border.all(
-                                                color: AppColors.primaryEmerald
-                                                    .withValues(alpha: 0.7),
-                                                width: 0.8,
-                                              )
-                                            : null,
-                                      ),
-                                      child: FittedBox(
-                                        fit: BoxFit.scaleDown,
-                                        child: Text(
-                                          opt.label,
-                                          maxLines: 1,
-                                          style: TextStyle(
-                                            color: selected
-                                                ? AppColors.primaryEmerald
-                                                : Colors.white70,
-                                            fontSize: 12,
-                                            fontWeight: selected
-                                                ? FontWeight.w700
-                                                : FontWeight.w500,
-                                          ),
+                                        color: const Color(0xFF15171E),
+                                        borderRadius: BorderRadius.circular(10),
+                                        border: Border.all(
+                                          color: _outsideButtonCount > 0
+                                              ? const Color(0xFFFF6A00)
+                                                    .withValues(alpha: 0.65)
+                                              : Colors.white10,
+                                          width: 0.8,
                                         ),
+                                      ),
+                                      child: Row(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                          Icon(
+                                            Icons.tune_rounded,
+                                            color: _outsideButtonCount > 0
+                                                ? const Color(0xFFFF6A00)
+                                                : Colors.white70,
+                                            size: 16,
+                                          ),
+                                          const SizedBox(width: 6),
+                                          Flexible(
+                                            child: Text(
+                                              _outsideButtonCount > 0
+                                                  ? 'Cài đặt ($_outsideButtonCount/4)'
+                                                  : 'Cài đặt',
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                color: _outsideButtonCount > 0
+                                                    ? const Color(0xFFFF6A00)
+                                                    : Colors.white,
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ),
                                   ),
-                                );
-                              }).toList(growable: false),
-                            ),
-                          ),
-
-                          const Padding(
-                            padding: EdgeInsets.symmetric(vertical: 14),
-                            child: Divider(height: 1, color: Colors.white10),
-                          ),
-
-                          // 3. Tự động dịch tiêu đề & mô tả (ML Kit)
-                          GestureDetector(
-                            behavior: HitTestBehavior.opaque,
-                            onTap: () {
-                              _toggleFeedTranslation(showSnackBar: false);
-                              if (sheetCtx.mounted) {
-                                setSheetState(() {});
-                              }
-                            },
-                            child: Row(
-                              children: [
-                                Icon(
-                                  Icons.translate_rounded,
-                                  color: _isTranslationEnabled
-                                      ? AppColors.primaryEmerald
-                                      : Colors.white70,
-                                  size: 18,
                                 ),
-                                const SizedBox(width: 8),
-                                const Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        'Tự động dịch tiêu đề & mô tả',
-                                        style: TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                      SizedBox(height: 2),
-                                      Text(
-                                        'Dùng ML Kit dịch nhanh khi lướt feed',
-                                        style: TextStyle(
-                                          color: Colors.white54,
-                                          fontSize: 11.5,
-                                        ),
-                                      ),
-                                    ],
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  int get _outsideButtonCount =>
+      (_showLiveBtnOutside ? 1 : 0) +
+      (_showSaveBtnOutside ? 1 : 0) +
+      (_showSimilarBtnOutside ? 1 : 0) +
+      (_showHideBtnOutside ? 1 : 0);
+
+  void _setAllOutsideButtons(bool visible) {
+    HapticFeedback.lightImpact();
+    setState(() {
+      _showLiveBtnOutside = visible;
+      _showSaveBtnOutside = visible;
+      _showSimilarBtnOutside = visible;
+      _showHideBtnOutside = visible;
+    });
+    _settings?.hongguoFeedShowLiveButton = visible;
+    _settings?.hongguoFeedShowSaveButton = visible;
+    _settings?.hongguoFeedShowSimilarButton = visible;
+    _settings?.hongguoFeedShowHideButton = visible;
+  }
+
+  /// Bảng cài đặt chọn nút phụ nào được đưa ra ngoài cột phải màn hình video.
+  Future<void> _showFeedOutsideButtonsSettingsSheet() async {
+    HapticFeedback.lightImpact();
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF181A22),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (sheetCtx, setSheetState) {
+            Widget buildButtonSwitch({
+              required IconData icon,
+              required Color iconColor,
+              required String title,
+              required String subtitle,
+              required bool value,
+              required ValueChanged<bool> onChanged,
+            }) {
+              return ListTile(
+                dense: true,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                leading: Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: iconColor.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(icon, color: iconColor, size: 18),
+                ),
+                title: Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                subtitle: Text(
+                  subtitle,
+                  style: const TextStyle(color: Colors.white54, fontSize: 11.5),
+                ),
+                trailing: Switch.adaptive(
+                  value: value,
+                  activeTrackColor: AppColors.primaryEmerald.withValues(
+                    alpha: 0.45,
+                  ),
+                  activeThumbColor: AppColors.primaryEmerald,
+                  onChanged: (v) {
+                    onChanged(v);
+                    if (sheetCtx.mounted) setSheetState(() {});
+                  },
+                ),
+                onTap: () {
+                  onChanged(!value);
+                  if (sheetCtx.mounted) setSheetState(() {});
+                },
+              );
+            }
+
+            return SafeArea(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(sheetCtx).size.height * 0.82,
+                ),
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Center(
+                        child: Container(
+                          width: 36,
+                          height: 4,
+                          margin: const EdgeInsets.only(bottom: 12),
+                          decoration: BoxDecoration(
+                            color: Colors.white24,
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
+                      ),
+                      Row(
+                        children: [
+                          const Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Hiển thị nút ngoài màn hình',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.bold,
                                   ),
                                 ),
-                                Switch.adaptive(
-                                  value: _isTranslationEnabled,
-                                  activeTrackColor: AppColors.primaryEmerald
-                                      .withValues(alpha: 0.45),
-                                  activeThumbColor: AppColors.primaryEmerald,
-                                  onChanged: (_) {
-                                    _toggleFeedTranslation(
-                                      showSnackBar: false,
-                                    );
-                                    if (sheetCtx.mounted) {
-                                      setSheetState(() {});
-                                    }
-                                  },
+                                SizedBox(height: 2),
+                                Text(
+                                  'Chọn nút muốn đưa ra cột phải (mặc định chỉ giữ 3 nút chính)',
+                                  style: TextStyle(
+                                    color: Colors.white54,
+                                    fontSize: 11.5,
+                                  ),
                                 ),
                               ],
                             ),
                           ),
+                          TextButton(
+                            onPressed: () {
+                              _setAllOutsideButtons(_outsideButtonCount < 4);
+                              if (sheetCtx.mounted) setSheetState(() {});
+                            },
+                            child: Text(
+                              _outsideButtonCount < 4
+                                  ? 'Hiện cả 4'
+                                  : 'Thu gọn',
+                              style: const TextStyle(
+                                color: AppColors.primaryEmerald,
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
                         ],
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF21242D),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: Colors.white10),
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            buildButtonSwitch(
+                              icon: Icons.spatial_audio_rounded,
+                              iconColor: const Color(0xFF64B5F6),
+                              title: 'Dịch Live',
+                              subtitle: 'Nút nghe dịch trực tiếp Gemini Live',
+                              value: _showLiveBtnOutside,
+                              onChanged: (v) {
+                                setState(() => _showLiveBtnOutside = v);
+                                _settings?.hongguoFeedShowLiveButton = v;
+                              },
+                            ),
+                            const Divider(height: 1, color: Colors.white10),
+                            buildButtonSwitch(
+                              icon: Icons.star_rounded,
+                              iconColor: const Color(0xFFFFB800),
+                              title: 'Lưu lại',
+                              subtitle: 'Nút lưu nhanh vào danh sách Xem sau',
+                              value: _showSaveBtnOutside,
+                              onChanged: (v) {
+                                setState(() => _showSaveBtnOutside = v);
+                                _settings?.hongguoFeedShowSaveButton = v;
+                              },
+                            ),
+                            const Divider(height: 1, color: Colors.white10),
+                            buildButtonSwitch(
+                              icon: Icons.auto_awesome_motion_rounded,
+                              iconColor: const Color(0xFF2DE1FC),
+                              title: 'Tương tự',
+                              subtitle: 'Nút tìm các phim cùng gu nhanh',
+                              value: _showSimilarBtnOutside,
+                              onChanged: (v) {
+                                setState(() => _showSimilarBtnOutside = v);
+                                _settings?.hongguoFeedShowSimilarButton = v;
+                              },
+                            ),
+                            const Divider(height: 1, color: Colors.white10),
+                            buildButtonSwitch(
+                              icon: Icons.visibility_off_outlined,
+                              iconColor: Colors.white70,
+                              title: 'Ẩn nút',
+                              subtitle: 'Nút chuyển chế độ xem sạch màn hình',
+                              value: _showHideBtnOutside,
+                              onChanged: (v) {
+                                setState(() => _showHideBtnOutside = v);
+                                _settings?.hongguoFeedShowHideButton = v;
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             );
@@ -3921,7 +4472,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
               const SizedBox(width: 14),
 
-              // Cột nút tác vụ bên phải (TikTok / Shorts Vertical Column)
+              // Cột nút tác vụ bên phải (3 nút cốt lõi + các nút phụ nếu người dùng bật hiện ra ngoài)
               Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -3933,112 +4484,57 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
                   // 2. Nút Lồng Tiếng AI Trực Tiếp
                   _buildDubbingButton(item),
 
-                  const SizedBox(height: 14),
-
-                  // 2b. Nút Nghe Dịch Trực Tiếp (Gemini 3.5 Live)
-                  _buildLiveTranslateButton(item),
+                  if (_showLiveBtnOutside) ...[
+                    const SizedBox(height: 14),
+                    _buildOutsideLiveTranslateButton(),
+                  ],
 
                   const SizedBox(height: 14),
 
                   // 3. Nút Tự động chuyển tập (kèm Dịch & Lồng tiếng trước trong nền)
                   _buildAutoNextEpisodeButton(item),
 
-                  const SizedBox(height: 14),
+                  if (_showSaveBtnOutside) ...[
+                    const SizedBox(height: 14),
+                    ValueListenableBuilder<List<WatchLaterItem>>(
+                      valueListenable: WatchLaterRepository.watchLaterNotifier,
+                      builder: (_, wlList, _) {
+                        final isSaved = wlList.any(
+                          (w) => w.seriesId == item.detail.seriesId,
+                        );
+                        return _buildOutsideActionButton(
+                          icon: isSaved
+                              ? Icons.star_rounded
+                              : Icons.star_outline_rounded,
+                          iconColor: isSaved
+                              ? const Color(0xFFFFB800)
+                              : Colors.white,
+                          label: isSaved ? 'Đã lưu' : 'Lưu lại',
+                          onTap: () => _toggleWatchLater(item, isSaved),
+                        );
+                      },
+                    ),
+                  ],
 
-                  // 4. Nút Lưu xem sau / Yêu thích
-                  ValueListenableBuilder<List<WatchLaterItem>>(
-                    valueListenable: WatchLaterRepository.watchLaterNotifier,
-                    builder: (context, wlList, _) {
-                      final isSaved = wlList.any(
-                        (w) => w.seriesId == item.detail.seriesId,
-                      );
-                      return _buildRightActionButton(
-                        icon: isSaved
-                            ? Icons.star_rounded
-                            : Icons.star_outline_rounded,
-                        iconColor: isSaved
-                            ? const Color(0xFFFFB800)
-                            : Colors.white,
-                        label: isSaved ? 'Đã lưu' : 'Lưu lại',
-                        onTap: () async {
-                          HapticFeedback.lightImpact();
-                          final repo = await WatchLaterRepository.getInstance();
-                          if (isSaved) {
-                            await repo.removeItem(item.detail.seriesId);
-                          } else {
-                            await repo.addItem(
-                              WatchLaterItem(
-                                id: item.detail.seriesId,
-                                title: item.detail.title,
-                                coverUrl: item.detail.cover,
-                                source: 'hongguo',
-                                targetUrl:
-                                    'https://hongguoduanju.com/player/${item.detail.seriesId}',
-                                seriesId: item.detail.seriesId,
-                                totalEpisodes: item.detail.totalEpisodes,
-                                addedAt: DateTime.now().millisecondsSinceEpoch,
-                              ),
-                            );
-                            HongguoSimilarEngine.instance.recordInterest(
-                              item.detail.tags,
-                              4.0,
-                            );
-                          }
-                        },
-                      );
-                    },
-                  ),
+                  if (_showSimilarBtnOutside) ...[
+                    const SizedBox(height: 14),
+                    _buildOutsideActionButton(
+                      icon: Icons.auto_awesome_motion_rounded,
+                      iconColor: const Color(0xFF2DE1FC),
+                      label: 'Tương tự',
+                      onTap: () => _openSimilarDramasSheet(item),
+                    ),
+                  ],
 
-                  const SizedBox(height: 14),
-
-                  // 5. Nút Tìm phim tương tự (Zone-based Tag Matching)
-                  _buildRightActionButton(
-                    icon: Icons.auto_awesome_motion_rounded,
-                    iconColor: const Color(0xFF2DE1FC),
-                    label: 'Tương tự',
-                    onTap: () => _openSimilarDramasSheet(item),
-                  ),
-
-                  const SizedBox(height: 14),
-
-                  // 6. Nút Ẩn giao diện / Xem gọn không bị che (Clean View Mode)
-                  _buildRightActionButton(
-                    icon: Icons.visibility_off_outlined,
-                    iconColor: Colors.white,
-                    label: 'Ẩn nút',
-                    onTap: () {
-                      HapticFeedback.mediumImpact();
-                      setState(() {
-                        _isCleanMode = true;
-                      });
-                      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: const Row(
-                            children: [
-                              Icon(
-                                Icons.touch_app_rounded,
-                                color: Colors.white,
-                                size: 16,
-                              ),
-                              SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  'Đã ẩn giao diện. Chạm vào màn hình để hiện lại.',
-                                ),
-                              ),
-                            ],
-                          ),
-                          backgroundColor: Colors.black87,
-                          behavior: SnackBarBehavior.floating,
-                          duration: const Duration(seconds: 2),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
+                  if (_showHideBtnOutside) ...[
+                    const SizedBox(height: 14),
+                    _buildOutsideActionButton(
+                      icon: Icons.visibility_off_outlined,
+                      iconColor: Colors.white,
+                      label: 'Ẩn nút',
+                      onTap: _enableCleanMode,
+                    ),
+                  ],
                 ],
               ),
             ],
@@ -4093,13 +4589,13 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     );
   }
 
-  /// Nút tác vụ dạng icon tròn bên phải
-  Widget _buildRightActionButton({
+  Widget _buildOutsideActionButton({
     required IconData icon,
     required String label,
     required VoidCallback onTap,
     VoidCallback? onLongPress,
     Color iconColor = Colors.white,
+    bool isActive = false,
   }) {
     return GestureDetector(
       onTap: onTap,
@@ -4110,24 +4606,77 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
           Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: 0.45),
+              color: isActive
+                  ? iconColor.withValues(alpha: 0.2)
+                  : Colors.black.withValues(alpha: 0.45),
               shape: BoxShape.circle,
-              border: Border.all(color: Colors.white24, width: 0.6),
+              border: Border.all(
+                color: isActive ? iconColor : Colors.white24,
+                width: isActive ? 1.5 : 0.6,
+              ),
+              boxShadow: isActive
+                  ? [
+                      BoxShadow(
+                        color: iconColor.withValues(alpha: 0.4),
+                        blurRadius: 8,
+                      ),
+                    ]
+                  : null,
             ),
             child: Icon(icon, color: iconColor, size: 24),
           ),
           const SizedBox(height: 4),
           Text(
             label,
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: isActive ? iconColor : Colors.white,
               fontSize: 10,
-              fontWeight: FontWeight.w500,
-              shadows: [Shadow(color: Colors.black, blurRadius: 2)],
+              fontWeight: isActive ? FontWeight.bold : FontWeight.w500,
+              shadows: const [Shadow(color: Colors.black, blurRadius: 2)],
             ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildOutsideLiveTranslateButton() {
+    final translator = _liveTranslator;
+    if (translator == null) {
+      return _buildOutsideActionButton(
+        icon: Icons.spatial_audio_rounded,
+        label: 'Dịch Live',
+        onTap: () {
+          HapticFeedback.lightImpact();
+          _openLiveTranslateSheet();
+        },
+        onLongPress: () {
+          HapticFeedback.mediumImpact();
+          _toggleLiveTranslate(true);
+        },
+      );
+    }
+    return AnimatedBuilder(
+      animation: translator,
+      builder: (_, _) {
+        final isActive = translator.isEnabled;
+        return _buildOutsideActionButton(
+          icon: Icons.spatial_audio_rounded,
+          iconColor: isActive ? const Color(0xFF64B5F6) : Colors.white,
+          label: isActive
+              ? '+${translator.leadSeconds.toStringAsFixed(1)}s'
+              : 'Dịch Live',
+          isActive: isActive,
+          onTap: () {
+            HapticFeedback.lightImpact();
+            _openLiveTranslateSheet();
+          },
+          onLongPress: () {
+            HapticFeedback.mediumImpact();
+            _toggleLiveTranslate(!isActive);
+          },
+        );
+      },
     );
   }
 
@@ -4665,70 +5214,6 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
           if (mounted) setState(() {});
         },
       ),
-    );
-  }
-
-  /// Nút Nghe Dịch Trực Tiếp (Gemini 3.5 Live): chạm để chỉnh lookahead & bật/tắt, giữ lâu bật/tắt nhanh
-  Widget _buildLiveTranslateButton(FeedDramaPageItem item) {
-    final translator = _liveTranslator;
-    Widget buildButton(bool isActive, double leadSec) {
-      final accent = isActive
-          ? const Color(0xFF64B5F6)
-          : Colors.white;
-      return GestureDetector(
-        onTap: () {
-          HapticFeedback.lightImpact();
-          _openLiveTranslateSheet();
-        },
-        onLongPress: () {
-          HapticFeedback.mediumImpact();
-          _toggleLiveTranslate(!isActive);
-        },
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: isActive
-                    ? const Color(0x3364B5F6)
-                    : Colors.black.withValues(alpha: 0.45),
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: isActive ? const Color(0xFF64B5F6) : Colors.white24,
-                  width: isActive ? 1.5 : 0.6,
-                ),
-                boxShadow: isActive
-                    ? const [BoxShadow(color: Color(0x6664B5F6), blurRadius: 8)]
-                    : null,
-              ),
-              child: Icon(
-                Icons.spatial_audio_rounded,
-                color: accent,
-                size: 24,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              isActive ? '+${leadSec.toStringAsFixed(1)}s' : 'Dịch Live',
-              style: TextStyle(
-                color: accent,
-                fontSize: 10,
-                fontWeight: isActive ? FontWeight.bold : FontWeight.w500,
-                shadows: const [Shadow(color: Colors.black, blurRadius: 2)],
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    if (translator == null) {
-      return buildButton(false, 2.0);
-    }
-    return AnimatedBuilder(
-      animation: translator,
-      builder: (_, _) => buildButton(translator.isEnabled, translator.leadSeconds),
     );
   }
 
