@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
 
-class DualVolumeSheet extends StatelessWidget {
+class DualVolumeSheet extends StatefulWidget {
   final double originalVolume;
   final double aiVolume;
   final ValueChanged<double> onOriginalVolumeChanged;
@@ -17,12 +17,53 @@ class DualVolumeSheet extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
-    final isLandscape =
-        MediaQuery.of(context).orientation == Orientation.landscape;
-    final maxHeight = MediaQuery.of(context).size.height * 0.92;
+  State<DualVolumeSheet> createState() => _DualVolumeSheetState();
+}
 
-    Widget originalCard = Container(
+class _DualVolumeSheetState extends State<DualVolumeSheet> {
+  late double _originalVolume;
+  late double _aiVolume;
+
+  @override
+  void initState() {
+    super.initState();
+    _originalVolume = widget.originalVolume.clamp(0.0, 1.0);
+    _aiVolume = widget.aiVolume.clamp(0.0, 1.0);
+  }
+
+  @override
+  void didUpdateWidget(covariant DualVolumeSheet oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.originalVolume != widget.originalVolume) {
+      _originalVolume = widget.originalVolume.clamp(0.0, 1.0);
+    }
+    if (oldWidget.aiVolume != widget.aiVolume) {
+      _aiVolume = widget.aiVolume.clamp(0.0, 1.0);
+    }
+  }
+
+  void _updateOriginalVolume(double val) {
+    final clamped = val.clamp(0.0, 1.0);
+    setState(() => _originalVolume = clamped);
+    widget.onOriginalVolumeChanged(clamped);
+  }
+
+  void _updateAiVolume(double val) {
+    final clamped = val.clamp(0.0, 1.0);
+    setState(() => _aiVolume = clamped);
+    widget.onAiVolumeChanged(clamped);
+  }
+
+  Widget _buildVolumeCard({
+    required BuildContext context,
+    required IconData icon,
+    required Color accentColor,
+    required String title,
+    required double volume,
+    required IconData mutedOrLowIcon,
+    required ValueChanged<double> onChanged,
+  }) {
+    return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: const Color(0xFF1F2029),
@@ -35,24 +76,30 @@ class DualVolumeSheet extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                children: const [
-                  Icon(Icons.volume_up, color: Color(0xFF64B5F6), size: 20),
-                  SizedBox(width: 8),
-                  Text(
-                    'Âm lượng Video Gốc',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
+              Expanded(
+                child: Row(
+                  children: [
+                    Icon(icon, color: accentColor, size: 20),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        title,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
+              const SizedBox(width: 8),
               Text(
-                '${(originalVolume * 100).toInt()}%',
-                style: const TextStyle(
-                  color: Color(0xFF64B5F6),
+                '${(volume * 100).toInt()}%',
+                style: TextStyle(
+                  color: accentColor,
                   fontSize: 14,
                   fontWeight: FontWeight.bold,
                 ),
@@ -63,24 +110,21 @@ class DualVolumeSheet extends StatelessWidget {
           Row(
             children: [
               IconButton(
-                icon: Icon(
-                  originalVolume > 0 ? Icons.volume_down : Icons.volume_mute,
-                  color: Colors.white70,
-                ),
+                icon: Icon(mutedOrLowIcon, color: Colors.white70),
                 onPressed: () {
-                  onOriginalVolumeChanged(originalVolume > 0 ? 0.0 : 1.0);
+                  onChanged(volume > 0 ? 0.0 : 1.0);
                 },
               ),
               Expanded(
                 child: SliderTheme(
                   data: SliderTheme.of(context).copyWith(
-                    activeTrackColor: const Color(0xFF64B5F6),
-                    thumbColor: const Color(0xFF64B5F6),
+                    activeTrackColor: accentColor,
+                    thumbColor: accentColor,
                     inactiveTrackColor: const Color(0xFF323444),
                   ),
                   child: Slider(
-                    value: originalVolume.clamp(0.0, 1.0),
-                    onChanged: onOriginalVolumeChanged,
+                    value: volume,
+                    onChanged: onChanged,
                   ),
                 ),
               ),
@@ -89,77 +133,33 @@ class DualVolumeSheet extends StatelessWidget {
         ],
       ),
     );
+  }
 
-    Widget aiCard = Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1F2029),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppTheme.cardBorder),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(
-                children: const [
-                  Icon(
-                    Icons.record_voice_over,
-                    color: AppTheme.primaryEmerald,
-                    size: 20,
-                  ),
-                  SizedBox(width: 8),
-                  Text(
-                    'Âm lượng Giọng Đọc AI',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-              Text(
-                '${(aiVolume * 100).toInt()}%',
-                style: const TextStyle(
-                  color: AppTheme.primaryEmerald,
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Row(
-            children: [
-              IconButton(
-                icon: Icon(
-                  aiVolume > 0 ? Icons.volume_down : Icons.volume_off,
-                  color: Colors.white70,
-                ),
-                onPressed: () {
-                  onAiVolumeChanged(aiVolume > 0 ? 0.0 : 1.0);
-                },
-              ),
-              Expanded(
-                child: SliderTheme(
-                  data: SliderTheme.of(context).copyWith(
-                    activeTrackColor: AppTheme.primaryEmerald,
-                    thumbColor: AppTheme.primaryEmerald,
-                    inactiveTrackColor: const Color(0xFF323444),
-                  ),
-                  child: Slider(
-                    value: aiVolume.clamp(0.0, 1.0),
-                    onChanged: onAiVolumeChanged,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
+  @override
+  Widget build(BuildContext context) {
+    final isLandscape =
+        MediaQuery.of(context).orientation == Orientation.landscape;
+    final maxHeight = MediaQuery.of(context).size.height * 0.92;
+
+    final originalCard = _buildVolumeCard(
+      context: context,
+      icon: Icons.volume_up,
+      accentColor: const Color(0xFF64B5F6),
+      title: 'Âm lượng Video Gốc',
+      volume: _originalVolume,
+      mutedOrLowIcon:
+          _originalVolume > 0 ? Icons.volume_down : Icons.volume_mute,
+      onChanged: _updateOriginalVolume,
+    );
+
+    final aiCard = _buildVolumeCard(
+      context: context,
+      icon: Icons.record_voice_over,
+      accentColor: AppTheme.primaryEmerald,
+      title: 'Âm lượng Giọng Đọc AI',
+      volume: _aiVolume,
+      mutedOrLowIcon: _aiVolume > 0 ? Icons.volume_down : Icons.volume_off,
+      onChanged: _updateAiVolume,
     );
 
     return SafeArea(

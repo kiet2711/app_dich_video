@@ -257,6 +257,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     return '${item.detail.seriesId}_ep${item.episodeIndex}';
   }
 
+  bool _isTranslationEnabled = true;
+  final Set<String> _translatingTitles = <String>{};
+  final Set<String> _translatingIntros = <String>{};
   bool _showSubtitles = true;
   bool _isTtsActive = false;
   TtsAudioScheduler? _ttsScheduler;
@@ -346,6 +349,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
     setState(() {
       _settings = settings;
+      _isTranslationEnabled = settings.hongguoTranslateEnabled;
       _preferredQuality = settings.hongguoPreferredQuality;
       _playbackSpeed = settings.hongguoPlaybackSpeed;
       _liveTranslator?.dispose();
@@ -371,7 +375,98 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       await _switchFeedTab(targetFeedTab, forceReload: true);
       return;
     }
+    _prefetchAdjacentTranslations(_currentIndex);
     await _activatePage(_currentIndex);
+  }
+
+  String _displayTitleFor(HongguoDramaDetail detail) {
+    if (!_isTranslationEnabled) return detail.title;
+    return OfflineMlKitTranslator.getCachedTitle(detail.title) ?? detail.title;
+  }
+
+  String _displayIntroFor(HongguoDramaDetail detail) {
+    if (detail.intro.isEmpty) return '';
+    if (!_isTranslationEnabled) return detail.intro;
+    return OfflineMlKitTranslator.getCachedIntro(detail.intro) ?? detail.intro;
+  }
+
+  void _ensureMetadataTranslated(FeedDramaPageItem item) {
+    if (!_isTranslationEnabled || !mounted) return;
+    final rawTitle = item.detail.title.trim();
+    if (rawTitle.isNotEmpty &&
+        OfflineMlKitTranslator.getCachedTitle(rawTitle) == null &&
+        _translatingTitles.add(rawTitle)) {
+      OfflineMlKitTranslator.translateHongguoTitle(rawTitle).then((_) {
+        _translatingTitles.remove(rawTitle);
+        if (mounted && _isTranslationEnabled) {
+          setState(() {});
+        }
+      }).catchError((_) {
+        _translatingTitles.remove(rawTitle);
+      });
+    }
+
+    final rawIntro = item.detail.intro.trim();
+    if (rawIntro.isNotEmpty &&
+        OfflineMlKitTranslator.getCachedIntro(rawIntro) == null &&
+        _translatingIntros.add(rawIntro)) {
+      OfflineMlKitTranslator.translateHongguoIntro(rawIntro).then((_) {
+        _translatingIntros.remove(rawIntro);
+        if (mounted && _isTranslationEnabled) {
+          setState(() {});
+        }
+      }).catchError((_) {
+        _translatingIntros.remove(rawIntro);
+      });
+    }
+  }
+
+  void _prefetchAdjacentTranslations(int centerIndex) {
+    if (!_isTranslationEnabled || !mounted) return;
+    for (var offset = 0; offset <= 1; offset++) {
+      final idx = centerIndex + offset;
+      if (idx >= 0 && idx < _feedItems.length) {
+        _ensureMetadataTranslated(_feedItems[idx]);
+      }
+    }
+  }
+
+  void _toggleFeedTranslation({bool showSnackBar = true}) {
+    HapticFeedback.lightImpact();
+    final nextVal = !_isTranslationEnabled;
+    setState(() {
+      _isTranslationEnabled = nextVal;
+    });
+    _settings?.hongguoTranslateEnabled = nextVal;
+    if (nextVal) {
+      _prefetchAdjacentTranslations(_currentIndex);
+    }
+    if (!showSnackBar) return;
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            Icon(
+              nextVal ? Icons.translate_rounded : Icons.translate_outlined,
+              color: nextVal ? AppColors.primaryEmerald : Colors.white70,
+              size: 16,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              nextVal
+                  ? 'Đã bật tự động dịch tiêu đề & mô tả'
+                  : 'Đã tắt dịch — hiển thị nguyên văn tiếng Trung',
+              style: const TextStyle(fontSize: 12.5),
+            ),
+          ],
+        ),
+        backgroundColor: const Color(0xFF22242A),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(milliseconds: 1600),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
   }
 
   final math.Random _rng = math.Random();
@@ -1016,6 +1111,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     final feedGeneration = _feedGeneration;
     final mediaKey = requestedMediaKey;
     _activePageIndex = index;
+    _prefetchAdjacentTranslations(index);
     _cancelCascadingPreload();
     _loadingIndicatorTimer?.cancel();
     _currentPos = Duration.zero;
@@ -1083,6 +1179,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
                 _feedItems[index].detail.seriesId == fullDetail.seriesId) {
               _feedItems[index] = item;
             }
+            _ensureMetadataTranslated(item);
             if (_isActivationCurrent(
               requestId: requestId,
               feedGeneration: feedGeneration,
@@ -2077,7 +2174,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     HongguoRelatedDramaSheet.show(
       context,
       currentDetail: item.detail,
-      isTranslationEnabled: true,
+      isTranslationEnabled: _isTranslationEnabled,
       onSelectDrama: (selectedDrama) {
         Navigator.pop(context);
         final detail = _dramaItemToDetail(selectedDrama);
@@ -2336,7 +2433,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     } catch (_) {}
   }
 
-  /// Mở bảng cài đặt nhanh khi nhấn giữ vào video (chỉ gồm Tốc độ & Chất lượng).
+  /// Mở bảng cài đặt nhanh khi nhấn giữ vào video (Tốc độ, Chất lượng & Dịch ML Kit).
   Future<void> _showFeedQuickSettingsSheet() async {
     HapticFeedback.mediumImpact();
     final rawTiers = _activeVideoInfo?.ladder?.availableQualityTiers ??
@@ -2571,6 +2668,72 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
                               }).toList(growable: false),
                             ),
                           ),
+
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 14),
+                            child: Divider(height: 1, color: Colors.white10),
+                          ),
+
+                          // 3. Tự động dịch tiêu đề & mô tả (ML Kit)
+                          GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () {
+                              _toggleFeedTranslation(showSnackBar: false);
+                              if (sheetCtx.mounted) {
+                                setSheetState(() {});
+                              }
+                            },
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.translate_rounded,
+                                  color: _isTranslationEnabled
+                                      ? AppColors.primaryEmerald
+                                      : Colors.white70,
+                                  size: 18,
+                                ),
+                                const SizedBox(width: 8),
+                                const Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Tự động dịch tiêu đề & mô tả',
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                      SizedBox(height: 2),
+                                      Text(
+                                        'Dùng ML Kit dịch nhanh khi lướt feed',
+                                        style: TextStyle(
+                                          color: Colors.white54,
+                                          fontSize: 11.5,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Switch.adaptive(
+                                  value: _isTranslationEnabled,
+                                  activeTrackColor: AppColors.primaryEmerald
+                                      .withValues(alpha: 0.45),
+                                  activeThumbColor: AppColors.primaryEmerald,
+                                  onChanged: (_) {
+                                    _toggleFeedTranslation(
+                                      showSnackBar: false,
+                                    );
+                                    if (sheetCtx.mounted) {
+                                      setSheetState(() {});
+                                    }
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -2699,6 +2862,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       builder: (ctx) => _ByteDanceEpisodePickerSheet(
         detail: detail,
         currentEpisode: currentEpisodeNum,
+        isTranslationEnabled: _isTranslationEnabled,
         onSelectEpisode: (epIndex, fullDetail) async {
           Navigator.pop(ctx);
           if (_isDramaEpisodeMode) {
@@ -3224,8 +3388,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
           ? _feedItems[_currentIndex]
           : null;
       final dramaTitle = currentItem != null
-          ? (OfflineMlKitTranslator.getCachedTitle(currentItem.detail.title) ??
-                currentItem.detail.title)
+          ? _displayTitleFor(currentItem.detail)
           : '';
 
       return Positioned(
@@ -3559,9 +3722,8 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       return const SizedBox.shrink();
     }
 
-    final title =
-        OfflineMlKitTranslator.getCachedTitle(item.detail.title) ??
-        item.detail.title;
+    final title = _displayTitleFor(item.detail);
+    final intro = _displayIntroFor(item.detail);
     final total = math.max(
       1,
       math.max(item.detail.episodes.length, item.detail.totalEpisodes),
@@ -3705,8 +3867,8 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
                               ),
                             ),
                             TextSpan(
-                              text: item.detail.intro.isNotEmpty
-                                  ? item.detail.intro
+                              text: intro.isNotEmpty
+                                  ? intro
                                   : 'Diễn biến gay cấn trọn bộ...',
                               style: const TextStyle(
                                 color: Colors.white,
@@ -5968,12 +6130,14 @@ typedef OnTagSelectedCallback = void Function(String tag);
 class _ByteDanceEpisodePickerSheet extends StatefulWidget {
   final HongguoDramaDetail detail;
   final int currentEpisode;
+  final bool isTranslationEnabled;
   final OnEpisodeSelectedCallback onSelectEpisode;
   final OnTagSelectedCallback? onSelectTag;
 
   const _ByteDanceEpisodePickerSheet({
     required this.detail,
     required this.currentEpisode,
+    this.isTranslationEnabled = true,
     required this.onSelectEpisode,
     this.onSelectTag,
   });
@@ -6016,10 +6180,29 @@ class _ByteDanceEpisodePickerSheetState
     super.initState();
     _currentDetail = widget.detail;
     _selectedRangeIndex = (widget.currentEpisode - 1) ~/ _episodesPerRange;
+    _translateSheetMetadata();
 
     // Tự động tải toàn bộ danh sách tập nếu chi tiết chưa có danh sách tập
     if (_currentDetail.episodes.length <= 1) {
       _loadFullDetail();
+    }
+  }
+
+  void _translateSheetMetadata() {
+    if (!widget.isTranslationEnabled) return;
+    final rawTitle = _currentDetail.title.trim();
+    if (rawTitle.isNotEmpty &&
+        OfflineMlKitTranslator.getCachedTitle(rawTitle) == null) {
+      OfflineMlKitTranslator.translateHongguoTitle(rawTitle).then((_) {
+        if (mounted) setState(() {});
+      }).catchError((_) {});
+    }
+    final rawIntro = _currentDetail.intro.trim();
+    if (rawIntro.isNotEmpty &&
+        OfflineMlKitTranslator.getCachedIntro(rawIntro) == null) {
+      OfflineMlKitTranslator.translateHongguoIntro(rawIntro).then((_) {
+        if (mounted) setState(() {});
+      }).catchError((_) {});
     }
   }
 
@@ -6037,6 +6220,7 @@ class _ByteDanceEpisodePickerSheetState
               (widget.currentEpisode - 1).clamp(0, full.episodes.length - 1) ~/
               _episodesPerRange;
         });
+        _translateSheetMetadata();
       } else if (mounted) {
         setState(() => _isLoadingDetail = false);
       }
@@ -6053,9 +6237,10 @@ class _ByteDanceEpisodePickerSheetState
     );
 
     final rangeCount = (total / _episodesPerRange).ceil();
-    final title =
-        OfflineMlKitTranslator.getCachedTitle(_currentDetail.title) ??
-        _currentDetail.title;
+    final title = widget.isTranslationEnabled
+        ? (OfflineMlKitTranslator.getCachedTitle(_currentDetail.title) ??
+              _currentDetail.title)
+        : _currentDetail.title;
 
     return Container(
       height: MediaQuery.of(context).size.height * 0.65,
@@ -6121,14 +6306,17 @@ class _ByteDanceEpisodePickerSheetState
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Flexible(
-                              child: Text(
-                                title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.bold,
+                              child: SingleChildScrollView(
+                                scrollDirection: Axis.horizontal,
+                                physics: const BouncingScrollPhysics(),
+                                child: Text(
+                                  title,
+                                  maxLines: 1,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.bold,
+                                  ),
                                 ),
                               ),
                             ),
@@ -6329,8 +6517,13 @@ class _ByteDanceEpisodePickerSheetState
           ),
           const SizedBox(height: 8),
           Text(
-            widget.detail.intro.isNotEmpty
-                ? widget.detail.intro
+            _currentDetail.intro.isNotEmpty
+                ? (widget.isTranslationEnabled
+                      ? (OfflineMlKitTranslator.getCachedIntro(
+                              _currentDetail.intro,
+                            ) ??
+                            _currentDetail.intro)
+                      : _currentDetail.intro)
                 : 'Hiện chưa có phần giới thiệu chi tiết cho bộ phim này.',
             style: const TextStyle(
               color: Colors.white,

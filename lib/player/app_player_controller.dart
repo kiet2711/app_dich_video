@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
@@ -73,6 +74,29 @@ class AppPlayerController extends ChangeNotifier {
   bool _isDisposed = false;
   bool _inSilentStandby = false;
   bool _isFailoveringCdn = false;
+  static bool _isAndroidEmulator = false;
+  static bool _platformDetected = false;
+
+  static bool get isAndroidEmulator => _isAndroidEmulator;
+
+  /// Kiểm tra một lần xem app có đang chạy trên Android Emulator hay không
+  /// để tránh ghi đè cấu hình máy thật.
+  static Future<void> ensurePlatformDetected() async {
+    if (_platformDetected || !Platform.isAndroid) {
+      _platformDetected = true;
+      return;
+    }
+    _platformDetected = true;
+    try {
+      final detected = await const MethodChannel(
+        'com.capcut.capsub/media',
+      ).invokeMethod<bool>('isEmulator');
+      _isAndroidEmulator = detected ?? false;
+      debugPrint('[AppPlayerController] isAndroidEmulator=$_isAndroidEmulator');
+    } catch (_) {
+      _isAndroidEmulator = false;
+    }
+  }
   List<({String videoUrl, String audioUrl})> _activeDashPairs = const [];
   Map<String, String> _activeDashHeaders = const {};
   int _activeDashPairIndex = 0;
@@ -94,15 +118,20 @@ class AppPlayerController extends ChangeNotifier {
         muted: silent,
       ),
     );
+    final useEmulatorDirectSurface = Platform.isAndroid && _isAndroidEmulator;
     videoController = VideoController(
       player,
       configuration: VideoControllerConfiguration(
-        enableHardwareAcceleration: hardwareDecode,
+        vo: useEmulatorDirectSurface ? 'mediacodec_embed' : null,
+        enableHardwareAcceleration:
+            useEmulatorDirectSurface ? true : hardwareDecode,
         androidAttachSurfaceAfterVideoParameters:
             Platform.isAndroid ? false : null,
-        hwdec: hardwareDecode
-            ? (Platform.isAndroid ? 'mediacodec,auto-safe' : 'auto')
-            : 'no',
+        hwdec: useEmulatorDirectSurface
+            ? 'mediacodec'
+            : (hardwareDecode
+                ? (Platform.isAndroid ? 'mediacodec,auto-safe' : 'auto')
+                : 'no'),
       ),
     );
 

@@ -12,6 +12,7 @@ import 'ui/theme/app_theme.dart';
 
 import 'data/repository/settings_repository.dart';
 import 'domain/font/custom_font_manager.dart';
+import 'player/app_player_controller.dart';
 import 'player/global_player_manager.dart';
 import 'player/pip_manager.dart';
 import 'package:media_kit/media_kit.dart';
@@ -23,6 +24,7 @@ Future<void> _initializeAppServices() async {
   PaintingBinding.instance.imageCache.maximumSizeBytes = 40 * 1024 * 1024; // 40 MB max
   PaintingBinding.instance.imageCache.maximumSize = 120; // Tối đa 120 ảnh
   MediaKit.ensureInitialized();
+  await AppPlayerController.ensurePlatformDetected();
   PipManager.initialize();
   final settings = await SettingsRepository.getInstance();
   await CustomFontManager.loadAllSavedFonts(settings);

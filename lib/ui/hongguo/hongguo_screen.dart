@@ -2299,14 +2299,113 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
   bool _loadingTts = false;
   String _statusMessage = '';
   int _selectedRangeChunk = 0; // Phân đoạn mỗi 30 tập: 0 (1-30), 1 (31-60), ...
+  final ScrollController _titleScrollController = ScrollController();
   final ScrollController _introScrollController = ScrollController();
+  bool _isTitleExpanded = false;
 
   static const int _chunkSize = 30;
 
   @override
   void dispose() {
+    _titleScrollController.dispose();
     _introScrollController.dispose();
     super.dispose();
+  }
+
+  Widget _buildHeaderTitle(String rawTitle) {
+    const titleStyle = TextStyle(
+      fontSize: 16,
+      fontWeight: FontWeight.bold,
+      color: AppColors.textPrimary,
+      height: 1.3,
+    );
+
+    Widget buildTitleContent(String displayTitle) {
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          final painter = TextPainter(
+            text: TextSpan(text: displayTitle, style: titleStyle),
+            maxLines: 2,
+            textDirection: TextDirection.ltr,
+          )..layout(maxWidth: constraints.maxWidth);
+
+          if (!painter.didExceedMaxLines) {
+            return Text(displayTitle, style: titleStyle);
+          }
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () {
+                  setState(() => _isTitleExpanded = !_isTitleExpanded);
+                },
+                child: _isTitleExpanded
+                    ? Text(displayTitle, style: titleStyle)
+                    : ConstrainedBox(
+                        constraints: const BoxConstraints(maxHeight: 46),
+                        child: Scrollbar(
+                          controller: _titleScrollController,
+                          thumbVisibility: true,
+                          radius: const Radius.circular(4),
+                          thickness: 3,
+                          child: SingleChildScrollView(
+                            controller: _titleScrollController,
+                            physics: const BouncingScrollPhysics(),
+                            child: Padding(
+                              padding: const EdgeInsets.only(right: 6),
+                              child: Text(displayTitle, style: titleStyle),
+                            ),
+                          ),
+                        ),
+                      ),
+              ),
+              const SizedBox(height: 2),
+              GestureDetector(
+                onTap: () {
+                  setState(() => _isTitleExpanded = !_isTitleExpanded);
+                },
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _isTitleExpanded ? 'Thu gọn' : 'Xem đủ tên',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.primaryEmerald,
+                      ),
+                    ),
+                    Icon(
+                      _isTitleExpanded
+                          ? Icons.keyboard_arrow_up_rounded
+                          : Icons.keyboard_arrow_down_rounded,
+                      size: 15,
+                      color: AppColors.primaryEmerald,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          );
+        },
+      );
+    }
+
+    if (!widget.isTranslationEnabled) {
+      return buildTitleContent(rawTitle);
+    }
+    final cached = OfflineMlKitTranslator.getCachedTitle(rawTitle);
+    if (cached != null) {
+      return buildTitleContent(cached);
+    }
+    return FutureBuilder<String>(
+      future: OfflineMlKitTranslator.translateHongguoTitle(rawTitle),
+      initialData: rawTitle,
+      builder: (ctx, snap) => buildTitleContent(snap.data ?? rawTitle),
+    );
   }
 
   @override
@@ -2392,55 +2491,7 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Builder(
-                                builder: (ctx) {
-                                  if (!widget.isTranslationEnabled) {
-                                    return Text(
-                                      detail.title,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.bold,
-                                        color: AppColors.textPrimary,
-                                      ),
-                                    );
-                                  }
-                                  final cached =
-                                      OfflineMlKitTranslator.getCachedTitle(
-                                          detail.title);
-                                  if (cached != null) {
-                                    return Text(
-                                      cached,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.bold,
-                                        color: AppColors.textPrimary,
-                                      ),
-                                    );
-                                  }
-                                  return FutureBuilder<String>(
-                                    future:
-                                        OfflineMlKitTranslator.translateHongguoTitle(
-                                            detail.title),
-                                    initialData: detail.title,
-                                    builder: (ctx, snap) {
-                                      return Text(
-                                        snap.data ?? detail.title,
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.bold,
-                                          color: AppColors.textPrimary,
-                                        ),
-                                      );
-                                    },
-                                  );
-                                },
-                              ),
+                              _buildHeaderTitle(detail.title),
                               const SizedBox(height: 6),
                               Wrap(
                                 spacing: 6,

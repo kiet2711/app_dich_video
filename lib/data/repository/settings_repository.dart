@@ -297,6 +297,12 @@ class SettingsRepository {
       '- Câu từ ngắn gọn, súc tích, khớp nhịp thoại nhanh của phim ngắn.\n'
       '- Giữ nguyên số dòng và định dạng, chỉ trả về nội dung bản dịch tiếng Việt.';
 
+  /// Bật/tắt tự động dịch tiêu đề & mô tả Hồng Quả bằng ML Kit
+  bool get hongguoTranslateEnabled =>
+      prefs.getBool('hongguo_translate_enabled') ?? true;
+  set hongguoTranslateEnabled(bool v) =>
+      prefs.setBool('hongguo_translate_enabled', v);
+
   /// Chế độ dịch riêng của Hồng Quả: 'capcut' (CapCut Free) hoặc 'api_online' (API Online tự động xoay model & key)
   String get hongguoTranslationMode =>
       prefs.getString('hongguo_translation_mode') ?? 'capcut';
