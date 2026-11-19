@@ -69,10 +69,11 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
 
   Future<void> _pickVoice() async {
     HapticFeedback.selectionClick();
+    final accent = AppThemePalette.of(context).accentFor(AppTabId.hongguo);
     final picked = await VoiceSelectorSheet.show(
       context,
       currentVoiceType: _selectedVoice.voiceType,
-      accentColor: AppColors.primaryEmerald,
+      accentColor: accent,
       title: 'Chọn Giọng Đọc Hồng Quả',
     );
 
@@ -112,15 +113,20 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.hongguo);
+    final secondary = palette.secondaryFor(AppTabId.hongguo);
+    final onAccent = palette.onColor(accent);
+
     if (_isLoading) {
       return Container(
         padding: const EdgeInsets.all(32),
-        decoration: const BoxDecoration(
-          color: AppColors.darkSurface,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        decoration: BoxDecoration(
+          color: palette.surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
         ),
-        child: const Center(
-          child: CircularProgressIndicator(color: AppColors.primaryEmerald),
+        child: Center(
+          child: CircularProgressIndicator(color: accent),
         ),
       );
     }
@@ -132,9 +138,9 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
       constraints: BoxConstraints(
         maxHeight: MediaQuery.of(context).size.height * 0.90,
       ),
-      decoration: const BoxDecoration(
-        color: AppColors.darkSurface,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       ),
       child: SafeArea(
         top: false,
@@ -142,42 +148,47 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Thanh kéo Drag handle
             Center(
               child: Container(
                 width: 40,
                 height: 4,
                 decoration: BoxDecoration(
-                  color: AppColors.cardBorder,
+                  color: palette.border,
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
             ),
             const SizedBox(height: 14),
 
-            // Tiêu đề
             Row(
               children: [
-                const Icon(
-                  Icons.settings_rounded,
-                  color: AppColors.primaryEmerald,
-                  size: 22,
+                Container(
+                  padding: const EdgeInsets.all(7),
+                  decoration: BoxDecoration(
+                    color: accent.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(
+                    Icons.settings_rounded,
+                    color: accent,
+                    size: 20,
+                  ),
                 ),
-                const SizedBox(width: 8),
-                const Expanded(
+                const SizedBox(width: 10),
+                Expanded(
                   child: Text(
                     'Cài Đặt Dịch & Xem Phim Hồng Quả',
                     style: TextStyle(
-                      color: AppColors.textPrimary,
+                      color: palette.textPrimary,
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                 ),
                 IconButton(
-                  icon: const Icon(
+                  icon: Icon(
                     Icons.close_rounded,
-                    color: AppColors.textSecondary,
+                    color: palette.textSecondary,
                     size: 20,
                   ),
                   onPressed: () => Navigator.pop(context),
@@ -187,27 +198,26 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
             ),
             const SizedBox(height: 8),
 
-            // Nội dung cuộn
             Flexible(
               child: SingleChildScrollView(
                 physics: const BouncingScrollPhysics(),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
+                    Text(
                       'NGUỒN GIẢI MÃ VIDEO:',
                       style: TextStyle(
-                        color: AppColors.textSecondary,
+                        color: palette.textSecondary,
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
                         letterSpacing: 0.5,
                       ),
                     ),
                     const SizedBox(height: 4),
-                    const Text(
+                    Text(
                       'Tự động kết hợp nguồn web, chữ ký thiết bị tạm và fallback giữa Local & Cloud.',
                       style: TextStyle(
-                        color: AppColors.textMuted,
+                        color: palette.textMuted,
                         fontSize: 11,
                       ),
                     ),
@@ -215,12 +225,12 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 12),
                       decoration: BoxDecoration(
-                        color: AppColors.darkSurfaceVariant,
-                        borderRadius: BorderRadius.circular(12),
+                        color: palette.surfaceAlt,
+                        borderRadius: BorderRadius.circular(14),
                         border: Border.all(
                           color: _videoResolverEngine == 'local'
-                              ? AppColors.primaryEmerald
-                              : Colors.orange,
+                              ? accent
+                              : secondary,
                         ),
                       ),
                       child: SwitchListTile(
@@ -231,15 +241,15 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
                               ? Icons.phone_android_rounded
                               : Icons.cloud_rounded,
                           color: _videoResolverEngine == 'local'
-                              ? AppColors.primaryEmerald
-                              : Colors.orange,
+                              ? accent
+                              : secondary,
                         ),
                         title: Text(
                           _videoResolverEngine == 'local'
                               ? 'Local trên điện thoại'
                               : 'Hugging Face Space',
-                          style: const TextStyle(
-                            color: AppColors.textPrimary,
+                          style: TextStyle(
+                            color: palette.textPrimary,
                             fontWeight: FontWeight.bold,
                             fontSize: 13,
                           ),
@@ -248,13 +258,13 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
                           _videoResolverEngine == 'local'
                               ? 'Tự ký request ByteDance, tải và giải mã CENC ngay trên máy.'
                               : 'Gửi Video ID đến server Hugging Face để xử lý.',
-                          style: const TextStyle(
-                            color: AppColors.textMuted,
+                          style: TextStyle(
+                            color: palette.textMuted,
                             fontSize: 11,
                           ),
                         ),
                         value: _videoResolverEngine == 'hf',
-                        activeThumbColor: Colors.orange,
+                        activeThumbColor: secondary,
                         onChanged: (useHf) {
                           HapticFeedback.selectionClick();
                           setState(() {
@@ -267,6 +277,7 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
                     Align(
                       alignment: Alignment.centerLeft,
                       child: TextButton.icon(
+                        style: TextButton.styleFrom(foregroundColor: accent),
                         onPressed: () async {
                           await HongguoCodecCapabilities.instance.lessons
                               .clearAll();
@@ -287,41 +298,42 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 18),
+                    const SizedBox(height: 16),
 
                     // ===== 1. CHỌN CHẾ ĐỘ DỊCH =====
-                    const Text(
+                    Text(
                       'CHẾ ĐỘ DỊCH PHIM (HỒNG QUẢ):',
                       style: TextStyle(
-                        color: AppColors.textSecondary,
+                        color: palette.textSecondary,
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
                         letterSpacing: 0.5,
                       ),
                     ),
                     const SizedBox(height: 4),
-                    const Text(
+                    Text(
                       'Cấu hình độc lập cho phim ngắn Trung ➔ Việt, không phụ thuộc vào trang chủ.',
                       style: TextStyle(
-                        color: AppColors.textMuted,
+                        color: palette.textMuted,
                         fontSize: 11,
                       ),
                     ),
                     const SizedBox(height: 10),
 
-                    // Lựa chọn chế độ dịch: 1 hàng 2 ô
                     IntrinsicHeight(
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           Expanded(
                             child: _buildModeOption(
+                              palette: palette,
+                              accent: accent,
                               mode: 'capcut',
                               title: 'CapCut Free',
                               badge: 'MIỄN PHÍ',
-                              badgeColor: Colors.amber,
+                              badgeColor: const Color(0xFFD97706),
                               icon: Icons.bolt_rounded,
-                              iconColor: Colors.amber,
+                              iconColor: const Color(0xFFD97706),
                               description: 'Không cần API Key\nBóc tách âm & dịch nhanh',
                               isSelected: _translationMode == 'capcut',
                               onTap: () {
@@ -333,12 +345,14 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
                           const SizedBox(width: 8),
                           Expanded(
                             child: _buildModeOption(
+                              palette: palette,
+                              accent: accent,
                               mode: 'api_online',
                               title: 'API Online',
                               badge: 'XOAY KEY',
-                              badgeColor: AppColors.primaryEmerald,
+                              badgeColor: accent,
                               icon: Icons.auto_awesome_rounded,
-                              iconColor: AppColors.primaryEmerald,
+                              iconColor: accent,
                               description: 'Dịch AI ngữ cảnh\nChuẩn văn phong phim',
                               isSelected: _translationMode == 'api_online',
                               onTap: () {
@@ -352,15 +366,14 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
                     ),
                     const SizedBox(height: 16),
 
-                    // ===== 2. PROMPT NGỮ CẢNH DỊCH (KHI DÙNG API ONLINE) =====
                     if (_translationMode == 'api_online') ...[
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          const Text(
+                          Text(
                             'PROMPT NGỮ CẢNH DỊCH (ZH ➔ VI):',
                             style: TextStyle(
-                              color: AppColors.textSecondary,
+                              color: palette.textSecondary,
                               fontSize: 12,
                               fontWeight: FontWeight.bold,
                               letterSpacing: 0.5,
@@ -373,16 +386,16 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
                                 horizontal: 6,
                               ),
                             ),
-                            icon: const Icon(
+                            icon: Icon(
                               Icons.refresh_rounded,
                               size: 14,
-                              color: AppColors.primaryEmerald,
+                              color: accent,
                             ),
-                            label: const Text(
+                            label: Text(
                               'Khôi phục mặc định',
                               style: TextStyle(
                                 fontSize: 11,
-                                color: AppColors.primaryEmerald,
+                                color: accent,
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
@@ -391,10 +404,10 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
                         ],
                       ),
                       const SizedBox(height: 4),
-                      const Text(
+                      Text(
                         'Prompt chuyên sâu cho phim ngắn Trung Quốc (tổng tài, ngôn tình, xuyên không, đô thị...).',
                         style: TextStyle(
-                          color: AppColors.textMuted,
+                          color: palette.textMuted,
                           fontSize: 11,
                         ),
                       ),
@@ -402,25 +415,25 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
 
                       Container(
                         decoration: BoxDecoration(
-                          color: AppColors.darkSurfaceVariant,
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: AppColors.cardBorder),
+                          color: palette.surfaceAlt,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: palette.border),
                         ),
                         child: TextField(
                           controller: _promptController,
                           maxLines: 4,
                           minLines: 2,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 12,
-                            color: AppColors.textPrimary,
+                            color: palette.textPrimary,
                             height: 1.4,
                           ),
-                          decoration: const InputDecoration(
+                          decoration: InputDecoration(
                             border: InputBorder.none,
-                            contentPadding: EdgeInsets.all(12),
+                            contentPadding: const EdgeInsets.all(12),
                             hintText: 'Nhập prompt ngữ cảnh dịch...',
                             hintStyle: TextStyle(
-                              color: AppColors.textMuted,
+                              color: palette.textMuted,
                               fontSize: 12,
                             ),
                           ),
@@ -429,21 +442,20 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
                       const SizedBox(height: 16),
                     ],
 
-                    // ===== 3. CHỌN GIỌNG LỒNG TIẾNG AI =====
-                    const Text(
+                    Text(
                       'GIỌNG LỒNG TIẾNG AI (HỒNG QUẢ):',
                       style: TextStyle(
-                        color: AppColors.textSecondary,
+                        color: palette.textSecondary,
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
                         letterSpacing: 0.5,
                       ),
                     ),
                     const SizedBox(height: 4),
-                    const Text(
+                    Text(
                       'Giọng đọc AI tự động lồng tiếng cho các tập phim ngắn Hồng Quả.',
                       style: TextStyle(
-                        color: AppColors.textMuted,
+                        color: palette.textMuted,
                         fontSize: 11,
                       ),
                     ),
@@ -451,16 +463,14 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
 
                     InkWell(
                       onTap: _pickVoice,
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(14),
                       child: Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: AppColors.darkSurfaceVariant,
-                          borderRadius: BorderRadius.circular(12),
+                          color: palette.surfaceAlt,
+                          borderRadius: BorderRadius.circular(14),
                           border: Border.all(
-                            color: AppColors.primaryEmerald.withValues(
-                              alpha: 0.3,
-                            ),
+                            color: accent.withValues(alpha: 0.35),
                           ),
                         ),
                         child: Row(
@@ -468,14 +478,12 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
                             Container(
                               padding: const EdgeInsets.all(10),
                               decoration: BoxDecoration(
-                                color: AppColors.primaryEmerald.withValues(
-                                  alpha: 0.15,
-                                ),
+                                color: accent.withValues(alpha: 0.14),
                                 shape: BoxShape.circle,
                               ),
-                              child: const Icon(
+                              child: Icon(
                                 Icons.record_voice_over_rounded,
-                                color: AppColors.primaryEmerald,
+                                color: accent,
                                 size: 20,
                               ),
                             ),
@@ -489,8 +497,8 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
                                       Flexible(
                                         child: Text(
                                           _selectedVoice.displayName,
-                                          style: const TextStyle(
-                                            color: AppColors.textPrimary,
+                                          style: TextStyle(
+                                            color: palette.textPrimary,
                                             fontSize: 14,
                                             fontWeight: FontWeight.bold,
                                           ),
@@ -505,16 +513,13 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
                                           vertical: 1,
                                         ),
                                         decoration: BoxDecoration(
-                                          color: AppColors.primaryEmerald
-                                              .withValues(alpha: 0.2),
-                                          borderRadius: BorderRadius.circular(
-                                            4,
-                                          ),
+                                          color: accent.withValues(alpha: 0.16),
+                                          borderRadius: BorderRadius.circular(4),
                                         ),
-                                        child: const Text(
+                                        child: Text(
                                           'Đang dùng',
                                           style: TextStyle(
-                                            color: AppColors.primaryEmerald,
+                                            color: accent,
                                             fontSize: 10,
                                             fontWeight: FontWeight.bold,
                                           ),
@@ -527,8 +532,8 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
                                     _selectedVoice.description.isNotEmpty
                                         ? _selectedVoice.description
                                         : 'Giọng đọc CapCut tự nhiên',
-                                    style: const TextStyle(
-                                      color: AppColors.textSecondary,
+                                    style: TextStyle(
+                                      color: palette.textSecondary,
                                       fontSize: 11,
                                     ),
                                     maxLines: 1,
@@ -543,32 +548,28 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
                                 vertical: 6,
                               ),
                               decoration: BoxDecoration(
-                                color: AppColors.primaryEmerald.withValues(
-                                  alpha: 0.15,
-                                ),
-                                borderRadius: BorderRadius.circular(8),
+                                color: accent.withValues(alpha: 0.14),
+                                borderRadius: BorderRadius.circular(10),
                                 border: Border.all(
-                                  color: AppColors.primaryEmerald.withValues(
-                                    alpha: 0.4,
-                                  ),
+                                  color: accent.withValues(alpha: 0.4),
                                 ),
                               ),
-                              child: const Row(
+                              child: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   Text(
                                     'Đổi giọng',
                                     style: TextStyle(
-                                      color: AppColors.primaryEmerald,
+                                      color: accent,
                                       fontSize: 11.5,
                                       fontWeight: FontWeight.bold,
                                     ),
                                   ),
-                                  SizedBox(width: 2),
+                                  const SizedBox(width: 2),
                                   Icon(
                                     Icons.chevron_right_rounded,
                                     size: 16,
-                                    color: AppColors.primaryEmerald,
+                                    color: accent,
                                   ),
                                 ],
                               ),
@@ -579,11 +580,10 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
                     ),
                     const SizedBox(height: 16),
 
-                    // ===== 4. CÀI ĐẶT PHÁT, CHUYỂN TẬP & BỘ NHỚ =====
-                    const Text(
+                    Text(
                       'PHÁT PHIM & BỘ NHỚ:',
                       style: TextStyle(
-                        color: AppColors.textSecondary,
+                        color: palette.textSecondary,
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
                         letterSpacing: 0.5,
@@ -593,35 +593,34 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
 
                     Container(
                       decoration: BoxDecoration(
-                        color: AppColors.darkSurfaceVariant,
+                        color: palette.surfaceAlt,
                         borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: AppColors.cardBorder),
+                        border: Border.all(color: palette.border),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          // 1. Tự động chuyển tập & dịch ngầm
                           Padding(
                             padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
                             child: Row(
                               children: [
-                                const Expanded(
+                                Expanded(
                                   child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       Text(
                                         'Tự động chuyển tập & dịch trước',
                                         style: TextStyle(
-                                          color: AppColors.textPrimary,
+                                          color: palette.textPrimary,
                                           fontWeight: FontWeight.bold,
                                           fontSize: 13,
                                         ),
                                       ),
-                                      SizedBox(height: 2),
+                                      const SizedBox(height: 2),
                                       Text(
                                         'Tự phát tiếp và dịch ngầm các tập kế tiếp',
                                         style: TextStyle(
-                                          color: AppColors.textMuted,
+                                          color: palette.textMuted,
                                           fontSize: 11,
                                         ),
                                       ),
@@ -630,7 +629,7 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
                                 ),
                                 Switch(
                                   value: _autoPlay,
-                                  activeThumbColor: AppColors.primaryEmerald,
+                                  activeThumbColor: accent,
                                   onChanged: (val) {
                                     setState(() => _autoPlay = val);
                                   },
@@ -639,25 +638,24 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
                             ),
                           ),
 
-                          // Tùy chọn số tập gối đầu (chỉ mở khi _autoPlay = true)
                           if (_autoPlay) ...[
                             Padding(
                               padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  const Row(
+                                  Row(
                                     children: [
                                       Icon(
                                         Icons.auto_mode_rounded,
                                         size: 13,
-                                        color: AppColors.primaryEmerald,
+                                        color: accent,
                                       ),
-                                      SizedBox(width: 4),
+                                      const SizedBox(width: 4),
                                       Text(
                                         'Số tập dịch sẵn trong nền:',
                                         style: TextStyle(
-                                          color: AppColors.textSecondary,
+                                          color: palette.textSecondary,
                                           fontSize: 11.5,
                                           fontWeight: FontWeight.w600,
                                         ),
@@ -667,11 +665,14 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
                                   const SizedBox(height: 6),
                                   Row(
                                     children: [
-                                      _buildCompactBufferOption(1, '1 tập'),
+                                      _buildCompactBufferOption(
+                                          palette, accent, 1, '1 tập'),
                                       const SizedBox(width: 6),
-                                      _buildCompactBufferOption(2, '2 tập'),
+                                      _buildCompactBufferOption(
+                                          palette, accent, 2, '2 tập'),
                                       const SizedBox(width: 6),
-                                      _buildCompactBufferOption(3, '3 tập'),
+                                      _buildCompactBufferOption(
+                                          palette, accent, 3, '3 tập'),
                                     ],
                                   ),
                                 ],
@@ -682,31 +683,30 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
                           Divider(
                             height: 1,
                             thickness: 0.8,
-                            color: AppColors.cardBorder.withValues(alpha: 0.6),
+                            color: palette.border,
                           ),
 
-                          // 2. Tự dọn dẹp tập cũ
                           Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                             child: Row(
                               children: [
-                                const Expanded(
+                                Expanded(
                                   child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       Text(
                                         'Tự xóa tập đã xem',
                                         style: TextStyle(
-                                          color: AppColors.textPrimary,
+                                          color: palette.textPrimary,
                                           fontWeight: FontWeight.bold,
                                           fontSize: 13,
                                         ),
                                       ),
-                                      SizedBox(height: 2),
+                                      const SizedBox(height: 2),
                                       Text(
                                         'Dọn sạch video, phụ đề & lồng tiếng cách 3 tập',
                                         style: TextStyle(
-                                          color: AppColors.textMuted,
+                                          color: palette.textMuted,
                                           fontSize: 11,
                                         ),
                                       ),
@@ -715,7 +715,7 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
                                 ),
                                 Switch(
                                   value: _autoDeleteWatched,
-                                  activeThumbColor: AppColors.primaryEmerald,
+                                  activeThumbColor: accent,
                                   onChanged: (val) {
                                     setState(() => _autoDeleteWatched = val);
                                   },
@@ -732,16 +732,15 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
               ),
             ),
 
-            // Nút Lưu Cài Đặt
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primaryEmerald,
-                  foregroundColor: Colors.black,
+                  backgroundColor: accent,
+                  foregroundColor: onAccent,
                   padding: const EdgeInsets.symmetric(vertical: 13),
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
+                    borderRadius: BorderRadius.circular(12),
                   ),
                   elevation: 0,
                 ),
@@ -760,6 +759,8 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
   }
 
   Widget _buildModeOption({
+    required AppThemePalette palette,
+    required Color accent,
     required String mode,
     required String title,
     required String badge,
@@ -778,11 +779,11 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
         decoration: BoxDecoration(
           color: isSelected
-              ? AppColors.primaryEmerald.withValues(alpha: 0.12)
-              : AppColors.darkSurfaceVariant,
+              ? accent.withValues(alpha: 0.12)
+              : palette.surfaceAlt,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: isSelected ? AppColors.primaryEmerald : AppColors.cardBorder,
+            color: isSelected ? accent : palette.border,
             width: isSelected ? 1.5 : 1,
           ),
         ),
@@ -806,9 +807,7 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
                       ? Icons.radio_button_checked_rounded
                       : Icons.radio_button_off_rounded,
                   size: 18,
-                  color: isSelected
-                      ? AppColors.primaryEmerald
-                      : AppColors.textMuted,
+                  color: isSelected ? accent : palette.textMuted,
                 ),
               ],
             ),
@@ -821,9 +820,7 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: isSelected
-                          ? AppColors.primaryEmerald
-                          : AppColors.textPrimary,
+                      color: isSelected ? accent : palette.textPrimary,
                       fontSize: 13,
                       fontWeight: FontWeight.bold,
                     ),
@@ -836,7 +833,7 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
                     vertical: 1,
                   ),
                   decoration: BoxDecoration(
-                    color: badgeColor.withValues(alpha: 0.15),
+                    color: badgeColor.withValues(alpha: 0.14),
                     borderRadius: BorderRadius.circular(4),
                     border: Border.all(
                       color: badgeColor.withValues(alpha: 0.4),
@@ -859,8 +856,8 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
               description,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: AppColors.textSecondary,
+              style: TextStyle(
+                color: palette.textSecondary,
                 fontSize: 10.5,
                 height: 1.25,
               ),
@@ -871,7 +868,12 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
     );
   }
 
-  Widget _buildCompactBufferOption(int count, String label) {
+  Widget _buildCompactBufferOption(
+    AppThemePalette palette,
+    Color accent,
+    int count,
+    String label,
+  ) {
     final isSelected = _prefetchCount == count;
     return Expanded(
       child: InkWell(
@@ -886,13 +888,11 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
           alignment: Alignment.center,
           decoration: BoxDecoration(
             color: isSelected
-                ? AppColors.primaryEmerald.withValues(alpha: 0.15)
+                ? accent.withValues(alpha: 0.14)
                 : Colors.transparent,
             borderRadius: BorderRadius.circular(8),
             border: Border.all(
-              color: isSelected
-                  ? AppColors.primaryEmerald
-                  : AppColors.cardBorder,
+              color: isSelected ? accent : palette.border,
               width: isSelected ? 1.4 : 1,
             ),
           ),
@@ -900,9 +900,7 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
             label,
             textAlign: TextAlign.center,
             style: TextStyle(
-              color: isSelected
-                  ? AppColors.primaryEmerald
-                  : AppColors.textPrimary,
+              color: isSelected ? accent : palette.textPrimary,
               fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
               fontSize: 12,
             ),

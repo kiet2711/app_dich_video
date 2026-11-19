@@ -208,11 +208,14 @@ class _ImportSubtitleDialogState extends State<ImportSubtitleDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.history);
+    final onAccent = palette.onColor(accent);
     final hasVideo = _selectedVideoPath != null;
     final hasSrt = _selectedSrtPath != null;
 
     return Dialog(
-      backgroundColor: AppTheme.darkCard,
+      backgroundColor: palette.surface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 480),
@@ -226,17 +229,17 @@ class _ImportSubtitleDialogState extends State<ImportSubtitleDialog> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text(
+                  Text(
                     '📥 Nhập Video & Phụ Đề',
                     style: TextStyle(
-                      color: Colors.white,
+                      color: palette.textPrimary,
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                   if (!_isTranslating)
                     IconButton(
-                      icon: const Icon(Icons.close, color: Colors.grey),
+                      icon: Icon(Icons.close, color: palette.textMuted),
                       onPressed: () => Navigator.pop(context),
                     ),
                 ],
@@ -246,23 +249,21 @@ class _ImportSubtitleDialogState extends State<ImportSubtitleDialog> {
               // 1. CHỌN VIDEO
               InkWell(
                 onTap: _isTranslating ? null : _pickVideo,
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(14),
                 child: Container(
                   padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF1E2029),
-                    borderRadius: BorderRadius.circular(12),
+                    color: palette.surfaceAlt,
+                    borderRadius: BorderRadius.circular(14),
                     border: Border.all(
-                      color: hasVideo
-                          ? AppTheme.primaryEmerald
-                          : const Color(0xFF2E313D),
+                      color: hasVideo ? accent : palette.border,
                     ),
                   ),
                   child: Row(
                     children: [
                       Icon(
                         hasVideo ? Icons.check_circle : Icons.video_file,
-                        color: hasVideo ? AppTheme.primaryEmerald : Colors.grey,
+                        color: hasVideo ? accent : palette.textMuted,
                         size: 28,
                       ),
                       const SizedBox(width: 12),
@@ -273,7 +274,7 @@ class _ImportSubtitleDialogState extends State<ImportSubtitleDialog> {
                             Text(
                               _selectedVideoName ?? 'Chọn file Video từ máy',
                               style: TextStyle(
-                                color: hasVideo ? Colors.white : Colors.grey,
+                                color: hasVideo ? palette.textPrimary : palette.textSecondary,
                                 fontSize: 14,
                                 fontWeight: FontWeight.w500,
                               ),
@@ -286,9 +287,7 @@ class _ImportSubtitleDialogState extends State<ImportSubtitleDialog> {
                                   ? 'Đã chọn video (Chạm để đổi)'
                                   : 'Hỗ trợ MP4, MKV, MOV',
                               style: TextStyle(
-                                color: hasVideo
-                                    ? AppTheme.primaryEmerald
-                                    : Colors.grey,
+                                color: hasVideo ? accent : palette.textMuted,
                                 fontSize: 11,
                               ),
                             ),
@@ -297,10 +296,10 @@ class _ImportSubtitleDialogState extends State<ImportSubtitleDialog> {
                       ),
                       if (hasVideo && !_isTranslating)
                         IconButton(
-                          icon: const Icon(
+                          icon: Icon(
                             Icons.close,
                             size: 18,
-                            color: Colors.grey,
+                            color: palette.textMuted,
                           ),
                           onPressed: () {
                             setState(() {
@@ -318,23 +317,21 @@ class _ImportSubtitleDialogState extends State<ImportSubtitleDialog> {
               // 2. CHỌN FILE PHỤ ĐỀ
               InkWell(
                 onTap: _isTranslating ? null : _pickSrt,
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(14),
                 child: Container(
                   padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF1E2029),
-                    borderRadius: BorderRadius.circular(12),
+                    color: palette.surfaceAlt,
+                    borderRadius: BorderRadius.circular(14),
                     border: Border.all(
-                      color: hasSrt
-                          ? AppTheme.primaryEmerald
-                          : const Color(0xFF2E313D),
+                      color: hasSrt ? accent : palette.border,
                     ),
                   ),
                   child: Row(
                     children: [
                       Icon(
                         hasSrt ? Icons.check_circle : Icons.description,
-                        color: hasSrt ? AppTheme.primaryEmerald : Colors.grey,
+                        color: hasSrt ? accent : palette.textMuted,
                         size: 28,
                       ),
                       const SizedBox(width: 12),
@@ -346,7 +343,7 @@ class _ImportSubtitleDialogState extends State<ImportSubtitleDialog> {
                               _selectedSrtName ??
                                   'Chọn file Phụ đề (.srt, .vtt)',
                               style: TextStyle(
-                                color: hasSrt ? Colors.white : Colors.grey,
+                                color: hasSrt ? palette.textPrimary : palette.textSecondary,
                                 fontSize: 14,
                                 fontWeight: FontWeight.w500,
                               ),
@@ -359,9 +356,7 @@ class _ImportSubtitleDialogState extends State<ImportSubtitleDialog> {
                                   ? 'Đã nhận file phụ đề (Chạm để đổi)'
                                   : 'File phụ đề rời có sẵn',
                               style: TextStyle(
-                                color: hasSrt
-                                    ? AppTheme.primaryEmerald
-                                    : Colors.grey,
+                                color: hasSrt ? accent : palette.textMuted,
                                 fontSize: 11,
                               ),
                             ),
@@ -370,10 +365,10 @@ class _ImportSubtitleDialogState extends State<ImportSubtitleDialog> {
                       ),
                       if (hasSrt && !_isTranslating)
                         IconButton(
-                          icon: const Icon(
+                          icon: Icon(
                             Icons.close,
                             size: 18,
-                            color: Colors.grey,
+                            color: palette.textMuted,
                           ),
                           onPressed: () {
                             setState(() {
@@ -393,20 +388,20 @@ class _ImportSubtitleDialogState extends State<ImportSubtitleDialog> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const SizedBox(
+                    SizedBox(
                       width: 22,
                       height: 22,
                       child: CircularProgressIndicator(
                         strokeWidth: 2.5,
-                        color: AppTheme.primaryEmerald,
+                        color: accent,
                       ),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Text(
                         _translationProgressText,
-                        style: const TextStyle(
-                          color: AppTheme.primaryEmerald,
+                        style: TextStyle(
+                          color: accent,
                           fontSize: 13,
                           fontWeight: FontWeight.w500,
                         ),
@@ -426,10 +421,11 @@ class _ImportSubtitleDialogState extends State<ImportSubtitleDialog> {
                       style: TextStyle(fontWeight: FontWeight.bold),
                     ),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTheme.primaryEmerald,
-                      foregroundColor: Colors.black,
+                      backgroundColor: accent,
+                      foregroundColor: onAccent,
+                      elevation: 0,
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
+                        borderRadius: BorderRadius.circular(12),
                       ),
                     ),
                   ),
@@ -441,22 +437,22 @@ class _ImportSubtitleDialogState extends State<ImportSubtitleDialog> {
                   height: 48,
                   child: OutlinedButton.icon(
                     onPressed: hasSrt ? _translateWithGemini : null,
-                    icon: const Icon(
+                    icon: Icon(
                       Icons.auto_awesome,
-                      color: AppTheme.primaryEmerald,
+                      color: accent,
                     ),
-                    label: const Text(
+                    label: Text(
                       'Dịch Phụ Đề Gốc Bằng AI (Gemini)',
                       style: TextStyle(
-                        color: Colors.white,
+                        color: palette.textPrimary,
                         fontWeight: FontWeight.w600,
                         fontSize: 13,
                       ),
                     ),
                     style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: AppTheme.cardBorder),
+                      side: BorderSide(color: palette.border),
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
+                        borderRadius: BorderRadius.circular(12),
                       ),
                     ),
                   ),

@@ -29,15 +29,19 @@ class BilibiliAccountSheet extends StatefulWidget {
     BilibiliResolver? resolver,
     bool translateTitles = true,
   }) {
+    final inheritedTheme = Theme.of(context);
     return showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (ctx) => BilibiliAccountSheet(
-        onOpenVideo: onOpenVideo,
-        onAccountChanged: onAccountChanged,
-        resolver: resolver,
-        translateTitles: translateTitles,
+      builder: (ctx) => Theme(
+        data: inheritedTheme,
+        child: BilibiliAccountSheet(
+          onOpenVideo: onOpenVideo,
+          onAccountChanged: onAccountChanged,
+          resolver: resolver,
+          translateTitles: translateTitles,
+        ),
       ),
     );
   }
@@ -47,9 +51,6 @@ class BilibiliAccountSheet extends StatefulWidget {
 }
 
 class _BilibiliAccountSheetState extends State<BilibiliAccountSheet> {
-  static const Color _biliPink = Color(0xFFFB7299);
-  static const Color _biliBlue = Color(0xFF00AEEC);
-
   late final BilibiliResolver _resolver;
   final ScrollController _scrollController = ScrollController();
 
@@ -187,26 +188,27 @@ class _BilibiliAccountSheetState extends State<BilibiliAccountSheet> {
   }
 
   Future<void> _logout() async {
+    final palette = AppThemePalette.of(context);
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.darkSurface,
+        backgroundColor: palette.surface,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
-          side: const BorderSide(color: AppTheme.cardBorder),
+          side: BorderSide(color: palette.border),
         ),
-        title: const Text(
+        title: Text(
           'Đăng xuất Bilibili?',
-          style: TextStyle(color: Colors.white),
+          style: TextStyle(color: palette.textPrimary),
         ),
-        content: const Text(
+        content: Text(
           'Sau khi đăng xuất, lịch sử Bilibili đồng bộ sẽ ẩn đi và bạn không thể xem chất lượng 1080p hoặc video Hội Viên.',
-          style: TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+          style: TextStyle(color: palette.textSecondary, fontSize: 13),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Hủy', style: TextStyle(color: Colors.white54)),
+            child: Text('Hủy', style: TextStyle(color: palette.textMuted)),
           ),
           ElevatedButton(
             onPressed: () => Navigator.of(ctx).pop(true),
@@ -236,13 +238,16 @@ class _BilibiliAccountSheetState extends State<BilibiliAccountSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.bilibili);
+    final secondary = palette.secondaryFor(AppTabId.bilibili);
     final isLoggedIn = _profile?.isLogin == true;
 
     return Container(
       height: MediaQuery.of(context).size.height * 0.84,
-      decoration: const BoxDecoration(
-        color: AppTheme.darkSurface,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       ),
       child: SafeArea(
         top: false,
@@ -255,7 +260,7 @@ class _BilibiliAccountSheetState extends State<BilibiliAccountSheet> {
                 width: 42,
                 height: 4,
                 decoration: BoxDecoration(
-                  color: Colors.white24,
+                  color: palette.border,
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
@@ -269,24 +274,24 @@ class _BilibiliAccountSheetState extends State<BilibiliAccountSheet> {
                   Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      color: _biliPink.withValues(alpha: 0.15),
+                      color: accent.withValues(alpha: 0.14),
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: const Icon(
+                    child: Icon(
                       Icons.account_circle_rounded,
-                      color: _biliPink,
+                      color: accent,
                       size: 20,
                     ),
                   ),
                   const SizedBox(width: 10),
-                  const Expanded(
+                  Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
                           'Tài khoản Bilibili',
                           style: TextStyle(
-                            color: AppTheme.textPrimary,
+                            color: palette.textPrimary,
                             fontSize: 16.5,
                             fontWeight: FontWeight.bold,
                           ),
@@ -294,7 +299,7 @@ class _BilibiliAccountSheetState extends State<BilibiliAccountSheet> {
                         Text(
                           'Đăng nhập & đồng bộ lịch sử xem Bilibili gốc',
                           style: TextStyle(
-                            color: AppTheme.textMuted,
+                            color: palette.textMuted,
                             fontSize: 11.5,
                           ),
                         ),
@@ -308,20 +313,20 @@ class _BilibiliAccountSheetState extends State<BilibiliAccountSheet> {
                           ? null
                           : _loadAccountAndHistory,
                       icon: (_isLoadingAccount || _isLoadingHistory)
-                          ? const SizedBox(
+                          ? SizedBox(
                               width: 18,
                               height: 18,
                               child: CircularProgressIndicator(
                                 strokeWidth: 2,
-                                color: _biliPink,
+                                color: accent,
                               ),
                             )
-                          : const Icon(Icons.sync_rounded, color: Colors.white70),
+                          : Icon(Icons.sync_rounded, color: palette.textSecondary),
                     ),
                   IconButton(
                     tooltip: 'Đóng',
                     onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(Icons.close_rounded, color: Colors.white70),
+                    icon: Icon(Icons.close_rounded, color: palette.textSecondary),
                   ),
                 ],
               ),
@@ -332,7 +337,7 @@ class _BilibiliAccountSheetState extends State<BilibiliAccountSheet> {
             // Account card
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 18),
-              child: _buildAccountCard(isLoggedIn),
+              child: _buildAccountCard(palette, accent, secondary, isLoggedIn),
             ),
 
             const SizedBox(height: 14),
@@ -342,7 +347,7 @@ class _BilibiliAccountSheetState extends State<BilibiliAccountSheet> {
               padding: const EdgeInsets.symmetric(horizontal: 18),
               child: Row(
                 children: [
-                  const Icon(Icons.history_rounded, color: _biliPink, size: 18),
+                  Icon(Icons.history_rounded, color: accent, size: 18),
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
@@ -351,8 +356,8 @@ class _BilibiliAccountSheetState extends State<BilibiliAccountSheet> {
                           : 'Lịch sử xem Bilibili',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: AppTheme.textPrimary,
+                      style: TextStyle(
+                        color: palette.textPrimary,
                         fontSize: 13.5,
                         fontWeight: FontWeight.w700,
                       ),
@@ -360,10 +365,10 @@ class _BilibiliAccountSheetState extends State<BilibiliAccountSheet> {
                   ),
                   if (isLoggedIn) ...[
                     const SizedBox(width: 8),
-                    const Text(
+                    Text(
                       'Đồng bộ app gốc',
                       style: TextStyle(
-                        color: AppTheme.textMuted,
+                        color: palette.textMuted,
                         fontSize: 11,
                       ),
                     ),
@@ -373,30 +378,40 @@ class _BilibiliAccountSheetState extends State<BilibiliAccountSheet> {
             ),
 
             const SizedBox(height: 8),
-            const Divider(color: AppTheme.cardBorder, height: 1),
+            Divider(color: palette.border, height: 1),
 
             // History list
-            Expanded(child: _buildHistoryContent(isLoggedIn)),
+            Expanded(
+              child: _buildHistoryContent(palette, accent, secondary, isLoggedIn),
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildAccountCard(bool isLoggedIn) {
+  Widget _buildAccountCard(
+    AppThemePalette palette,
+    Color accent,
+    Color secondary,
+    bool isLoggedIn,
+  ) {
+    final vipGold =
+        palette.isDark ? const Color(0xFFFFD700) : const Color(0xFFD97706);
+
     if (_isLoadingAccount) {
       return Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: AppTheme.darkSurfaceVariant,
+          color: palette.surfaceAlt,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: AppTheme.cardBorder),
+          border: Border.all(color: palette.border),
         ),
-        child: const Center(
+        child: Center(
           child: SizedBox(
             width: 24,
             height: 24,
-            child: CircularProgressIndicator(strokeWidth: 2.2, color: _biliBlue),
+            child: CircularProgressIndicator(strokeWidth: 2.2, color: secondary),
           ),
         ),
       );
@@ -409,28 +424,26 @@ class _BilibiliAccountSheetState extends State<BilibiliAccountSheet> {
         decoration: BoxDecoration(
           gradient: LinearGradient(
             colors: [
-              _biliBlue.withValues(alpha: 0.14),
-              AppTheme.darkSurfaceVariant,
+              secondary.withValues(alpha: palette.isDark ? 0.16 : 0.12),
+              palette.surfaceAlt,
             ],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: profile.isVip
-                ? const Color(0xFFFFD700)
-                : _biliBlue.withValues(alpha: 0.4),
+            color: profile.isVip ? vipGold : secondary.withValues(alpha: 0.4),
           ),
         ),
         child: Row(
           children: [
             CircleAvatar(
               radius: 24,
-              backgroundColor: Colors.white12,
+              backgroundColor: palette.surface,
               backgroundImage:
                   profile.avatar.isNotEmpty ? NetworkImage(profile.avatar) : null,
               child: profile.avatar.isEmpty
-                  ? const Icon(Icons.person, color: Colors.white54)
+                  ? Icon(Icons.person, color: palette.textMuted)
                   : null,
             ),
             const SizedBox(width: 12),
@@ -445,8 +458,8 @@ class _BilibiliAccountSheetState extends State<BilibiliAccountSheet> {
                           profile.uname,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
+                          style: TextStyle(
+                            color: palette.textPrimary,
                             fontSize: 15,
                             fontWeight: FontWeight.bold,
                           ),
@@ -460,13 +473,13 @@ class _BilibiliAccountSheetState extends State<BilibiliAccountSheet> {
                             vertical: 1,
                           ),
                           decoration: BoxDecoration(
-                            color: Colors.blueAccent,
+                            color: secondary,
                             borderRadius: BorderRadius.circular(4),
                           ),
                           child: Text(
                             'Lv.${profile.level}',
-                            style: const TextStyle(
-                              color: Colors.white,
+                            style: TextStyle(
+                              color: palette.onColor(secondary),
                               fontSize: 10,
                               fontWeight: FontWeight.bold,
                             ),
@@ -483,10 +496,10 @@ class _BilibiliAccountSheetState extends State<BilibiliAccountSheet> {
                         vertical: 2,
                       ),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFFFD700).withValues(alpha: 0.2),
+                        color: vipGold.withValues(alpha: 0.16),
                         borderRadius: BorderRadius.circular(6),
                         border: Border.all(
-                          color: const Color(0xFFFFD700),
+                          color: vipGold,
                           width: 0.8,
                         ),
                       ),
@@ -494,18 +507,18 @@ class _BilibiliAccountSheetState extends State<BilibiliAccountSheet> {
                         profile.vipLabel.isNotEmpty
                             ? profile.vipLabel
                             : 'VIP Bilibili',
-                        style: const TextStyle(
-                          color: Color(0xFFFFD700),
+                        style: TextStyle(
+                          color: vipGold,
                           fontSize: 11,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
                     )
                   else
-                    const Text(
+                    Text(
                       'Tài khoản chuẩn (Đã đăng nhập)',
                       style: TextStyle(
-                        color: AppTheme.textSecondary,
+                        color: palette.textSecondary,
                         fontSize: 12,
                       ),
                     ),
@@ -528,18 +541,18 @@ class _BilibiliAccountSheetState extends State<BilibiliAccountSheet> {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: AppTheme.darkSurfaceVariant,
+        color: palette.surfaceAlt,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppTheme.cardBorder),
+        border: Border.all(color: palette.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const Icon(
+              Icon(
                 Icons.lock_outline_rounded,
-                color: Colors.orangeAccent,
+                color: palette.isDark ? Colors.orangeAccent : const Color(0xFFEA580C),
                 size: 19,
               ),
               const SizedBox(width: 8),
@@ -548,8 +561,8 @@ class _BilibiliAccountSheetState extends State<BilibiliAccountSheet> {
                   _cookie.isNotEmpty
                       ? 'Phiên đăng nhập Bilibili đã hết hạn'
                       : 'Chưa đăng nhập Bilibili',
-                  style: const TextStyle(
-                    color: AppTheme.textPrimary,
+                  style: TextStyle(
+                    color: palette.textPrimary,
                     fontSize: 14,
                     fontWeight: FontWeight.bold,
                   ),
@@ -558,9 +571,9 @@ class _BilibiliAccountSheetState extends State<BilibiliAccountSheet> {
             ],
           ),
           const SizedBox(height: 6),
-          const Text(
+          Text(
             'Đăng nhập để xem chất lượng 1080p+, mở khóa VIP và đồng bộ lịch sử xem từ app Bilibili gốc.',
-            style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+            style: TextStyle(color: palette.textSecondary, fontSize: 12),
           ),
           const SizedBox(height: 12),
           SizedBox(
@@ -570,8 +583,9 @@ class _BilibiliAccountSheetState extends State<BilibiliAccountSheet> {
               icon: const Icon(Icons.login_rounded, size: 18),
               label: const Text('Đăng nhập ngay'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: _biliBlue,
-                foregroundColor: Colors.white,
+                backgroundColor: secondary,
+                foregroundColor: palette.onColor(secondary),
+                elevation: 0,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
@@ -583,20 +597,29 @@ class _BilibiliAccountSheetState extends State<BilibiliAccountSheet> {
     );
   }
 
-  Widget _buildHistoryContent(bool isLoggedIn) {
+  Widget _buildHistoryContent(
+    AppThemePalette palette,
+    Color accent,
+    Color secondary,
+    bool isLoggedIn,
+  ) {
     if (!isLoggedIn) {
-      return const Center(
+      return Center(
         child: Padding(
-          padding: EdgeInsets.all(24),
+          padding: const EdgeInsets.all(24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.history_toggle_off_rounded, color: Colors.white24, size: 44),
-              SizedBox(height: 10),
+              Icon(
+                Icons.history_toggle_off_rounded,
+                color: palette.textMuted.withValues(alpha: 0.45),
+                size: 44,
+              ),
+              const SizedBox(height: 10),
               Text(
                 'Đăng nhập tài khoản Bilibili để đồng bộ lịch sử xem từ app gốc.',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: AppTheme.textMuted, fontSize: 13),
+                style: TextStyle(color: palette.textMuted, fontSize: 13),
               ),
             ],
           ),
@@ -605,8 +628,8 @@ class _BilibiliAccountSheetState extends State<BilibiliAccountSheet> {
     }
 
     if (_isLoadingHistory && _history.isEmpty) {
-      return const Center(
-        child: CircularProgressIndicator(color: _biliPink),
+      return Center(
+        child: CircularProgressIndicator(color: accent),
       );
     }
 
@@ -635,16 +658,16 @@ class _BilibiliAccountSheetState extends State<BilibiliAccountSheet> {
     }
 
     if (_history.isEmpty) {
-      return const Center(
+      return Center(
         child: Text(
           'Chưa có lịch sử xem trên tài khoản Bilibili.',
-          style: TextStyle(color: AppTheme.textMuted, fontSize: 13),
+          style: TextStyle(color: palette.textMuted, fontSize: 13),
         ),
       );
     }
 
     return RefreshIndicator(
-      color: _biliPink,
+      color: accent,
       onRefresh: _loadAccountAndHistory,
       child: ListView.separated(
         controller: _scrollController,
@@ -656,27 +679,32 @@ class _BilibiliAccountSheetState extends State<BilibiliAccountSheet> {
         separatorBuilder: (_, _) => const SizedBox(height: 10),
         itemBuilder: (ctx, index) {
           if (index >= _history.length) {
-            return const Padding(
-              padding: EdgeInsets.symmetric(vertical: 12),
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
               child: Center(
                 child: SizedBox(
                   width: 22,
                   height: 22,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-                    color: _biliPink,
+                    color: accent,
                   ),
                 ),
               ),
             );
           }
-          return _buildHistoryRow(_history[index]);
+          return _buildHistoryRow(palette, accent, secondary, _history[index]);
         },
       ),
     );
   }
 
-  Widget _buildHistoryRow(BilibiliWatchHistoryEntry entry) {
+  Widget _buildHistoryRow(
+    AppThemePalette palette,
+    Color accent,
+    Color secondary,
+    BilibiliWatchHistoryEntry entry,
+  ) {
     final item = entry.item;
     final progressText = entry.isCompleted
         ? 'Đã xem xong'
@@ -691,20 +719,20 @@ class _BilibiliAccountSheetState extends State<BilibiliAccountSheet> {
         Navigator.of(context).pop();
         widget.onOpenVideo?.call(entry);
       },
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(14),
       child: Container(
         padding: const EdgeInsets.all(8),
         decoration: BoxDecoration(
-          color: AppTheme.darkSurfaceVariant,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+          color: palette.surfaceAlt,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: palette.border),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Thumbnail + progress overlay
             ClipRRect(
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(10),
               child: SizedBox(
                 width: 118,
                 height: 68,
@@ -717,19 +745,19 @@ class _BilibiliAccountSheetState extends State<BilibiliAccountSheet> {
                         cacheWidth: 280,
                         fit: BoxFit.cover,
                         errorBuilder: (_, _, _) => Container(
-                          color: const Color(0xFF282B37),
-                          child: const Icon(
+                          color: palette.surface,
+                          child: Icon(
                             Icons.movie_rounded,
-                            color: Colors.white24,
+                            color: palette.textMuted,
                           ),
                         ),
                       )
                     else
                       Container(
-                        color: const Color(0xFF282B37),
-                        child: const Icon(
+                        color: palette.surface,
+                        child: Icon(
                           Icons.movie_rounded,
-                          color: Colors.white24,
+                          color: palette.textMuted,
                         ),
                       ),
                     if (item.badge.isNotEmpty)
@@ -742,13 +770,13 @@ class _BilibiliAccountSheetState extends State<BilibiliAccountSheet> {
                             vertical: 1.5,
                           ),
                           decoration: BoxDecoration(
-                            color: _biliPink,
+                            color: accent,
                             borderRadius: BorderRadius.circular(4),
                           ),
                           child: Text(
                             item.badge,
-                            style: const TextStyle(
-                              color: Colors.white,
+                            style: TextStyle(
+                              color: palette.onColor(accent),
                               fontSize: 9,
                               fontWeight: FontWeight.bold,
                             ),
@@ -787,7 +815,7 @@ class _BilibiliAccountSheetState extends State<BilibiliAccountSheet> {
                           value: entry.progressFraction,
                           minHeight: 2.5,
                           backgroundColor: Colors.white24,
-                          valueColor: const AlwaysStoppedAnimation<Color>(_biliPink),
+                          valueColor: AlwaysStoppedAnimation<Color>(accent),
                         ),
                       ),
                   ],
@@ -810,8 +838,8 @@ class _BilibiliAccountSheetState extends State<BilibiliAccountSheet> {
                             snap.data ?? item.title,
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Colors.white,
+                            style: TextStyle(
+                              color: palette.textPrimary,
                               fontSize: 13,
                               fontWeight: FontWeight.w600,
                               height: 1.25,
@@ -822,8 +850,8 @@ class _BilibiliAccountSheetState extends State<BilibiliAccountSheet> {
                           item.title,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
+                          style: TextStyle(
+                            color: palette.textPrimary,
                             fontSize: 13,
                             fontWeight: FontWeight.w600,
                             height: 1.25,
@@ -835,8 +863,8 @@ class _BilibiliAccountSheetState extends State<BilibiliAccountSheet> {
                       entry.showTitle,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: _biliBlue,
+                      style: TextStyle(
+                        color: secondary,
                         fontSize: 11,
                         fontWeight: FontWeight.w500,
                       ),
@@ -846,10 +874,10 @@ class _BilibiliAccountSheetState extends State<BilibiliAccountSheet> {
                   Row(
                     children: [
                       if (item.author.isNotEmpty) ...[
-                        const Icon(
+                        Icon(
                           Icons.person_outline_rounded,
                           size: 12,
-                          color: AppTheme.textMuted,
+                          color: palette.textMuted,
                         ),
                         const SizedBox(width: 3),
                         Flexible(
@@ -857,26 +885,26 @@ class _BilibiliAccountSheetState extends State<BilibiliAccountSheet> {
                             item.author,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: AppTheme.textMuted,
+                            style: TextStyle(
+                              color: palette.textMuted,
                               fontSize: 11,
                             ),
                           ),
                         ),
                       ],
                       if (item.author.isNotEmpty && viewedAt.isNotEmpty)
-                        const Text(
+                        Text(
                           ' · ',
                           style: TextStyle(
-                            color: AppTheme.textMuted,
+                            color: palette.textMuted,
                             fontSize: 11,
                           ),
                         ),
                       if (viewedAt.isNotEmpty)
                         Text(
                           viewedAt,
-                          style: const TextStyle(
-                            color: AppTheme.textMuted,
+                          style: TextStyle(
+                            color: palette.textMuted,
                             fontSize: 11,
                           ),
                         ),

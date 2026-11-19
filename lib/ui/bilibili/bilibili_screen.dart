@@ -453,11 +453,15 @@ class _BilibiliScreenState extends State<BilibiliScreen>
   }
 
   void _showItemMoreOptions(BilibiliAnimeItem item) {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.bilibili);
+    final secondary = palette.secondaryFor(AppTabId.bilibili);
+
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF1E202A),
+      backgroundColor: palette.surface,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (ctx) {
         final bvid = item.bvid ?? '';
@@ -477,16 +481,27 @@ class _BilibiliScreenState extends State<BilibiliScreen>
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFFB7299),
+                          color: accent,
                           borderRadius: BorderRadius.circular(4),
                         ),
-                        child: const Text('UP', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                        child: Text(
+                          'UP',
+                          style: TextStyle(
+                            color: palette.onColor(accent),
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                       ),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           item.author.isNotEmpty ? item.author : 'Bilibili Video',
-                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                          style: TextStyle(
+                            color: palette.textPrimary,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                          ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -494,25 +509,25 @@ class _BilibiliScreenState extends State<BilibiliScreen>
                       if (item.durationText.isNotEmpty)
                         Text(
                           item.durationText,
-                          style: const TextStyle(color: Colors.white60, fontSize: 12),
+                          style: TextStyle(color: palette.textMuted, fontSize: 12),
                         ),
                     ],
                   ),
                 ),
-                const Divider(color: Colors.white12),
+                Divider(color: palette.border),
                 ListTile(
-                  leading: const Icon(Icons.play_circle_fill_rounded, color: Color(0xFF00AEEC)),
-                  title: const Text('Xem video ngay', style: TextStyle(color: Colors.white, fontSize: 14)),
+                  leading: Icon(Icons.play_circle_fill_rounded, color: secondary),
+                  title: Text('Xem video ngay', style: TextStyle(color: palette.textPrimary, fontSize: 14)),
                   onTap: () {
                     Navigator.pop(ctx);
                     _playVideo(item);
                   },
                 ),
                 ListTile(
-                  leading: const Icon(Icons.translate_rounded, color: Color(0xFFFB7299)),
+                  leading: Icon(Icons.translate_rounded, color: accent),
                   title: Text(
                     _manualTranslationCache.containsKey(item.title) ? 'Xem tiêu đề Tiếng Trung gốc' : 'Dịch tiêu đề sang Tiếng Việt',
-                    style: const TextStyle(color: Colors.white, fontSize: 14),
+                    style: TextStyle(color: palette.textPrimary, fontSize: 14),
                   ),
                   onTap: () {
                     Navigator.pop(ctx);
@@ -522,11 +537,11 @@ class _BilibiliScreenState extends State<BilibiliScreen>
                 ListTile(
                   leading: Icon(
                     isWl ? Icons.bookmark_added_rounded : Icons.bookmark_add_outlined,
-                    color: const Color(0xFF00AEEC),
+                    color: secondary,
                   ),
                   title: Text(
                     isWl ? 'Xóa khỏi danh sách xem sau' : 'Thêm vào danh sách xem sau',
-                    style: const TextStyle(color: Colors.white, fontSize: 14),
+                    style: TextStyle(color: palette.textPrimary, fontSize: 14),
                   ),
                   onTap: () async {
                     Navigator.pop(ctx);
@@ -548,7 +563,7 @@ class _BilibiliScreenState extends State<BilibiliScreen>
                           children: [
                             Icon(
                               added ? Icons.bookmark_added_rounded : Icons.bookmark_remove_rounded,
-                              color: added ? const Color(0xFF00AEEC) : Colors.orangeAccent,
+                              color: added ? secondary : Colors.orangeAccent,
                               size: 18,
                             ),
                             const SizedBox(width: 8),
@@ -570,8 +585,8 @@ class _BilibiliScreenState extends State<BilibiliScreen>
                   },
                 ),
                 ListTile(
-                  leading: const Icon(Icons.copy_rounded, color: Colors.white70),
-                  title: const Text('Sao chép tiêu đề', style: TextStyle(color: Colors.white, fontSize: 14)),
+                  leading: Icon(Icons.copy_rounded, color: palette.textSecondary),
+                  title: Text('Sao chép tiêu đề', style: TextStyle(color: palette.textPrimary, fontSize: 14)),
                   onTap: () {
                     Navigator.pop(ctx);
                     Clipboard.setData(ClipboardData(text: item.title));
@@ -581,8 +596,8 @@ class _BilibiliScreenState extends State<BilibiliScreen>
                   },
                 ),
                 ListTile(
-                  leading: const Icon(Icons.link_rounded, color: Colors.white70),
-                  title: const Text('Sao chép link Bilibili', style: TextStyle(color: Colors.white, fontSize: 14)),
+                  leading: Icon(Icons.link_rounded, color: palette.textSecondary),
+                  title: Text('Sao chép link Bilibili', style: TextStyle(color: palette.textPrimary, fontSize: 14)),
                   onTap: () {
                     Navigator.pop(ctx);
                     Clipboard.setData(ClipboardData(text: item.targetPlayUrl));
@@ -638,6 +653,10 @@ class _BilibiliScreenState extends State<BilibiliScreen>
   }
 
   Widget _buildAssistantFloatingButton() {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.bilibili);
+    final secondary = palette.secondaryFor(AppTabId.bilibili);
+
     return AnimatedBuilder(
       animation: _assistantController,
       builder: (context, _) {
@@ -657,68 +676,71 @@ class _BilibiliScreenState extends State<BilibiliScreen>
           statusColor = Colors.white54;
         }
 
-        return Material(
-          color: Colors.transparent,
-          elevation: 8,
-          borderRadius: BorderRadius.circular(28),
-          child: InkWell(
-            onTap: _openAssistantSheet,
+        return Padding(
+          padding: EdgeInsets.only(bottom: palette.isFloatingNav ? 72 : 0),
+          child: Material(
+            color: Colors.transparent,
+            elevation: 8,
             borderRadius: BorderRadius.circular(28),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFFFB7299), Color(0xFF00AEEC)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
+            child: InkWell(
+              onTap: _openAssistantSheet,
+              borderRadius: BorderRadius.circular(28),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [accent, secondary],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(28),
+                  boxShadow: [
+                    BoxShadow(
+                      color: accent.withValues(alpha: 0.34),
+                      blurRadius: 14,
+                      offset: const Offset(0, 6),
+                    ),
+                  ],
                 ),
-                borderRadius: BorderRadius.circular(28),
-                boxShadow: [
-                  BoxShadow(
-                    color: const Color(0xFFFB7299).withValues(alpha: 0.32),
-                    blurRadius: 14,
-                    offset: const Offset(0, 6),
-                  ),
-                ],
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (isBusy)
-                    const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (isBusy)
+                      const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                        ),
+                      )
+                    else
+                      Icon(
+                        isMic ? Icons.mic_rounded : Icons.auto_awesome_rounded,
+                        color: Colors.white,
+                        size: 20,
                       ),
-                    )
-                  else
-                    Icon(
-                      isMic ? Icons.mic_rounded : Icons.auto_awesome_rounded,
-                      color: Colors.white,
-                      size: 20,
+                    const SizedBox(width: 8),
+                    Text(
+                      isMic ? 'Đang nghe...' : 'Trợ lý AI',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13.5,
+                      ),
                     ),
-                  const SizedBox(width: 8),
-                  Text(
-                    isMic ? 'Đang nghe...' : 'Trợ lý AI',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 13.5,
+                    const SizedBox(width: 7),
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        color: statusColor,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 1.2),
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 7),
-                  Container(
-                    width: 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      color: statusColor,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white, width: 1.2),
-                    ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
@@ -729,23 +751,22 @@ class _BilibiliScreenState extends State<BilibiliScreen>
 
   @override
   Widget build(BuildContext context) {
+    final palette = AppThemePalette.of(context);
+    final bg = palette.backgroundFor(AppTabId.bilibili);
+
     return Scaffold(
-      backgroundColor: const Color(0xFF121318),
+      backgroundColor: bg,
       floatingActionButton: _buildAssistantFloatingButton(),
       body: SafeArea(
         child: Column(
           children: [
-            // Top App Bar + Search Bar Header (matching screenshot)
             _buildHeaderSection(),
 
             if (_hasSearched) ...[
               _buildSearchResultHeader(),
               Expanded(child: _buildSearchResultList()),
             ] else ...[
-              // Sub-Tabs Header (推荐, AI 漫剧, 热门, 动态漫)
               _buildTabBar(),
-
-              // Tab Views
               Expanded(
                 child: TabBarView(
                   controller: _tabController,
@@ -782,18 +803,21 @@ class _BilibiliScreenState extends State<BilibiliScreen>
 
   // =================== HEADER SECTION ===================
   Widget _buildHeaderSection() {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.bilibili);
+    final onAccent = palette.onColor(accent);
     final avatar = _userProfile?.avatar ?? '';
     final isLogin = _userProfile?.isLogin ?? false;
 
     return Container(
-      padding: const EdgeInsets.fromLTRB(12, 10, 8, 6),
-      color: const Color(0xFF17181F),
+      padding: const EdgeInsets.fromLTRB(12, 10, 8, 8),
+      color: palette.surface,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              // User Avatar on Left (tap -> opens Bilibili account & synced history)
+              // User Avatar on Left
               Tooltip(
                 message: isLogin
                     ? 'Tài khoản Bilibili (${_userProfile?.uname ?? "Đã đăng nhập"})'
@@ -817,8 +841,9 @@ class _BilibiliScreenState extends State<BilibiliScreen>
                     height: 36,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
+                      color: palette.surfaceAlt,
                       border: Border.all(
-                        color: isLogin ? const Color(0xFFFB7299) : Colors.white24,
+                        color: isLogin ? accent : palette.border,
                         width: 1.5,
                       ),
                     ),
@@ -827,15 +852,15 @@ class _BilibiliScreenState extends State<BilibiliScreen>
                         ? Image.network(
                             avatar,
                             fit: BoxFit.cover,
-                            errorBuilder: (_, _, _) => const Icon(
+                            errorBuilder: (_, _, _) => Icon(
                               Icons.account_circle_rounded,
-                              color: Colors.white70,
+                              color: palette.textSecondary,
                               size: 32,
                             ),
                           )
-                        : const Icon(
+                        : Icon(
                             Icons.account_circle_rounded,
-                            color: Colors.white70,
+                            color: palette.textSecondary,
                             size: 32,
                           ),
                   ),
@@ -843,28 +868,28 @@ class _BilibiliScreenState extends State<BilibiliScreen>
               ),
               const SizedBox(width: 8),
 
-              // Rounded Search Pill (matching screenshot Q 重生回到高中时代)
+              // Rounded Search Pill kiểu Bilibili gốc
               Expanded(
                 child: Container(
                   height: 38,
                   decoration: BoxDecoration(
-                    color: const Color(0xFF232530),
+                    color: palette.surfaceAlt,
                     borderRadius: BorderRadius.circular(19),
-                    border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+                    border: Border.all(color: palette.border),
                   ),
                   child: Row(
                     children: [
                       const SizedBox(width: 12),
-                      const Icon(Icons.search_rounded, color: Colors.white60, size: 18),
+                      Icon(Icons.search_rounded, color: accent, size: 18),
                       const SizedBox(width: 6),
                       Expanded(
                         child: TextField(
                           controller: _searchController,
                           focusNode: _searchFocusNode,
-                          style: const TextStyle(color: Colors.white, fontSize: 13),
-                          decoration: const InputDecoration(
-                            hintText: 'Q Trọng sinh học đường / Tìm phim AI...',
-                            hintStyle: TextStyle(color: Colors.white38, fontSize: 12.5),
+                          style: TextStyle(color: palette.textPrimary, fontSize: 13),
+                          decoration: InputDecoration(
+                            hintText: 'Tìm video Bilibili (hỗ trợ tiếng Việt)',
+                            hintStyle: TextStyle(color: palette.textMuted, fontSize: 12),
                             border: InputBorder.none,
                             isDense: true,
                             contentPadding: EdgeInsets.zero,
@@ -874,7 +899,7 @@ class _BilibiliScreenState extends State<BilibiliScreen>
                       ),
                       if (_searchController.text.isNotEmpty)
                         IconButton(
-                          icon: const Icon(Icons.clear_rounded, size: 16, color: Colors.white54),
+                          icon: Icon(Icons.clear_rounded, size: 16, color: palette.textMuted),
                           onPressed: () {
                             _searchController.clear();
                             setState(() {
@@ -889,14 +914,14 @@ class _BilibiliScreenState extends State<BilibiliScreen>
                         child: Container(
                           padding: const EdgeInsets.symmetric(horizontal: 14),
                           alignment: Alignment.center,
-                          decoration: const BoxDecoration(
-                            color: Color(0xFFFB7299),
-                            borderRadius: BorderRadius.horizontal(right: Radius.circular(19)),
+                          decoration: BoxDecoration(
+                            color: accent,
+                            borderRadius: const BorderRadius.horizontal(right: Radius.circular(19)),
                           ),
-                          child: const Text(
+                          child: Text(
                             'Tìm',
                             style: TextStyle(
-                              color: Colors.white,
+                              color: onAccent,
                               fontWeight: FontWeight.bold,
                               fontSize: 12,
                             ),
@@ -907,7 +932,7 @@ class _BilibiliScreenState extends State<BilibiliScreen>
                   ),
                 ),
               ),
-              const SizedBox(width: 2),
+              const SizedBox(width: 4),
 
               // Translation toggle button
               IconButton(
@@ -917,31 +942,30 @@ class _BilibiliScreenState extends State<BilibiliScreen>
                 tooltip: _isTranslateEnabled ? 'Dịch tiêu đề: Đang BẬT' : 'Dịch tiêu đề: Đang TẮT',
                 icon: Icon(
                   _isTranslateEnabled ? Icons.translate_rounded : Icons.translate_outlined,
-                  color: _isTranslateEnabled ? const Color(0xFFFB7299) : Colors.white54,
+                  color: _isTranslateEnabled ? accent : palette.textMuted,
                   size: 21,
                 ),
               ),
 
-              // Dedicated Settings button on right (separated from Account)
+              // Dedicated Settings button on right
               IconButton(
                 onPressed: () => BilibiliSettingsSheet.show(context),
                 visualDensity: VisualDensity.compact,
                 constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                 tooltip: 'Cài đặt Bilibili',
-                icon: const Icon(
+                icon: Icon(
                   Icons.settings_rounded,
-                  color: Colors.white70,
+                  color: palette.textSecondary,
                   size: 21,
                 ),
               ),
             ],
           ),
 
-          // Hot keywords horizontal list (dịch động tự động bằng ML Kit)
           if (_hotKeywords.isNotEmpty && !_hasSearched) ...[
-            const SizedBox(height: 6),
+            const SizedBox(height: 8),
             SizedBox(
-              height: 24,
+              height: 26,
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
                 itemCount: _hotKeywords.length,
@@ -953,12 +977,13 @@ class _BilibiliScreenState extends State<BilibiliScreen>
                       _searchController.text = kw;
                       _executeSearch(kw);
                     },
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(13),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF232530),
-                        borderRadius: BorderRadius.circular(12),
+                        color: palette.surfaceAlt,
+                        borderRadius: BorderRadius.circular(13),
+                        border: Border.all(color: palette.border),
                       ),
                       child: FutureBuilder<String>(
                         future: OfflineMlKitTranslator.translateHongguoTitle(kw),
@@ -966,7 +991,7 @@ class _BilibiliScreenState extends State<BilibiliScreen>
                         builder: (context, snapshot) {
                           return Text(
                             snapshot.data ?? kw,
-                            style: const TextStyle(color: Colors.white70, fontSize: 11),
+                            style: TextStyle(color: palette.textSecondary, fontSize: 11),
                           );
                         },
                       ),
@@ -983,20 +1008,27 @@ class _BilibiliScreenState extends State<BilibiliScreen>
 
   // =================== TAB BAR ===================
   Widget _buildTabBar() {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.bilibili);
+
     return Container(
-      color: const Color(0xFF17181F),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        border: Border(bottom: BorderSide(color: palette.border)),
+      ),
       child: TabBar(
         controller: _tabController,
         isScrollable: true,
         tabAlignment: TabAlignment.start,
+        dividerColor: Colors.transparent,
         labelPadding: const EdgeInsets.symmetric(horizontal: 16),
-        indicatorColor: const Color(0xFFFB7299),
+        indicatorColor: accent,
         indicatorWeight: 3,
         indicatorSize: TabBarIndicatorSize.label,
-        labelColor: const Color(0xFFFB7299),
-        unselectedLabelColor: Colors.white70,
-        labelStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-        unselectedLabelStyle: const TextStyle(fontSize: 14),
+        labelColor: accent,
+        unselectedLabelColor: palette.textSecondary,
+        labelStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
+        unselectedLabelStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
         tabs: const [
           Tab(text: 'Đề xuất'),
           Tab(text: 'Phim AI'),
@@ -1009,22 +1041,26 @@ class _BilibiliScreenState extends State<BilibiliScreen>
 
   // =================== TAB 1: 推荐 (RECOMMEND FEED) ===================
   Widget _buildRecommendTab() {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.bilibili);
+    final onAccent = palette.onColor(accent);
+
     if (_isLoadingRecommend) {
-      return const Center(child: CircularProgressIndicator(color: Color(0xFFFB7299)));
+      return Center(child: CircularProgressIndicator(color: accent));
     }
     if (_recommendList.isEmpty) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.cloud_off_rounded, size: 48, color: Colors.white38),
+            Icon(Icons.cloud_off_rounded, size: 48, color: palette.textMuted),
             const SizedBox(height: 12),
-            const Text('Chưa có gợi ý video nào', style: TextStyle(color: Colors.white70)),
+            Text('Chưa có gợi ý video nào', style: TextStyle(color: palette.textSecondary)),
             const SizedBox(height: 12),
             ElevatedButton(
               onPressed: () => _fetchRecommend(refresh: true),
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFB7299)),
-              child: const Text('Thử lại', style: TextStyle(color: Colors.white)),
+              style: ElevatedButton.styleFrom(backgroundColor: accent, foregroundColor: onAccent),
+              child: const Text('Thử lại'),
             ),
           ],
         ),
@@ -1032,8 +1068,8 @@ class _BilibiliScreenState extends State<BilibiliScreen>
     }
 
     return RefreshIndicator(
-      color: const Color(0xFFFB7299),
-      backgroundColor: const Color(0xFF1E202A),
+      color: accent,
+      backgroundColor: palette.surface,
       onRefresh: () => _fetchRecommend(refresh: true),
       child: NotificationListener<ScrollNotification>(
         onNotification: (scrollInfo) {
@@ -1045,20 +1081,23 @@ class _BilibiliScreenState extends State<BilibiliScreen>
         },
         child: CustomScrollView(
           slivers: [
-            // Top Banner matching user screenshot
             SliverToBoxAdapter(
               child: _buildAiBanner(),
             ),
 
-            // Video Cards 2-column Grid
             SliverPadding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              padding: EdgeInsets.fromLTRB(
+                12,
+                6,
+                12,
+                palette.bottomContentPadding(extra: 16),
+              ),
               sliver: SliverGrid(
                 gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: 2,
                   childAspectRatio: 0.90,
-                  crossAxisSpacing: 8,
-                  mainAxisSpacing: 10,
+                  crossAxisSpacing: 10,
+                  mainAxisSpacing: 12,
                 ),
                 delegate: SliverChildBuilderDelegate(
                   (context, index) => _buildVideoCard(_recommendList[index]),
@@ -1068,11 +1107,11 @@ class _BilibiliScreenState extends State<BilibiliScreen>
             ),
 
             if (_isLoadingMoreRecommend)
-              const SliverToBoxAdapter(
+              SliverToBoxAdapter(
                 child: Padding(
-                  padding: EdgeInsets.symmetric(vertical: 20),
+                  padding: const EdgeInsets.symmetric(vertical: 20),
                   child: Center(
-                    child: CircularProgressIndicator(color: Color(0xFFFB7299), strokeWidth: 2.5),
+                    child: CircularProgressIndicator(color: accent, strokeWidth: 2.5),
                   ),
                 ),
               ),
@@ -1082,41 +1121,42 @@ class _BilibiliScreenState extends State<BilibiliScreen>
     );
   }
 
-  // Banner styled like screenshot's AI Contest Banner
+  // Banner rực rỡ phong cách Bilibili
   Widget _buildAiBanner() {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.bilibili);
+    final secondary = palette.secondaryFor(AppTabId.bilibili);
+
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 10, 12, 6),
-      height: 120,
+      height: 118,
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-        gradient: const LinearGradient(
-          colors: [
-            Color(0xFF1F1C38),
-            Color(0xFF14243B),
-            Color(0xFF0F1E29),
-          ],
+        borderRadius: BorderRadius.circular(18),
+        gradient: LinearGradient(
+          colors: palette.isDark
+              ? [const Color(0xFF1F1C38), const Color(0xFF14243B), const Color(0xFF0F1E29)]
+              : [accent, secondary],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.4),
-            blurRadius: 8,
-            offset: const Offset(0, 4),
+            color: accent.withValues(alpha: palette.isDark ? 0.25 : 0.34),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
           ),
         ],
       ),
       clipBehavior: Clip.antiAlias,
       child: Stack(
         children: [
-          // Background Tech pattern
           Positioned(
             right: -20,
             bottom: -20,
             child: Icon(
               Icons.auto_awesome_motion_rounded,
               size: 140,
-              color: Colors.white.withValues(alpha: 0.05),
+              color: Colors.white.withValues(alpha: 0.14),
             ),
           ),
 
@@ -1129,10 +1169,10 @@ class _BilibiliScreenState extends State<BilibiliScreen>
                 Row(
                   children: [
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFFB7299),
-                        borderRadius: BorderRadius.circular(4),
+                        color: Colors.white.withValues(alpha: 0.24),
+                        borderRadius: BorderRadius.circular(6),
                       ),
                       child: const Text(
                         'Kho Phim AI',
@@ -1144,9 +1184,13 @@ class _BilibiliScreenState extends State<BilibiliScreen>
                       ),
                     ),
                     const SizedBox(width: 8),
-                    const Text(
+                    Text(
                       'Bilibili AI Video Feed',
-                      style: TextStyle(color: Colors.white60, fontSize: 11),
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.85),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
                   ],
                 ),
@@ -1155,15 +1199,18 @@ class _BilibiliScreenState extends State<BilibiliScreen>
                   'Phim AI · Truyện Tranh Động · Đoản Kịch',
                   style: TextStyle(
                     color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
+                    fontSize: 15.5,
+                    fontWeight: FontWeight.w800,
                     letterSpacing: -0.2,
                   ),
                 ),
                 const SizedBox(height: 4),
-                const Text(
+                Text(
                   'Xem trọn bộ phim AI 1-2 tiếng mượt mà, dịch Vietsub & lồng tiếng AI',
-                  style: TextStyle(color: Colors.white70, fontSize: 11),
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.9),
+                    fontSize: 11,
+                  ),
                 ),
               ],
             ),
@@ -1175,21 +1222,26 @@ class _BilibiliScreenState extends State<BilibiliScreen>
 
   // =================== TAB 2: AI 漫剧 (PHIM AI) ===================
   Widget _buildAiTab() {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.bilibili);
+
     return Column(
       children: [
-        // AI Tag and Sort Filter Chips
         _buildAiFilterBar(),
 
         Expanded(
           child: _isLoadingAi
-              ? const Center(child: CircularProgressIndicator(color: Color(0xFFFB7299)))
+              ? Center(child: CircularProgressIndicator(color: accent))
               : _aiList.isEmpty
-                  ? const Center(
-                      child: Text('Không tìm thấy phim AI nào', style: TextStyle(color: Colors.white60)),
+                  ? Center(
+                      child: Text(
+                        'Không tìm thấy phim AI nào',
+                        style: TextStyle(color: palette.textSecondary),
+                      ),
                     )
                   : RefreshIndicator(
-                      color: const Color(0xFFFB7299),
-                      backgroundColor: const Color(0xFF1E202A),
+                      color: accent,
+                      backgroundColor: palette.surface,
                       onRefresh: () => _fetchAi(refresh: true),
                       child: NotificationListener<ScrollNotification>(
                         onNotification: (scrollInfo) {
@@ -1202,18 +1254,23 @@ class _BilibiliScreenState extends State<BilibiliScreen>
                           return false;
                         },
                         child: GridView.builder(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                          padding: EdgeInsets.fromLTRB(
+                            12,
+                            10,
+                            12,
+                            palette.bottomContentPadding(extra: 16),
+                          ),
                           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                             crossAxisCount: 2,
                             childAspectRatio: 0.90,
-                            crossAxisSpacing: 8,
-                            mainAxisSpacing: 10,
+                            crossAxisSpacing: 10,
+                            mainAxisSpacing: 12,
                           ),
                           itemCount: _aiList.length + (_isLoadingMoreAi ? 1 : 0),
                           itemBuilder: (context, index) {
                             if (index >= _aiList.length) {
-                              return const Center(
-                                child: CircularProgressIndicator(color: Color(0xFFFB7299)),
+                              return Center(
+                                child: CircularProgressIndicator(color: accent),
                               );
                             }
                             return _buildVideoCard(_aiList[index]);
@@ -1227,12 +1284,18 @@ class _BilibiliScreenState extends State<BilibiliScreen>
   }
 
   Widget _buildAiFilterBar() {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.bilibili);
+    final onAccent = palette.onColor(accent);
+
     return Container(
-      color: const Color(0xFF17181F),
-      padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        border: Border(bottom: BorderSide(color: palette.border)),
+      ),
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
       child: Column(
         children: [
-          // Order row: Tổng hợp | Xem nhiều | Mới nhất
           Row(
             children: [
               _buildSortChip(label: 'Tổng hợp', orderKey: 'totalrank', isSelected: _aiOrder == 'totalrank', onSelect: () {
@@ -1251,9 +1314,8 @@ class _BilibiliScreenState extends State<BilibiliScreen>
               }),
             ],
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 8),
 
-          // Keywords list
           SizedBox(
             height: 28,
             child: ListView.separated(
@@ -1270,17 +1332,18 @@ class _BilibiliScreenState extends State<BilibiliScreen>
                   },
                   borderRadius: BorderRadius.circular(14),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 4),
                     decoration: BoxDecoration(
-                      color: isSel ? const Color(0xFFFB7299) : const Color(0xFF232530),
+                      color: isSel ? accent : palette.surfaceAlt,
                       borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: isSel ? accent : palette.border),
                     ),
                     child: Text(
                       tag.label,
                       style: TextStyle(
-                        color: isSel ? Colors.white : Colors.white70,
+                        color: isSel ? onAccent : palette.textSecondary,
                         fontSize: 11,
-                        fontWeight: isSel ? FontWeight.bold : FontWeight.normal,
+                        fontWeight: isSel ? FontWeight.bold : FontWeight.w500,
                       ),
                     ),
                   ),
@@ -1299,25 +1362,28 @@ class _BilibiliScreenState extends State<BilibiliScreen>
     required bool isSelected,
     required VoidCallback onSelect,
   }) {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.bilibili);
+
     return InkWell(
       onTap: onSelect,
-      borderRadius: BorderRadius.circular(6),
+      borderRadius: BorderRadius.circular(8),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
         decoration: BoxDecoration(
-          color: isSelected ? const Color(0xFFFB7299).withValues(alpha: 0.2) : Colors.transparent,
-          borderRadius: BorderRadius.circular(6),
+          color: isSelected ? accent.withValues(alpha: 0.14) : palette.surfaceAlt,
+          borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color: isSelected ? const Color(0xFFFB7299) : Colors.white24,
+            color: isSelected ? accent : palette.border,
             width: 1,
           ),
         ),
         child: Text(
           label,
           style: TextStyle(
-            color: isSelected ? const Color(0xFFFB7299) : Colors.white70,
+            color: isSelected ? accent : palette.textSecondary,
             fontSize: 11,
-            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
           ),
         ),
       ),
@@ -1326,12 +1392,15 @@ class _BilibiliScreenState extends State<BilibiliScreen>
 
   // =================== TAB 3: 热门 (POPULAR) ===================
   Widget _buildPopularTab() {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.bilibili);
+
     if (_isLoadingPopular) {
-      return const Center(child: CircularProgressIndicator(color: Color(0xFFFB7299)));
+      return Center(child: CircularProgressIndicator(color: accent));
     }
     return RefreshIndicator(
-      color: const Color(0xFFFB7299),
-      backgroundColor: const Color(0xFF1E202A),
+      color: accent,
+      backgroundColor: palette.surface,
       onRefresh: () => _fetchPopular(refresh: true),
       child: NotificationListener<ScrollNotification>(
         onNotification: (scrollInfo) {
@@ -1344,18 +1413,23 @@ class _BilibiliScreenState extends State<BilibiliScreen>
           return false;
         },
         child: GridView.builder(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          padding: EdgeInsets.fromLTRB(
+            12,
+            10,
+            12,
+            palette.bottomContentPadding(extra: 16),
+          ),
           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: 2,
             childAspectRatio: 0.90,
-            crossAxisSpacing: 8,
-            mainAxisSpacing: 10,
+            crossAxisSpacing: 10,
+            mainAxisSpacing: 12,
           ),
           itemCount: _popularList.length + (_isLoadingMorePopular ? 1 : 0),
           itemBuilder: (context, index) {
             if (index >= _popularList.length) {
-              return const Center(
-                child: CircularProgressIndicator(color: Color(0xFFFB7299)),
+              return Center(
+                child: CircularProgressIndicator(color: accent),
               );
             }
             return _buildVideoCard(_popularList[index]);
@@ -1367,14 +1441,20 @@ class _BilibiliScreenState extends State<BilibiliScreen>
 
   // =================== TAB 4: 动态漫 (COMIC DRAMAS) ===================
   Widget _buildComicTab() {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.bilibili);
+
     if (_isLoadingComic) {
-      return const Center(child: CircularProgressIndicator(color: Color(0xFFFB7299)));
+      return Center(child: CircularProgressIndicator(color: accent));
     }
     return Column(
       children: [
         Container(
-          color: const Color(0xFF17181F),
-          padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
+          decoration: BoxDecoration(
+            color: palette.surface,
+            border: Border(bottom: BorderSide(color: palette.border)),
+          ),
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
           child: Row(
             children: [
               _buildSortChip(label: 'Tổng hợp', orderKey: 'totalrank', isSelected: _comicOrder == 'totalrank', onSelect: () {
@@ -1396,56 +1476,67 @@ class _BilibiliScreenState extends State<BilibiliScreen>
         ),
         Expanded(
           child: RefreshIndicator(
-      color: const Color(0xFFFB7299),
-      backgroundColor: const Color(0xFF1E202A),
-      onRefresh: () => _fetchComic(refresh: true),
-      child: NotificationListener<ScrollNotification>(
-        onNotification: (scrollInfo) {
-          if (!_isLoadingMoreComic &&
-              _hasMoreComic &&
-              scrollInfo.metrics.pixels >= scrollInfo.metrics.maxScrollExtent - 400) {
-            _comicPage++;
-            _fetchComic(refresh: false);
-          }
-          return false;
-        },
-        child: GridView.builder(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 2,
-            childAspectRatio: 0.90,
-            crossAxisSpacing: 8,
-            mainAxisSpacing: 10,
+            color: accent,
+            backgroundColor: palette.surface,
+            onRefresh: () => _fetchComic(refresh: true),
+            child: NotificationListener<ScrollNotification>(
+              onNotification: (scrollInfo) {
+                if (!_isLoadingMoreComic &&
+                    _hasMoreComic &&
+                    scrollInfo.metrics.pixels >= scrollInfo.metrics.maxScrollExtent - 400) {
+                  _comicPage++;
+                  _fetchComic(refresh: false);
+                }
+                return false;
+              },
+              child: GridView.builder(
+                padding: EdgeInsets.fromLTRB(
+                  12,
+                  10,
+                  12,
+                  palette.bottomContentPadding(extra: 16),
+                ),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  childAspectRatio: 0.90,
+                  crossAxisSpacing: 10,
+                  mainAxisSpacing: 12,
+                ),
+                itemCount: _comicList.length + (_isLoadingMoreComic ? 1 : 0),
+                itemBuilder: (context, index) {
+                  if (index >= _comicList.length) {
+                    return Center(
+                      child: CircularProgressIndicator(color: accent),
+                    );
+                  }
+                  return _buildVideoCard(_comicList[index]);
+                },
+              ),
+            ),
           ),
-          itemCount: _comicList.length + (_isLoadingMoreComic ? 1 : 0),
-          itemBuilder: (context, index) {
-            if (index >= _comicList.length) {
-              return const Center(
-                child: CircularProgressIndicator(color: Color(0xFFFB7299)),
-              );
-            }
-            return _buildVideoCard(_comicList[index]);
-          },
         ),
-      ),
-    ),
-    ),
-    ],
+      ],
     );
   }
 
   // =================== SEARCH RESULTS ===================
   Widget _buildSearchResultHeader() {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.bilibili);
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      color: const Color(0xFF17181F),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        border: Border(bottom: BorderSide(color: palette.border)),
+      ),
       child: Row(
         children: [
           Expanded(
             child: Text(
               'Kết quả tìm kiếm cho "$_lastSearchKeyword" (${_searchResults.length} video)',
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: palette.textPrimary,
                 fontSize: 13,
                 fontWeight: FontWeight.bold,
               ),
@@ -1458,7 +1549,7 @@ class _BilibiliScreenState extends State<BilibiliScreen>
                 _searchResults.clear();
               });
             },
-            child: const Text('Đóng', style: TextStyle(color: Color(0xFFFB7299), fontSize: 12)),
+            child: Text('Đóng', style: TextStyle(color: accent, fontSize: 12)),
           ),
         ],
       ),
@@ -1466,47 +1557,58 @@ class _BilibiliScreenState extends State<BilibiliScreen>
   }
 
   Widget _buildSearchResultList() {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.bilibili);
+
     if (_isLoadingSearch) {
-      return const Center(child: CircularProgressIndicator(color: Color(0xFFFB7299)));
+      return Center(child: CircularProgressIndicator(color: accent));
     }
     if (_searchResults.isEmpty) {
-      return const Center(
+      return Center(
         child: Text(
           'Không tìm thấy video nào phù hợp.',
-          style: TextStyle(color: AppTheme.textSecondary),
+          style: TextStyle(color: palette.textSecondary),
         ),
       );
     }
 
     return GridView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: EdgeInsets.fromLTRB(
+        12,
+        10,
+        12,
+        palette.bottomContentPadding(extra: 16),
+      ),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
         childAspectRatio: 0.90,
-        crossAxisSpacing: 8,
-        mainAxisSpacing: 10,
+        crossAxisSpacing: 10,
+        mainAxisSpacing: 12,
       ),
       itemCount: _searchResults.length,
       itemBuilder: (ctx, idx) => _buildVideoCard(_searchResults[idx]),
     );
   }
 
-  // =================== VIDEO CARD (MATCHING USER SCREENSHOT) ===================
+  // =================== VIDEO CARD (BILIBILI CLEAN 16:10 GRID) ===================
   Widget _buildVideoCard(BilibiliAnimeItem item) {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.bilibili);
+
     return InkWell(
       onTap: () => _playVideo(item),
-      borderRadius: BorderRadius.circular(10),
+      borderRadius: BorderRadius.circular(14),
       child: Container(
         decoration: BoxDecoration(
-          color: const Color(0xFF1E202A),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+          color: palette.surface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: palette.border),
+          boxShadow: palette.cardShadows,
         ),
         clipBehavior: Clip.antiAlias,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 1. Thumbnail with Bottom Stats Overlay (16:9)
             AspectRatio(
               aspectRatio: 16 / 9.5,
               child: Stack(
@@ -1518,24 +1620,23 @@ class _BilibiliScreenState extends State<BilibiliScreen>
                       cacheWidth: 360,
                       fit: BoxFit.cover,
                       errorBuilder: (_, _, _) => Container(
-                        color: const Color(0xFF282B37),
-                        child: const Icon(Icons.movie_rounded, color: Colors.white24),
+                        color: palette.surfaceAlt,
+                        child: Icon(Icons.movie_rounded, color: palette.textMuted),
                       ),
                     )
                   else
                     Container(
-                      color: const Color(0xFF282B37),
-                      child: const Icon(Icons.movie_rounded, color: Colors.white24),
+                      color: palette.surfaceAlt,
+                      child: Icon(Icons.movie_rounded, color: palette.textMuted),
                     ),
 
-                  // Gradient Scrim at bottom of image
                   Positioned.fill(
                     child: DecoratedBox(
                       decoration: BoxDecoration(
                         gradient: LinearGradient(
                           colors: [
                             Colors.transparent,
-                            Colors.black.withValues(alpha: 0.85),
+                            Colors.black.withValues(alpha: 0.8),
                           ],
                           begin: Alignment.topCenter,
                           end: Alignment.bottomCenter,
@@ -1544,14 +1645,12 @@ class _BilibiliScreenState extends State<BilibiliScreen>
                     ),
                   ),
 
-                  // Bottom Overlay Stats: [▶ Views] [💬 Danmaku] ... [Duration H:mm:ss]
                   Positioned(
                     left: 6,
                     right: 6,
                     bottom: 4,
                     child: Row(
                       children: [
-                        // Play count
                         const Icon(Icons.play_circle_outline_rounded, size: 12, color: Colors.white),
                         const SizedBox(width: 2.5),
                         Text(
@@ -1564,7 +1663,6 @@ class _BilibiliScreenState extends State<BilibiliScreen>
                         ),
                         const SizedBox(width: 8),
 
-                        // Danmaku / Comment
                         const Icon(Icons.subtitles_outlined, size: 11, color: Colors.white70),
                         const SizedBox(width: 2),
                         Text(
@@ -1577,7 +1675,6 @@ class _BilibiliScreenState extends State<BilibiliScreen>
 
                         const Spacer(),
 
-                        // Video Duration (e.g. 2:07:07, 1:08:31)
                         if (item.durationText.isNotEmpty)
                           Text(
                             item.durationText,
@@ -1595,34 +1692,33 @@ class _BilibiliScreenState extends State<BilibiliScreen>
               ),
             ),
 
-            // 2. Title & Channel Row
             Padding(
-              padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+              padding: const EdgeInsets.fromLTRB(9, 7, 8, 7),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // Title (2 lines max, height 32px vừa vặn 2 dòng)
                   SizedBox(
                     height: 32,
                     child: _buildTitleText(item.title),
                   ),
                   const SizedBox(height: 5),
 
-                  // Channel / UP row with UP badge and 3-dots icon
                   Row(
                     children: [
-                      // UP Badge
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
                         decoration: BoxDecoration(
-                          border: Border.all(color: Colors.white30, width: 0.8),
-                          borderRadius: BorderRadius.circular(3),
+                          border: Border.all(
+                            color: accent.withValues(alpha: 0.55),
+                            width: 0.8,
+                          ),
+                          borderRadius: BorderRadius.circular(4),
                         ),
-                        child: const Text(
+                        child: Text(
                           'UP',
                           style: TextStyle(
-                            color: Colors.white60,
+                            color: accent,
                             fontSize: 8,
                             fontWeight: FontWeight.bold,
                             letterSpacing: -0.2,
@@ -1631,17 +1727,19 @@ class _BilibiliScreenState extends State<BilibiliScreen>
                       ),
                       const SizedBox(width: 4),
 
-                      // Channel name
                       Expanded(
                         child: _buildUpName(item.author),
                       ),
 
-                      // 3-dots options icon
                       InkWell(
                         onTap: () => _showItemMoreOptions(item),
-                        child: const Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 2),
-                          child: Icon(Icons.more_vert_rounded, size: 15, color: Colors.white38),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 2),
+                          child: Icon(
+                            Icons.more_vert_rounded,
+                            size: 15,
+                            color: palette.textMuted,
+                          ),
                         ),
                       ),
                     ],
@@ -1657,17 +1755,20 @@ class _BilibiliScreenState extends State<BilibiliScreen>
 
   // =================== TITLE TRANSLATION HELPER ===================
   Widget _buildTitleText(String originalTitle) {
+    final palette = AppThemePalette.of(context);
+    final style = TextStyle(
+      color: palette.textPrimary,
+      fontSize: 12,
+      fontWeight: FontWeight.w600,
+      height: 1.25,
+    );
+
     if (_manualTranslationCache.containsKey(originalTitle)) {
       return Text(
         _manualTranslationCache[originalTitle]!,
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-          height: 1.25,
-        ),
+        style: style,
       );
     }
 
@@ -1676,12 +1777,7 @@ class _BilibiliScreenState extends State<BilibiliScreen>
         originalTitle,
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-          height: 1.25,
-        ),
+        style: style,
       );
     }
 
@@ -1693,12 +1789,7 @@ class _BilibiliScreenState extends State<BilibiliScreen>
           snapshot.data ?? originalTitle,
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-            height: 1.25,
-          ),
+          style: style,
         );
       },
     );
@@ -1720,13 +1811,15 @@ class _BilibiliScreenState extends State<BilibiliScreen>
   }
 
   Widget _buildUpName(String author) {
+    final palette = AppThemePalette.of(context);
+    final style = TextStyle(color: palette.textMuted, fontSize: 11);
     final clean = author.trim();
     if (clean.isEmpty) {
-      return const Text(
+      return Text(
         'Bilibili UP',
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: TextStyle(color: Colors.white60, fontSize: 11),
+        style: style,
       );
     }
     if (!_isTranslateEnabled) {
@@ -1734,7 +1827,7 @@ class _BilibiliScreenState extends State<BilibiliScreen>
         clean,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: const TextStyle(color: Colors.white60, fontSize: 11),
+        style: style,
       );
     }
     return FutureBuilder<String>(
@@ -1745,7 +1838,7 @@ class _BilibiliScreenState extends State<BilibiliScreen>
           snapshot.data ?? clean,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(color: Colors.white60, fontSize: 11),
+          style: style,
         );
       },
     );

@@ -114,7 +114,7 @@ class _AppStartupSplashState extends State<AppStartupSplash>
                 opacity: _exitOpacity,
                 child: ScaleTransition(
                   scale: _exitScale,
-                  child: _buildSplashSurface(),
+                  child: _buildSplashSurface(context),
                 ),
               ),
             ),
@@ -123,23 +123,27 @@ class _AppStartupSplashState extends State<AppStartupSplash>
     );
   }
 
-  Widget _buildSplashSurface() {
+  Widget _buildSplashSurface(BuildContext context) {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.studio);
+    final secondary = palette.secondaryFor(AppTabId.studio);
+    final bgTop = palette.isDark
+        ? const Color(0xFF171B2A)
+        : Color.lerp(palette.surface, accent, 0.08)!;
+    final bgBottom = palette.backgroundFor(AppTabId.studio);
+
     return DecoratedBox(
-      decoration: const BoxDecoration(
-        color: AppColors.darkBackground,
+      decoration: BoxDecoration(
+        color: bgBottom,
         gradient: RadialGradient(
-          center: Alignment(0.0, -0.18),
-          radius: 0.85,
-          colors: [
-            Color(0xFF171B2A),
-            AppColors.darkBackground,
-          ],
+          center: const Alignment(0.0, -0.18),
+          radius: 0.9,
+          colors: [bgTop, bgBottom],
         ),
       ),
       child: SafeArea(
         child: Stack(
           children: [
-            // Logo chính giữa cùng nhịp glow kiểu TikTok
             Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -157,11 +161,11 @@ class _AppStartupSplashState extends State<AppStartupSplash>
                               shape: BoxShape.circle,
                               gradient: RadialGradient(
                                 colors: [
-                                  AppColors.primaryEmerald.withValues(
-                                    alpha: 0.14 * _pulseGlow.value,
+                                  accent.withValues(
+                                    alpha: 0.16 * _pulseGlow.value,
                                   ),
-                                  AppColors.primaryEmeraldDark.withValues(
-                                    alpha: 0.06 * _pulseGlow.value,
+                                  secondary.withValues(
+                                    alpha: 0.08 * _pulseGlow.value,
                                   ),
                                   Colors.transparent,
                                 ],
@@ -179,16 +183,16 @@ class _AppStartupSplashState extends State<AppStartupSplash>
                   ),
                   const SizedBox(height: 18),
                   ShaderMask(
-                    shaderCallback: (bounds) => const LinearGradient(
+                    shaderCallback: (bounds) => LinearGradient(
                       colors: [
-                        Colors.white,
-                        Color(0xFFBDF8DF),
+                        palette.textPrimary,
+                        accent,
                       ],
                     ).createShader(bounds),
-                    child: const Text(
+                    child: Text(
                       'CapSub AI',
                       style: TextStyle(
-                        color: Colors.white,
+                        color: palette.isDark ? Colors.white : palette.textPrimary,
                         fontSize: 23,
                         fontWeight: FontWeight.w800,
                         letterSpacing: 0.4,
@@ -197,10 +201,10 @@ class _AppStartupSplashState extends State<AppStartupSplash>
                     ),
                   ),
                   const SizedBox(height: 5),
-                  const Text(
+                  Text(
                     'Dịch phim & lồng tiếng thông minh',
                     style: TextStyle(
-                      color: AppColors.textSecondary,
+                      color: palette.textSecondary,
                       fontSize: 12.5,
                       fontWeight: FontWeight.w500,
                       letterSpacing: 0.2,
@@ -210,8 +214,6 @@ class _AppStartupSplashState extends State<AppStartupSplash>
                 ],
               ),
             ),
-
-            // Thanh nạp gọn ở phía dưới trong lúc chờ vào video/studio
             Positioned(
               left: 0,
               right: 0,
@@ -221,14 +223,12 @@ class _AppStartupSplashState extends State<AppStartupSplash>
                 children: [
                   SizedBox(
                     width: 132,
-                    height: 3,
+                    height: 3.5,
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(2),
                       child: LinearProgressIndicator(
-                        backgroundColor: Colors.white.withValues(alpha: 0.10),
-                        valueColor: const AlwaysStoppedAnimation<Color>(
-                          AppColors.primaryEmerald,
-                        ),
+                        backgroundColor: accent.withValues(alpha: 0.14),
+                        valueColor: AlwaysStoppedAnimation<Color>(accent),
                       ),
                     ),
                   ),
@@ -236,9 +236,9 @@ class _AppStartupSplashState extends State<AppStartupSplash>
                   Text(
                     'STUDIO · HỒNG QUẢ · BILIBILI',
                     style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.36),
+                      color: palette.textMuted,
                       fontSize: 10,
-                      fontWeight: FontWeight.w600,
+                      fontWeight: FontWeight.w700,
                       letterSpacing: 1.5,
                       decoration: TextDecoration.none,
                     ),
@@ -252,4 +252,3 @@ class _AppStartupSplashState extends State<AppStartupSplash>
     );
   }
 }
-

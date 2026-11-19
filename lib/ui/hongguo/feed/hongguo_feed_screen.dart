@@ -3663,13 +3663,15 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
   @override
   Widget build(BuildContext context) {
-    return PopScope(
-      canPop: !_isDramaEpisodeMode && !_isLandscapeFullscreen && !_isCleanMode,
-      onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) _handleBackNavigation();
-      },
-      child: Scaffold(
-        backgroundColor: Colors.black,
+    return Theme(
+      data: buildDarkCinemaTheme(),
+      child: PopScope(
+        canPop: !_isDramaEpisodeMode && !_isLandscapeFullscreen && !_isCleanMode,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop) _handleBackNavigation();
+        },
+        child: Scaffold(
+          backgroundColor: Colors.black,
         body: Stack(
           children: [
             // 1. Vertical PageView lướt video dạng TikTok/Shorts
@@ -3862,6 +3864,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
                 ),
               ),
           ],
+        ),
         ),
       ),
     );

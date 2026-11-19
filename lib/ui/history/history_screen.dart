@@ -332,19 +332,20 @@ class _HistoryScreenState extends State<HistoryScreen>
       }
     }
 
+    final palette = AppThemePalette.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.darkCard,
-        title: const Text('Xóa các mục đã chọn', style: TextStyle(color: Colors.white)),
+        backgroundColor: palette.surface,
+        title: Text('Xóa các mục đã chọn', style: TextStyle(color: palette.textPrimary)),
         content: Text(
           'Bạn có chắc chắn muốn xóa ${_selectedItemKeys.length} mục đã chọn (tổng cộng $totalCount tập phim / video) không?\n\nToàn bộ dữ liệu phụ đề và video offline tương ứng sẽ được dọn dẹp khỏi máy.',
-          style: const TextStyle(color: Colors.white70),
+          style: TextStyle(color: palette.textSecondary),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Hủy', style: TextStyle(color: Colors.grey)),
+            child: Text('Hủy', style: TextStyle(color: palette.textMuted)),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
@@ -438,22 +439,23 @@ class _HistoryScreenState extends State<HistoryScreen>
     final tabName = tabIndex == 0
         ? 'Phim Hồng Quả'
         : (tabIndex == 1 ? 'Bilibili' : 'Video máy & Link ngoài');
+    final palette = AppThemePalette.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.darkCard,
+        backgroundColor: palette.surface,
         title: Text(
           'Xóa lịch sử $tabName',
-          style: const TextStyle(color: Colors.white),
+          style: TextStyle(color: palette.textPrimary),
         ),
         content: Text(
           'Thao tác này sẽ xóa ${itemsInTab.length} mục trong danh mục $tabName. Bạn có chắc chắn không?',
-          style: const TextStyle(color: Colors.white70),
+          style: TextStyle(color: palette.textSecondary),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Hủy', style: TextStyle(color: Colors.grey)),
+            child: Text('Hủy', style: TextStyle(color: palette.textMuted)),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
@@ -760,11 +762,12 @@ class _HistoryScreenState extends State<HistoryScreen>
     DramaHistoryGroup group,
     HongguoDramaDetail detail,
   ) async {
+    final accent = AppThemePalette.of(context).accentFor(AppTabId.history);
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => const Center(
-        child: CircularProgressIndicator(color: AppTheme.primaryEmerald),
+      builder: (ctx) => Center(
+        child: CircularProgressIndicator(color: accent),
       ),
     );
 
@@ -814,11 +817,12 @@ class _HistoryScreenState extends State<HistoryScreen>
     HongguoDramaDetail? dramaDetail = existingDetail;
 
     if (dramaDetail == null || dramaDetail.episodes.isEmpty) {
+      final accent = AppThemePalette.of(context).accentFor(AppTabId.history);
       showDialog(
         context: context,
         barrierDismissible: false,
-        builder: (ctx) => const Center(
-          child: CircularProgressIndicator(color: AppTheme.primaryEmerald),
+        builder: (ctx) => Center(
+          child: CircularProgressIndicator(color: accent),
         ),
       );
 
@@ -902,15 +906,19 @@ class _HistoryScreenState extends State<HistoryScreen>
     final isOnlineStream = targetItem?.isOnlineStream ?? false;
     final hasWatchingProgress = resumePosition > 0;
 
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.history);
+    final secondary = palette.secondaryFor(AppTabId.history);
+
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (sheetContext) {
         return Container(
-          decoration: const BoxDecoration(
-            color: Color(0xFF161822),
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          decoration: BoxDecoration(
+            color: palette.surface,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
           ),
           padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
           child: SafeArea(
@@ -919,25 +927,23 @@ class _HistoryScreenState extends State<HistoryScreen>
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Thanh kéo handle
                 Center(
                   child: Container(
                     width: 36,
                     height: 4,
                     decoration: BoxDecoration(
-                      color: Colors.white24,
+                      color: palette.border,
                       borderRadius: BorderRadius.circular(2),
                     ),
                   ),
                 ),
                 const SizedBox(height: 16),
 
-                // Tiêu đề phim và thông tin tập
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: BorderRadius.circular(10),
                       child: (group.seriesCover != null && group.seriesCover!.isNotEmpty)
                           ? Image.network(
                               group.seriesCover!,
@@ -949,20 +955,20 @@ class _HistoryScreenState extends State<HistoryScreen>
                               errorBuilder: (_, _, _) => Container(
                                 width: 44,
                                 height: 58,
-                                color: const Color(0xFF252631),
-                                child: const Icon(Icons.movie_rounded, color: Colors.white30, size: 24),
+                                color: palette.surfaceAlt,
+                                child: Icon(Icons.movie_rounded, color: palette.textMuted, size: 24),
                               ),
                             )
                           : Container(
                               width: 44,
                               height: 58,
                               decoration: BoxDecoration(
-                                color: const Color(0xFF132F24),
-                                borderRadius: BorderRadius.circular(8),
+                                color: accent.withValues(alpha: 0.14),
+                                borderRadius: BorderRadius.circular(10),
                               ),
-                              child: const Icon(
+                              child: Icon(
                                 Icons.movie_filter_rounded,
-                                color: AppTheme.primaryEmerald,
+                                color: accent,
                                 size: 24,
                               ),
                             ),
@@ -974,8 +980,8 @@ class _HistoryScreenState extends State<HistoryScreen>
                         children: [
                           Text(
                             group.seriesTitle,
-                            style: const TextStyle(
-                              color: Colors.white,
+                            style: TextStyle(
+                              color: palette.textPrimary,
                               fontSize: 16,
                               fontWeight: FontWeight.bold,
                             ),
@@ -991,13 +997,13 @@ class _HistoryScreenState extends State<HistoryScreen>
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                                 decoration: BoxDecoration(
-                                  color: AppTheme.primaryEmerald.withValues(alpha: 0.15),
-                                  borderRadius: BorderRadius.circular(4),
+                                  color: accent.withValues(alpha: 0.14),
+                                  borderRadius: BorderRadius.circular(6),
                                 ),
                                 child: Text(
                                   'Tập $epNum',
-                                  style: const TextStyle(
-                                    color: AppTheme.primaryEmerald,
+                                  style: TextStyle(
+                                    color: accent,
                                     fontSize: 11,
                                     fontWeight: FontWeight.bold,
                                   ),
@@ -1007,15 +1013,15 @@ class _HistoryScreenState extends State<HistoryScreen>
                                 Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                                   decoration: BoxDecoration(
-                                    color: AppTheme.accentGold.withValues(alpha: 0.15),
-                                    borderRadius: BorderRadius.circular(4),
+                                    color: secondary.withValues(alpha: 0.14),
+                                    borderRadius: BorderRadius.circular(6),
                                   ),
                                   child: Text(
                                     targetItem?.durationMs != null && targetItem!.durationMs > 0
                                         ? 'Đang xem: ${_formatMs(resumePosition)} / ${_formatMs(targetItem.durationMs)}'
                                         : 'Đang xem: ${_formatMs(resumePosition)}',
-                                    style: const TextStyle(
-                                      color: AppTheme.accentGold,
+                                    style: TextStyle(
+                                      color: secondary,
                                       fontSize: 11,
                                       fontWeight: FontWeight.w600,
                                     ),
@@ -1027,16 +1033,16 @@ class _HistoryScreenState extends State<HistoryScreen>
                       ),
                     ),
                     IconButton(
-                      icon: const Icon(Icons.close_rounded, color: Colors.white54, size: 22),
+                      icon: Icon(Icons.close_rounded, color: palette.textSecondary, size: 22),
                       onPressed: () => Navigator.pop(sheetContext),
                     ),
                   ],
                 ),
                 const SizedBox(height: 18),
-                const Text(
+                Text(
                   'CHỌN CHẾ ĐỘ XEM TIẾP',
                   style: TextStyle(
-                    color: Colors.grey,
+                    color: palette.textMuted,
                     fontSize: 11.5,
                     fontWeight: FontWeight.bold,
                     letterSpacing: 0.8,
@@ -1044,7 +1050,7 @@ class _HistoryScreenState extends State<HistoryScreen>
                 ),
                 const SizedBox(height: 12),
 
-                // 1. TÙY CHỌN 1: Lướt Shorts Online
+                // 1. Lướt Shorts Online
                 InkWell(
                   onTap: () {
                     Navigator.pop(sheetContext);
@@ -1063,13 +1069,13 @@ class _HistoryScreenState extends State<HistoryScreen>
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
                       color: isOnlineStream
-                          ? Colors.purpleAccent.withValues(alpha: 0.12)
-                          : const Color(0xFF1E202B),
+                          ? accent.withValues(alpha: 0.1)
+                          : palette.surfaceAlt,
                       borderRadius: BorderRadius.circular(14),
                       border: Border.all(
                         color: isOnlineStream
-                            ? Colors.purpleAccent.withValues(alpha: 0.5)
-                            : Colors.white12,
+                            ? accent.withValues(alpha: 0.5)
+                            : palette.border,
                         width: isOnlineStream ? 1.5 : 1,
                       ),
                     ),
@@ -1079,12 +1085,12 @@ class _HistoryScreenState extends State<HistoryScreen>
                           width: 44,
                           height: 44,
                           decoration: BoxDecoration(
-                            color: Colors.purpleAccent.withValues(alpha: 0.18),
+                            color: accent.withValues(alpha: 0.16),
                             borderRadius: BorderRadius.circular(10),
                           ),
-                          child: const Icon(
+                          child: Icon(
                             Icons.swipe_vertical_rounded,
-                            color: Colors.purpleAccent,
+                            color: accent,
                             size: 24,
                           ),
                         ),
@@ -1095,10 +1101,10 @@ class _HistoryScreenState extends State<HistoryScreen>
                             children: [
                               Row(
                                 children: [
-                                  const Text(
+                                  Text(
                                     'Lướt Shorts Online',
                                     style: TextStyle(
-                                      color: Colors.white,
+                                      color: palette.textPrimary,
                                       fontSize: 15,
                                       fontWeight: FontWeight.bold,
                                     ),
@@ -1108,17 +1114,17 @@ class _HistoryScreenState extends State<HistoryScreen>
                                     Container(
                                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
                                       decoration: BoxDecoration(
-                                        color: Colors.purpleAccent.withValues(alpha: 0.25),
+                                        color: accent.withValues(alpha: 0.16),
                                         borderRadius: BorderRadius.circular(4),
                                         border: Border.all(
-                                          color: Colors.purpleAccent.withValues(alpha: 0.6),
+                                          color: accent.withValues(alpha: 0.5),
                                           width: 0.8,
                                         ),
                                       ),
-                                      child: const Text(
+                                      child: Text(
                                         'Lần trước',
                                         style: TextStyle(
-                                          color: Colors.purpleAccent,
+                                          color: accent,
                                           fontSize: 9.5,
                                           fontWeight: FontWeight.bold,
                                         ),
@@ -1128,10 +1134,10 @@ class _HistoryScreenState extends State<HistoryScreen>
                                 ],
                               ),
                               const SizedBox(height: 3),
-                              const Text(
+                              Text(
                                 'Vuốt dọc chuyển tập siêu mượt, tự động nhận phụ đề Vietsub và lồng tiếng AI',
                                 style: TextStyle(
-                                  color: Colors.white70,
+                                  color: palette.textSecondary,
                                   fontSize: 12,
                                   height: 1.25,
                                 ),
@@ -1139,14 +1145,14 @@ class _HistoryScreenState extends State<HistoryScreen>
                             ],
                           ),
                         ),
-                        const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white30, size: 14),
+                        Icon(Icons.arrow_forward_ios_rounded, color: palette.textMuted, size: 14),
                       ],
                     ),
                   ),
                 ),
                 const SizedBox(height: 10),
 
-                // 2. TÙY CHỌN 2: Trình phát đầy đủ (Player)
+                // 2. Trình phát đầy đủ (Player)
                 InkWell(
                   onTap: () {
                     Navigator.pop(sheetContext);
@@ -1173,13 +1179,13 @@ class _HistoryScreenState extends State<HistoryScreen>
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
                       color: !isOnlineStream
-                          ? AppTheme.primaryEmerald.withValues(alpha: 0.1)
-                          : const Color(0xFF1E202B),
+                          ? secondary.withValues(alpha: 0.1)
+                          : palette.surfaceAlt,
                       borderRadius: BorderRadius.circular(14),
                       border: Border.all(
                         color: !isOnlineStream
-                            ? AppTheme.primaryEmerald.withValues(alpha: 0.5)
-                            : Colors.white12,
+                            ? secondary.withValues(alpha: 0.5)
+                            : palette.border,
                         width: !isOnlineStream ? 1.5 : 1,
                       ),
                     ),
@@ -1189,12 +1195,12 @@ class _HistoryScreenState extends State<HistoryScreen>
                           width: 44,
                           height: 44,
                           decoration: BoxDecoration(
-                            color: AppTheme.primaryEmerald.withValues(alpha: 0.18),
+                            color: secondary.withValues(alpha: 0.16),
                             borderRadius: BorderRadius.circular(10),
                           ),
-                          child: const Icon(
+                          child: Icon(
                             Icons.play_circle_fill_rounded,
-                            color: AppTheme.primaryEmerald,
+                            color: secondary,
                             size: 24,
                           ),
                         ),
@@ -1205,10 +1211,10 @@ class _HistoryScreenState extends State<HistoryScreen>
                             children: [
                               Row(
                                 children: [
-                                  const Text(
+                                  Text(
                                     'Trình phát đầy đủ (Player)',
                                     style: TextStyle(
-                                      color: Colors.white,
+                                      color: palette.textPrimary,
                                       fontSize: 15,
                                       fontWeight: FontWeight.bold,
                                     ),
@@ -1218,17 +1224,17 @@ class _HistoryScreenState extends State<HistoryScreen>
                                     Container(
                                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
                                       decoration: BoxDecoration(
-                                        color: AppTheme.primaryEmerald.withValues(alpha: 0.2),
+                                        color: secondary.withValues(alpha: 0.16),
                                         borderRadius: BorderRadius.circular(4),
                                         border: Border.all(
-                                          color: AppTheme.primaryEmerald.withValues(alpha: 0.6),
+                                          color: secondary.withValues(alpha: 0.5),
                                           width: 0.8,
                                         ),
                                       ),
-                                      child: const Text(
+                                      child: Text(
                                         'Offline',
                                         style: TextStyle(
-                                          color: AppTheme.primaryEmerald,
+                                          color: secondary,
                                           fontSize: 9.5,
                                           fontWeight: FontWeight.bold,
                                         ),
@@ -1238,10 +1244,10 @@ class _HistoryScreenState extends State<HistoryScreen>
                                 ],
                               ),
                               const SizedBox(height: 3),
-                              const Text(
+                              Text(
                                 'Xem video offline / cache, có thanh tua tiến độ, gối đầu tập tiếp theo',
                                 style: TextStyle(
-                                  color: Colors.white70,
+                                  color: palette.textSecondary,
                                   fontSize: 12,
                                   height: 1.25,
                                 ),
@@ -1249,7 +1255,7 @@ class _HistoryScreenState extends State<HistoryScreen>
                             ],
                           ),
                         ),
-                        const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white30, size: 14),
+                        Icon(Icons.arrow_forward_ios_rounded, color: palette.textMuted, size: 14),
                       ],
                     ),
                   ),
@@ -1307,19 +1313,20 @@ class _HistoryScreenState extends State<HistoryScreen>
   }
 
   Future<void> _confirmDelete(HistoryItem item) async {
+    final palette = AppThemePalette.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.darkCard,
-        title: const Text('Xóa lịch sử', style: TextStyle(color: Colors.white)),
+        backgroundColor: palette.surface,
+        title: Text('Xóa lịch sử', style: TextStyle(color: palette.textPrimary)),
         content: Text(
           'Bạn có chắc chắn muốn xóa bản ghi "${item.title}" không?',
-          style: const TextStyle(color: Colors.white70),
+          style: TextStyle(color: palette.textSecondary),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Hủy', style: TextStyle(color: Colors.grey)),
+            child: Text('Hủy', style: TextStyle(color: palette.textMuted)),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
@@ -1337,22 +1344,23 @@ class _HistoryScreenState extends State<HistoryScreen>
 
   /// Xóa toàn bộ các tập của một bộ phim
   Future<void> _confirmDeleteDramaGroup(DramaHistoryGroup group) async {
+    final palette = AppThemePalette.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.darkCard,
-        title: const Text(
+        backgroundColor: palette.surface,
+        title: Text(
           'Xóa toàn bộ phim',
-          style: TextStyle(color: Colors.white),
+          style: TextStyle(color: palette.textPrimary),
         ),
         content: Text(
           'Bạn có chắc chắn muốn xóa tất cả ${group.episodes.length} tập của phim "${group.seriesTitle}" không?',
-          style: const TextStyle(color: Colors.white70),
+          style: TextStyle(color: palette.textSecondary),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Hủy', style: TextStyle(color: Colors.grey)),
+            child: Text('Hủy', style: TextStyle(color: palette.textMuted)),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
@@ -1460,6 +1468,20 @@ class _HistoryScreenState extends State<HistoryScreen>
               'Video máy & Link ngoài',
             ];
 
+        final palette = AppThemePalette.of(context);
+        final accent = palette.accentFor(AppTabId.history);
+        final secondary = palette.secondaryFor(AppTabId.history);
+        final bg = palette.backgroundFor(AppTabId.history);
+        final hgAccent = palette.accentFor(AppTabId.hongguo);
+        final biliAccent = palette.accentFor(AppTabId.bilibili);
+        const watchLaterAmber = Color(0xFFF59E0B);
+
+        final activeTabColor = currentTabIndex == 0
+            ? hgAccent
+            : (currentTabIndex == 1
+                ? biliAccent
+                : (currentTabIndex == 2 ? watchLaterAmber : accent));
+
         final isAllSelected = currentDisplayItems.isNotEmpty &&
             _selectedItemKeys.length >= currentDisplayItems.length &&
             currentDisplayItems.every((item) => _selectedItemKeys.contains(_getDisplayItemKey(item)));
@@ -1472,20 +1494,25 @@ class _HistoryScreenState extends State<HistoryScreen>
             }
           },
           child: Scaffold(
-            backgroundColor: AppTheme.darkBackground,
+            backgroundColor: bg,
             appBar: _isMultiSelectMode
                 ? AppBar(
-                    backgroundColor: const Color(0xFF1E212A),
-                    elevation: 2,
+                    backgroundColor: palette.surface,
+                    elevation: 0,
+                    scrolledUnderElevation: 0,
+                    bottom: PreferredSize(
+                      preferredSize: const Size.fromHeight(1),
+                      child: Divider(height: 1, color: palette.border),
+                    ),
                     leading: IconButton(
-                      icon: const Icon(Icons.close_rounded, color: Colors.white),
+                      icon: Icon(Icons.close_rounded, color: palette.textPrimary),
                       onPressed: _exitMultiSelectMode,
                       tooltip: 'Hủy chọn',
                     ),
                     title: Text(
                       'Đã chọn ${_selectedItemKeys.length}',
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: palette.textPrimary,
                         fontSize: 17,
                         fontWeight: FontWeight.bold,
                       ),
@@ -1497,8 +1524,8 @@ class _HistoryScreenState extends State<HistoryScreen>
                             : () => _toggleSelectAll(currentDisplayItems),
                         child: Text(
                           isAllSelected ? 'Bỏ chọn' : 'Tất cả',
-                          style: const TextStyle(
-                            color: AppTheme.primaryEmerald,
+                          style: TextStyle(
+                            color: accent,
                             fontWeight: FontWeight.bold,
                             fontSize: 14,
                           ),
@@ -1507,7 +1534,9 @@ class _HistoryScreenState extends State<HistoryScreen>
                       IconButton(
                         icon: Icon(
                           Icons.delete_outline_rounded,
-                          color: _selectedItemKeys.isEmpty ? Colors.white30 : Colors.redAccent,
+                          color: _selectedItemKeys.isEmpty
+                              ? palette.textMuted.withValues(alpha: 0.4)
+                              : Colors.redAccent,
                           size: 24,
                         ),
                         tooltip: 'Xóa mục đã chọn',
@@ -1518,18 +1547,57 @@ class _HistoryScreenState extends State<HistoryScreen>
                     ],
                   )
                 : AppBar(
-                    backgroundColor: AppTheme.darkBackground,
+                    backgroundColor: bg,
                     elevation: 0,
+                    scrolledUnderElevation: 0,
+                    toolbarHeight: 64,
                     title: Row(
-                      children: const [
-                        Icon(Icons.video_library, color: AppTheme.primaryEmerald, size: 24),
-                        SizedBox(width: 10),
-                        Text(
-                          'Trình Phát & Lịch Sử',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
+                      children: [
+                        Container(
+                          width: 38,
+                          height: 38,
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [accent, secondary],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            ),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Icon(
+                            Icons.history_rounded,
+                            color: palette.onColor(accent),
+                            size: 21,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                'Thư Viện & Lịch Sử',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: palette.textPrimary,
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              const SizedBox(height: 1),
+                              Text(
+                                'Tự động nhớ đúng tập & giây đang xem',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: palette.textMuted,
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ],
@@ -1537,12 +1605,12 @@ class _HistoryScreenState extends State<HistoryScreen>
                     actions: [
                       if (currentDisplayItems.isNotEmpty)
                         IconButton(
-                          icon: const Icon(Icons.checklist_rounded, color: Colors.white70),
+                          icon: Icon(Icons.checklist_rounded, color: palette.textSecondary),
                           tooltip: 'Chọn nhiều mục để xóa',
                           onPressed: () => _enterMultiSelectMode(),
                         ),
                       IconButton(
-                        icon: const Icon(Icons.cleaning_services_rounded, color: Colors.orangeAccent),
+                        icon: Icon(Icons.cleaning_services_rounded, color: watchLaterAmber),
                         tooltip: 'Dọn dẹp bộ nhớ',
                         onPressed: () {
                           Navigator.push(
@@ -1552,7 +1620,8 @@ class _HistoryScreenState extends State<HistoryScreen>
                         },
                       ),
                       IconButton(
-                        icon: const Icon(Icons.settings, color: Colors.white70),
+                        icon: Icon(Icons.settings_rounded, color: palette.textSecondary),
+                        tooltip: 'Cài đặt hệ thống',
                         onPressed: () {
                           Navigator.push(
                             context,
@@ -1563,53 +1632,43 @@ class _HistoryScreenState extends State<HistoryScreen>
                     ],
                   ),
             body: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              padding: EdgeInsets.fromLTRB(
+                16,
+                10,
+                16,
+                palette.bottomContentPadding(extra: 18),
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // 3 Tabs Selector
+                  // 4 Tabs Pill Selector
                   Container(
                     margin: const EdgeInsets.only(bottom: 16),
+                    padding: const EdgeInsets.all(4),
                     decoration: BoxDecoration(
-                      color: AppTheme.darkSurfaceVariant,
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: AppTheme.cardBorder),
+                      color: palette.surface,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: palette.border),
+                      boxShadow: palette.cardShadows,
                     ),
                     child: TabBar(
                       controller: _historyTabController,
+                      dividerColor: Colors.transparent,
                       indicatorSize: TabBarIndicatorSize.tab,
                       isScrollable: true,
                       tabAlignment: TabAlignment.start,
                       padding: EdgeInsets.zero,
                       labelPadding: const EdgeInsets.symmetric(horizontal: 10),
                       indicator: BoxDecoration(
-                        color: currentTabIndex == 0
-                            ? AppTheme.primaryEmerald.withValues(alpha: 0.25)
-                            : (currentTabIndex == 1
-                                ? const Color(0xFF00AEEC).withValues(alpha: 0.25)
-                                : (currentTabIndex == 2
-                                    ? Colors.amber.withValues(alpha: 0.25)
-                                    : Colors.white24)),
+                        color: activeTabColor.withValues(alpha: palette.isDark ? 0.24 : 0.14),
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(
-                          color: currentTabIndex == 0
-                              ? AppTheme.primaryEmerald
-                              : (currentTabIndex == 1
-                                  ? const Color(0xFF00AEEC)
-                                  : (currentTabIndex == 2
-                                      ? Colors.amber
-                                      : Colors.white60)),
+                          color: activeTabColor,
                           width: 1.2,
                         ),
                       ),
-                      labelColor: currentTabIndex == 0
-                          ? AppTheme.primaryEmerald
-                          : (currentTabIndex == 1
-                              ? const Color(0xFF00AEEC)
-                              : (currentTabIndex == 2
-                                  ? Colors.amber
-                                  : Colors.white)),
-                      unselectedLabelColor: AppTheme.textSecondary,
+                      labelColor: activeTabColor,
+                      unselectedLabelColor: palette.textSecondary,
                       labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
                       tabs: [
                         Tab(
@@ -1636,17 +1695,24 @@ class _HistoryScreenState extends State<HistoryScreen>
                   if (currentTabIndex == 2)
                     _buildWatchLaterTab(context, watchLaterItems, allItems)
                   else ...[
+                    // Hero "Đang xem gần nhất" Card
+                    if (currentDisplayItems.isNotEmpty && !_isMultiSelectMode) ...[
+                      _buildHeroResumeCard(currentDisplayItems.first, palette),
+                      const SizedBox(height: 16),
+                    ],
+
                     // Banner "Nhập Video & Phụ Đề Có Sẵn" (Hiển thị khi ở Tab Video & Khác)
                     if (currentTabIndex == 3) ...[
                     InkWell(
                       onTap: _isMultiSelectMode ? null : _showImportSubtitleDialog,
-                      borderRadius: BorderRadius.circular(16),
+                      borderRadius: BorderRadius.circular(18),
                       child: Container(
                         padding: const EdgeInsets.all(16),
                         decoration: BoxDecoration(
-                          color: AppTheme.darkCard,
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: AppTheme.cardBorder),
+                          color: palette.surface,
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(color: palette.border),
+                          boxShadow: palette.cardShadows,
                         ),
                         child: Row(
                           children: [
@@ -1654,37 +1720,37 @@ class _HistoryScreenState extends State<HistoryScreen>
                               width: 46,
                               height: 46,
                               decoration: BoxDecoration(
-                                color: AppTheme.primaryEmerald.withValues(alpha: 0.15),
+                                color: accent.withValues(alpha: 0.14),
                                 shape: BoxShape.circle,
                               ),
-                              child: const Icon(
+                              child: Icon(
                                 Icons.input,
-                                color: AppTheme.primaryEmerald,
+                                color: accent,
                                 size: 24,
                               ),
                             ),
                             const SizedBox(width: 14),
-                            const Expanded(
+                            Expanded(
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
                                     'Nhập Video & Phụ Đề Có Sẵn',
                                     style: TextStyle(
-                                      color: Colors.white,
+                                      color: palette.textPrimary,
                                       fontSize: 15,
                                       fontWeight: FontWeight.bold,
                                     ),
                                   ),
-                                  SizedBox(height: 3),
+                                  const SizedBox(height: 3),
                                   Text(
                                     'Xem với phụ đề rời hoặc dịch file sub gốc bằng AI',
-                                    style: TextStyle(color: Colors.grey, fontSize: 12),
+                                    style: TextStyle(color: palette.textSecondary, fontSize: 12),
                                   ),
                                 ],
                               ),
                             ),
-                            const Icon(Icons.chevron_right, color: Colors.grey),
+                            Icon(Icons.chevron_right, color: palette.textMuted),
                           ],
                         ),
                       ),
@@ -1696,26 +1762,30 @@ class _HistoryScreenState extends State<HistoryScreen>
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
-                        '${tabTitles[currentTabIndex].toUpperCase()} (${currentDisplayItems.length} MỤC)',
-                        style: const TextStyle(
-                          color: Colors.grey,
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 1,
+                      Flexible(
+                        child: Text(
+                          '${tabTitles[currentTabIndex].toUpperCase()} (${currentDisplayItems.length} MỤC)',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: palette.textMuted,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 0.8,
+                          ),
                         ),
                       ),
                       if (currentRawItems.isNotEmpty && !_isMultiSelectMode)
                         TextButton.icon(
                           onPressed: () => _confirmClearTab(currentTabIndex, currentRawItems),
-                          icon: const Icon(
+                          icon: Icon(
                             Icons.delete_sweep_outlined,
                             size: 16,
-                            color: Colors.grey,
+                            color: palette.textMuted,
                           ),
-                          label: const Text(
+                          label: Text(
                             'Xóa tab này',
-                            style: TextStyle(color: Colors.grey, fontSize: 12),
+                            style: TextStyle(color: palette.textMuted, fontSize: 12),
                           ),
                           style: TextButton.styleFrom(
                             padding: const EdgeInsets.symmetric(
@@ -1731,15 +1801,21 @@ class _HistoryScreenState extends State<HistoryScreen>
                   // Danh sách hoặc empty state
                   if (currentDisplayItems.isEmpty)
                     Container(
-                      padding: const EdgeInsets.symmetric(vertical: 40),
+                      padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 20),
                       alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: palette.surface,
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(color: palette.border),
+                        boxShadow: palette.cardShadows,
+                      ),
                       child: Column(
                         children: [
                           Icon(
                             currentTabIndex == 0
                                 ? Icons.movie_filter_outlined
                                 : (currentTabIndex == 1 ? Icons.tv_off_rounded : Icons.video_library_outlined),
-                            color: Colors.white24,
+                            color: palette.textMuted.withValues(alpha: 0.45),
                             size: 56,
                           ),
                           const SizedBox(height: 12),
@@ -1749,7 +1825,12 @@ class _HistoryScreenState extends State<HistoryScreen>
                                 : (currentTabIndex == 1
                                     ? 'Chưa có video Bilibili nào trong lịch sử'
                                     : 'Chưa có video máy hoặc link ngoài nào'),
-                            style: const TextStyle(color: Colors.white70, fontSize: 15),
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: palette.textPrimary,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                           const SizedBox(height: 4),
                           Text(
@@ -1759,7 +1840,7 @@ class _HistoryScreenState extends State<HistoryScreen>
                                     ? 'Xem video tại tab "Bilibili" để lưu lại lịch sử xem'
                                     : 'Dùng nút Nhập Video ở trên để xem video từ máy hoặc link trực tiếp'),
                             textAlign: TextAlign.center,
-                            style: const TextStyle(color: Colors.grey, fontSize: 12),
+                            style: TextStyle(color: palette.textSecondary, fontSize: 12),
                           ),
                         ],
                       ),
@@ -1808,6 +1889,212 @@ class _HistoryScreenState extends State<HistoryScreen>
 );
 }
 
+  Widget _buildHeroResumeCard(HistoryDisplayItem dItem, AppThemePalette palette) {
+    final accent = palette.accentFor(AppTabId.history);
+    final secondary = palette.secondaryFor(AppTabId.history);
+    final onHero = palette.onColor(accent);
+
+    final String title;
+    final String subtitle;
+    final String? coverUrl;
+    final double? progress;
+    final VoidCallback onPlay;
+
+    if (dItem.isDramaGroup) {
+      final group = dItem.dramaGroup!;
+      final latest = group.latestWatchedEpisode;
+      final latestEpNum = latest.extractedEpisodeIndex;
+      final isTranslated = _showTranslatedGroupKeys.contains(group.seriesKey);
+      final translated = _groupTranslatedTitles[group.seriesKey];
+      title = isTranslated && translated != null && translated.isNotEmpty
+          ? translated
+          : group.seriesTitle;
+      subtitle = latest.lastPositionMs > 0
+          ? 'Tập $latestEpNum · Đã xem ${_formatMs(latest.lastPositionMs)}'
+          : 'Tập $latestEpNum · Đã lưu ${group.episodes.length} tập';
+      coverUrl = (group.seriesCover != null && group.seriesCover!.isNotEmpty)
+          ? group.seriesCover
+          : (latest.seriesCover ?? latest.coverUrl);
+      progress = (latest.durationMs > 0 && latest.lastPositionMs > 0)
+          ? (latest.lastPositionMs / latest.durationMs).clamp(0.0, 1.0)
+          : null;
+      onPlay = () => _showHongguoPlaybackOptions(
+        group: group,
+        episodeItem: latest,
+        targetEpisodeIndex: latestEpNum,
+      );
+    } else {
+      final it = dItem.singleItem!;
+      final isTranslated = _showTranslatedItemIds.contains(it.id);
+      final hasTranslated =
+          it.displayTranslatedTitle != null && it.displayTranslatedTitle!.isNotEmpty;
+      title = isTranslated && hasTranslated
+          ? it.displayTranslatedTitle!
+          : it.displayOriginalTitle;
+      subtitle = it.lastPositionMs > 0
+          ? (it.durationMs > 0
+              ? 'Đang xem ${_formatMs(it.lastPositionMs)} / ${_formatMs(it.durationMs)}'
+              : 'Đang xem ${_formatMs(it.lastPositionMs)}')
+          : '${it.sentenceCount > 0 ? it.sentenceCount : "?"} câu · ${it.isOnlineStream ? "Lướt Online" : "Offline"}';
+      coverUrl = (it.seriesCover != null && it.seriesCover!.trim().isNotEmpty)
+          ? it.seriesCover
+          : it.coverUrl;
+      progress = (it.durationMs > 0 && it.lastPositionMs > 0)
+          ? (it.lastPositionMs / it.durationMs).clamp(0.0, 1.0)
+          : null;
+      onPlay = () {
+        if (it.isOnlineStream || (it.seriesId != null && it.seriesId!.isNotEmpty)) {
+          final dramaGroup = DramaHistoryGroup(
+            seriesKey: it.seriesId ?? it.extractedSeriesTitle,
+            seriesId: it.seriesId,
+            seriesTitle: it.extractedSeriesTitle,
+            seriesCover: it.seriesCover ?? it.coverUrl,
+            totalEpisodes: it.totalEpisodes ?? 0,
+            episodes: [it],
+          );
+          _showHongguoPlaybackOptions(
+            group: dramaGroup,
+            episodeItem: it,
+            targetEpisodeIndex: it.extractedEpisodeIndex,
+          );
+        } else {
+          _openItem(it);
+        }
+      };
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [accent, secondary],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: accent.withValues(alpha: 0.28),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onPlay,
+          borderRadius: BorderRadius.circular(20),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: (coverUrl != null && coverUrl.trim().isNotEmpty)
+                      ? Image.network(
+                          coverUrl,
+                          headers: _imageHeaders(coverUrl),
+                          cacheWidth: 160,
+                          width: 56,
+                          height: 76,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, _, _) => Container(
+                            width: 56,
+                            height: 76,
+                            color: onHero.withValues(alpha: 0.16),
+                            child: Icon(Icons.play_circle_fill_rounded, color: onHero, size: 28),
+                          ),
+                        )
+                      : Container(
+                          width: 56,
+                          height: 76,
+                          color: onHero.withValues(alpha: 0.16),
+                          child: Icon(Icons.play_circle_fill_rounded, color: onHero, size: 28),
+                        ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: onHero.withValues(alpha: 0.18),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          '▶ ĐANG XEM GẦN NHẤT',
+                          style: TextStyle(
+                            color: onHero,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: onHero,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w800,
+                          height: 1.25,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: onHero.withValues(alpha: 0.86),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      if (progress != null) ...[
+                        const SizedBox(height: 7),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(4),
+                          child: LinearProgressIndicator(
+                            value: progress,
+                            minHeight: 4,
+                            backgroundColor: onHero.withValues(alpha: 0.22),
+                            valueColor: AlwaysStoppedAnimation<Color>(onHero),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: onHero,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    'Xem tiếp',
+                    style: TextStyle(
+                      color: accent,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   /// Card gom nhóm cho Phim Bộ (Hồng Quả / Short Drama)
   Widget _buildDramaGroupCard(
     DramaHistoryGroup group,
@@ -1817,6 +2104,11 @@ class _HistoryScreenState extends State<HistoryScreen>
     VoidCallback? onToggleSelect,
     VoidCallback? onEnterMultiSelect,
   }) {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.history);
+    final onAccent = palette.onColor(accent);
+    final amberText = palette.isDark ? AppTheme.accentGold : const Color(0xFFB45309);
+
     final latest = group.latestWatchedEpisode;
     final latestEpNum = latest.extractedEpisodeIndex;
     final dateStr = dateFormatter.format(
@@ -1826,23 +2118,24 @@ class _HistoryScreenState extends State<HistoryScreen>
     return InkWell(
       onTap: isMultiSelectMode ? onToggleSelect : null,
       onLongPress: !isMultiSelectMode ? onEnterMultiSelect : null,
-      borderRadius: BorderRadius.circular(16),
+      borderRadius: BorderRadius.circular(18),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 180),
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: isSelected
-              ? AppTheme.primaryEmerald.withValues(alpha: 0.12)
-              : AppTheme.darkCard,
-          borderRadius: BorderRadius.circular(16),
+              ? accent.withValues(alpha: 0.12)
+              : palette.surface,
+          borderRadius: BorderRadius.circular(18),
           border: Border.all(
             color: isSelected
-                ? AppTheme.primaryEmerald
+                ? accent
                 : (isMultiSelectMode
-                    ? Colors.white24
-                    : AppTheme.primaryEmerald.withValues(alpha: 0.3)),
-            width: isSelected ? 1.8 : 1.2,
+                    ? palette.border
+                    : accent.withValues(alpha: 0.28)),
+            width: isSelected ? 1.8 : 1.1,
           ),
+          boxShadow: palette.cardShadows,
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1860,20 +2153,20 @@ class _HistoryScreenState extends State<HistoryScreen>
                       height: 22,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: isSelected ? AppTheme.primaryEmerald : Colors.transparent,
+                        color: isSelected ? accent : Colors.transparent,
                         border: Border.all(
-                          color: isSelected ? AppTheme.primaryEmerald : Colors.white54,
+                          color: isSelected ? accent : palette.textMuted,
                           width: 2,
                         ),
                       ),
                       child: isSelected
-                          ? const Icon(Icons.check, size: 14, color: Colors.black)
+                          ? Icon(Icons.check, size: 14, color: onAccent)
                           : null,
                     ),
                   ),
                 ],
                 ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(10),
                   child: (group.seriesCover != null &&
                           group.seriesCover!.isNotEmpty)
                       ? Image.network(
@@ -1886,20 +2179,20 @@ class _HistoryScreenState extends State<HistoryScreen>
                           errorBuilder: (_, _, _) => Container(
                             width: 52,
                             height: 70,
-                            color: const Color(0xFF252631),
-                            child: const Icon(Icons.movie, color: Colors.white30),
+                            color: palette.surfaceAlt,
+                            child: Icon(Icons.movie, color: palette.textMuted),
                           ),
                         )
                       : Container(
                           width: 52,
                           height: 70,
                           decoration: BoxDecoration(
-                            color: const Color(0xFF132F24),
-                            borderRadius: BorderRadius.circular(8),
+                            color: accent.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(10),
                           ),
-                          child: const Icon(
+                          child: Icon(
                             Icons.movie_filter_rounded,
-                            color: AppTheme.primaryEmerald,
+                            color: accent,
                           ),
                         ),
                 ),
@@ -1942,8 +2235,8 @@ class _HistoryScreenState extends State<HistoryScreen>
                                         borderRadius: BorderRadius.circular(4),
                                         child: Text(
                                           displayGroupTitle,
-                                          style: const TextStyle(
-                                            color: Colors.white,
+                                          style: TextStyle(
+                                            color: palette.textPrimary,
                                             fontSize: 15,
                                             fontWeight: FontWeight.bold,
                                           ),
@@ -1957,27 +2250,27 @@ class _HistoryScreenState extends State<HistoryScreen>
                                   if (!isMultiSelectMode)
                                     InkWell(
                                       onTap: isGroupTranslating ? null : () => _toggleTranslateDramaTitle(group),
-                                      borderRadius: BorderRadius.circular(6),
+                                      borderRadius: BorderRadius.circular(8),
                                       child: Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
                                         decoration: BoxDecoration(
                                           color: isGroupTranslated
-                                              ? AppTheme.primaryEmerald.withValues(alpha: 0.18)
-                                              : const Color(0xFF2A2D3A),
-                                          borderRadius: BorderRadius.circular(6),
+                                              ? accent.withValues(alpha: 0.14)
+                                              : palette.surfaceAlt,
+                                          borderRadius: BorderRadius.circular(8),
                                           border: Border.all(
                                             color: isGroupTranslated
-                                                ? AppTheme.primaryEmerald.withValues(alpha: 0.5)
-                                                : Colors.white24,
+                                                ? accent.withValues(alpha: 0.5)
+                                                : palette.border,
                                           ),
                                         ),
                                         child: isGroupTranslating
-                                            ? const SizedBox(
+                                            ? SizedBox(
                                                 width: 10,
                                                 height: 10,
                                                 child: CircularProgressIndicator(
                                                   strokeWidth: 2,
-                                                  color: AppTheme.primaryEmerald,
+                                                  color: accent,
                                                 ),
                                               )
                                             : Row(
@@ -1987,16 +2280,16 @@ class _HistoryScreenState extends State<HistoryScreen>
                                                     Icons.translate_rounded,
                                                     size: 11,
                                                     color: isGroupTranslated
-                                                        ? AppTheme.primaryEmerald
-                                                        : Colors.white70,
+                                                        ? accent
+                                                        : palette.textSecondary,
                                                   ),
                                                   const SizedBox(width: 3),
                                                   Text(
                                                     isGroupTranslated ? 'Gốc' : 'Dịch',
                                                     style: TextStyle(
                                                       color: isGroupTranslated
-                                                          ? AppTheme.primaryEmerald
-                                                          : Colors.white70,
+                                                          ? accent
+                                                          : palette.textSecondary,
                                                       fontSize: 10,
                                                       fontWeight: FontWeight.bold,
                                                     ),
@@ -2014,8 +2307,8 @@ class _HistoryScreenState extends State<HistoryScreen>
                                     Expanded(
                                       child: Text(
                                         '🇨🇳 Gốc: ${group.seriesTitle}',
-                                        style: const TextStyle(
-                                          color: Colors.grey,
+                                        style: TextStyle(
+                                          color: palette.textMuted,
                                           fontSize: 11,
                                           fontStyle: FontStyle.italic,
                                         ),
@@ -2034,9 +2327,9 @@ class _HistoryScreenState extends State<HistoryScreen>
                                             ),
                                           );
                                         },
-                                        child: const Padding(
-                                          padding: EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                                          child: Icon(Icons.copy_rounded, size: 12, color: Colors.grey),
+                                        child: Padding(
+                                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                          child: Icon(Icons.copy_rounded, size: 12, color: palette.textMuted),
                                         ),
                                       ),
                                   ],
@@ -2057,14 +2350,13 @@ class _HistoryScreenState extends State<HistoryScreen>
                               vertical: 2,
                             ),
                             decoration: BoxDecoration(
-                              color: AppTheme.primaryEmerald
-                                  .withValues(alpha: 0.15),
-                              borderRadius: BorderRadius.circular(5),
+                              color: accent.withValues(alpha: 0.14),
+                              borderRadius: BorderRadius.circular(6),
                             ),
                             child: Text(
                               '🎬 Đã lưu ${group.episodes.length} tập',
-                              style: const TextStyle(
-                                color: AppTheme.primaryEmerald,
+                              style: TextStyle(
+                                color: accent,
                                 fontSize: 11,
                                 fontWeight: FontWeight.bold,
                               ),
@@ -2076,13 +2368,13 @@ class _HistoryScreenState extends State<HistoryScreen>
                               vertical: 2,
                             ),
                             decoration: BoxDecoration(
-                              color: const Color(0xFF1E2029),
-                              borderRadius: BorderRadius.circular(5),
+                              color: palette.surfaceAlt,
+                              borderRadius: BorderRadius.circular(6),
                             ),
                             child: Text(
                               'Gần nhất: Tập $latestEpNum',
-                              style: const TextStyle(
-                                color: AppTheme.accentGold,
+                              style: TextStyle(
+                                color: amberText,
                                 fontSize: 11,
                                 fontWeight: FontWeight.w600,
                               ),
@@ -2093,7 +2385,7 @@ class _HistoryScreenState extends State<HistoryScreen>
                       const SizedBox(height: 4),
                       Text(
                         dateStr,
-                        style: const TextStyle(color: Colors.grey, fontSize: 11),
+                        style: TextStyle(color: palette.textMuted, fontSize: 11),
                       ),
                     ],
                   ),
@@ -2101,10 +2393,11 @@ class _HistoryScreenState extends State<HistoryScreen>
                 if (!isMultiSelectMode)
                   InkWell(
                     onTap: () => _confirmDeleteDramaGroup(group),
-                    child: const Padding(
-                      padding: EdgeInsets.all(4),
+                    borderRadius: BorderRadius.circular(8),
+                    child: Padding(
+                      padding: const EdgeInsets.all(4),
                       child: Icon(Icons.delete_outline,
-                          color: Colors.grey, size: 20),
+                          color: palette.textMuted, size: 20),
                     ),
                   ),
               ],
@@ -2125,17 +2418,17 @@ class _HistoryScreenState extends State<HistoryScreen>
                         episodeItem: latest,
                         targetEpisodeIndex: latestEpNum,
                       ),
-                      icon: const Icon(
+                      icon: Icon(
                         Icons.play_arrow_rounded,
                         size: 20,
-                        color: Colors.black,
+                        color: onAccent,
                       ),
                       label: Text(
                         latest.lastPositionMs > 0
                             ? 'Xem tiếp Tập $latestEpNum (${_formatMs(latest.lastPositionMs)})'
                             : 'Xem Tập $latestEpNum',
-                        style: const TextStyle(
-                          color: Colors.black,
+                        style: TextStyle(
+                          color: onAccent,
                           fontSize: 13,
                           fontWeight: FontWeight.bold,
                         ),
@@ -2143,10 +2436,10 @@ class _HistoryScreenState extends State<HistoryScreen>
                         overflow: TextOverflow.ellipsis,
                       ),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: AppTheme.primaryEmerald,
-                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        backgroundColor: accent,
+                        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 10),
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(10),
                         ),
                         elevation: 0,
                       ),
@@ -2159,24 +2452,26 @@ class _HistoryScreenState extends State<HistoryScreen>
                     flex: 4,
                     child: OutlinedButton.icon(
                       onPressed: () => _showDramaEpisodesSheet(group),
-                      icon: const Icon(
+                      icon: Icon(
                         Icons.list_alt_rounded,
                         size: 18,
-                        color: Colors.white,
+                        color: palette.textPrimary,
                       ),
                       label: Text(
                         'Tất cả tập (${group.episodes.length})',
-                        style: const TextStyle(
-                          color: Colors.white,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: palette.textPrimary,
                           fontSize: 12,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
                       style: OutlinedButton.styleFrom(
-                        side: const BorderSide(color: AppTheme.cardBorder),
-                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        side: BorderSide(color: palette.border),
+                        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(10),
                         ),
                       ),
                     ),
@@ -2199,6 +2494,14 @@ class _HistoryScreenState extends State<HistoryScreen>
     VoidCallback? onToggleSelect,
     VoidCallback? onEnterMultiSelect,
   }) {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.history);
+    final onAccent = palette.onColor(accent);
+    final watchingColor =
+        palette.isDark ? AppTheme.accentGold : const Color(0xFFD97706);
+    final onlineColor =
+        palette.isDark ? Colors.purpleAccent.shade100 : const Color(0xFF7C3AED);
+
     final dateStr = dateFormatter.format(
       DateTime.fromMillisecondsSinceEpoch(it.timestamp),
     );
@@ -2222,21 +2525,20 @@ class _HistoryScreenState extends State<HistoryScreen>
     return InkWell(
       onTap: isMultiSelectMode ? onToggleSelect : () => _openItem(it),
       onLongPress: !isMultiSelectMode ? onEnterMultiSelect : null,
-      borderRadius: BorderRadius.circular(14),
+      borderRadius: BorderRadius.circular(16),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 180),
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: isSelected
-              ? AppTheme.primaryEmerald.withValues(alpha: 0.12)
-              : AppTheme.darkCard,
-          borderRadius: BorderRadius.circular(14),
+              ? accent.withValues(alpha: 0.12)
+              : palette.surface,
+          borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: isSelected
-                ? AppTheme.primaryEmerald
-                : (isMultiSelectMode ? Colors.white24 : AppTheme.cardBorder),
+            color: isSelected ? accent : palette.border,
             width: isSelected ? 1.8 : 1,
           ),
+          boxShadow: palette.cardShadows,
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -2253,21 +2555,21 @@ class _HistoryScreenState extends State<HistoryScreen>
                       height: 22,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: isSelected ? AppTheme.primaryEmerald : Colors.transparent,
+                        color: isSelected ? accent : Colors.transparent,
                         border: Border.all(
-                          color: isSelected ? AppTheme.primaryEmerald : Colors.white54,
+                          color: isSelected ? accent : palette.textMuted,
                           width: 2,
                         ),
                       ),
                       child: isSelected
-                          ? const Icon(Icons.check, size: 14, color: Colors.black)
+                          ? Icon(Icons.check, size: 14, color: onAccent)
                           : null,
                     ),
                   ),
                 ],
               if (showCoverSlot) ...[
                 ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(10),
                   child: Stack(
                     children: [
                       hasCover
@@ -2281,20 +2583,20 @@ class _HistoryScreenState extends State<HistoryScreen>
                               errorBuilder: (_, _, _) => Container(
                                 width: 52,
                                 height: 70,
-                                color: const Color(0xFF252631),
-                                child: const Icon(Icons.movie, color: Colors.white30),
+                                color: palette.surfaceAlt,
+                                child: Icon(Icons.movie, color: palette.textMuted),
                               ),
                             )
                           : Container(
                               width: 52,
                               height: 70,
                               decoration: BoxDecoration(
-                                color: const Color(0xFF132F24),
-                                borderRadius: BorderRadius.circular(8),
+                                color: accent.withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(10),
                               ),
-                              child: const Icon(
+                              child: Icon(
                                 Icons.movie_filter_rounded,
-                                color: AppTheme.primaryEmerald,
+                                color: accent,
                               ),
                             ),
                       if (it.lastPositionMs > 0 && it.durationMs > 0)
@@ -2308,8 +2610,8 @@ class _HistoryScreenState extends State<HistoryScreen>
                             backgroundColor: Colors.black54,
                             valueColor: AlwaysStoppedAnimation<Color>(
                               it.lastPositionMs >= it.durationMs * 0.95
-                                  ? AppTheme.primaryEmerald
-                                  : AppTheme.accentGold,
+                                  ? accent
+                                  : watchingColor,
                             ),
                           ),
                         ),
@@ -2342,8 +2644,8 @@ class _HistoryScreenState extends State<HistoryScreen>
                     borderRadius: BorderRadius.circular(4),
                     child: Text(
                       displayTitle,
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: palette.textPrimary,
                         fontSize: 15,
                         fontWeight: FontWeight.bold,
                       ),
@@ -2357,27 +2659,27 @@ class _HistoryScreenState extends State<HistoryScreen>
               // Nút dịch / chuyển đổi tên phim
               InkWell(
                 onTap: isTranslating ? null : () => _toggleTranslateTitle(it),
-                borderRadius: BorderRadius.circular(6),
+                borderRadius: BorderRadius.circular(8),
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
                   decoration: BoxDecoration(
                     color: (isShowingTranslated && hasTranslated)
-                        ? AppTheme.primaryEmerald.withValues(alpha: 0.18)
-                        : const Color(0xFF2A2D3A),
-                    borderRadius: BorderRadius.circular(6),
+                        ? accent.withValues(alpha: 0.14)
+                        : palette.surfaceAlt,
+                    borderRadius: BorderRadius.circular(8),
                     border: Border.all(
                       color: (isShowingTranslated && hasTranslated)
-                          ? AppTheme.primaryEmerald.withValues(alpha: 0.5)
-                          : Colors.white24,
+                          ? accent.withValues(alpha: 0.5)
+                          : palette.border,
                     ),
                   ),
                   child: isTranslating
-                      ? const SizedBox(
+                      ? SizedBox(
                           width: 12,
                           height: 12,
                           child: CircularProgressIndicator(
                             strokeWidth: 2,
-                            color: AppTheme.primaryEmerald,
+                            color: accent,
                           ),
                         )
                       : Row(
@@ -2387,16 +2689,16 @@ class _HistoryScreenState extends State<HistoryScreen>
                               Icons.translate_rounded,
                               size: 13,
                               color: (isShowingTranslated && hasTranslated)
-                                  ? AppTheme.primaryEmerald
-                                  : Colors.white70,
+                                  ? accent
+                                  : palette.textSecondary,
                             ),
                             const SizedBox(width: 4),
                             Text(
                               (isShowingTranslated && hasTranslated) ? 'Gốc' : 'Dịch',
                               style: TextStyle(
                                 color: (isShowingTranslated && hasTranslated)
-                                    ? AppTheme.primaryEmerald
-                                    : Colors.white70,
+                                    ? accent
+                                    : palette.textSecondary,
                                 fontSize: 11,
                                 fontWeight: FontWeight.bold,
                               ),
@@ -2409,11 +2711,12 @@ class _HistoryScreenState extends State<HistoryScreen>
                 const SizedBox(width: 6),
                 InkWell(
                   onTap: () => _confirmDelete(it),
-                  child: const Padding(
-                    padding: EdgeInsets.all(4),
+                  borderRadius: BorderRadius.circular(8),
+                  child: Padding(
+                    padding: const EdgeInsets.all(4),
                     child: Icon(
                       Icons.delete_outline,
-                      color: Colors.grey,
+                      color: palette.textMuted,
                       size: 20,
                     ),
                   ),
@@ -2428,8 +2731,8 @@ class _HistoryScreenState extends State<HistoryScreen>
                           Expanded(
                             child: Text(
                               '🇨🇳 Gốc: ${it.displayOriginalTitle}',
-                              style: const TextStyle(
-                                color: Colors.grey,
+                              style: TextStyle(
+                                color: palette.textMuted,
                                 fontSize: 12,
                                 fontStyle: FontStyle.italic,
                               ),
@@ -2444,7 +2747,7 @@ class _HistoryScreenState extends State<HistoryScreen>
                                 SnackBar(
                                   content: Row(
                                     children: [
-                                      const Icon(Icons.check_circle, color: AppTheme.primaryEmerald, size: 16),
+                                      Icon(Icons.check_circle, color: accent, size: 16),
                                       const SizedBox(width: 8),
                                       Expanded(child: Text('Đã sao chép: "${it.displayOriginalTitle}"')),
                                     ],
@@ -2454,12 +2757,12 @@ class _HistoryScreenState extends State<HistoryScreen>
                               );
                             },
                             borderRadius: BorderRadius.circular(4),
-                            child: const Padding(
-                              padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
                               child: Icon(
                                 Icons.copy_rounded,
                                 size: 14,
-                                color: Colors.grey,
+                                color: palette.textMuted,
                               ),
                             ),
                           ),
@@ -2469,8 +2772,8 @@ class _HistoryScreenState extends State<HistoryScreen>
                     const SizedBox(height: 6),
                     Text(
                       dateStr,
-                      style: const TextStyle(
-                        color: Colors.grey,
+                      style: TextStyle(
+                        color: palette.textMuted,
                         fontSize: 11,
                       ),
                     ),
@@ -2482,7 +2785,7 @@ class _HistoryScreenState extends State<HistoryScreen>
           const SizedBox(height: 10),
           Wrap(
             spacing: 8,
-            runSpacing: 4,
+            runSpacing: 6,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               if (isWatching) ...[
@@ -2492,23 +2795,23 @@ class _HistoryScreenState extends State<HistoryScreen>
                     vertical: 3,
                   ),
                   decoration: BoxDecoration(
-                    color: AppTheme.accentGold.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(6),
+                    color: watchingColor.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(7),
                     border: Border.all(
-                      color: AppTheme.accentGold.withValues(alpha: 0.3),
+                      color: watchingColor.withValues(alpha: 0.35),
                     ),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(Icons.history_rounded, size: 12, color: AppTheme.accentGold),
+                      Icon(Icons.history_rounded, size: 12, color: watchingColor),
                       const SizedBox(width: 4),
                       Text(
                         it.durationMs > 0
                             ? 'Đang xem dở: ${_formatMs(it.lastPositionMs)} / ${_formatMs(it.durationMs)}'
                             : 'Đang xem dở: ${_formatMs(it.lastPositionMs)}',
-                        style: const TextStyle(
-                          color: AppTheme.accentGold,
+                        style: TextStyle(
+                          color: watchingColor,
                           fontSize: 11,
                           fontWeight: FontWeight.bold,
                         ),
@@ -2523,20 +2826,20 @@ class _HistoryScreenState extends State<HistoryScreen>
                     vertical: 3,
                   ),
                   decoration: BoxDecoration(
-                    color: AppTheme.primaryEmerald.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(6),
+                    color: accent.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(7),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(Icons.check_circle_outline_rounded, size: 12, color: AppTheme.primaryEmerald),
+                      Icon(Icons.check_circle_outline_rounded, size: 12, color: accent),
                       const SizedBox(width: 4),
                       Text(
                         it.durationMs > 0
                             ? 'Đã xem xong (${_formatMs(it.durationMs)})'
                             : 'Đã xem xong',
-                        style: const TextStyle(
-                          color: AppTheme.primaryEmerald,
+                        style: TextStyle(
+                          color: accent,
                           fontSize: 11,
                           fontWeight: FontWeight.w600,
                         ),
@@ -2552,13 +2855,13 @@ class _HistoryScreenState extends State<HistoryScreen>
                 ),
                 decoration: BoxDecoration(
                   color: it.isOnlineStream
-                      ? Colors.purpleAccent.withValues(alpha: 0.18)
-                      : AppTheme.primaryEmerald.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(6),
+                      ? onlineColor.withValues(alpha: 0.12)
+                      : accent.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(7),
                   border: Border.all(
                     color: it.isOnlineStream
-                        ? Colors.purpleAccent.withValues(alpha: 0.45)
-                        : AppTheme.primaryEmerald.withValues(alpha: 0.4),
+                        ? onlineColor.withValues(alpha: 0.38)
+                        : accent.withValues(alpha: 0.35),
                     width: 0.8,
                   ),
                 ),
@@ -2570,17 +2873,13 @@ class _HistoryScreenState extends State<HistoryScreen>
                           ? Icons.swipe_vertical_rounded
                           : Icons.download_done_rounded,
                       size: 11,
-                      color: it.isOnlineStream
-                          ? Colors.purpleAccent.shade100
-                          : AppTheme.primaryEmerald,
+                      color: it.isOnlineStream ? onlineColor : accent,
                     ),
                     const SizedBox(width: 4),
                     Text(
                       it.isOnlineStream ? 'Lướt Online' : 'Offline',
                       style: TextStyle(
-                        color: it.isOnlineStream
-                            ? Colors.purpleAccent.shade100
-                            : AppTheme.primaryEmerald,
+                        color: it.isOnlineStream ? onlineColor : accent,
                         fontSize: 10,
                         fontWeight: FontWeight.bold,
                       ),
@@ -2594,13 +2893,13 @@ class _HistoryScreenState extends State<HistoryScreen>
                   vertical: 3,
                 ),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF1E2029),
-                  borderRadius: BorderRadius.circular(6),
+                  color: palette.surfaceAlt,
+                  borderRadius: BorderRadius.circular(7),
                 ),
                 child: Text(
                   '${it.sentenceCount > 0 ? it.sentenceCount : '?'} câu',
-                  style: const TextStyle(
-                    color: AppTheme.primaryEmerald,
+                  style: TextStyle(
+                    color: accent,
                     fontSize: 11,
                     fontWeight: FontWeight.w600,
                   ),
@@ -2613,14 +2912,14 @@ class _HistoryScreenState extends State<HistoryScreen>
                 ),
                 decoration: BoxDecoration(
                   color: hasVoice
-                      ? const Color(0xFF132F24)
-                      : const Color(0xFF252631),
-                  borderRadius: BorderRadius.circular(6),
+                      ? accent.withValues(alpha: 0.12)
+                      : palette.surfaceAlt,
+                  borderRadius: BorderRadius.circular(7),
                 ),
                 child: Text(
                   hasVoice ? '🎤 ${it.ttsVoice}' : 'Chưa lồng tiếng',
                   style: TextStyle(
-                    color: hasVoice ? AppTheme.primaryEmerald : Colors.grey,
+                    color: hasVoice ? accent : palette.textMuted,
                     fontSize: 11,
                   ),
                 ),
@@ -2633,79 +2932,57 @@ class _HistoryScreenState extends State<HistoryScreen>
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Row(
-                  children: [
-                    ElevatedButton.icon(
-                      onPressed: () {
-                        if (it.isOnlineStream || (it.seriesId != null && it.seriesId!.isNotEmpty)) {
-                          final dramaGroup = DramaHistoryGroup(
-                            seriesKey: it.seriesId ?? it.extractedSeriesTitle,
-                            seriesId: it.seriesId,
-                            seriesTitle: it.extractedSeriesTitle,
-                            seriesCover: it.seriesCover ?? it.coverUrl,
-                            totalEpisodes: it.totalEpisodes ?? 0,
-                            episodes: [it],
-                          );
-                          _showHongguoPlaybackOptions(
-                            group: dramaGroup,
-                            episodeItem: it,
-                            targetEpisodeIndex: it.extractedEpisodeIndex,
-                          );
-                        } else {
-                          _openItem(it);
-                        }
-                      },
-                      icon: Icon(
-                        Icons.play_arrow_rounded,
-                        size: 18,
-                        color: isWatching
-                            ? Colors.black
-                            : (isFinished ? Colors.white70 : AppTheme.primaryEmerald),
-                      ),
-                      label: Text(
-                        isWatching
-                            ? 'Xem tiếp (${_formatMs(it.lastPositionMs)})'
-                            : (isFinished ? 'Xem lại từ đầu' : 'Xem Video'),
-                        style: TextStyle(
-                          color: isWatching ? Colors.black : Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: isWatching
-                            ? AppTheme.accentGold
-                            : const Color(0xFF252631),
-                        elevation: isWatching ? 2 : 0,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 8,
-                        ),
-                      ),
-                    ),
-                    if (widget.onOpenInTts != null) ...[
-                      const SizedBox(width: 8),
-                      OutlinedButton.icon(
-                        onPressed: () => _openInTts(it),
-                        icon: const Icon(
-                          Icons.record_voice_over,
-                          size: 16,
-                          color: AppTheme.primaryEmerald,
+                Expanded(
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 6,
+                    children: [
+                      ElevatedButton.icon(
+                        onPressed: () {
+                          if (it.isOnlineStream || (it.seriesId != null && it.seriesId!.isNotEmpty)) {
+                            final dramaGroup = DramaHistoryGroup(
+                              seriesKey: it.seriesId ?? it.extractedSeriesTitle,
+                              seriesId: it.seriesId,
+                              seriesTitle: it.extractedSeriesTitle,
+                              seriesCover: it.seriesCover ?? it.coverUrl,
+                              totalEpisodes: it.totalEpisodes ?? 0,
+                              episodes: [it],
+                            );
+                            _showHongguoPlaybackOptions(
+                              group: dramaGroup,
+                              episodeItem: it,
+                              targetEpisodeIndex: it.extractedEpisodeIndex,
+                            );
+                          } else {
+                            _openItem(it);
+                          }
+                        },
+                        icon: Icon(
+                          Icons.play_arrow_rounded,
+                          size: 18,
+                          color: isWatching
+                              ? palette.onColor(watchingColor)
+                              : (isFinished ? accent : onAccent),
                         ),
                         label: Text(
-                          hasVoice ? 'Đổi giọng' : 'Lồng tiếng',
-                          style: const TextStyle(
-                            color: Colors.white,
+                          isWatching
+                              ? 'Xem tiếp (${_formatMs(it.lastPositionMs)})'
+                              : (isFinished ? 'Xem lại từ đầu' : 'Xem Video'),
+                          style: TextStyle(
+                            color: isWatching
+                                ? palette.onColor(watchingColor)
+                                : (isFinished ? palette.textPrimary : onAccent),
                             fontSize: 12,
+                            fontWeight: FontWeight.bold,
                           ),
                         ),
-                        style: OutlinedButton.styleFrom(
-                          side: const BorderSide(color: AppTheme.cardBorder),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: isWatching
+                              ? watchingColor
+                              : (isFinished ? palette.surfaceAlt : accent),
+                          elevation: 0,
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
+                            borderRadius: BorderRadius.circular(10),
                           ),
                           padding: const EdgeInsets.symmetric(
                             horizontal: 12,
@@ -2713,13 +2990,39 @@ class _HistoryScreenState extends State<HistoryScreen>
                           ),
                         ),
                       ),
+                      if (widget.onOpenInTts != null)
+                        OutlinedButton.icon(
+                          onPressed: () => _openInTts(it),
+                          icon: Icon(
+                            Icons.record_voice_over,
+                            size: 16,
+                            color: accent,
+                          ),
+                          label: Text(
+                            hasVoice ? 'Đổi giọng' : 'Lồng tiếng',
+                            style: TextStyle(
+                              color: palette.textPrimary,
+                              fontSize: 12,
+                            ),
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            side: BorderSide(color: palette.border),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 8,
+                            ),
+                          ),
+                        ),
                     ],
-                  ],
+                  ),
                 ),
                 IconButton(
-                  icon: const Icon(
+                  icon: Icon(
                     Icons.file_download_outlined,
-                    color: Colors.white70,
+                    color: palette.textSecondary,
                     size: 22,
                   ),
                   tooltip: 'Xuất file SRT',
@@ -2735,19 +3038,20 @@ class _HistoryScreenState extends State<HistoryScreen>
 }
 
   Future<void> _confirmClearWatchLater() async {
+    final palette = AppThemePalette.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.darkCard,
-        title: const Text('Xóa danh sách xem sau', style: TextStyle(color: Colors.white)),
-        content: const Text(
+        backgroundColor: palette.surface,
+        title: Text('Xóa danh sách xem sau', style: TextStyle(color: palette.textPrimary)),
+        content: Text(
           'Bạn có chắc chắn muốn xóa toàn bộ các mục trong danh sách Xem sau không?',
-          style: TextStyle(color: Colors.white70),
+          style: TextStyle(color: palette.textSecondary),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Hủy', style: TextStyle(color: Colors.grey)),
+            child: Text('Hủy', style: TextStyle(color: palette.textMuted)),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
@@ -2883,24 +3187,27 @@ class _HistoryScreenState extends State<HistoryScreen>
     required VoidCallback onTap,
     required Color color,
   }) {
+    final palette = AppThemePalette.of(context);
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(20),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
         decoration: BoxDecoration(
-          color: isSelected ? color.withValues(alpha: 0.25) : AppTheme.darkSurfaceVariant,
+          color: isSelected
+              ? color.withValues(alpha: palette.isDark ? 0.24 : 0.14)
+              : palette.surface,
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
-            color: isSelected ? color : AppTheme.cardBorder,
-            width: isSelected ? 1.2 : 0.8,
+            color: isSelected ? color : palette.border,
+            width: isSelected ? 1.2 : 0.9,
           ),
         ),
         child: Text(
           label,
           style: TextStyle(
-            color: isSelected ? color : Colors.white70,
+            color: isSelected ? color : palette.textSecondary,
             fontSize: 11.5,
             fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
           ),
@@ -2914,6 +3221,11 @@ class _HistoryScreenState extends State<HistoryScreen>
     List<WatchLaterItem> allItems,
     List<HistoryItem> historyItems,
   ) {
+    final palette = AppThemePalette.of(context);
+    final hgAccent = palette.accentFor(AppTabId.hongguo);
+    final biliAccent = palette.accentFor(AppTabId.bilibili);
+    final amberColor = palette.isDark ? Colors.amber : const Color(0xFFD97706);
+
     final hgItems = allItems.where((it) => it.isHongguo).toList();
     final biliItems = allItems.where((it) => it.isBilibili).toList();
 
@@ -2934,34 +3246,45 @@ class _HistoryScreenState extends State<HistoryScreen>
         // Thanh bộ lọc & nút xóa tất cả
         Row(
           children: [
-            _buildFilterChip(
-              label: 'Tất cả (${allItems.length})',
-              isSelected: _watchLaterFilter == 'all',
-              onTap: () => setState(() => _watchLaterFilter = 'all'),
-              color: Colors.amber,
+            Expanded(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                physics: const BouncingScrollPhysics(),
+                child: Row(
+                  children: [
+                    _buildFilterChip(
+                      label: 'Tất cả (${allItems.length})',
+                      isSelected: _watchLaterFilter == 'all',
+                      onTap: () => setState(() => _watchLaterFilter = 'all'),
+                      color: amberColor,
+                    ),
+                    const SizedBox(width: 8),
+                    _buildFilterChip(
+                      label: 'Hồng Quả (${hgItems.length})',
+                      isSelected: _watchLaterFilter == 'hongguo',
+                      onTap: () => setState(() => _watchLaterFilter = 'hongguo'),
+                      color: hgAccent,
+                    ),
+                    const SizedBox(width: 8),
+                    _buildFilterChip(
+                      label: 'Bilibili (${biliItems.length})',
+                      isSelected: _watchLaterFilter == 'bilibili',
+                      onTap: () => setState(() => _watchLaterFilter = 'bilibili'),
+                      color: biliAccent,
+                    ),
+                  ],
+                ),
+              ),
             ),
-            const SizedBox(width: 8),
-            _buildFilterChip(
-              label: 'Hồng Quả (${hgItems.length})',
-              isSelected: _watchLaterFilter == 'hongguo',
-              onTap: () => setState(() => _watchLaterFilter = 'hongguo'),
-              color: AppTheme.primaryEmerald,
-            ),
-            const SizedBox(width: 8),
-            _buildFilterChip(
-              label: 'Bilibili (${biliItems.length})',
-              isSelected: _watchLaterFilter == 'bilibili',
-              onTap: () => setState(() => _watchLaterFilter = 'bilibili'),
-              color: const Color(0xFF00AEEC),
-            ),
-            const Spacer(),
-            if (allItems.isNotEmpty)
+            if (allItems.isNotEmpty) ...[
+              const SizedBox(width: 6),
               TextButton.icon(
                 onPressed: _confirmClearWatchLater,
-                icon: const Icon(Icons.delete_sweep_outlined, size: 16, color: Colors.grey),
-                label: const Text('Xóa tất cả', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                icon: Icon(Icons.delete_sweep_outlined, size: 16, color: palette.textMuted),
+                label: Text('Xóa tất cả', style: TextStyle(color: palette.textMuted, fontSize: 12)),
                 style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2)),
               ),
+            ],
           ],
         ),
         const SizedBox(height: 12),
@@ -2971,15 +3294,16 @@ class _HistoryScreenState extends State<HistoryScreen>
             padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 20),
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: AppTheme.darkCard,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: AppTheme.cardBorder),
+              color: palette.surface,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: palette.border),
+              boxShadow: palette.cardShadows,
             ),
             child: Column(
               children: [
-                const Icon(
+                Icon(
                   Icons.bookmark_border_rounded,
-                  color: Colors.white24,
+                  color: palette.textMuted.withValues(alpha: 0.45),
                   size: 56,
                 ),
                 const SizedBox(height: 14),
@@ -2987,13 +3311,13 @@ class _HistoryScreenState extends State<HistoryScreen>
                   allItems.isEmpty
                       ? 'Chưa có phim hoặc video nào trong Xem sau'
                       : 'Không có mục nào trong danh mục này',
-                  style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+                  style: TextStyle(color: palette.textPrimary, fontSize: 15, fontWeight: FontWeight.bold),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 6),
-                const Text(
+                Text(
                   'Khi lướt phim ở Hồng Quả, video Bilibili hoặc trong trình phát, hãy chạm vào nút 🔖 Xem sau để lưu lại xem bất cứ lúc nào!',
-                  style: TextStyle(color: Colors.grey, fontSize: 12, height: 1.4),
+                  style: TextStyle(color: palette.textSecondary, fontSize: 12, height: 1.4),
                   textAlign: TextAlign.center,
                 ),
               ],
@@ -3220,33 +3544,34 @@ class _HistoryScreenState extends State<HistoryScreen>
     DateFormat dateFormatter,
     List<HistoryItem> historyItems,
   ) {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.history);
+    final watchingColor =
+        palette.isDark ? AppTheme.accentGold : const Color(0xFFD97706);
+
     final isHongguo = it.isHongguo;
-    final sourceColor = isHongguo ? AppTheme.primaryEmerald : const Color(0xFF00AEEC);
+    final sourceColor = isHongguo
+        ? palette.accentFor(AppTabId.hongguo)
+        : palette.accentFor(AppTabId.bilibili);
     final sourceLabel = isHongguo ? 'Hồng Quả' : 'Bilibili';
     final link = _resolveWatchLaterHistoryLink(it, historyItems);
 
     return Container(
       decoration: BoxDecoration(
-        color: AppTheme.darkCard,
-        borderRadius: BorderRadius.circular(14),
+        color: palette.surface,
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(
           color: link.isWatching
-              ? AppTheme.accentGold.withValues(alpha: 0.4)
-              : AppTheme.cardBorder,
+              ? watchingColor.withValues(alpha: 0.45)
+              : palette.border,
           width: link.isWatching ? 1.2 : 1,
         ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.25),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
-          ),
-        ],
+        boxShadow: palette.cardShadows,
       ),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: () => _openWatchLaterItem(it, historyItems),
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(16),
         child: Padding(
           padding: const EdgeInsets.all(10),
           child: Row(
@@ -3267,18 +3592,18 @@ class _HistoryScreenState extends State<HistoryScreen>
                               cacheWidth: 200,
                               fit: BoxFit.cover,
                               errorBuilder: (_, _, _) => Container(
-                                color: AppTheme.darkSurfaceVariant,
+                                color: palette.surfaceAlt,
                                 child: Icon(
                                   isHongguo ? Icons.movie_rounded : Icons.tv_rounded,
-                                  color: Colors.white24,
+                                  color: palette.textMuted,
                                 ),
                               ),
                             )
                           : Container(
-                              color: AppTheme.darkSurfaceVariant,
+                              color: palette.surfaceAlt,
                               child: Icon(
                                 isHongguo ? Icons.movie_rounded : Icons.tv_rounded,
-                                color: Colors.white24,
+                                color: palette.textMuted,
                               ),
                             ),
                     ),
@@ -3288,13 +3613,13 @@ class _HistoryScreenState extends State<HistoryScreen>
                       child: Container(
                         padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
                         decoration: BoxDecoration(
-                          color: sourceColor.withValues(alpha: 0.9),
+                          color: sourceColor.withValues(alpha: 0.92),
                           borderRadius: BorderRadius.circular(4),
                         ),
                         child: Text(
                           sourceLabel,
-                          style: const TextStyle(
-                            color: Colors.white,
+                          style: TextStyle(
+                            color: palette.onColor(sourceColor),
                             fontSize: 9.5,
                             fontWeight: FontWeight.bold,
                           ),
@@ -3311,9 +3636,7 @@ class _HistoryScreenState extends State<HistoryScreen>
                           minHeight: 3.5,
                           backgroundColor: Colors.black54,
                           valueColor: AlwaysStoppedAnimation<Color>(
-                            link.isFinished
-                                ? AppTheme.primaryEmerald
-                                : AppTheme.accentGold,
+                            link.isFinished ? accent : watchingColor,
                           ),
                         ),
                       ),
@@ -3331,8 +3654,8 @@ class _HistoryScreenState extends State<HistoryScreen>
                       it.displayTitle,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: palette.textPrimary,
                         fontSize: 14,
                         fontWeight: FontWeight.bold,
                         height: 1.3,
@@ -3345,22 +3668,22 @@ class _HistoryScreenState extends State<HistoryScreen>
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
                         decoration: BoxDecoration(
-                          color: AppTheme.accentGold.withValues(alpha: 0.15),
+                          color: watchingColor.withValues(alpha: 0.14),
                           borderRadius: BorderRadius.circular(6),
                           border: Border.all(
-                            color: AppTheme.accentGold.withValues(alpha: 0.35),
+                            color: watchingColor.withValues(alpha: 0.35),
                           ),
                         ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            const Icon(Icons.history_rounded, size: 12, color: AppTheme.accentGold),
+                            Icon(Icons.history_rounded, size: 12, color: watchingColor),
                             const SizedBox(width: 4),
                             Flexible(
                               child: Text(
                                 link.statusText,
-                                style: const TextStyle(
-                                  color: AppTheme.accentGold,
+                                style: TextStyle(
+                                  color: watchingColor,
                                   fontSize: 11,
                                   fontWeight: FontWeight.bold,
                                 ),
@@ -3375,22 +3698,22 @@ class _HistoryScreenState extends State<HistoryScreen>
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
                         decoration: BoxDecoration(
-                          color: AppTheme.primaryEmerald.withValues(alpha: 0.15),
+                          color: accent.withValues(alpha: 0.14),
                           borderRadius: BorderRadius.circular(6),
                           border: Border.all(
-                            color: AppTheme.primaryEmerald.withValues(alpha: 0.35),
+                            color: accent.withValues(alpha: 0.35),
                           ),
                         ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            const Icon(Icons.check_circle_outline_rounded, size: 12, color: AppTheme.primaryEmerald),
+                            Icon(Icons.check_circle_outline_rounded, size: 12, color: accent),
                             const SizedBox(width: 4),
                             Flexible(
                               child: Text(
                                 link.statusText,
-                                style: const TextStyle(
-                                  color: AppTheme.primaryEmerald,
+                                style: TextStyle(
+                                  color: accent,
                                   fontSize: 11,
                                   fontWeight: FontWeight.w600,
                                 ),
@@ -3404,7 +3727,7 @@ class _HistoryScreenState extends State<HistoryScreen>
                     else
                       Text(
                         link.statusText,
-                        style: const TextStyle(color: Colors.white60, fontSize: 11.5),
+                        style: TextStyle(color: palette.textSecondary, fontSize: 11.5),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -3412,49 +3735,56 @@ class _HistoryScreenState extends State<HistoryScreen>
 
                     Text(
                       'Đã lưu: ${dateFormatter.format(DateTime.fromMillisecondsSinceEpoch(it.addedAt))}',
-                      style: const TextStyle(color: Colors.white38, fontSize: 10.5),
+                      style: TextStyle(color: palette.textMuted, fontSize: 10.5),
                     ),
                     const SizedBox(height: 10),
 
                     // Nút thao tác
                     Row(
                       children: [
-                        ElevatedButton.icon(
-                          onPressed: () => _openWatchLaterItem(it, historyItems),
-                          icon: Icon(link.buttonIcon, size: 16),
-                          label: Text(
-                            link.buttonText,
-                            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: link.isWatching ? AppTheme.accentGold : sourceColor,
-                            foregroundColor: link.isWatching ? Colors.black : Colors.white,
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                            minimumSize: const Size(0, 32),
-                            elevation: 0,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        Expanded(
+                          child: Wrap(
+                            spacing: 8,
+                            runSpacing: 6,
+                            children: [
+                              ElevatedButton.icon(
+                                onPressed: () => _openWatchLaterItem(it, historyItems),
+                                icon: Icon(link.buttonIcon, size: 16),
+                                label: Text(
+                                  link.buttonText,
+                                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                                ),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: link.isWatching ? watchingColor : sourceColor,
+                                  foregroundColor: palette.onColor(
+                                    link.isWatching ? watchingColor : sourceColor,
+                                  ),
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                  minimumSize: const Size(0, 32),
+                                  elevation: 0,
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
+                                ),
+                              ),
+                              if (link.dramaGroup != null)
+                                OutlinedButton.icon(
+                                  onPressed: () => _showDramaEpisodesSheet(link.dramaGroup!),
+                                  icon: Icon(Icons.list_alt_rounded, size: 14, color: palette.textSecondary),
+                                  label: Text(
+                                    'Tập (${link.dramaGroup!.episodes.length})',
+                                    style: TextStyle(fontSize: 11, color: palette.textSecondary),
+                                  ),
+                                  style: OutlinedButton.styleFrom(
+                                    side: BorderSide(color: palette.border),
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                                    minimumSize: const Size(0, 32),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
+                                  ),
+                                ),
+                            ],
                           ),
                         ),
-                        if (link.dramaGroup != null) ...[
-                          const SizedBox(width: 8),
-                          OutlinedButton.icon(
-                            onPressed: () => _showDramaEpisodesSheet(link.dramaGroup!),
-                            icon: const Icon(Icons.list_alt_rounded, size: 14, color: Colors.white70),
-                            label: Text(
-                              'Tập (${link.dramaGroup!.episodes.length})',
-                              style: const TextStyle(fontSize: 11, color: Colors.white70),
-                            ),
-                            style: OutlinedButton.styleFrom(
-                              side: const BorderSide(color: AppTheme.cardBorder),
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                              minimumSize: const Size(0, 32),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                            ),
-                          ),
-                        ],
-                        const Spacer(),
                         IconButton(
-                          icon: const Icon(Icons.delete_outline_rounded, color: Colors.white54, size: 20),
+                          icon: Icon(Icons.delete_outline_rounded, color: palette.textMuted, size: 20),
                           tooltip: 'Xóa khỏi xem sau',
                           padding: EdgeInsets.zero,
                           constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
@@ -3589,20 +3919,21 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
 
   Future<void> _confirmDeleteSelectedEpisodes(List<HistoryItem> episodes) async {
     if (_selectedEpIds.isEmpty) return;
+    final palette = AppThemePalette.of(context);
     final count = _selectedEpIds.length;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.darkCard,
-        title: const Text('Xóa tập đã chọn', style: TextStyle(color: Colors.white)),
+        backgroundColor: palette.surface,
+        title: Text('Xóa tập đã chọn', style: TextStyle(color: palette.textPrimary)),
         content: Text(
           'Bạn có chắc chắn muốn xóa $count tập đã chọn của phim "${widget.group.seriesTitle}" không?\n\nFile video offline và phụ đề tương ứng sẽ được dọn dẹp khỏi máy.',
-          style: const TextStyle(color: Colors.white70),
+          style: TextStyle(color: palette.textSecondary),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Hủy', style: TextStyle(color: Colors.grey)),
+            child: Text('Hủy', style: TextStyle(color: palette.textMuted)),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
@@ -3628,6 +3959,9 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.history);
+
     return ValueListenableBuilder<List<HistoryItem>>(
       valueListenable: HistoryRepository.historyNotifier,
       builder: (context, allItems, _) {
@@ -3664,9 +3998,9 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
           length: 2,
           child: Container(
             height: MediaQuery.of(context).size.height * 0.85,
-            decoration: const BoxDecoration(
-              color: Color(0xFF161822),
-              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            decoration: BoxDecoration(
+              color: palette.backgroundFor(AppTabId.history),
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
             ),
             child: Column(
               children: [
@@ -3677,7 +4011,7 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
                     width: 40,
                     height: 4,
                     decoration: BoxDecoration(
-                      color: Colors.white24,
+                      color: palette.border,
                       borderRadius: BorderRadius.circular(2),
                     ),
                   ),
@@ -3689,7 +4023,7 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
                   child: Row(
                     children: [
                       ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(10),
                         child: (currentGroup.seriesCover != null &&
                                 currentGroup.seriesCover!.isNotEmpty)
                             ? Image.network(
@@ -3702,20 +4036,20 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
                                 errorBuilder: (_, _, _) => Container(
                                   width: 56,
                                   height: 74,
-                                  color: AppTheme.darkCard,
-                                  child: const Icon(
+                                  color: palette.surfaceAlt,
+                                  child: Icon(
                                     Icons.movie,
-                                    color: Colors.white30,
+                                    color: palette.textMuted,
                                   ),
                                 ),
                               )
                             : Container(
                                 width: 56,
                                 height: 74,
-                                color: AppTheme.darkCard,
-                                child: const Icon(
+                                color: palette.surfaceAlt,
+                                child: Icon(
                                   Icons.movie,
-                                  color: AppTheme.primaryEmerald,
+                                  color: accent,
                                 ),
                               ),
                       ),
@@ -3726,8 +4060,8 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
                           children: [
                             Text(
                               currentGroup.seriesTitle,
-                              style: const TextStyle(
-                                color: Colors.white,
+                              style: TextStyle(
+                                color: palette.textPrimary,
                                 fontSize: 16,
                                 fontWeight: FontWeight.bold,
                               ),
@@ -3737,6 +4071,7 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
                             const SizedBox(height: 6),
                             Wrap(
                               spacing: 8,
+                              runSpacing: 4,
                               children: [
                                 Container(
                                   padding: const EdgeInsets.symmetric(
@@ -3744,14 +4079,13 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
                                     vertical: 3,
                                   ),
                                   decoration: BoxDecoration(
-                                    color: AppTheme.primaryEmerald
-                                        .withValues(alpha: 0.15),
+                                    color: accent.withValues(alpha: 0.14),
                                     borderRadius: BorderRadius.circular(6),
                                   ),
                                   child: Text(
                                     'Đã lưu ${currentEpisodes.length} tập',
-                                    style: const TextStyle(
-                                      color: AppTheme.primaryEmerald,
+                                    style: TextStyle(
+                                      color: accent,
                                       fontSize: 11,
                                       fontWeight: FontWeight.bold,
                                     ),
@@ -3764,13 +4098,13 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
                                       vertical: 3,
                                     ),
                                     decoration: BoxDecoration(
-                                      color: const Color(0xFF252631),
+                                      color: palette.surfaceAlt,
                                       borderRadius: BorderRadius.circular(6),
                                     ),
                                     child: Text(
                                       'Tổng ${currentGroup.totalEpisodes} tập',
-                                      style: const TextStyle(
-                                        color: Colors.white70,
+                                      style: TextStyle(
+                                        color: palette.textSecondary,
                                         fontSize: 11,
                                       ),
                                     ),
@@ -3786,9 +4120,10 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
 
                 // Tab Bar
                 TabBar(
-                  indicatorColor: AppTheme.primaryEmerald,
-                  labelColor: AppTheme.primaryEmerald,
-                  unselectedLabelColor: Colors.white60,
+                  indicatorColor: accent,
+                  labelColor: accent,
+                  unselectedLabelColor: palette.textMuted,
+                  dividerColor: palette.border,
                   labelStyle: const TextStyle(
                     fontWeight: FontWeight.bold,
                     fontSize: 13,
@@ -3802,7 +4137,6 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
                     ),
                   ],
                 ),
-                const Divider(color: Colors.white12, height: 1),
 
                 // Nội dung 2 tab
                 Expanded(
@@ -3825,6 +4159,12 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
   }
 
   Widget _buildSavedEpisodesTab(List<HistoryItem> currentEpisodes, DramaHistoryGroup currentGroup) {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.history);
+    final onAccent = palette.onColor(accent);
+    final onlineColor =
+        palette.isDark ? Colors.purpleAccent.shade100 : const Color(0xFF7C3AED);
+
     final isAllSelected = currentEpisodes.isNotEmpty &&
         _selectedEpIds.length == currentEpisodes.length;
 
@@ -3833,14 +4173,14 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
         // Sub-toolbar cho Tab 1
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          color: _isEpMultiSelect ? const Color(0xFF1E212A) : Colors.transparent,
+          color: _isEpMultiSelect ? palette.surfaceAlt : Colors.transparent,
           child: Row(
             children: [
               if (_isEpMultiSelect) ...[
                 IconButton(
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(),
-                  icon: const Icon(Icons.close_rounded, color: Colors.white70, size: 20),
+                  icon: Icon(Icons.close_rounded, color: palette.textSecondary, size: 20),
                   onPressed: _exitEpMultiSelect,
                   tooltip: 'Hủy chọn',
                 ),
@@ -3848,8 +4188,8 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
                 Expanded(
                   child: Text(
                     'Đã chọn ${_selectedEpIds.length} tập',
-                    style: const TextStyle(
-                      color: Colors.white,
+                    style: TextStyle(
+                      color: palette.textPrimary,
                       fontSize: 13,
                       fontWeight: FontWeight.bold,
                     ),
@@ -3859,8 +4199,8 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
                   onPressed: () => _toggleEpSelectAll(currentEpisodes),
                   child: Text(
                     isAllSelected ? 'Bỏ chọn' : 'Tất cả',
-                    style: const TextStyle(
-                      color: AppTheme.primaryEmerald,
+                    style: TextStyle(
+                      color: accent,
                       fontWeight: FontWeight.bold,
                       fontSize: 12,
                     ),
@@ -3886,16 +4226,16 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
                 Expanded(
                   child: Text(
                     'Danh sách tập có trong lịch sử (${currentEpisodes.length})',
-                    style: const TextStyle(color: Colors.grey, fontSize: 12),
+                    style: TextStyle(color: palette.textMuted, fontSize: 12),
                   ),
                 ),
                 TextButton.icon(
                   onPressed: () => _enterEpMultiSelect(),
-                  icon: const Icon(Icons.checklist_rounded, size: 16, color: AppTheme.primaryEmerald),
-                  label: const Text(
+                  icon: Icon(Icons.checklist_rounded, size: 16, color: accent),
+                  label: Text(
                     'Chọn nhiều tập',
                     style: TextStyle(
-                      color: AppTheme.primaryEmerald,
+                      color: accent,
                       fontSize: 12,
                       fontWeight: FontWeight.bold,
                     ),
@@ -3909,7 +4249,7 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
             ],
           ),
         ),
-        const Divider(color: Colors.white10, height: 1),
+        Divider(color: palette.border, height: 1),
 
         // Episode List
         Expanded(
@@ -3938,21 +4278,20 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
                     _enterEpMultiSelect(ep.id);
                   }
                 },
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(14),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 180),
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
                     color: isSelected
-                        ? AppTheme.primaryEmerald.withValues(alpha: 0.12)
-                        : AppTheme.darkCard,
-                    borderRadius: BorderRadius.circular(12),
+                        ? accent.withValues(alpha: 0.12)
+                        : palette.surface,
+                    borderRadius: BorderRadius.circular(14),
                     border: Border.all(
-                      color: isSelected
-                          ? AppTheme.primaryEmerald
-                          : (_isEpMultiSelect ? Colors.white24 : AppTheme.cardBorder),
+                      color: isSelected ? accent : palette.border,
                       width: isSelected ? 1.6 : 1,
                     ),
+                    boxShadow: palette.cardShadows,
                   ),
                   child: Row(
                     children: [
@@ -3964,14 +4303,14 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
                           margin: const EdgeInsets.only(right: 12),
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            color: isSelected ? AppTheme.primaryEmerald : Colors.transparent,
+                            color: isSelected ? accent : Colors.transparent,
                             border: Border.all(
-                              color: isSelected ? AppTheme.primaryEmerald : Colors.white54,
+                              color: isSelected ? accent : palette.textMuted,
                               width: 2,
                             ),
                           ),
                           child: isSelected
-                              ? const Icon(Icons.check, size: 14, color: Colors.black)
+                              ? Icon(Icons.check, size: 14, color: onAccent)
                               : null,
                         ),
                       ],
@@ -3979,14 +4318,14 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
                         width: 36,
                         height: 36,
                         decoration: BoxDecoration(
-                          color: AppTheme.primaryEmerald.withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(8),
+                          color: accent.withValues(alpha: 0.14),
+                          borderRadius: BorderRadius.circular(10),
                         ),
                         alignment: Alignment.center,
                         child: Text(
                           '$epNum',
-                          style: const TextStyle(
-                            color: AppTheme.primaryEmerald,
+                          style: TextStyle(
+                            color: accent,
                             fontWeight: FontWeight.bold,
                             fontSize: 15,
                           ),
@@ -4001,8 +4340,8 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
                               children: [
                                 Text(
                                   'Tập $epNum',
-                                  style: const TextStyle(
-                                    color: Colors.white,
+                                  style: TextStyle(
+                                    color: palette.textPrimary,
                                     fontWeight: FontWeight.bold,
                                     fontSize: 14,
                                   ),
@@ -4015,22 +4354,20 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
                                   ),
                                   decoration: BoxDecoration(
                                     color: ep.isOnlineStream
-                                        ? Colors.purpleAccent.withValues(alpha: 0.18)
-                                        : AppTheme.primaryEmerald.withValues(alpha: 0.15),
+                                        ? onlineColor.withValues(alpha: 0.14)
+                                        : accent.withValues(alpha: 0.14),
                                     borderRadius: BorderRadius.circular(4),
                                     border: Border.all(
                                       color: ep.isOnlineStream
-                                          ? Colors.purpleAccent.withValues(alpha: 0.45)
-                                          : AppTheme.primaryEmerald.withValues(alpha: 0.4),
+                                          ? onlineColor.withValues(alpha: 0.4)
+                                          : accent.withValues(alpha: 0.4),
                                       width: 0.8,
                                     ),
                                   ),
                                   child: Text(
                                     ep.isOnlineStream ? 'Lướt Online' : 'Offline',
                                     style: TextStyle(
-                                      color: ep.isOnlineStream
-                                          ? Colors.purpleAccent.shade100
-                                          : AppTheme.primaryEmerald,
+                                      color: ep.isOnlineStream ? onlineColor : accent,
                                       fontSize: 9,
                                       fontWeight: FontWeight.bold,
                                     ),
@@ -4041,8 +4378,8 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
                             const SizedBox(height: 3),
                             Text(
                               'Đã xem: $posStr / $durStr  •  ${ep.sentenceCount} câu',
-                              style: const TextStyle(
-                                color: Colors.grey,
+                              style: TextStyle(
+                                color: palette.textMuted,
                                 fontSize: 11,
                               ),
                             ),
@@ -4051,8 +4388,8 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
                                 padding: const EdgeInsets.only(top: 2),
                                 child: Text(
                                   '🎤 ${ep.ttsVoice}',
-                                  style: const TextStyle(
-                                    color: AppTheme.primaryEmerald,
+                                  style: TextStyle(
+                                    color: accent,
                                     fontSize: 10,
                                   ),
                                 ),
@@ -4062,21 +4399,21 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
                       ),
                       if (!_isEpMultiSelect) ...[
                         IconButton(
-                          icon: const Icon(
+                          icon: Icon(
                             Icons.play_circle_fill_rounded,
-                            color: AppTheme.primaryEmerald,
+                            color: accent,
                             size: 30,
                           ),
                           tooltip: 'Xem tập $epNum',
                           onPressed: () => widget.onOpenEpisode(ep, currentGroup, customEpisodeIndex: epNum),
                         ),
                         PopupMenuButton<String>(
-                          icon: const Icon(
+                          icon: Icon(
                             Icons.more_vert,
-                            color: Colors.white70,
+                            color: palette.textSecondary,
                             size: 20,
                           ),
-                          color: const Color(0xFF252631),
+                          color: palette.surface,
                           onSelected: (val) {
                             if (val == 'tts') {
                               widget.onOpenTts(ep);
@@ -4087,18 +4424,18 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
                             }
                           },
                           itemBuilder: (ctx) => [
-                            const PopupMenuItem(
+                            PopupMenuItem(
                               value: 'tts',
                               child: Text(
                                 'Lồng tiếng AI',
-                                style: TextStyle(color: Colors.white),
+                                style: TextStyle(color: palette.textPrimary),
                               ),
                             ),
-                            const PopupMenuItem(
+                            PopupMenuItem(
                               value: 'srt',
                               child: Text(
                                 'Xuất file SRT',
-                                style: TextStyle(color: Colors.white),
+                                style: TextStyle(color: palette.textPrimary),
                               ),
                             ),
                             const PopupMenuItem(
@@ -4125,6 +4462,9 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
   }
 
   Widget _buildAllDramaEpisodesView(DramaHistoryGroup group) {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.history);
+
     if (group.seriesId == null || group.seriesId!.isEmpty) {
       return Center(
         child: Padding(
@@ -4132,20 +4472,18 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.search, size: 48, color: Colors.white30),
+              Icon(Icons.search, size: 48, color: palette.textMuted.withValues(alpha: 0.5)),
               const SizedBox(height: 12),
-              const Text(
+              Text(
                 'Phim này chưa liên kết mã Hồng Quả',
-                style: TextStyle(color: Colors.white70, fontSize: 14),
+                style: TextStyle(color: palette.textSecondary, fontSize: 14),
               ),
               const SizedBox(height: 12),
               OutlinedButton.icon(
-                icon: const Icon(Icons.explore_outlined,
-                    color: AppTheme.primaryEmerald),
-                label: const Text('Đóng',
-                    style: TextStyle(color: Colors.white)),
+                icon: Icon(Icons.explore_outlined, color: accent),
+                label: Text('Đóng', style: TextStyle(color: palette.textPrimary)),
                 style: OutlinedButton.styleFrom(
-                  side: const BorderSide(color: AppTheme.cardBorder),
+                  side: BorderSide(color: palette.border),
                 ),
                 onPressed: () {
                   Navigator.pop(context);
@@ -4161,8 +4499,8 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
       future: widget.hongguoResolver.getDramaDetail(group.seriesId!),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(
-            child: CircularProgressIndicator(color: AppTheme.primaryEmerald),
+          return Center(
+            child: CircularProgressIndicator(color: accent),
           );
         }
 
@@ -4171,21 +4509,22 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Icons.cloud_off_rounded,
-                    size: 44, color: Colors.white30),
+                Icon(Icons.cloud_off_rounded,
+                    size: 44, color: palette.textMuted.withValues(alpha: 0.5)),
                 const SizedBox(height: 10),
-                const Text(
+                Text(
                   'Không thể tải danh sách tập từ máy chủ',
-                  style: TextStyle(color: Colors.white70),
+                  style: TextStyle(color: palette.textSecondary),
                 ),
                 const SizedBox(height: 12),
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF252631),
+                    backgroundColor: palette.surfaceAlt,
+                    elevation: 0,
                   ),
                   onPressed: () => setState(() {}),
-                  child: const Text('Thử lại',
-                      style: TextStyle(color: Colors.white)),
+                  child: Text('Thử lại',
+                      style: TextStyle(color: palette.textPrimary)),
                 ),
               ],
             ),
@@ -4233,17 +4572,15 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
                   widget.onOpenUnwatchedEpisode(epIndex, group, detail);
                 }
               },
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(10),
               child: Container(
                 decoration: BoxDecoration(
                   color: isSaved
-                      ? const Color(0xFF132F24)
-                      : const Color(0xFF252631),
-                  borderRadius: BorderRadius.circular(8),
+                      ? accent.withValues(alpha: 0.14)
+                      : palette.surfaceAlt,
+                  borderRadius: BorderRadius.circular(10),
                   border: Border.all(
-                    color: isSaved
-                        ? AppTheme.primaryEmerald
-                        : Colors.white12,
+                    color: isSaved ? accent : palette.border,
                     width: isSaved ? 1.5 : 1,
                   ),
                 ),
@@ -4254,17 +4591,17 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
                     Text(
                       '$epIndex',
                       style: TextStyle(
-                        color: isSaved ? AppTheme.primaryEmerald : Colors.white,
+                        color: isSaved ? accent : palette.textPrimary,
                         fontWeight:
                             isSaved ? FontWeight.bold : FontWeight.normal,
                         fontSize: 13,
                       ),
                     ),
                     if (isSaved)
-                      const Text(
+                      Text(
                         'Đã sub',
                         style: TextStyle(
-                          color: AppTheme.primaryEmerald,
+                          color: accent,
                           fontSize: 8,
                           fontWeight: FontWeight.w600,
                         ),

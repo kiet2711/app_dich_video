@@ -122,13 +122,15 @@ class _HongguoScreenState extends State<HongguoScreen> {
     } catch (_) {}
 
     if (!mounted) return;
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.hongguo);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Row(
           children: [
             Icon(
               newVal ? Icons.translate_rounded : Icons.translate_outlined,
-              color: newVal ? AppColors.primaryEmerald : Colors.white70,
+              color: newVal ? accent : Colors.white70,
               size: 18,
             ),
             const SizedBox(width: 8),
@@ -144,11 +146,6 @@ class _HongguoScreenState extends State<HongguoScreen> {
         ),
         duration: const Duration(seconds: 2),
         behavior: SnackBarBehavior.floating,
-        backgroundColor: const Color(0xFF1E222D),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(10),
-          side: const BorderSide(color: AppColors.cardBorder),
-        ),
       ),
     );
   }
@@ -292,7 +289,6 @@ class _HongguoScreenState extends State<HongguoScreen> {
         ),
         duration: const Duration(seconds: 2),
         behavior: SnackBarBehavior.floating,
-        backgroundColor: const Color(0xFF1E222D),
       ),
     );
   }
@@ -326,12 +322,12 @@ class _HongguoScreenState extends State<HongguoScreen> {
         if (translatedQuery.isNotEmpty && translatedQuery != text) {
           queryToSearch = translatedQuery;
           if (mounted) {
+            final accent = AppThemePalette.of(context).accentFor(AppTabId.hongguo);
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Row(
                   children: [
-                    const Icon(Icons.translate_rounded,
-                        color: AppColors.primaryEmerald, size: 16),
+                    Icon(Icons.translate_rounded, color: accent, size: 16),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
@@ -343,11 +339,6 @@ class _HongguoScreenState extends State<HongguoScreen> {
                 ),
                 duration: const Duration(seconds: 3),
                 behavior: SnackBarBehavior.floating,
-                backgroundColor: const Color(0xFF1E222D),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  side: const BorderSide(color: AppColors.cardBorder),
-                ),
               ),
             );
           }
@@ -493,10 +484,11 @@ class _HongguoScreenState extends State<HongguoScreen> {
   }
 
   Future<void> _openLibraryFilterSheet() async {
+    final accent = AppThemePalette.of(context).accentFor(AppTabId.hongguo);
     final picked = await HongguoDiscoveryFilterSheet.show(
       context,
       initialSelection: _librarySelection,
-      accentColor: AppColors.primaryEmerald,
+      accentColor: accent,
     );
     if (!mounted || picked == null) return;
     setState(() {
@@ -611,11 +603,12 @@ class _HongguoScreenState extends State<HongguoScreen> {
 
   Future<void> _openDramaDetail(HongguoDramaItem item) async {
     HapticFeedback.lightImpact();
+    final accent = AppThemePalette.of(context).accentFor(AppTabId.hongguo);
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => const Center(
-        child: CircularProgressIndicator(color: AppColors.primaryEmerald),
+      builder: (ctx) => Center(
+        child: CircularProgressIndicator(color: accent),
       ),
     );
 
@@ -668,15 +661,17 @@ class _HongguoScreenState extends State<HongguoScreen> {
 
   void _showDramaQuickMenu(HongguoDramaItem drama) {
     HapticFeedback.mediumImpact();
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.hongguo);
     final isWl = WatchLaterRepository.watchLaterNotifier.value.any(
       (w) => w.seriesId == drama.seriesId || w.id.contains(drama.seriesId),
     );
 
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF1E222D),
+      backgroundColor: palette.surface,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (ctx) => SafeArea(
         child: Column(
@@ -687,7 +682,7 @@ class _HongguoScreenState extends State<HongguoScreen> {
               width: 36,
               height: 4,
               decoration: BoxDecoration(
-                color: Colors.white24,
+                color: palette.border,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
@@ -695,8 +690,8 @@ class _HongguoScreenState extends State<HongguoScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               child: Text(
                 drama.title,
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: palette.textPrimary,
                   fontWeight: FontWeight.bold,
                   fontSize: 15,
                 ),
@@ -704,15 +699,15 @@ class _HongguoScreenState extends State<HongguoScreen> {
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-            const Divider(color: Colors.white12),
+            Divider(color: palette.border),
             ListTile(
               leading: Icon(
                 isWl ? Icons.bookmark_added_rounded : Icons.bookmark_add_outlined,
-                color: AppColors.primaryEmerald,
+                color: accent,
               ),
               title: Text(
                 isWl ? 'Xóa khỏi danh sách xem sau' : 'Thêm vào danh sách xem sau',
-                style: const TextStyle(color: Colors.white, fontSize: 14),
+                style: TextStyle(color: palette.textPrimary, fontSize: 14),
               ),
               onTap: () async {
                 Navigator.pop(ctx);
@@ -735,7 +730,7 @@ class _HongguoScreenState extends State<HongguoScreen> {
                       children: [
                         Icon(
                           added ? Icons.bookmark_added_rounded : Icons.bookmark_remove_rounded,
-                          color: added ? AppColors.primaryEmerald : Colors.orangeAccent,
+                          color: added ? accent : Colors.orangeAccent,
                           size: 18,
                         ),
                         const SizedBox(width: 8),
@@ -757,8 +752,11 @@ class _HongguoScreenState extends State<HongguoScreen> {
               },
             ),
             ListTile(
-              leading: const Icon(Icons.copy_rounded, color: Colors.white70),
-              title: const Text('Sao chép tên phim', style: TextStyle(color: Colors.white, fontSize: 14)),
+              leading: Icon(Icons.copy_rounded, color: palette.textSecondary),
+              title: Text(
+                'Sao chép tên phim',
+                style: TextStyle(color: palette.textPrimary, fontSize: 14),
+              ),
               onTap: () {
                 Navigator.pop(ctx);
                 Clipboard.setData(ClipboardData(text: drama.title));
@@ -775,6 +773,10 @@ class _HongguoScreenState extends State<HongguoScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.hongguo);
+    final bg = palette.backgroundFor(AppTabId.hongguo);
+
     final libraryGroups = HongguoDiscoveryService.instance.getSelectorGroups(
       _librarySelection.genreKind,
     );
@@ -782,15 +784,15 @@ class _HongguoScreenState extends State<HongguoScreen> {
     final activeCount = _librarySelection.activeFilterCount;
 
     return Scaffold(
-      backgroundColor: AppColors.darkBackground,
+      backgroundColor: bg,
       body: SafeArea(
         child: Column(
           children: [
-            // 1. THANH HEADER TRÊN CÙNG GIỐNG TAB BILIBILI
-            // (Avatar đăng nhập | Thanh tìm kiếm | Feed | Cài đặt)
+            // 1. THANH HEADER TRÊN CÙNG PHONG CÁCH HỒNG QUẢ
+            // (Avatar đăng nhập | Thanh tìm kiếm | Lướt Shorts | Cài đặt)
             _buildHeaderSection(),
 
-            const SizedBox(height: 6),
+            const SizedBox(height: 4),
 
             // 2. THANH 3 TAB CẤP 1 GỌN GÀNG (ĐỀ XUẤT | KHO LỌC SÂU | BẢNG XẾP HẠNG)
             _buildPrimaryTabBar(),
@@ -815,8 +817,8 @@ class _HongguoScreenState extends State<HongguoScreen> {
               child: Stack(
                 children: [
                   RefreshIndicator(
-                    color: AppColors.primaryEmerald,
-                    backgroundColor: AppColors.darkSurface,
+                    color: accent,
+                    backgroundColor: palette.surface,
                     onRefresh: _isSearchMode && _currentSearchQuery.isNotEmpty
                         ? () => _loadSearchPage(_currentPage)
                         : () => _loadDramas(resetCursor: true),
@@ -840,12 +842,17 @@ class _HongguoScreenState extends State<HongguoScreen> {
   }
 
   Widget _buildHeaderSection() {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.hongguo);
+    final secondary = palette.secondaryFor(AppTabId.hongguo);
+    final bg = palette.backgroundFor(AppTabId.hongguo);
+
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 8, 8, 6),
-      color: AppColors.darkSurface,
+      color: bg,
       child: Row(
         children: [
-          // Ảnh đại diện đăng nhập bên trái (giống tab Bilibili)
+          // Ảnh đại diện đăng nhập bên trái
           ValueListenableBuilder<HongguoCloudAccountState>(
             valueListenable: HongguoCloudAccountService.instance.state,
             builder: (ctx, cloudState, _) {
@@ -891,13 +898,12 @@ class _HongguoScreenState extends State<HongguoScreen> {
                         height: 36,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: AppColors.darkSurfaceVariant,
+                          color: palette.surface,
                           border: Border.all(
-                            color: isLoggedIn
-                                ? AppColors.primaryEmerald
-                                : Colors.white24,
+                            color: isLoggedIn ? accent : palette.border,
                             width: 1.5,
                           ),
+                          boxShadow: palette.cardShadows,
                         ),
                         clipBehavior: Clip.antiAlias,
                         child: avatarUrl.isNotEmpty
@@ -907,16 +913,16 @@ class _HongguoScreenState extends State<HongguoScreen> {
                                 errorBuilder: (_, _, _) => Icon(
                                   Icons.account_circle_rounded,
                                   color: isLoggedIn
-                                      ? AppColors.primaryEmerald
-                                      : Colors.white70,
+                                      ? accent
+                                      : palette.textSecondary,
                                   size: 32,
                                 ),
                               )
                             : Icon(
                                 Icons.account_circle_rounded,
                                 color: isLoggedIn
-                                    ? AppColors.primaryEmerald
-                                    : Colors.white70,
+                                    ? accent
+                                    : palette.textSecondary,
                                 size: 32,
                               ),
                       ),
@@ -928,10 +934,10 @@ class _HongguoScreenState extends State<HongguoScreen> {
                             width: 10,
                             height: 10,
                             decoration: BoxDecoration(
-                              color: AppColors.primaryEmerald,
+                              color: accent,
                               shape: BoxShape.circle,
                               border: Border.all(
-                                color: AppColors.darkSurface,
+                                color: palette.surface,
                                 width: 1.5,
                               ),
                             ),
@@ -945,23 +951,26 @@ class _HongguoScreenState extends State<HongguoScreen> {
           ),
           const SizedBox(width: 8),
 
-          // Thanh tìm kiếm bo tròn bên cạnh avatar (giống tab Bilibili)
+          // Thanh tìm kiếm bo tròn kiểu Hồng Quả
           Expanded(
             child: Container(
-              height: 38,
+              height: 40,
               decoration: BoxDecoration(
-                color: AppColors.darkSurfaceVariant,
-                borderRadius: BorderRadius.circular(19),
-                border: Border.all(color: AppColors.cardBorder),
+                color: palette.surface,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: accent.withValues(alpha: 0.28),
+                ),
+                boxShadow: palette.cardShadows,
               ),
               child: Row(
                 children: [
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 11),
                   GestureDetector(
                     onTap: () => _performSearch(),
-                    child: const Icon(
+                    child: Icon(
                       Icons.search_rounded,
-                      color: AppColors.textSecondary,
+                      color: accent,
                       size: 18,
                     ),
                   ),
@@ -972,14 +981,14 @@ class _HongguoScreenState extends State<HongguoScreen> {
                       textInputAction: TextInputAction.search,
                       onChanged: (_) => setState(() {}),
                       onSubmitted: _performSearch,
-                      style: const TextStyle(
-                        color: AppColors.textPrimary,
+                      style: TextStyle(
+                        color: palette.textPrimary,
                         fontSize: 13,
                       ),
-                      decoration: const InputDecoration(
+                      decoration: InputDecoration(
                         hintText: 'Tìm phim hoặc dán link...',
                         hintStyle: TextStyle(
-                          color: AppColors.textMuted,
+                          color: palette.textMuted,
                           fontSize: 12.5,
                         ),
                         border: InputBorder.none,
@@ -996,10 +1005,10 @@ class _HongguoScreenState extends State<HongguoScreen> {
                         minWidth: 28,
                         minHeight: 28,
                       ),
-                      icon: const Icon(
+                      icon: Icon(
                         Icons.close_rounded,
                         size: 16,
-                        color: AppColors.textMuted,
+                        color: palette.textMuted,
                       ),
                       onPressed: () {
                         _searchController.clear();
@@ -1016,13 +1025,13 @@ class _HongguoScreenState extends State<HongguoScreen> {
                           vertical: 5,
                         ),
                         decoration: BoxDecoration(
-                          color: AppColors.primaryEmerald,
+                          color: accent,
                           borderRadius: BorderRadius.circular(15),
                         ),
-                        child: const Text(
+                        child: Text(
                           'Tìm',
                           style: TextStyle(
-                            color: Colors.black,
+                            color: palette.onColor(accent),
                             fontWeight: FontWeight.bold,
                             fontSize: 11.5,
                           ),
@@ -1037,10 +1046,10 @@ class _HongguoScreenState extends State<HongguoScreen> {
                       minWidth: 32,
                       minHeight: 32,
                     ),
-                    icon: const Icon(
+                    icon: Icon(
                       Icons.paste_rounded,
                       size: 17,
-                      color: AppColors.primaryEmerald,
+                      color: accent,
                     ),
                     tooltip: 'Dán link từ Clipboard',
                     onPressed: _pasteFromClipboard,
@@ -1049,39 +1058,82 @@ class _HongguoScreenState extends State<HongguoScreen> {
               ),
             ),
           ),
-          const SizedBox(width: 2),
+          const SizedBox(width: 6),
 
-          // Nút Feed ở trên cùng cạnh nút Cài đặt
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-            icon: const Icon(
-              Icons.swipe_vertical_rounded,
-              color: Colors.amberAccent,
-              size: 21,
-            ),
-            tooltip: 'Lướt Shorts Khám Phá (Xem thử siêu tốc)',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (ctx) => const HongguoFeedScreen(),
+          // Nút Lướt Shorts rực rỡ kiểu Hồng Quả
+          Tooltip(
+            message: 'Lướt Shorts Khám Phá (Xem thử siêu tốc)',
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(20),
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (ctx) => const HongguoFeedScreen(),
+                    ),
+                  );
+                },
+                child: Ink(
+                  height: 36,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(colors: [accent, secondary]),
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: accent.withValues(alpha: 0.3),
+                        blurRadius: 8,
+                        offset: const Offset(0, 3),
+                      ),
+                    ],
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.swipe_vertical_rounded,
+                        color: Colors.white,
+                        size: 16,
+                      ),
+                      SizedBox(width: 3),
+                      Text(
+                        'Lướt',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              );
-            },
+              ),
+            ),
           ),
+          const SizedBox(width: 6),
 
           // Nút Cài đặt bên phải
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-            icon: const Icon(
-              Icons.settings_rounded,
-              color: AppColors.textSecondary,
-              size: 21,
+          Tooltip(
+            message: 'Cài đặt tự chuyển tập & dịch ngầm',
+            child: Material(
+              color: palette.surface,
+              shape: CircleBorder(side: BorderSide(color: palette.border)),
+              child: InkWell(
+                customBorder: const CircleBorder(),
+                onTap: _showHongguoSettingsSheet,
+                child: SizedBox(
+                  width: 36,
+                  height: 36,
+                  child: Icon(
+                    Icons.settings_rounded,
+                    color: palette.textSecondary,
+                    size: 19,
+                  ),
+                ),
+              ),
             ),
-            tooltip: 'Cài đặt tự chuyển tập & dịch ngầm',
-            onPressed: _showHongguoSettingsSheet,
           ),
         ],
       ),
@@ -1089,81 +1141,77 @@ class _HongguoScreenState extends State<HongguoScreen> {
   }
 
   Widget _buildPrimaryTabBar() {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.hongguo);
+
     const tabs = <({String id, String label, IconData icon})>[
       (id: 'discover', label: 'Đề xuất', icon: Icons.auto_awesome_rounded),
       (id: 'library', label: 'Kho lọc sâu', icon: Icons.tune_rounded),
       (id: 'rank', label: 'Bảng Xếp Hạng', icon: Icons.leaderboard_rounded),
     ];
 
-    return Padding(
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      physics: const BouncingScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(14, 2, 14, 6),
-      child: Container(
-        padding: const EdgeInsets.all(4),
-        decoration: BoxDecoration(
-          color: AppColors.darkSurfaceVariant.withValues(alpha: 0.65),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: AppColors.cardBorder),
-        ),
-        child: Row(
-          children: tabs.map((tab) {
-            final isSelected =
-                !_isSearchMode && !_isAiResultMode && _primaryTab == tab.id;
-            return Expanded(
-              child: GestureDetector(
-                onTap: () => _onSelectPrimaryTab(tab.id),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 160),
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  decoration: BoxDecoration(
-                    color: isSelected
-                        ? AppColors.primaryEmerald.withValues(alpha: 0.22)
-                        : Colors.transparent,
-                    borderRadius: BorderRadius.circular(9),
-                    border: Border.all(
-                      color: isSelected
-                          ? AppColors.primaryEmerald.withValues(alpha: 0.75)
-                          : Colors.transparent,
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
+      child: Row(
+        children: tabs.map((tab) {
+          final isSelected =
+              !_isSearchMode && !_isAiResultMode && _primaryTab == tab.id;
+          return Padding(
+            padding: const EdgeInsets.only(right: 18),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => _onSelectPrimaryTab(tab.id),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(
                         tab.icon,
                         size: 14,
-                        color: isSelected
-                            ? AppColors.primaryEmerald
-                            : AppColors.textSecondary,
+                        color: isSelected ? accent : palette.textMuted,
                       ),
-                      const SizedBox(width: 5),
-                      Flexible(
-                        child: Text(
-                          tab.label,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 12.2,
-                            fontWeight: isSelected
-                                ? FontWeight.bold
-                                : FontWeight.w500,
-                            color: isSelected
-                                ? Colors.white
-                                : AppColors.textSecondary,
-                          ),
+                      const SizedBox(width: 4),
+                      Text(
+                        tab.label,
+                        style: TextStyle(
+                          fontSize: isSelected ? 14.5 : 13,
+                          fontWeight:
+                              isSelected ? FontWeight.w800 : FontWeight.w600,
+                          color: isSelected
+                              ? palette.textPrimary
+                              : palette.textMuted,
                         ),
                       ),
                     ],
                   ),
-                ),
+                  const SizedBox(height: 5),
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    width: isSelected ? 22 : 0,
+                    height: 3.5,
+                    decoration: BoxDecoration(
+                      color: isSelected ? accent : Colors.transparent,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ],
               ),
-            );
-          }).toList(),
-        ),
+            ),
+          );
+        }).toList(),
       ),
     );
   }
 
   Widget _buildSearchScopeBar() {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.hongguo);
+    final onAccent = palette.onColor(accent);
+
     final options = <({HongguoGenreKind? kind, String label})>[
       (kind: null, label: 'Tất cả kho'),
       for (final k in HongguoGenreKind.values)
@@ -1186,16 +1234,17 @@ class _HongguoScreenState extends State<HongguoScreen> {
               opt.label,
               style: TextStyle(
                 fontSize: 11.5,
-                color: isSel ? Colors.white : AppColors.textSecondary,
-                fontWeight: isSel ? FontWeight.bold : FontWeight.normal,
+                color: isSel ? onAccent : palette.textSecondary,
+                fontWeight: isSel ? FontWeight.bold : FontWeight.w500,
               ),
             ),
             selected: isSel,
-            selectedColor: AppColors.primaryEmerald.withValues(alpha: 0.3),
-            backgroundColor: AppColors.darkSurfaceVariant,
+            selectedColor: accent,
+            backgroundColor: palette.surface,
             side: BorderSide(
-              color: isSel ? AppColors.primaryEmerald : AppColors.cardBorder,
+              color: isSel ? accent : palette.border,
             ),
+            showCheckmark: false,
             onSelected: (_) {
               if (_searchScope == opt.kind) return;
               HapticFeedback.selectionClick();
@@ -1211,6 +1260,10 @@ class _HongguoScreenState extends State<HongguoScreen> {
   }
 
   Widget _buildDiscoverScopeBar() {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.hongguo);
+    final onAccent = palette.onColor(accent);
+
     const scopes = <({String id, String label})>[
       (id: 'all', label: '✨ Dành cho bạn'),
       (id: 'short_play', label: '🎬 Người thật'),
@@ -1234,16 +1287,17 @@ class _HongguoScreenState extends State<HongguoScreen> {
               s.label,
               style: TextStyle(
                 fontSize: 12,
-                color: isSel ? Colors.white : AppColors.textSecondary,
-                fontWeight: isSel ? FontWeight.bold : FontWeight.normal,
+                color: isSel ? onAccent : palette.textSecondary,
+                fontWeight: isSel ? FontWeight.bold : FontWeight.w500,
               ),
             ),
             selected: isSel,
-            selectedColor: AppColors.primaryEmerald.withValues(alpha: 0.28),
-            backgroundColor: AppColors.darkSurfaceVariant,
+            selectedColor: accent,
+            backgroundColor: palette.surface,
             side: BorderSide(
-              color: isSel ? AppColors.primaryEmerald : AppColors.cardBorder,
+              color: isSel ? accent : palette.border,
             ),
+            showCheckmark: false,
             onSelected: (_) => _onSelectDiscoverScope(s.id),
           );
         },
@@ -1255,6 +1309,11 @@ class _HongguoScreenState extends State<HongguoScreen> {
     List<HongguoSelectorGroup> groups,
     int activeCount,
   ) {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.hongguo);
+    final secondary = palette.secondaryFor(AppTabId.hongguo);
+    final onAccent = palette.onColor(accent);
+
     final kind = _librarySelection.genreKind;
     final quickChips = <({String axis, String id, String label})>[
       (axis: 'sort', id: 'hot_score', label: '🔥 Hot nhất'),
@@ -1286,7 +1345,6 @@ class _HongguoScreenState extends State<HongguoScreen> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Hàng 1: Chọn 1 trong 3 Kho + nút Bộ lọc Đa chiều
           Row(
             children: [
               Expanded(
@@ -1307,20 +1365,18 @@ class _HongguoScreenState extends State<HongguoScreen> {
                           '${k.emoji} ${k.shortLabel}',
                           style: TextStyle(
                             fontSize: 12,
-                            color: isSel ? Colors.white : AppColors.textSecondary,
+                            color: isSel ? onAccent : palette.textSecondary,
                             fontWeight:
-                                isSel ? FontWeight.bold : FontWeight.normal,
+                                isSel ? FontWeight.bold : FontWeight.w500,
                           ),
                         ),
                         selected: isSel,
-                        selectedColor:
-                            AppColors.primaryEmerald.withValues(alpha: 0.28),
-                        backgroundColor: AppColors.darkSurfaceVariant,
+                        selectedColor: accent,
+                        backgroundColor: palette.surface,
                         side: BorderSide(
-                          color: isSel
-                              ? AppColors.primaryEmerald
-                              : AppColors.cardBorder,
+                          color: isSel ? accent : palette.border,
                         ),
+                        showCheckmark: false,
                         onSelected: (_) => _onSelectLibraryKind(k),
                       );
                     },
@@ -1338,13 +1394,11 @@ class _HongguoScreenState extends State<HongguoScreen> {
                   ),
                   decoration: BoxDecoration(
                     color: activeCount > 0
-                        ? AppColors.primaryEmerald.withValues(alpha: 0.2)
-                        : AppColors.darkSurfaceVariant,
+                        ? accent.withValues(alpha: 0.14)
+                        : palette.surface,
                     borderRadius: BorderRadius.circular(18),
                     border: Border.all(
-                      color: activeCount > 0
-                          ? AppColors.primaryEmerald
-                          : AppColors.cardBorder,
+                      color: activeCount > 0 ? accent : palette.border,
                     ),
                   ),
                   child: Row(
@@ -1353,9 +1407,7 @@ class _HongguoScreenState extends State<HongguoScreen> {
                       Icon(
                         Icons.tune_rounded,
                         size: 14,
-                        color: activeCount > 0
-                            ? AppColors.primaryEmerald
-                            : AppColors.textSecondary,
+                        color: activeCount > 0 ? accent : palette.textSecondary,
                       ),
                       const SizedBox(width: 5),
                       Text(
@@ -1363,9 +1415,7 @@ class _HongguoScreenState extends State<HongguoScreen> {
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.bold,
-                          color: activeCount > 0
-                              ? AppColors.primaryEmerald
-                              : AppColors.textPrimary,
+                          color: activeCount > 0 ? accent : palette.textPrimary,
                         ),
                       ),
                     ],
@@ -1375,8 +1425,6 @@ class _HongguoScreenState extends State<HongguoScreen> {
             ],
           ),
           const SizedBox(height: 6),
-
-          // Hàng 2: Chip lọc nhanh (Sắp xếp + Nam/Nữ tần + Bối cảnh + Chủ đề)
           SizedBox(
             height: 30,
             child: ListView.separated(
@@ -1398,17 +1446,17 @@ class _HongguoScreenState extends State<HongguoScreen> {
                     c.label,
                     style: TextStyle(
                       fontSize: 11,
-                      color: isSel ? AppColors.accentGold : AppColors.textMuted,
-                      fontWeight: isSel ? FontWeight.bold : FontWeight.normal,
+                      color: isSel ? secondary : palette.textSecondary,
+                      fontWeight: isSel ? FontWeight.bold : FontWeight.w500,
                     ),
                   ),
                   backgroundColor: isSel
-                      ? AppColors.accentGold.withValues(alpha: 0.14)
-                      : AppColors.darkSurfaceVariant.withValues(alpha: 0.5),
+                      ? secondary.withValues(alpha: 0.14)
+                      : palette.surface,
                   side: BorderSide(
                     color: isSel
-                        ? AppColors.accentGold.withValues(alpha: 0.7)
-                        : AppColors.cardBorder.withValues(alpha: 0.6),
+                        ? secondary.withValues(alpha: 0.7)
+                        : palette.border,
                   ),
                   onPressed: () => _toggleQuickLibraryFilter(c.axis, c.id),
                 );
@@ -1421,6 +1469,10 @@ class _HongguoScreenState extends State<HongguoScreen> {
   }
 
   Widget _buildRankBoardBar() {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.hongguo);
+    final onAccent = palette.onColor(accent);
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 0, 14, 0),
       child: SizedBox(
@@ -1440,18 +1492,17 @@ class _HongguoScreenState extends State<HongguoScreen> {
                 board.label,
                 style: TextStyle(
                   fontSize: 11.5,
-                  color: isSelected ? Colors.redAccent : AppColors.textSecondary,
-                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                  color: isSelected ? onAccent : palette.textSecondary,
+                  fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
                 ),
               ),
               selected: isSelected,
-              selectedColor: Colors.redAccent.withValues(alpha: 0.16),
-              backgroundColor: AppColors.darkSurfaceVariant,
+              selectedColor: accent,
+              backgroundColor: palette.surface,
               side: BorderSide(
-                color: isSelected
-                    ? Colors.redAccent.withValues(alpha: 0.75)
-                    : AppColors.cardBorder,
+                color: isSelected ? accent : palette.border,
               ),
+              showCheckmark: false,
               onSelected: (_) => _onSelectRankBoard(board.slug),
             );
           },
@@ -1461,6 +1512,10 @@ class _HongguoScreenState extends State<HongguoScreen> {
   }
 
   Widget _buildStatusActionBar(String librarySummary) {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.hongguo);
+    final secondary = palette.secondaryFor(AppTabId.hongguo);
+
     final rankLabel = HongguoResolver.rankBoards
         .cast<HongguoCategory?>()
         .firstWhere((c) => c?.slug == _selectedRankSlug, orElse: () => null)
@@ -1501,19 +1556,17 @@ class _HongguoScreenState extends State<HongguoScreen> {
                                   : Icons.filter_list_rounded))),
                   size: 15,
                   color: _primaryTab == 'rank'
-                      ? Colors.redAccent
-                      : (_primaryTab == 'discover'
-                          ? AppColors.accentGold
-                          : AppColors.primaryEmerald),
+                      ? accent
+                      : (_primaryTab == 'discover' ? secondary : accent),
                 ),
                 const SizedBox(width: 6),
                 Flexible(
                   child: Text(
                     statusTitle,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
-                      color: AppColors.textSecondary,
+                      color: palette.textSecondary,
                     ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -1530,21 +1583,21 @@ class _HongguoScreenState extends State<HongguoScreen> {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                 decoration: BoxDecoration(
-                  color: AppColors.darkSurfaceVariant,
+                  color: palette.surface,
                   borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: AppColors.cardBorder),
+                  border: Border.all(color: palette.border),
                 ),
-                child: const Row(
+                child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.close_rounded, size: 13, color: AppColors.textSecondary),
-                    SizedBox(width: 4),
+                    Icon(Icons.close_rounded, size: 13, color: palette.textSecondary),
+                    const SizedBox(width: 4),
                     Text(
                       'Thoát lọc AI',
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w600,
-                        color: AppColors.textSecondary,
+                        color: palette.textSecondary,
                       ),
                     ),
                   ],
@@ -1562,27 +1615,22 @@ class _HongguoScreenState extends State<HongguoScreen> {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                 decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      AppColors.primaryEmerald.withValues(alpha: 0.22),
-                      AppColors.primaryEmerald.withValues(alpha: 0.08),
-                    ],
-                  ),
+                  color: accent.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(
-                    color: AppColors.primaryEmerald.withValues(alpha: 0.5),
+                    color: accent.withValues(alpha: 0.45),
                   ),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     _isLoading
-                        ? const SizedBox(
+                        ? SizedBox(
                             width: 13,
                             height: 13,
                             child: CircularProgressIndicator(
                               strokeWidth: 2,
-                              color: AppColors.primaryEmerald,
+                              color: accent,
                             ),
                           )
                         : Icon(
@@ -1590,15 +1638,15 @@ class _HongguoScreenState extends State<HongguoScreen> {
                                 ? Icons.auto_awesome_rounded
                                 : Icons.refresh_rounded,
                             size: 14,
-                            color: AppColors.primaryEmerald,
+                            color: accent,
                           ),
                     const SizedBox(width: 5),
                     Text(
                       _primaryTab == 'discover' ? 'Đổi loạt mới' : 'Làm mới',
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 11.5,
                         fontWeight: FontWeight.bold,
-                        color: AppColors.primaryEmerald,
+                        color: accent,
                       ),
                     ),
                   ],
@@ -1611,9 +1659,13 @@ class _HongguoScreenState extends State<HongguoScreen> {
   }
 
   Widget _buildBody() {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.hongguo);
+    final onAccent = palette.onColor(accent);
+
     if (_isLoading) {
-      return const Center(
-        child: CircularProgressIndicator(color: AppColors.primaryEmerald),
+      return Center(
+        child: CircularProgressIndicator(color: accent),
       );
     }
 
@@ -1633,7 +1685,7 @@ class _HongguoScreenState extends State<HongguoScreen> {
               Text(
                 _errorMessage!,
                 textAlign: TextAlign.center,
-                style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
+                style: TextStyle(color: palette.textSecondary, fontSize: 13),
               ),
               const SizedBox(height: 16),
               Row(
@@ -1643,9 +1695,10 @@ class _HongguoScreenState extends State<HongguoScreen> {
                     icon: const Icon(Icons.refresh_rounded, size: 16),
                     label: const Text('Thử lại'),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.darkSurfaceVariant,
-                      foregroundColor: AppColors.primaryEmerald,
-                      side: const BorderSide(color: AppColors.cardBorder),
+                      backgroundColor: palette.surface,
+                      foregroundColor: accent,
+                      side: BorderSide(color: palette.border),
+                      elevation: 0,
                     ),
                     onPressed: _isSearchMode && _currentSearchQuery.isNotEmpty
                         ? () => _loadSearchPage(_currentPage)
@@ -1656,8 +1709,9 @@ class _HongguoScreenState extends State<HongguoScreen> {
                     icon: const Icon(Icons.auto_awesome_rounded, size: 16),
                     label: const Text('Tải đề xuất'),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primaryEmerald,
-                      foregroundColor: Colors.black,
+                      backgroundColor: accent,
+                      foregroundColor: onAccent,
+                      elevation: 0,
                     ),
                     onPressed: _loadNextDiscoverBatch,
                   ),
@@ -1674,10 +1728,10 @@ class _HongguoScreenState extends State<HongguoScreen> {
         physics: const AlwaysScrollableScrollPhysics(),
         children: [
           const SizedBox(height: 100),
-          const Center(
+          Center(
             child: Text(
               'Không tìm thấy phim phù hợp với bộ lọc này.',
-              style: TextStyle(color: AppColors.textMuted),
+              style: TextStyle(color: palette.textMuted),
             ),
           ),
           const SizedBox(height: 16),
@@ -1686,8 +1740,9 @@ class _HongguoScreenState extends State<HongguoScreen> {
               icon: const Icon(Icons.refresh_rounded, size: 16),
               label: const Text('Đặt lại bộ lọc'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primaryEmerald,
-                foregroundColor: Colors.black,
+                backgroundColor: accent,
+                foregroundColor: onAccent,
+                elevation: 0,
               ),
               onPressed: () {
                 setState(() {
@@ -1704,7 +1759,6 @@ class _HongguoScreenState extends State<HongguoScreen> {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        // Tỉ lệ poster thích ứng cho mọi kích thước màn hình điện thoại
         final width = constraints.maxWidth;
         final aspectRatio = width < 370 ? 0.58 : 0.61;
 
@@ -1738,6 +1792,9 @@ class _HongguoScreenState extends State<HongguoScreen> {
   }
 
   Widget _buildAssistantFloatingButton() {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.hongguo);
+    final secondary = palette.secondaryFor(AppTabId.hongguo);
     return ListenableBuilder(
       listenable: _assistantController,
       builder: (context, _) {
@@ -1748,7 +1805,7 @@ class _HongguoScreenState extends State<HongguoScreen> {
         return Material(
           color: Colors.transparent,
           elevation: 8,
-          shadowColor: AppColors.primaryEmerald.withValues(alpha: 0.35),
+          shadowColor: accent.withValues(alpha: 0.35),
           borderRadius: BorderRadius.circular(28),
           child: InkWell(
             onTap: _openAssistantSheet,
@@ -1757,10 +1814,7 @@ class _HongguoScreenState extends State<HongguoScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(
                 gradient: LinearGradient(
-                  colors: [
-                    AppColors.primaryEmerald,
-                    AppColors.primaryEmerald.withValues(alpha: 0.85),
-                  ],
+                  colors: [accent, secondary],
                 ),
                 borderRadius: BorderRadius.circular(28),
                 border: Border.all(
@@ -1775,14 +1829,14 @@ class _HongguoScreenState extends State<HongguoScreen> {
                     isBusy
                         ? Icons.graphic_eq_rounded
                         : Icons.auto_awesome_rounded,
-                    color: Colors.black,
+                    color: Colors.white,
                     size: 18,
                   ),
                   const SizedBox(width: 6),
                   const Text(
                     'Trợ lý AI',
                     style: TextStyle(
-                      color: Colors.black,
+                      color: Colors.white,
                       fontWeight: FontWeight.w800,
                       fontSize: 13,
                     ),
@@ -1793,7 +1847,7 @@ class _HongguoScreenState extends State<HongguoScreen> {
                       width: 7,
                       height: 7,
                       decoration: const BoxDecoration(
-                        color: Colors.black87,
+                        color: Colors.white,
                         shape: BoxShape.circle,
                       ),
                     ),
@@ -1808,6 +1862,9 @@ class _HongguoScreenState extends State<HongguoScreen> {
   }
 
   Widget _buildBottomActionBar() {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.hongguo);
+
     final showPagination = !_isAiResultMode &&
         (_isSearchMode || _primaryTab != 'discover') &&
         (_totalPages > 1 || _currentPage > 1);
@@ -1820,9 +1877,9 @@ class _HongguoScreenState extends State<HongguoScreen> {
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: const BoxDecoration(
-        color: AppColors.darkSurface,
-        border: Border(top: BorderSide(color: AppColors.cardBorder)),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        border: Border(top: BorderSide(color: palette.border)),
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1844,11 +1901,10 @@ class _HongguoScreenState extends State<HongguoScreen> {
                   ),
                 ),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor:
-                      AppColors.primaryEmerald.withValues(alpha: 0.14),
-                  foregroundColor: AppColors.primaryEmerald,
+                  backgroundColor: accent.withValues(alpha: 0.12),
+                  foregroundColor: accent,
                   side: BorderSide(
-                    color: AppColors.primaryEmerald.withValues(alpha: 0.7),
+                    color: accent.withValues(alpha: 0.45),
                   ),
                   padding: const EdgeInsets.symmetric(
                     horizontal: 12,
@@ -1857,7 +1913,7 @@ class _HongguoScreenState extends State<HongguoScreen> {
                   minimumSize: const Size(0, 34),
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
+                    borderRadius: BorderRadius.circular(12),
                   ),
                   elevation: 0,
                 ),
@@ -1873,27 +1929,29 @@ class _HongguoScreenState extends State<HongguoScreen> {
   }
 
   Widget _buildTranslateToggleButton({required bool compact}) {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.hongguo);
     final enabled = _isTranslationEnabled;
-    final color = enabled ? AppColors.primaryEmerald : AppColors.textMuted;
+    final color = enabled ? accent : palette.textMuted;
     return Tooltip(
       message: enabled
           ? 'Tắt dịch tiếng Việt'
           : 'Bật dịch tiếng Việt (Tên & Giới thiệu)',
       child: InkWell(
         onTap: _toggleTranslation,
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(12),
         child: Container(
           height: 34,
           padding: EdgeInsets.symmetric(horizontal: compact ? 9 : 11),
           decoration: BoxDecoration(
             color: enabled
-                ? AppColors.primaryEmerald.withValues(alpha: 0.14)
-                : AppColors.darkSurfaceVariant,
-            borderRadius: BorderRadius.circular(10),
+                ? accent.withValues(alpha: 0.12)
+                : palette.surfaceAlt,
+            borderRadius: BorderRadius.circular(12),
             border: Border.all(
               color: enabled
-                  ? AppColors.primaryEmerald.withValues(alpha: 0.55)
-                  : AppColors.cardBorder,
+                  ? accent.withValues(alpha: 0.45)
+                  : palette.border,
             ),
           ),
           child: Row(
@@ -1909,7 +1967,7 @@ class _HongguoScreenState extends State<HongguoScreen> {
                 Text(
                   enabled ? 'Dịch: BẬT' : 'Dịch: TẮT',
                   style: TextStyle(
-                    color: enabled ? AppColors.primaryEmerald : AppColors.textSecondary,
+                    color: enabled ? accent : palette.textSecondary,
                     fontWeight: FontWeight.w600,
                     fontSize: 12,
                   ),
@@ -1923,11 +1981,14 @@ class _HongguoScreenState extends State<HongguoScreen> {
   }
 
   Widget _buildPaginationBar() {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.hongguo);
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: const BoxDecoration(
-        color: AppColors.darkSurface,
-        border: Border(top: BorderSide(color: AppColors.cardBorder)),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        border: Border(top: BorderSide(color: palette.border)),
       ),
       child: Row(
         children: [
@@ -1935,13 +1996,11 @@ class _HongguoScreenState extends State<HongguoScreen> {
             icon: const Icon(Icons.arrow_back_ios_rounded, size: 12),
             label: const Text('Trước', style: TextStyle(fontSize: 12)),
             style: OutlinedButton.styleFrom(
-              foregroundColor: _currentPage > 1
-                  ? AppColors.primaryEmerald
-                  : AppColors.textMuted,
+              foregroundColor: _currentPage > 1 ? accent : palette.textMuted,
               side: BorderSide(
                 color: _currentPage > 1
-                    ? AppColors.primaryEmerald.withValues(alpha: 0.5)
-                    : AppColors.cardBorder,
+                    ? accent.withValues(alpha: 0.5)
+                    : palette.border,
               ),
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               minimumSize: const Size(0, 34),
@@ -1956,14 +2015,14 @@ class _HongguoScreenState extends State<HongguoScreen> {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                 decoration: BoxDecoration(
-                  color: AppColors.darkSurfaceVariant,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: AppColors.cardBorder),
+                  color: palette.surfaceAlt,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: palette.border),
                 ),
                 child: Text(
                   '$_currentPage / $_totalPages',
-                  style: const TextStyle(
-                    color: AppColors.textPrimary,
+                  style: TextStyle(
+                    color: palette.textPrimary,
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
                   ),
@@ -1974,13 +2033,12 @@ class _HongguoScreenState extends State<HongguoScreen> {
           const SizedBox(width: 6),
           OutlinedButton(
             style: OutlinedButton.styleFrom(
-              foregroundColor: _currentPage < _totalPages
-                  ? AppColors.primaryEmerald
-                  : AppColors.textMuted,
+              foregroundColor:
+                  _currentPage < _totalPages ? accent : palette.textMuted,
               side: BorderSide(
                 color: _currentPage < _totalPages
-                    ? AppColors.primaryEmerald.withValues(alpha: 0.5)
-                    : AppColors.cardBorder,
+                    ? accent.withValues(alpha: 0.5)
+                    : palette.border,
               ),
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               minimumSize: const Size(0, 34),
@@ -2026,23 +2084,20 @@ class _DramaCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.hongguo);
+
     return InkWell(
       onTap: onTap,
       onLongPress: onLongPress,
-      borderRadius: BorderRadius.circular(12),
-      splashColor: AppColors.primaryEmerald.withValues(alpha: 0.1),
+      borderRadius: BorderRadius.circular(18),
+      splashColor: accent.withValues(alpha: 0.1),
       child: Container(
         decoration: BoxDecoration(
-          color: AppColors.darkSurface,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: AppColors.cardBorder),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.35),
-              blurRadius: 8,
-              offset: const Offset(0, 3),
-            ),
-          ],
+          color: palette.surface,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: palette.border),
+          boxShadow: palette.cardShadows,
         ),
         clipBehavior: Clip.antiAlias,
         child: Column(
@@ -2060,33 +2115,33 @@ class _DramaCard extends StatelessWidget {
                           cacheWidth: 360,
                           fit: BoxFit.cover,
                           errorBuilder: (ctx, e, st) => Container(
-                            color: AppColors.darkSurfaceVariant,
-                            child: const Center(
+                            color: palette.surfaceAlt,
+                            child: Center(
                               child: Icon(
                                 Icons.movie_rounded,
                                 size: 36,
-                                color: AppColors.textMuted,
+                                color: palette.textMuted,
                               ),
                             ),
                           ),
                           loadingBuilder: (ctx, child, progress) {
                             if (progress == null) return child;
                             return Container(
-                              color: AppColors.darkSurfaceVariant,
+                              color: palette.surfaceAlt,
                               child: Stack(
                                 alignment: Alignment.center,
                                 children: [
                                   Icon(
                                     Icons.movie_rounded,
                                     size: 36,
-                                    color: Colors.white.withValues(alpha: 0.05),
+                                    color: palette.textMuted.withValues(alpha: 0.25),
                                   ),
-                                  const SizedBox(
+                                  SizedBox(
                                     width: 22,
                                     height: 22,
                                     child: CircularProgressIndicator(
                                       strokeWidth: 2,
-                                      color: AppColors.primaryEmerald,
+                                      color: accent,
                                     ),
                                   ),
                                 ],
@@ -2095,15 +2150,35 @@ class _DramaCard extends StatelessWidget {
                           },
                         )
                       : Container(
-                          color: AppColors.darkSurfaceVariant,
-                          child: const Center(
+                          color: palette.surfaceAlt,
+                          child: Center(
                             child: Icon(
                               Icons.movie_rounded,
                               size: 36,
-                              color: AppColors.textMuted,
+                              color: palette.textMuted,
                             ),
                           ),
                         ),
+
+                  // Subtle bottom scrim for polished poster look
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    height: 34,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [
+                            Colors.transparent,
+                            Colors.black.withValues(alpha: 0.48),
+                          ],
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                        ),
+                      ),
+                    ),
+                  ),
 
                   // Badge Xếp Hạng Top 1, 2, 3 (Góc trên trái)
                   if (isRankCategory && index <= 10)
@@ -2112,8 +2187,8 @@ class _DramaCard extends StatelessWidget {
                       left: 6,
                       child: Container(
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
+                          horizontal: 7,
+                          vertical: 2.5,
                         ),
                         decoration: BoxDecoration(
                           color: index == 1
@@ -2123,13 +2198,7 @@ class _DramaCard extends StatelessWidget {
                                   : index == 3
                                       ? const Color(0xFFFAAD14)
                                       : Colors.black.withValues(alpha: 0.7),
-                          borderRadius: BorderRadius.circular(4),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.4),
-                              blurRadius: 4,
-                            ),
-                          ],
+                          borderRadius: BorderRadius.circular(6),
                         ),
                         child: Text(
                           'TOP $index',
@@ -2149,22 +2218,19 @@ class _DramaCard extends StatelessWidget {
                       right: 6,
                       child: Container(
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
+                          horizontal: 7,
+                          vertical: 2.5,
                         ),
                         decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.75),
-                          borderRadius: BorderRadius.circular(6),
-                          border: Border.all(
-                            color: Colors.white.withValues(alpha: 0.2),
-                          ),
+                          color: Colors.black.withValues(alpha: 0.68),
+                          borderRadius: BorderRadius.circular(8),
                         ),
                         child: Text(
                           '${drama.episodeCount} Tập',
                           style: const TextStyle(
                             fontSize: 10,
                             fontWeight: FontWeight.bold,
-                            color: AppColors.accentGold,
+                            color: Color(0xFFFFD54F),
                           ),
                         ),
                       ),
@@ -2175,7 +2241,7 @@ class _DramaCard extends StatelessWidget {
 
             // Thông tin phim (tiêu đề + tags)
             Padding(
-              padding: const EdgeInsets.all(8),
+              padding: const EdgeInsets.fromLTRB(10, 8, 10, 9),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
@@ -2187,10 +2253,10 @@ class _DramaCard extends StatelessWidget {
                           drama.title,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 13,
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.textPrimary,
+                            fontWeight: FontWeight.w700,
+                            color: palette.textPrimary,
                             height: 1.25,
                           ),
                         );
@@ -2202,10 +2268,10 @@ class _DramaCard extends StatelessWidget {
                           cached,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 13,
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.textPrimary,
+                            fontWeight: FontWeight.w700,
+                            color: palette.textPrimary,
                             height: 1.25,
                           ),
                         );
@@ -2219,10 +2285,10 @@ class _DramaCard extends StatelessWidget {
                             snapshot.data ?? drama.title,
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 13,
-                              fontWeight: FontWeight.bold,
-                              color: AppColors.textPrimary,
+                              fontWeight: FontWeight.w700,
+                              color: palette.textPrimary,
                               height: 1.25,
                             ),
                           );
@@ -2230,15 +2296,32 @@ class _DramaCard extends StatelessWidget {
                       );
                     },
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    _formatCardSubtitle(drama),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 10,
-                      color: AppColors.textMuted,
-                    ),
+                  const SizedBox(height: 5),
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: accent.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            _formatCardSubtitle(drama),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              color: accent,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -2313,10 +2396,12 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
   }
 
   Widget _buildHeaderTitle(String rawTitle) {
-    const titleStyle = TextStyle(
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.hongguo);
+    final titleStyle = TextStyle(
       fontSize: 16,
       fontWeight: FontWeight.bold,
-      color: AppColors.textPrimary,
+      color: palette.textPrimary,
       height: 1.3,
     );
 
@@ -2372,10 +2457,10 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                   children: [
                     Text(
                       _isTitleExpanded ? 'Thu gọn' : 'Xem đủ tên',
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w600,
-                        color: AppColors.primaryEmerald,
+                        color: accent,
                       ),
                     ),
                     Icon(
@@ -2383,7 +2468,7 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                           ? Icons.keyboard_arrow_up_rounded
                           : Icons.keyboard_arrow_down_rounded,
                       size: 15,
-                      color: AppColors.primaryEmerald,
+                      color: accent,
                     ),
                   ],
                 ),
@@ -2410,6 +2495,11 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.hongguo);
+    final secondary = palette.secondaryFor(AppTabId.hongguo);
+    final onAccent = palette.onColor(accent);
+
     final detail = widget.detail;
     final maxKnown = detail.episodes.length > detail.totalEpisodes
         ? detail.episodes.length
@@ -2418,7 +2508,6 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
 
     final totalChunks = (total / _chunkSize).ceil();
 
-    // Lọc danh sách tập hiển thị theo khoảng nếu có nhiều tập
     final startEp = total > _chunkSize ? _selectedRangeChunk * _chunkSize + 1 : 1;
     final endEp = total > _chunkSize
         ? ((_selectedRangeChunk + 1) * _chunkSize).clamp(1, total)
@@ -2432,38 +2521,35 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
       expand: false,
       builder: (ctx, scrollController) {
         return Container(
-          decoration: const BoxDecoration(
-            color: AppColors.darkSurface,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          decoration: BoxDecoration(
+            color: palette.surface,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
           ),
           child: Column(
             children: [
-              // Thanh kéo drag handle (iOS / Android Sheet bar)
               Center(
                 child: Container(
                   margin: const EdgeInsets.only(top: 10, bottom: 8),
                   width: 40,
                   height: 4,
                   decoration: BoxDecoration(
-                    color: AppColors.cardBorder,
+                    color: palette.border,
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
               ),
 
-              // Nội dung chính cuộn được
               Expanded(
                 child: ListView(
                   controller: scrollController,
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   physics: const BouncingScrollPhysics(),
                   children: [
-                    // Header phim: Poster nhỏ + Tên + Tổng số tập + Giới thiệu
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         ClipRRect(
-                          borderRadius: BorderRadius.circular(10),
+                          borderRadius: BorderRadius.circular(12),
                           child: detail.cover.isNotEmpty
                               ? Image.network(
                                   detail.cover,
@@ -2475,15 +2561,15 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                                   errorBuilder: (ctx, e, st) => Container(
                                     width: 84,
                                     height: 114,
-                                    color: AppColors.darkSurfaceVariant,
-                                    child: const Icon(Icons.movie_rounded),
+                                    color: palette.surfaceAlt,
+                                    child: Icon(Icons.movie_rounded, color: palette.textMuted),
                                   ),
                                 )
                               : Container(
                                   width: 84,
                                   height: 114,
-                                  color: AppColors.darkSurfaceVariant,
-                                  child: const Icon(Icons.movie_rounded),
+                                  color: palette.surfaceAlt,
+                                  child: Icon(Icons.movie_rounded, color: palette.textMuted),
                                 ),
                         ),
                         const SizedBox(width: 14),
@@ -2504,16 +2590,15 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                                       vertical: 3,
                                     ),
                                     decoration: BoxDecoration(
-                                      color: AppColors.primaryEmerald
-                                          .withValues(alpha: 0.15),
-                                      borderRadius: BorderRadius.circular(6),
+                                      color: accent.withValues(alpha: 0.14),
+                                      borderRadius: BorderRadius.circular(8),
                                     ),
                                     child: Text(
                                       'Tổng $total Tập',
-                                      style: const TextStyle(
+                                      style: TextStyle(
                                         fontSize: 11,
                                         fontWeight: FontWeight.bold,
-                                        color: AppColors.primaryEmerald,
+                                        color: accent,
                                       ),
                                     ),
                                   ),
@@ -2547,9 +2632,7 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                                                     added
                                                         ? Icons.bookmark_added_rounded
                                                         : Icons.bookmark_remove_rounded,
-                                                    color: added
-                                                        ? AppColors.primaryEmerald
-                                                        : Colors.orangeAccent,
+                                                    color: added ? accent : Colors.orangeAccent,
                                                     size: 18,
                                                   ),
                                                   const SizedBox(width: 8),
@@ -2569,18 +2652,16 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                                             ),
                                           );
                                         },
-                                        borderRadius: BorderRadius.circular(6),
+                                        borderRadius: BorderRadius.circular(8),
                                         child: Container(
                                           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                                           decoration: BoxDecoration(
                                             color: isWl
-                                                ? AppColors.primaryEmerald.withValues(alpha: 0.25)
-                                                : Colors.white12,
-                                            borderRadius: BorderRadius.circular(6),
+                                                ? accent.withValues(alpha: 0.16)
+                                                : palette.surfaceAlt,
+                                            borderRadius: BorderRadius.circular(8),
                                             border: Border.all(
-                                              color: isWl
-                                                  ? AppColors.primaryEmerald
-                                                  : Colors.white24,
+                                              color: isWl ? accent : palette.border,
                                               width: 0.8,
                                             ),
                                           ),
@@ -2590,7 +2671,7 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                                               Icon(
                                                 isWl ? Icons.bookmark_added_rounded : Icons.bookmark_add_outlined,
                                                 size: 13,
-                                                color: isWl ? AppColors.primaryEmerald : Colors.white70,
+                                                color: isWl ? accent : palette.textSecondary,
                                               ),
                                               const SizedBox(width: 4),
                                               Text(
@@ -2598,7 +2679,7 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                                                 style: TextStyle(
                                                   fontSize: 11,
                                                   fontWeight: FontWeight.bold,
-                                                  color: isWl ? AppColors.primaryEmerald : Colors.white70,
+                                                  color: isWl ? accent : palette.textSecondary,
                                                 ),
                                               ),
                                             ],
@@ -2613,7 +2694,7 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                                       final isFav = cloudState.isFavorite(detail.seriesId);
                                       final pending = cloudState.isFavoritePending(detail.seriesId);
                                       return InkWell(
-                                        borderRadius: BorderRadius.circular(6),
+                                        borderRadius: BorderRadius.circular(8),
                                         onTap: pending
                                             ? null
                                             : () async {
@@ -2652,13 +2733,13 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                                           ),
                                           decoration: BoxDecoration(
                                             color: isFav
-                                                ? const Color(0xFFFF4D67).withValues(alpha: 0.16)
-                                                : Colors.white.withValues(alpha: 0.06),
-                                            borderRadius: BorderRadius.circular(6),
+                                                ? const Color(0xFFFF4D67).withValues(alpha: 0.14)
+                                                : palette.surfaceAlt,
+                                            borderRadius: BorderRadius.circular(8),
                                             border: Border.all(
                                               color: isFav
-                                                  ? const Color(0xFFFF4D67).withValues(alpha: 0.6)
-                                                  : Colors.white24,
+                                                  ? const Color(0xFFFF4D67).withValues(alpha: 0.55)
+                                                  : palette.border,
                                             ),
                                           ),
                                           child: Row(
@@ -2676,7 +2757,7 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                                                   size: 13,
                                                   color: isFav
                                                       ? const Color(0xFFFF4D67)
-                                                      : Colors.white70,
+                                                      : palette.textSecondary,
                                                 ),
                                               const SizedBox(width: 4),
                                               Text(
@@ -2685,8 +2766,8 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                                                   fontSize: 11,
                                                   fontWeight: FontWeight.bold,
                                                   color: isFav
-                                                      ? const Color(0xFFFF6B81)
-                                                      : Colors.white70,
+                                                      ? const Color(0xFFFF4D67)
+                                                      : palette.textSecondary,
                                                 ),
                                               ),
                                             ],
@@ -2696,7 +2777,7 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                                     },
                                   ),
                                   InkWell(
-                                    borderRadius: BorderRadius.circular(6),
+                                    borderRadius: BorderRadius.circular(8),
                                     onTap: () {
                                       HapticFeedback.selectionClick();
                                       HongguoRelatedDramaSheet.show(
@@ -2721,29 +2802,33 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                                       ),
                                       decoration: BoxDecoration(
                                         color: const Color(0xFF7C3AED)
-                                            .withValues(alpha: 0.2),
-                                        borderRadius: BorderRadius.circular(6),
+                                            .withValues(alpha: 0.14),
+                                        borderRadius: BorderRadius.circular(8),
                                         border: Border.all(
-                                          color: const Color(0xFFA78BFA)
-                                              .withValues(alpha: 0.55),
+                                          color: const Color(0xFF7C3AED)
+                                              .withValues(alpha: 0.45),
                                           width: 0.8,
                                         ),
                                       ),
-                                      child: const Row(
+                                      child: Row(
                                         mainAxisSize: MainAxisSize.min,
                                         children: [
                                           Icon(
                                             Icons.auto_awesome_rounded,
                                             size: 13,
-                                            color: Color(0xFFC4B5FD),
+                                            color: palette.isDark
+                                                ? const Color(0xFFC4B5FD)
+                                                : const Color(0xFF7C3AED),
                                           ),
-                                          SizedBox(width: 4),
+                                          const SizedBox(width: 4),
                                           Text(
                                             'Phim tương tự',
                                             style: TextStyle(
                                               fontSize: 11,
                                               fontWeight: FontWeight.bold,
-                                              color: Color(0xFFEDE9FE),
+                                              color: palette.isDark
+                                                  ? const Color(0xFFEDE9FE)
+                                                  : const Color(0xFF6D28D9),
                                             ),
                                           ),
                                         ],
@@ -2776,20 +2861,19 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                                           vertical: 3,
                                         ),
                                         decoration: BoxDecoration(
-                                          color: Colors.white
-                                              .withValues(alpha: 0.07),
+                                          color: palette.surfaceAlt,
                                           borderRadius:
                                               BorderRadius.circular(12),
                                           border: Border.all(
-                                            color: Colors.white24,
-                                            width: 0.7,
+                                            color: palette.border,
+                                            width: 0.8,
                                           ),
                                         ),
                                         child: Text(
                                           '#$viLabel',
-                                          style: const TextStyle(
+                                          style: TextStyle(
                                             fontSize: 10.5,
-                                            color: Colors.white70,
+                                            color: palette.textSecondary,
                                             fontWeight: FontWeight.w500,
                                           ),
                                         ),
@@ -2819,9 +2903,9 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                                             if (!widget.isTranslationEnabled) {
                                               return Text(
                                                 detail.intro,
-                                                style: const TextStyle(
+                                                style: TextStyle(
                                                   fontSize: 11,
-                                                  color: AppColors.textMuted,
+                                                  color: palette.textMuted,
                                                   height: 1.35,
                                                 ),
                                               );
@@ -2833,9 +2917,9 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                                             if (cached != null) {
                                               return Text(
                                                 cached,
-                                                style: const TextStyle(
+                                                style: TextStyle(
                                                   fontSize: 11,
-                                                  color: AppColors.textMuted,
+                                                  color: palette.textMuted,
                                                   height: 1.35,
                                                 ),
                                               );
@@ -2848,9 +2932,9 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                                               builder: (ctx, snap) {
                                                 return Text(
                                                   snap.data ?? detail.intro,
-                                                  style: const TextStyle(
+                                                  style: TextStyle(
                                                     fontSize: 11,
-                                                    color: AppColors.textMuted,
+                                                    color: palette.textMuted,
                                                     height: 1.35,
                                                   ),
                                                 );
@@ -2870,19 +2954,18 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                     ),
 
                     const SizedBox(height: 14),
-                    const Divider(color: AppColors.cardBorder, height: 1),
+                    Divider(color: palette.border, height: 1),
                     const SizedBox(height: 12),
 
-                    // Tiêu đề chọn tập
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text(
                           'Chọn tập (Đang chọn: Tập $_selectedEpisodeIndex)',
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 14,
                             fontWeight: FontWeight.bold,
-                            color: AppColors.textPrimary,
+                            color: palette.textPrimary,
                           ),
                         ),
                         Container(
@@ -2891,15 +2974,15 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                             vertical: 3,
                           ),
                           decoration: BoxDecoration(
-                            color: AppColors.primaryEmerald.withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(6),
+                            color: accent.withValues(alpha: 0.14),
+                            borderRadius: BorderRadius.circular(8),
                           ),
                           child: Text(
                             'Mở VIP trọn bộ $total tập',
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.bold,
-                              color: AppColors.primaryEmerald,
+                              color: accent,
                             ),
                           ),
                         ),
@@ -2907,7 +2990,6 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                     ),
                     const SizedBox(height: 10),
 
-                    // Bộ lọc khoảng tập (Nếu phim có trên 30 tập)
                     if (total > _chunkSize) ...[
                       SizedBox(
                         height: 34,
@@ -2929,16 +3011,15 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                                     ? FontWeight.bold
                                     : FontWeight.normal,
                                 color: isSelected
-                                    ? Colors.black
-                                    : AppColors.textSecondary,
+                                    ? onAccent
+                                    : palette.textSecondary,
                               ),
-                              selectedColor: AppColors.primaryEmerald,
-                              backgroundColor: AppColors.darkSurfaceVariant,
+                              selectedColor: accent,
+                              backgroundColor: palette.surfaceAlt,
                               side: BorderSide(
-                                color: isSelected
-                                    ? AppColors.primaryEmerald
-                                    : AppColors.cardBorder,
+                                color: isSelected ? accent : palette.border,
                               ),
+                              showCheckmark: false,
                               onSelected: (_) {
                                 HapticFeedback.selectionClick();
                                 setState(() {
@@ -2952,7 +3033,6 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                       const SizedBox(height: 10),
                     ],
 
-                    // Lưới các nút tập (5 cột chuẩn mobile)
                     GridView.builder(
                       shrinkWrap: true,
                       physics: const NeverScrollableScrollPhysics(),
@@ -2985,18 +3065,15 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                               }
                             });
                           },
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(10),
                           child: Container(
                             decoration: BoxDecoration(
                               color: isSelected
-                                  ? AppColors.primaryEmerald
-                                      .withValues(alpha: 0.25)
-                                  : AppColors.darkSurfaceVariant,
-                              borderRadius: BorderRadius.circular(8),
+                                  ? accent.withValues(alpha: 0.16)
+                                  : palette.surfaceAlt,
+                              borderRadius: BorderRadius.circular(10),
                               border: Border.all(
-                                color: isSelected
-                                    ? AppColors.primaryEmerald
-                                    : AppColors.cardBorder,
+                                color: isSelected ? accent : palette.border,
                                 width: isSelected ? 1.5 : 1,
                               ),
                             ),
@@ -3011,10 +3088,10 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                                     fontSize: 13,
                                     fontWeight: isSelected
                                         ? FontWeight.bold
-                                        : FontWeight.normal,
+                                        : FontWeight.w500,
                                     color: isSelected
-                                        ? AppColors.primaryEmerald
-                                        : AppColors.textPrimary,
+                                        ? accent
+                                        : palette.textPrimary,
                                   ),
                                 ),
                                 if (!isAccessible) ...[
@@ -3026,18 +3103,16 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                                     ),
                                     decoration: BoxDecoration(
                                       color: isSelected
-                                          ? AppColors.primaryEmerald.withValues(alpha: 0.3)
-                                          : AppColors.accentGold.withValues(alpha: 0.2),
-                                      borderRadius: BorderRadius.circular(3),
+                                          ? accent.withValues(alpha: 0.25)
+                                          : secondary.withValues(alpha: 0.16),
+                                      borderRadius: BorderRadius.circular(4),
                                     ),
                                     child: Text(
                                       'VIP',
                                       style: TextStyle(
                                         fontSize: 8.5,
                                         fontWeight: FontWeight.bold,
-                                        color: isSelected
-                                            ? AppColors.primaryEmerald
-                                            : AppColors.accentGold,
+                                        color: isSelected ? accent : secondary,
                                       ),
                                     ),
                                   ),
@@ -3054,44 +3129,42 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                       Center(
                         child: Text(
                           _statusMessage,
-                          style: const TextStyle(
-                            color: AppColors.accentGold,
+                          style: TextStyle(
+                            color: secondary,
                             fontSize: 12,
                           ),
                         ),
                       ),
                     ],
 
-                    const SizedBox(height: 80), // Chừa khoảng trống cho thanh nút đáy
+                    const SizedBox(height: 80),
                   ],
                 ),
               ),
 
-              // THANH NÚT HÀNH ĐỘNG CỐ ĐỊNH Ở ĐÁY SHEET (VỚI SAFE AREA CHO IOS HOME BAR & ANDROID GESTURES)
               SafeArea(
                 top: false,
                 child: Container(
                   padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
-                  decoration: const BoxDecoration(
-                    color: AppColors.darkSurface,
-                    border: Border(top: BorderSide(color: AppColors.cardBorder)),
+                  decoration: BoxDecoration(
+                    color: palette.surface,
+                    border: Border(top: BorderSide(color: palette.border)),
                   ),
                   child: Row(
                     children: [
-                      // Nút Lướt Xem Thử (Feed Shorts)
                       Container(
                         margin: const EdgeInsets.only(right: 8),
                         decoration: BoxDecoration(
-                          color: Colors.amberAccent.withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(10),
+                          color: secondary.withValues(alpha: 0.14),
+                          borderRadius: BorderRadius.circular(12),
                           border: Border.all(
-                            color: Colors.amberAccent.withValues(alpha: 0.4),
+                            color: secondary.withValues(alpha: 0.4),
                           ),
                         ),
                         child: IconButton(
-                          icon: const Icon(
+                          icon: Icon(
                             Icons.swipe_vertical_rounded,
-                            color: Colors.amberAccent,
+                            color: secondary,
                           ),
                           tooltip: 'Lướt xem thử dạng Shorts',
                           onPressed: () {
@@ -3109,16 +3182,15 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                         ),
                       ),
 
-                      // Nút Xem Vietsub (Phụ đề)
                       Expanded(
                         child: OutlinedButton.icon(
                           icon: (_isLoadingPlayUrl && !_loadingTts)
-                              ? const SizedBox(
+                              ? SizedBox(
                                   width: 16,
                                   height: 16,
                                   child: CircularProgressIndicator(
                                     strokeWidth: 2,
-                                    color: AppColors.textPrimary,
+                                    color: palette.textPrimary,
                                   ),
                                 )
                               : const Icon(Icons.subtitles_rounded, size: 18),
@@ -3128,11 +3200,11 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                             overflow: TextOverflow.ellipsis,
                           ),
                           style: OutlinedButton.styleFrom(
-                            foregroundColor: AppColors.textPrimary,
-                            side: const BorderSide(color: AppColors.cardBorder),
+                            foregroundColor: palette.textPrimary,
+                            side: BorderSide(color: palette.border),
                             padding: const EdgeInsets.symmetric(vertical: 13),
                             shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
+                              borderRadius: BorderRadius.circular(12),
                             ),
                           ),
                           onPressed: _isLoadingPlayUrl
@@ -3142,16 +3214,15 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                       ),
                       const SizedBox(width: 10),
 
-                      // Nút Xem Lồng Tiếng (AI Voice-over)
                       Expanded(
                         child: ElevatedButton.icon(
                           icon: (_isLoadingPlayUrl && _loadingTts)
-                              ? const SizedBox(
+                              ? SizedBox(
                                   width: 16,
                                   height: 16,
                                   child: CircularProgressIndicator(
                                     strokeWidth: 2,
-                                    color: Colors.black,
+                                    color: onAccent,
                                   ),
                                 )
                               : const Icon(Icons.record_voice_over_rounded,
@@ -3162,11 +3233,11 @@ class _EpisodeSelectorSheetState extends State<_EpisodeSelectorSheet> {
                             overflow: TextOverflow.ellipsis,
                           ),
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.primaryEmerald,
-                            foregroundColor: Colors.black,
+                            backgroundColor: accent,
+                            foregroundColor: onAccent,
                             padding: const EdgeInsets.symmetric(vertical: 13),
                             shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
+                              borderRadius: BorderRadius.circular(12),
                             ),
                             elevation: 0,
                           ),

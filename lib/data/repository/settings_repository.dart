@@ -649,4 +649,25 @@ class SettingsRepository {
     'live_translate_model',
     v.trim().isEmpty ? 'gemini-3.5-live-translate-preview' : v.trim(),
   );
+
+  // ===== CẤU HÌNH GIAO DIỆN & MÀU SẮC TỪNG TAB =====
+  String get uiThemeMode => prefs.getString('ui_theme_mode') ?? 'fresh';
+  set uiThemeMode(String v) =>
+      prefs.setString('ui_theme_mode', v.trim().isEmpty ? 'fresh' : v.trim());
+
+  String get uiNavStyle => prefs.getString('ui_nav_style') ?? 'floating';
+  set uiNavStyle(String v) =>
+      prefs.setString('ui_nav_style', v == 'docked' ? 'docked' : 'floating');
+
+  int get uiAccentStudio => prefs.getInt('ui_accent_studio') ?? 0xFF5B5CF6;
+  set uiAccentStudio(int v) => prefs.setInt('ui_accent_studio', v);
+
+  int get uiAccentHongguo => prefs.getInt('ui_accent_hongguo') ?? 0xFFFF4D2D;
+  set uiAccentHongguo(int v) => prefs.setInt('ui_accent_hongguo', v);
+
+  int get uiAccentBilibili => prefs.getInt('ui_accent_bilibili') ?? 0xFFFB7299;
+  set uiAccentBilibili(int v) => prefs.setInt('ui_accent_bilibili', v);
+
+  int get uiAccentHistory => prefs.getInt('ui_accent_history') ?? 0xFF7C3AED;
+  set uiAccentHistory(int v) => prefs.setInt('ui_accent_history', v);
 }

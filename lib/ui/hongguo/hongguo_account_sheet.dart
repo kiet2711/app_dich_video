@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../../domain/media/hongguo/hongguo_auth_service.dart';
 import '../../domain/media/hongguo/hongguo_cloud_account_service.dart';
+import '../theme/app_theme.dart';
 
 /// Cửa sổ Quản lý & Đăng nhập Tài khoản Đám mây Hồng Quả (QR chính thức, SMS App Passport,
 /// Lịch sử Cloud, Yêu thích 2 chiều & Đặt trước).
@@ -19,11 +20,15 @@ class HongguoAccountSheet extends StatefulWidget {
     void Function(String seriesId, {int episodeIndex, int positionMs})?
         onOpenSeries,
   }) {
+    final inheritedTheme = Theme.of(context);
     return showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => HongguoAccountSheet(onOpenSeries: onOpenSeries),
+      builder: (_) => Theme(
+        data: inheritedTheme,
+        child: HongguoAccountSheet(onOpenSeries: onOpenSeries),
+      ),
     );
   }
 
@@ -216,15 +221,18 @@ class _HongguoAccountSheetState extends State<HongguoAccountSheet>
 
   @override
   Widget build(BuildContext context) {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.hongguo);
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+
     return Container(
       constraints: BoxConstraints(
         maxHeight: MediaQuery.of(context).size.height * 0.88,
       ),
       padding: EdgeInsets.only(bottom: bottomInset),
-      decoration: const BoxDecoration(
-        color: Color(0xFF14161E),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       ),
       child: ValueListenableBuilder<HongguoCloudAccountState>(
         valueListenable: HongguoCloudAccountService.instance.state,
@@ -237,7 +245,7 @@ class _HongguoAccountSheetState extends State<HongguoAccountSheet>
                 width: 40,
                 height: 4,
                 decoration: BoxDecoration(
-                  color: Colors.white24,
+                  color: palette.border,
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
@@ -248,12 +256,12 @@ class _HongguoAccountSheetState extends State<HongguoAccountSheet>
                     Container(
                       padding: const EdgeInsets.all(8),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFFF4D67).withValues(alpha: 0.16),
+                        color: accent.withValues(alpha: 0.14),
                         borderRadius: BorderRadius.circular(10),
                       ),
-                      child: const Icon(
+                      child: Icon(
                         Icons.account_circle_rounded,
-                        color: Color(0xFFFF4D67),
+                        color: accent,
                         size: 20,
                       ),
                     ),
@@ -266,8 +274,8 @@ class _HongguoAccountSheetState extends State<HongguoAccountSheet>
                             cloudState.isLoggedIn
                                 ? 'Tài khoản Đám mây Hồng Quả'
                                 : 'Đăng nhập Tài khoản Hồng Quả',
-                            style: const TextStyle(
-                              color: Colors.white,
+                            style: TextStyle(
+                              color: palette.textPrimary,
                               fontSize: 16,
                               fontWeight: FontWeight.w700,
                             ),
@@ -277,8 +285,8 @@ class _HongguoAccountSheetState extends State<HongguoAccountSheet>
                                 ? (cloudState.profile?.userName ??
                                     'Đồng bộ lịch sử, yêu thích & đặt trước')
                                 : 'Quét QR hoặc SMS để đồng bộ lịch sử & yêu thích',
-                            style: const TextStyle(
-                              color: Colors.white60,
+                            style: TextStyle(
+                              color: palette.textMuted,
                               fontSize: 12,
                             ),
                           ),
@@ -286,17 +294,17 @@ class _HongguoAccountSheetState extends State<HongguoAccountSheet>
                       ),
                     ),
                     IconButton(
-                      icon: const Icon(Icons.close, color: Colors.white54),
+                      icon: Icon(Icons.close, color: palette.textMuted),
                       onPressed: () => Navigator.of(context).pop(),
                     ),
                   ],
                 ),
               ),
-              const Divider(color: Colors.white12, height: 1),
+              Divider(color: palette.border, height: 1),
               Flexible(
                 child: cloudState.isLoggedIn
-                    ? _buildLoggedInDashboard(cloudState)
-                    : _buildLoginView(),
+                    ? _buildLoggedInDashboard(palette, accent, cloudState)
+                    : _buildLoginView(palette, accent),
               ),
             ],
           );
@@ -305,15 +313,16 @@ class _HongguoAccountSheetState extends State<HongguoAccountSheet>
     );
   }
 
-  Widget _buildLoginView() {
+  Widget _buildLoginView(AppThemePalette palette, Color accent) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
         TabBar(
           controller: _loginTabController,
-          indicatorColor: const Color(0xFFFF4D67),
-          labelColor: Colors.white,
-          unselectedLabelColor: Colors.white54,
+          indicatorColor: accent,
+          labelColor: accent,
+          unselectedLabelColor: palette.textMuted,
+          dividerColor: palette.border,
           onTap: (idx) {
             if (idx == 0 && _qrSession == null && !_qrLoading) {
               _loadQr();
@@ -330,8 +339,8 @@ class _HongguoAccountSheetState extends State<HongguoAccountSheet>
             child: TabBarView(
               controller: _loginTabController,
               children: <Widget>[
-                _buildQrTab(),
-                _buildSmsTab(),
+                _buildQrTab(palette, accent),
+                _buildSmsTab(palette, accent),
               ],
             ),
           ),
@@ -340,7 +349,7 @@ class _HongguoAccountSheetState extends State<HongguoAccountSheet>
     );
   }
 
-  Widget _buildQrTab() {
+  Widget _buildQrTab(AppThemePalette palette, Color accent) {
     final statusText = switch (_qrStatus) {
       HongguoQrPollStatus.pending =>
         'Mở ứng dụng Hồng Quả trên điện thoại -> Quét mã QR bên trên',
@@ -361,9 +370,11 @@ class _HongguoAccountSheetState extends State<HongguoAccountSheet>
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: palette.border),
+              boxShadow: palette.cardShadows,
             ),
             child: _qrLoading
-                ? const Center(child: CircularProgressIndicator())
+                ? Center(child: CircularProgressIndicator(color: accent))
                 : (_qrSession != null
                     ? Image.memory(
                         _qrSession!.qrImageBytes,
@@ -386,8 +397,8 @@ class _HongguoAccountSheetState extends State<HongguoAccountSheet>
             textAlign: TextAlign.center,
             style: TextStyle(
               color: _qrError != null
-                  ? const Color(0xFFFF6B81)
-                  : Colors.white70,
+                  ? Colors.redAccent
+                  : palette.textSecondary,
               fontSize: 13,
             ),
           ),
@@ -400,8 +411,8 @@ class _HongguoAccountSheetState extends State<HongguoAccountSheet>
                 icon: const Icon(Icons.refresh, size: 18),
                 label: const Text('Làm mới QR'),
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.white,
-                  side: const BorderSide(color: Colors.white24),
+                  foregroundColor: palette.textPrimary,
+                  side: BorderSide(color: palette.border),
                 ),
               ),
               if (_qrSession?.dragonDeeplink.isNotEmpty == true) ...<Widget>[
@@ -420,8 +431,9 @@ class _HongguoAccountSheetState extends State<HongguoAccountSheet>
                   icon: const Icon(Icons.link, size: 18),
                   label: const Text('Link App'),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFFF4D67),
-                    foregroundColor: Colors.white,
+                    backgroundColor: accent,
+                    foregroundColor: palette.onColor(accent),
+                    elevation: 0,
                   ),
                 ),
               ],
@@ -432,7 +444,12 @@ class _HongguoAccountSheetState extends State<HongguoAccountSheet>
     );
   }
 
-  Widget _buildSmsTab() {
+  Widget _buildSmsTab(AppThemePalette palette, Color accent) {
+    final successColor =
+        palette.isDark ? Colors.greenAccent : const Color(0xFF15803D);
+    final errorColor =
+        palette.isDark ? const Color(0xFFFF8899) : Colors.redAccent;
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
       child: Column(
@@ -440,16 +457,20 @@ class _HongguoAccountSheetState extends State<HongguoAccountSheet>
         children: <Widget>[
           DropdownButtonFormField<HongguoCountryCode>(
             initialValue: _selectedCountry,
-            dropdownColor: const Color(0xFF1E212D),
-            style: const TextStyle(color: Colors.white, fontSize: 14),
+            dropdownColor: palette.surface,
+            style: TextStyle(color: palette.textPrimary, fontSize: 14),
             decoration: InputDecoration(
               labelText: 'Mã vùng quốc gia / khu vực',
-              labelStyle: const TextStyle(color: Colors.white60),
+              labelStyle: TextStyle(color: palette.textSecondary),
               filled: true,
-              fillColor: Colors.white.withValues(alpha: 0.06),
+              fillColor: palette.surfaceAlt,
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide.none,
+                borderSide: BorderSide(color: palette.border),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: palette.border),
               ),
             ),
             items: kHongguoCountryCodes
@@ -468,21 +489,25 @@ class _HongguoAccountSheetState extends State<HongguoAccountSheet>
           TextField(
             controller: _phoneCtrl,
             keyboardType: TextInputType.phone,
-            style: const TextStyle(color: Colors.white),
+            style: TextStyle(color: palette.textPrimary),
             decoration: InputDecoration(
               labelText: 'Số điện thoại',
               hintText: _selectedCountry.code == '86'
                   ? '13800138000 (11 số)'
                   : 'Nhập số không cần mã vùng',
-              hintStyle: const TextStyle(color: Colors.white30),
-              labelStyle: const TextStyle(color: Colors.white60),
+              hintStyle: TextStyle(color: palette.textMuted),
+              labelStyle: TextStyle(color: palette.textSecondary),
               prefixText: '+${_selectedCountry.code} ',
-              prefixStyle: const TextStyle(color: Color(0xFFFF4D67)),
+              prefixStyle: TextStyle(color: accent, fontWeight: FontWeight.w600),
               filled: true,
-              fillColor: Colors.white.withValues(alpha: 0.06),
+              fillColor: palette.surfaceAlt,
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide.none,
+                borderSide: BorderSide(color: palette.border),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: palette.border),
               ),
             ),
           ),
@@ -493,15 +518,19 @@ class _HongguoAccountSheetState extends State<HongguoAccountSheet>
                 child: TextField(
                   controller: _codeCtrl,
                   keyboardType: TextInputType.number,
-                  style: const TextStyle(color: Colors.white),
+                  style: TextStyle(color: palette.textPrimary),
                   decoration: InputDecoration(
                     labelText: 'Mã OTP (4-6 số)',
-                    labelStyle: const TextStyle(color: Colors.white60),
+                    labelStyle: TextStyle(color: palette.textSecondary),
                     filled: true,
-                    fillColor: Colors.white.withValues(alpha: 0.06),
+                    fillColor: palette.surfaceAlt,
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide.none,
+                      borderSide: BorderSide(color: palette.border),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: palette.border),
                     ),
                   ),
                 ),
@@ -513,17 +542,20 @@ class _HongguoAccountSheetState extends State<HongguoAccountSheet>
                   onPressed:
                       (_smsSending || _smsCountdown > 0) ? null : _sendSms,
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.white,
-                    side: const BorderSide(color: Colors.white24),
+                    foregroundColor: palette.textPrimary,
+                    side: BorderSide(color: palette.border),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
                   child: _smsSending
-                      ? const SizedBox(
+                      ? SizedBox(
                           width: 18,
                           height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: accent,
+                          ),
                         )
                       : Text(
                           _smsCountdown > 0
@@ -539,18 +571,14 @@ class _HongguoAccountSheetState extends State<HongguoAccountSheet>
             Container(
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: (_smsIsError
-                        ? const Color(0xFFFF4D67)
-                        : Colors.greenAccent)
+                color: (_smsIsError ? Colors.redAccent : successColor)
                     .withValues(alpha: 0.14),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Text(
                 _smsMessage!,
                 style: TextStyle(
-                  color: _smsIsError
-                      ? const Color(0xFFFF8899)
-                      : Colors.greenAccent,
+                  color: _smsIsError ? errorColor : successColor,
                   fontSize: 12.5,
                 ),
               ),
@@ -562,19 +590,20 @@ class _HongguoAccountSheetState extends State<HongguoAccountSheet>
             child: ElevatedButton(
               onPressed: (_smsVerifying || !_smsSent) ? null : _verifySms,
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFFFF4D67),
-                foregroundColor: Colors.white,
+                backgroundColor: accent,
+                foregroundColor: palette.onColor(accent),
+                elevation: 0,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
               ),
               child: _smsVerifying
-                  ? const SizedBox(
+                  ? SizedBox(
                       width: 20,
                       height: 20,
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
-                        color: Colors.white,
+                        color: palette.onColor(accent),
                       ),
                     )
                   : const Text(
@@ -588,7 +617,11 @@ class _HongguoAccountSheetState extends State<HongguoAccountSheet>
     );
   }
 
-  Widget _buildLoggedInDashboard(HongguoCloudAccountState state) {
+  Widget _buildLoggedInDashboard(
+    AppThemePalette palette,
+    Color accent,
+    HongguoCloudAccountState state,
+  ) {
     final profile = state.profile;
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -599,13 +632,13 @@ class _HongguoAccountSheetState extends State<HongguoAccountSheet>
             children: <Widget>[
               CircleAvatar(
                 radius: 22,
-                backgroundColor: Colors.white12,
+                backgroundColor: palette.surfaceAlt,
                 backgroundImage:
                     (profile?.avatarUrl.isNotEmpty ?? false)
                         ? NetworkImage(profile!.avatarUrl)
                         : null,
                 child: (profile?.avatarUrl.isEmpty ?? true)
-                    ? const Icon(Icons.person, color: Colors.white70)
+                    ? Icon(Icons.person, color: palette.textMuted)
                     : null,
               ),
               const SizedBox(width: 12),
@@ -617,8 +650,8 @@ class _HongguoAccountSheetState extends State<HongguoAccountSheet>
                       profile?.userName ??
                           state.credentials?.userName ??
                           'Đã đăng nhập Hồng Quả',
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: palette.textPrimary,
                         fontSize: 15,
                         fontWeight: FontWeight.w600,
                       ),
@@ -629,8 +662,8 @@ class _HongguoAccountSheetState extends State<HongguoAccountSheet>
                           : (state.lastError ?? 'Đang đồng bộ hồ sơ...'),
                       style: TextStyle(
                         color: state.lastError != null
-                            ? const Color(0xFFFF8899)
-                            : Colors.white54,
+                            ? Colors.redAccent
+                            : palette.textMuted,
                         fontSize: 12,
                       ),
                     ),
@@ -643,18 +676,21 @@ class _HongguoAccountSheetState extends State<HongguoAccountSheet>
                     ? null
                     : () => HongguoCloudAccountService.instance.refreshAll(),
                 icon: state.isLoading
-                    ? const SizedBox(
+                    ? SizedBox(
                         width: 18,
                         height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: accent,
+                        ),
                       )
-                    : const Icon(Icons.sync_rounded, color: Colors.white70),
+                    : Icon(Icons.sync_rounded, color: palette.textSecondary),
               ),
               TextButton(
                 onPressed: () => HongguoCloudAccountService.instance.logout(),
                 child: const Text(
                   'Đăng xuất',
-                  style: TextStyle(color: Color(0xFFFF6B81)),
+                  style: TextStyle(color: Colors.redAccent),
                 ),
               ),
             ],
@@ -689,20 +725,24 @@ class _HongguoAccountSheetState extends State<HongguoAccountSheet>
         Flexible(
           child: SizedBox(
             height: 360,
-            child: _buildDashboardList(state),
+            child: _buildDashboardList(palette, accent, state),
           ),
         ),
       ],
     );
   }
 
-  Widget _buildDashboardList(HongguoCloudAccountState state) {
+  Widget _buildDashboardList(
+    AppThemePalette palette,
+    Color accent,
+    HongguoCloudAccountState state,
+  ) {
     if (_dashboardTabIndex == 0) {
       if (state.history.isEmpty) {
-        return const Center(
+        return Center(
           child: Text(
             'Chưa có lịch sử xem trên đám mây',
-            style: TextStyle(color: Colors.white54),
+            style: TextStyle(color: palette.textMuted),
           ),
         );
       }
@@ -715,24 +755,25 @@ class _HongguoAccountSheetState extends State<HongguoAccountSheet>
           final posSec = item.positionMs ~/ 1000;
           final durSec = item.durationMs ~/ 1000;
           return ListTile(
-            tileColor: Colors.white.withValues(alpha: 0.05),
+            tileColor: palette.surfaceAlt,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
+              side: BorderSide(color: palette.border),
             ),
-            leading: _coverThumb(item.cover),
+            leading: _coverThumb(palette, item.cover),
             title: Text(
               item.title.isNotEmpty ? item.title : 'Phim #${item.seriesId}',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Colors.white, fontSize: 14),
+              style: TextStyle(color: palette.textPrimary, fontSize: 14),
             ),
             subtitle: Text(
               'Tập ${item.episodeIndex} • ${_formatSec(posSec)}${durSec > 0 ? ' / ${_formatSec(durSec)}' : ''}',
-              style: const TextStyle(color: Colors.white60, fontSize: 12),
+              style: TextStyle(color: palette.textSecondary, fontSize: 12),
             ),
-            trailing: const Icon(
+            trailing: Icon(
               Icons.play_circle_outline_rounded,
-              color: Color(0xFFFF4D67),
+              color: accent,
             ),
             onTap: () {
               Navigator.of(context).pop();
@@ -749,10 +790,10 @@ class _HongguoAccountSheetState extends State<HongguoAccountSheet>
 
     if (_dashboardTabIndex == 1) {
       if (state.favorites.isEmpty) {
-        return const Center(
+        return Center(
           child: Text(
             'Tủ phim yêu thích đám mây đang trống',
-            style: TextStyle(color: Colors.white54),
+            style: TextStyle(color: palette.textMuted),
           ),
         );
       }
@@ -764,31 +805,32 @@ class _HongguoAccountSheetState extends State<HongguoAccountSheet>
           final fav = state.favorites[index];
           final pending = state.isFavoritePending(fav.seriesId);
           return ListTile(
-            tileColor: Colors.white.withValues(alpha: 0.05),
+            tileColor: palette.surfaceAlt,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
+              side: BorderSide(color: palette.border),
             ),
-            leading: _coverThumb(fav.cover),
+            leading: _coverThumb(palette, fav.cover),
             title: Text(
               fav.title.isNotEmpty ? fav.title : 'Phim #${fav.seriesId}',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Colors.white, fontSize: 14),
+              style: TextStyle(color: palette.textPrimary, fontSize: 14),
             ),
             subtitle: fav.badge.isNotEmpty
                 ? Text(
                     fav.badge,
-                    style: const TextStyle(color: Colors.white60, fontSize: 12),
+                    style: TextStyle(color: palette.textSecondary, fontSize: 12),
                   )
                 : null,
             trailing: IconButton(
               icon: pending
-                  ? const SizedBox(
+                  ? SizedBox(
                       width: 18,
                       height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+                      child: CircularProgressIndicator(strokeWidth: 2, color: accent),
                     )
-                  : const Icon(Icons.favorite, color: Color(0xFFFF4D67)),
+                  : Icon(Icons.favorite, color: accent),
               onPressed: pending
                   ? null
                   : () => HongguoCloudAccountService.instance.setFavorite(
@@ -817,7 +859,7 @@ class _HongguoAccountSheetState extends State<HongguoAccountSheet>
               state.upcomingReservationsError ??
               'Chưa có phim đặt trước',
           textAlign: TextAlign.center,
-          style: const TextStyle(color: Colors.white54),
+          style: TextStyle(color: palette.textMuted),
         ),
       );
     }
@@ -828,16 +870,17 @@ class _HongguoAccountSheetState extends State<HongguoAccountSheet>
       itemBuilder: (context, index) {
         final r = allRes[index];
         return ListTile(
-          tileColor: Colors.white.withValues(alpha: 0.05),
+          tileColor: palette.surfaceAlt,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
+            side: BorderSide(color: palette.border),
           ),
-          leading: _coverThumb(r.cover),
+          leading: _coverThumb(palette, r.cover),
           title: Text(
             r.title.isNotEmpty ? r.title : 'Phim #${r.seriesId}',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: Colors.white, fontSize: 14),
+            style: TextStyle(color: palette.textPrimary, fontSize: 14),
           ),
           subtitle: Text(
             r.isOnline
@@ -845,7 +888,7 @@ class _HongguoAccountSheetState extends State<HongguoAccountSheet>
                 : (r.releaseTimeText.isNotEmpty
                     ? 'Sắp chiếu: ${r.releaseTimeText}'
                     : 'Sắp ra mắt'),
-            style: const TextStyle(color: Colors.white60, fontSize: 12),
+            style: TextStyle(color: palette.textSecondary, fontSize: 12),
           ),
           onTap: r.isOnline
               ? () {
@@ -858,16 +901,16 @@ class _HongguoAccountSheetState extends State<HongguoAccountSheet>
     );
   }
 
-  Widget _coverThumb(String url) {
+  Widget _coverThumb(AppThemePalette palette, String url) {
     if (url.isEmpty) {
       return Container(
         width: 42,
         height: 56,
         decoration: BoxDecoration(
-          color: Colors.white10,
+          color: palette.surface,
           borderRadius: BorderRadius.circular(6),
         ),
-        child: const Icon(Icons.movie, color: Colors.white38, size: 20),
+        child: Icon(Icons.movie, color: palette.textMuted, size: 20),
       );
     }
     return ClipRRect(
@@ -880,8 +923,8 @@ class _HongguoAccountSheetState extends State<HongguoAccountSheet>
         errorBuilder: (_, _, _) => Container(
           width: 42,
           height: 56,
-          color: Colors.white10,
-          child: const Icon(Icons.movie, color: Colors.white38, size: 20),
+          color: palette.surface,
+          child: Icon(Icons.movie, color: palette.textMuted, size: 20),
         ),
       ),
     );

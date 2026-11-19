@@ -73,6 +73,8 @@ class _StorageCleanerScreenState extends State<StorageCleanerScreen> {
   }
 
   Future<void> _confirmDeleteSelected() async {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.history);
     final itemsToDelete = _scanResult!.items
         .where((it) => _selectedPaths.contains(it.path))
         .toList();
@@ -83,23 +85,25 @@ class _StorageCleanerScreenState extends State<StorageCleanerScreen> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1E2029),
+        backgroundColor: palette.surface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
-          children: const [
+        title: const Row(
+          children: [
             Icon(Icons.warning_amber_rounded, color: Colors.orangeAccent, size: 28),
             SizedBox(width: 10),
-            Text('Xác nhận dọn dẹp', style: TextStyle(color: Colors.white, fontSize: 18)),
+            Expanded(
+              child: Text('Xác nhận dọn dẹp', style: TextStyle(fontSize: 18)),
+            ),
           ],
         ),
         content: Text(
           'Bạn có chắc chắn muốn giải phóng $freedMb bằng cách xóa ${itemsToDelete.length} tệp đã chọn?\n\n(Lưu ý: Phụ đề hoặc video offline bị xóa sẽ không thể phục hồi).',
-          style: const TextStyle(color: Colors.white70, fontSize: 14),
+          style: TextStyle(color: palette.textSecondary, fontSize: 14),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Hủy', style: TextStyle(color: Colors.white60)),
+            child: Text('Hủy', style: TextStyle(color: palette.textMuted)),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
@@ -124,8 +128,9 @@ class _StorageCleanerScreenState extends State<StorageCleanerScreen> {
       SnackBar(
         content: Text(
           '✅ Đã dọn dẹp thành công! Giải phóng ${StorageScanResult.format(freed)} dung lượng máy.',
+          style: TextStyle(color: palette.onColor(accent)),
         ),
-        backgroundColor: AppTheme.primaryEmerald,
+        backgroundColor: accent,
       ),
     );
 
@@ -134,6 +139,8 @@ class _StorageCleanerScreenState extends State<StorageCleanerScreen> {
   }
 
   Future<void> _smartCleanJunk() async {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.history);
     if (_scanResult == null || _scanResult!.safeCleanSizeBytes == 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('✨ Bộ nhớ rác tạm rất sạch sẽ! Không có file dở dang.')),
@@ -145,28 +152,33 @@ class _StorageCleanerScreenState extends State<StorageCleanerScreen> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1E2029),
+        backgroundColor: palette.surface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Row(
-          children: const [
-            Icon(Icons.auto_delete_rounded, color: AppTheme.primaryEmerald, size: 28),
-            SizedBox(width: 10),
-            Text('Dọn rác nhanh an toàn', style: TextStyle(color: Colors.white, fontSize: 18)),
+          children: [
+            Icon(Icons.auto_delete_rounded, color: accent, size: 28),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Dọn rác nhanh an toàn',
+                style: TextStyle(color: palette.textPrimary, fontSize: 18),
+              ),
+            ),
           ],
         ),
         content: Text(
           'Hệ thống sẽ tự động quét và xóa sạch $safeMb gồm:\n• Tệp video tải dở dang (.part)\n• Bộ nhớ cache tạm thời hệ thống (iOS picker / audio tạm)\n• Các phiên cache cũ không còn dùng\n\n(Không xóa video offline hay phụ đề của bạn).',
-          style: const TextStyle(color: Colors.white70, fontSize: 14),
+          style: TextStyle(color: palette.textSecondary, fontSize: 14),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Hủy', style: TextStyle(color: Colors.white60)),
+            child: Text('Hủy', style: TextStyle(color: palette.textMuted)),
           ),
           ElevatedButton.icon(
             style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.primaryEmerald,
-              foregroundColor: Colors.black,
+              backgroundColor: accent,
+              foregroundColor: palette.onColor(accent),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
             ),
             icon: const Icon(Icons.bolt, size: 18),
@@ -187,8 +199,9 @@ class _StorageCleanerScreenState extends State<StorageCleanerScreen> {
       SnackBar(
         content: Text(
           '⚡ Đã dọn sạch rác an toàn! Giải phóng ${StorageScanResult.format(freed)}.',
+          style: TextStyle(color: palette.onColor(accent)),
         ),
-        backgroundColor: AppTheme.primaryEmerald,
+        backgroundColor: accent,
       ),
     );
 
@@ -197,20 +210,21 @@ class _StorageCleanerScreenState extends State<StorageCleanerScreen> {
   }
 
   Future<void> _deleteSingleItem(StorageFileItem item) async {
+    final palette = AppThemePalette.of(context);
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1E2029),
+        backgroundColor: palette.surface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('Xóa tệp này?', style: TextStyle(color: Colors.white, fontSize: 17)),
+        title: Text('Xóa tệp này?', style: TextStyle(color: palette.textPrimary, fontSize: 17)),
         content: Text(
           'Bạn có muốn xóa "${item.displayName}" (${item.formattedSize}) không?',
-          style: const TextStyle(color: Colors.white70),
+          style: TextStyle(color: palette.textSecondary),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Hủy', style: TextStyle(color: Colors.white60)),
+            child: Text('Hủy', style: TextStyle(color: palette.textMuted)),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
@@ -239,18 +253,24 @@ class _StorageCleanerScreenState extends State<StorageCleanerScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.history);
+    final bg = palette.backgroundFor(AppTabId.history);
+
     final filtered = _filteredItems;
     final allSelected = filtered.isNotEmpty && filtered.every((it) => _selectedPaths.contains(it.path));
 
     return Scaffold(
-      backgroundColor: AppTheme.darkBackground,
+      backgroundColor: bg,
       appBar: AppBar(
-        backgroundColor: AppTheme.darkBackground,
+        backgroundColor: bg,
         elevation: 0,
-        title: const Text(
+        scrolledUnderElevation: 0,
+        foregroundColor: palette.textPrimary,
+        title: Text(
           'Dọn Dẹp Bộ Nhớ Thông Minh',
           style: TextStyle(
-            color: Colors.white,
+            color: palette.textPrimary,
             fontSize: 18,
             fontWeight: FontWeight.bold,
           ),
@@ -261,26 +281,26 @@ class _StorageCleanerScreenState extends State<StorageCleanerScreen> {
               onPressed: _toggleSelectAll,
               child: Text(
                 allSelected ? 'Bỏ chọn' : 'Chọn tất cả',
-                style: const TextStyle(color: AppTheme.primaryEmerald, fontWeight: FontWeight.bold),
+                style: TextStyle(color: accent, fontWeight: FontWeight.bold),
               ),
             ),
           IconButton(
-            icon: const Icon(Icons.refresh, color: Colors.white70),
+            icon: Icon(Icons.refresh, color: palette.textSecondary),
             tooltip: 'Quét lại bộ nhớ',
             onPressed: _isLoading ? null : _loadStorageData,
           ),
         ],
       ),
       body: _isLoading
-          ? const Center(
+          ? Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  CircularProgressIndicator(color: AppTheme.primaryEmerald),
-                  SizedBox(height: 16),
+                  CircularProgressIndicator(color: accent),
+                  const SizedBox(height: 16),
                   Text(
                     'Đang phân tích bộ nhớ ứng dụng...',
-                    style: TextStyle(color: Colors.white70),
+                    style: TextStyle(color: palette.textSecondary),
                   ),
                 ],
               ),
@@ -300,12 +320,12 @@ class _StorageCleanerScreenState extends State<StorageCleanerScreen> {
                                   Icon(
                                     Icons.check_circle_outline_rounded,
                                     size: 64,
-                                    color: Colors.white.withValues(alpha: 0.2),
+                                    color: palette.textMuted.withValues(alpha: 0.35),
                                   ),
                                   const SizedBox(height: 12),
-                                  const Text(
+                                  Text(
                                     'Danh mục này không có tệp nào',
-                                    style: TextStyle(color: Colors.grey, fontSize: 14),
+                                    style: TextStyle(color: palette.textMuted, fontSize: 14),
                                   ),
                                 ],
                               ),
@@ -315,7 +335,7 @@ class _StorageCleanerScreenState extends State<StorageCleanerScreen> {
                                 left: 16,
                                 right: 16,
                                 top: 8,
-                                bottom: 90,
+                                bottom: 96,
                               ),
                               itemCount: filtered.length,
                               itemBuilder: (ctx, index) {
@@ -335,15 +355,18 @@ class _StorageCleanerScreenState extends State<StorageCleanerScreen> {
                     child: Container(
                       padding: const EdgeInsets.all(24),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF1E2029),
-                        borderRadius: BorderRadius.circular(16),
+                        color: palette.surface,
+                        borderRadius: BorderRadius.circular(18),
                       ),
-                      child: const Column(
+                      child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          CircularProgressIndicator(color: AppTheme.primaryEmerald),
-                          SizedBox(height: 16),
-                          Text('Đang dọn dẹp các tệp đã chọn...', style: TextStyle(color: Colors.white)),
+                          CircularProgressIndicator(color: accent),
+                          const SizedBox(height: 16),
+                          Text(
+                            'Đang dọn dẹp các tệp đã chọn...',
+                            style: TextStyle(color: palette.textPrimary),
+                          ),
                         ],
                       ),
                     ),
@@ -354,10 +377,18 @@ class _StorageCleanerScreenState extends State<StorageCleanerScreen> {
   }
 
   Widget _buildOverviewCard() {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.history);
+    final audioColor =
+        palette.isDark ? Colors.lightBlueAccent : const Color(0xFF0284C7);
+    final subColor =
+        palette.isDark ? Colors.amberAccent : const Color(0xFFD97706);
+    final tempColor =
+        palette.isDark ? Colors.orangeAccent : const Color(0xFFEA580C);
+
     final result = _scanResult!;
     final totalBytes = result.totalSizeBytes;
 
-    // Tỉ lệ phần trăm cho visual bar
     final vidPct = totalBytes > 0 ? (result.videoSizeBytes / totalBytes) : 0.0;
     final audPct = totalBytes > 0 ? (result.audioSizeBytes / totalBytes) : 0.0;
     final subPct = totalBytes > 0 ? (result.subtitleSizeBytes / totalBytes) : 0.0;
@@ -367,16 +398,10 @@ class _StorageCleanerScreenState extends State<StorageCleanerScreen> {
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: AppTheme.darkCard,
+        color: palette.surface,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: AppTheme.cardBorder),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.3),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
+        border: Border.all(color: palette.border),
+        boxShadow: palette.cardShadows,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -384,45 +409,53 @@ class _StorageCleanerScreenState extends State<StorageCleanerScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'DUNG LƯỢNG ĐÃ DÙNG',
-                    style: TextStyle(
-                      color: Colors.grey,
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 1,
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'DUNG LƯỢNG ĐÃ DÙNG',
+                      style: TextStyle(
+                        color: palette.textMuted,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 1,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 4),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.baseline,
-                    textBaseline: TextBaseline.alphabetic,
-                    children: [
-                      Text(
-                        result.formattedTotal,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 26,
-                          fontWeight: FontWeight.bold,
+                    const SizedBox(height: 4),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.baseline,
+                      textBaseline: TextBaseline.alphabetic,
+                      children: [
+                        Text(
+                          result.formattedTotal,
+                          style: TextStyle(
+                            color: palette.textPrimary,
+                            fontSize: 26,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        '(${result.items.length} tệp)',
-                        style: const TextStyle(color: Colors.white54, fontSize: 13),
-                      ),
-                    ],
-                  ),
-                ],
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            '(${result.items.length} tệp)',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(color: palette.textMuted, fontSize: 13),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
-              if (result.safeCleanSizeBytes > 0)
+              if (result.safeCleanSizeBytes > 0) ...[
+                const SizedBox(width: 8),
                 ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.primaryEmerald,
-                    foregroundColor: Colors.black,
+                    backgroundColor: accent,
+                    foregroundColor: palette.onColor(accent),
+                    elevation: 0,
                     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   ),
@@ -433,6 +466,7 @@ class _StorageCleanerScreenState extends State<StorageCleanerScreen> {
                     style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                   ),
                 ),
+              ],
             ],
           ),
           const SizedBox(height: 16),
@@ -446,27 +480,27 @@ class _StorageCleanerScreenState extends State<StorageCleanerScreen> {
                 children: [
                   if (vidPct > 0)
                     Expanded(
-                      flex: (vidPct * 1000).toInt(),
-                      child: Container(color: AppTheme.primaryEmerald),
+                      flex: (vidPct * 1000).toInt().clamp(1, 1000),
+                      child: Container(color: accent),
                     ),
                   if (audPct > 0)
                     Expanded(
-                      flex: (audPct * 1000).toInt(),
-                      child: Container(color: Colors.blueAccent),
+                      flex: (audPct * 1000).toInt().clamp(1, 1000),
+                      child: Container(color: audioColor),
                     ),
                   if (subPct > 0)
                     Expanded(
-                      flex: (subPct * 1000).toInt(),
-                      child: Container(color: Colors.amberAccent),
+                      flex: (subPct * 1000).toInt().clamp(1, 1000),
+                      child: Container(color: subColor),
                     ),
                   if (tmpPct > 0)
                     Expanded(
-                      flex: (tmpPct * 1000).toInt(),
-                      child: Container(color: Colors.orangeAccent),
+                      flex: (tmpPct * 1000).toInt().clamp(1, 1000),
+                      child: Container(color: tempColor),
                     ),
                   if (totalBytes == 0)
                     Expanded(
-                      child: Container(color: Colors.white12),
+                      child: Container(color: palette.surfaceAlt),
                     ),
                 ],
               ),
@@ -479,10 +513,10 @@ class _StorageCleanerScreenState extends State<StorageCleanerScreen> {
             spacing: 14,
             runSpacing: 6,
             children: [
-              _buildLegendItem('Video', result.formattedVideo, AppTheme.primaryEmerald),
-              _buildLegendItem('Âm thanh TTS', result.formattedAudio, Colors.blueAccent),
-              _buildLegendItem('Phụ đề SRT', result.formattedSubtitle, Colors.amberAccent),
-              _buildLegendItem('Rác & Tạm', result.formattedTemp, Colors.orangeAccent),
+              _buildLegendItem(palette, 'Video', result.formattedVideo, accent),
+              _buildLegendItem(palette, 'Âm thanh TTS', result.formattedAudio, audioColor),
+              _buildLegendItem(palette, 'Phụ đề SRT', result.formattedSubtitle, subColor),
+              _buildLegendItem(palette, 'Rác & Tạm', result.formattedTemp, tempColor),
             ],
           ),
         ],
@@ -490,7 +524,12 @@ class _StorageCleanerScreenState extends State<StorageCleanerScreen> {
     );
   }
 
-  Widget _buildLegendItem(String label, String sizeStr, Color color) {
+  Widget _buildLegendItem(
+    AppThemePalette palette,
+    String label,
+    String sizeStr,
+    Color color,
+  ) {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -502,11 +541,15 @@ class _StorageCleanerScreenState extends State<StorageCleanerScreen> {
         const SizedBox(width: 5),
         Text(
           '$label: ',
-          style: const TextStyle(color: Colors.white60, fontSize: 11),
+          style: TextStyle(color: palette.textSecondary, fontSize: 11),
         ),
         Text(
           sizeStr,
-          style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+          style: TextStyle(
+            color: palette.textPrimary,
+            fontSize: 11,
+            fontWeight: FontWeight.bold,
+          ),
         ),
       ],
     );
@@ -539,6 +582,8 @@ class _StorageCleanerScreenState extends State<StorageCleanerScreen> {
   }
 
   Widget _buildFilterChip(String label, StorageCategory? cat) {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.history);
     final isSelected = _selectedCategory == cat;
     return InkWell(
       onTap: () => setState(() => _selectedCategory = cat),
@@ -546,16 +591,16 @@ class _StorageCleanerScreenState extends State<StorageCleanerScreen> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
         decoration: BoxDecoration(
-          color: isSelected ? AppTheme.primaryEmerald : const Color(0xFF1E2029),
+          color: isSelected ? accent : palette.surface,
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
-            color: isSelected ? AppTheme.primaryEmerald : Colors.white12,
+            color: isSelected ? accent : palette.border,
           ),
         ),
         child: Text(
           label,
           style: TextStyle(
-            color: isSelected ? Colors.black : Colors.white70,
+            color: isSelected ? palette.onColor(accent) : palette.textSecondary,
             fontSize: 12,
             fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
           ),
@@ -565,24 +610,29 @@ class _StorageCleanerScreenState extends State<StorageCleanerScreen> {
   }
 
   Widget _buildFileItemCard(StorageFileItem item, bool isSelected) {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.history);
     Color iconColor;
     IconData iconData;
 
     switch (item.category) {
       case StorageCategory.video:
-        iconColor = AppTheme.primaryEmerald;
+        iconColor = accent;
         iconData = Icons.movie_filter_rounded;
         break;
       case StorageCategory.audio:
-        iconColor = Colors.blueAccent;
+        iconColor =
+            palette.isDark ? Colors.lightBlueAccent : const Color(0xFF0284C7);
         iconData = Icons.record_voice_over_rounded;
         break;
       case StorageCategory.subtitle:
-        iconColor = Colors.amberAccent;
+        iconColor =
+            palette.isDark ? Colors.amberAccent : const Color(0xFFD97706);
         iconData = Icons.subtitles_rounded;
         break;
       case StorageCategory.temp:
-        iconColor = Colors.orangeAccent;
+        iconColor =
+            palette.isDark ? Colors.orangeAccent : const Color(0xFFEA580C);
         iconData = Icons.delete_sweep_rounded;
         break;
     }
@@ -592,12 +642,13 @@ class _StorageCleanerScreenState extends State<StorageCleanerScreen> {
       decoration: BoxDecoration(
         color: isSelected
             ? iconColor.withValues(alpha: 0.12)
-            : const Color(0xFF191B22),
+            : palette.surface,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: isSelected ? iconColor.withValues(alpha: 0.5) : Colors.white10,
+          color: isSelected ? iconColor.withValues(alpha: 0.5) : palette.border,
           width: isSelected ? 1.5 : 1,
         ),
+        boxShadow: palette.cardShadows,
       ),
       child: ListTile(
         contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
@@ -607,8 +658,8 @@ class _StorageCleanerScreenState extends State<StorageCleanerScreen> {
             Checkbox(
               value: isSelected,
               activeColor: iconColor,
-              checkColor: Colors.black,
-              side: const BorderSide(color: Colors.white30, width: 1.5),
+              checkColor: palette.onColor(iconColor),
+              side: BorderSide(color: palette.textMuted, width: 1.5),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
               onChanged: (val) {
                 setState(() {
@@ -624,7 +675,7 @@ class _StorageCleanerScreenState extends State<StorageCleanerScreen> {
               width: 36,
               height: 36,
               decoration: BoxDecoration(
-                color: iconColor.withValues(alpha: 0.15),
+                color: iconColor.withValues(alpha: 0.14),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Icon(iconData, color: iconColor, size: 20),
@@ -633,8 +684,8 @@ class _StorageCleanerScreenState extends State<StorageCleanerScreen> {
         ),
         title: Text(
           item.displayName,
-          style: const TextStyle(
-            color: Colors.white,
+          style: TextStyle(
+            color: palette.textPrimary,
             fontWeight: FontWeight.w600,
             fontSize: 13.5,
           ),
@@ -645,7 +696,7 @@ class _StorageCleanerScreenState extends State<StorageCleanerScreen> {
           padding: const EdgeInsets.only(top: 2),
           child: Text(
             item.description,
-            style: const TextStyle(color: Colors.white54, fontSize: 11),
+            style: TextStyle(color: palette.textMuted, fontSize: 11),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
@@ -656,20 +707,20 @@ class _StorageCleanerScreenState extends State<StorageCleanerScreen> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.08),
+                color: palette.surfaceAlt,
                 borderRadius: BorderRadius.circular(6),
               ),
               child: Text(
                 item.formattedSize,
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: palette.textPrimary,
                   fontWeight: FontWeight.bold,
                   fontSize: 12,
                 ),
               ),
             ),
             IconButton(
-              icon: const Icon(Icons.delete_outline, color: Colors.white38, size: 20),
+              icon: Icon(Icons.delete_outline, color: palette.textMuted, size: 20),
               tooltip: 'Xóa tệp này',
               onPressed: () => _deleteSingleItem(item),
             ),
@@ -689,22 +740,24 @@ class _StorageCleanerScreenState extends State<StorageCleanerScreen> {
   }
 
   Widget _buildBottomActionBar() {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.history);
     final count = _selectedPaths.length;
     final totalSizeStr = StorageScanResult.format(_selectedTotalBytes);
 
     return Positioned(
       left: 16,
       right: 16,
-      bottom: 16,
+      bottom: MediaQuery.paddingOf(context).bottom + 12,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
-          color: const Color(0xFF222430),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.white12),
+          color: palette.surface,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: palette.border),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.5),
+              color: Colors.black.withValues(alpha: palette.isDark ? 0.5 : 0.14),
               blurRadius: 16,
               offset: const Offset(0, 6),
             ),
@@ -719,16 +772,16 @@ class _StorageCleanerScreenState extends State<StorageCleanerScreen> {
                 children: [
                   Text(
                     'Đã chọn $count tệp',
-                    style: const TextStyle(
-                      color: Colors.white,
+                    style: TextStyle(
+                      color: palette.textPrimary,
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
                   Text(
                     'Giải phóng $totalSizeStr',
-                    style: const TextStyle(
-                      color: AppTheme.primaryEmerald,
+                    style: TextStyle(
+                      color: accent,
                       fontSize: 14,
                       fontWeight: FontWeight.bold,
                     ),
@@ -740,8 +793,9 @@ class _StorageCleanerScreenState extends State<StorageCleanerScreen> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.redAccent,
                 foregroundColor: Colors.white,
+                elevation: 0,
                 padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
               icon: const Icon(Icons.delete_forever, size: 18),
               onPressed: _confirmDeleteSelected,

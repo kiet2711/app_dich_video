@@ -7,7 +7,7 @@ import '../theme/app_theme.dart';
 
 class VoiceSelectorSheet extends StatefulWidget {
   final String currentVoiceType;
-  final Color accentColor;
+  final Color? accentColor;
   final String title;
   final bool allowPreview;
   final String? initialPreviewText;
@@ -15,7 +15,7 @@ class VoiceSelectorSheet extends StatefulWidget {
   const VoiceSelectorSheet({
     super.key,
     required this.currentVoiceType,
-    this.accentColor = AppColors.primaryEmerald,
+    this.accentColor,
     this.title = 'Chọn Giọng Lồng Tiếng AI',
     this.allowPreview = false,
     this.initialPreviewText,
@@ -24,7 +24,7 @@ class VoiceSelectorSheet extends StatefulWidget {
   static Future<VoiceItem?> show(
     BuildContext context, {
     required String currentVoiceType,
-    Color accentColor = AppColors.primaryEmerald,
+    Color? accentColor,
     String title = 'Chọn Giọng Lồng Tiếng AI',
     bool allowPreview = false,
     String? initialPreviewText,
@@ -120,6 +120,15 @@ class _VoiceSelectorSheetState extends State<VoiceSelectorSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = AppThemePalette.of(context);
+    final accent = widget.accentColor ?? palette.accentFor(AppTabId.studio);
+    final reviewColor =
+        palette.isDark ? Colors.amber : const Color(0xFFD97706);
+    final maleColor =
+        palette.isDark ? Colors.lightBlueAccent : const Color(0xFF0284C7);
+    final femaleColor =
+        palette.isDark ? Colors.pinkAccent : const Color(0xFFDB2777);
+
     final filteredVoices = _getFilteredVoices();
     final screenHeight = MediaQuery.of(context).size.height;
 
@@ -127,9 +136,9 @@ class _VoiceSelectorSheetState extends State<VoiceSelectorSheet> {
       constraints: BoxConstraints(
         maxHeight: screenHeight * 0.85,
       ),
-      decoration: const BoxDecoration(
-        color: AppColors.darkSurface,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       ),
       child: SafeArea(
         top: false,
@@ -144,7 +153,7 @@ class _VoiceSelectorSheetState extends State<VoiceSelectorSheet> {
                 width: 40,
                 height: 4,
                 decoration: BoxDecoration(
-                  color: AppColors.cardBorder,
+                  color: palette.border,
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
@@ -158,12 +167,12 @@ class _VoiceSelectorSheetState extends State<VoiceSelectorSheet> {
                   Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      color: widget.accentColor.withValues(alpha: 0.15),
+                      color: accent.withValues(alpha: 0.14),
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Icon(
                       Icons.record_voice_over_rounded,
-                      color: widget.accentColor,
+                      color: accent,
                       size: 20,
                     ),
                   ),
@@ -174,8 +183,8 @@ class _VoiceSelectorSheetState extends State<VoiceSelectorSheet> {
                       children: [
                         Text(
                           widget.title,
-                          style: const TextStyle(
-                            color: AppColors.textPrimary,
+                          style: TextStyle(
+                            color: palette.textPrimary,
                             fontSize: 16,
                             fontWeight: FontWeight.bold,
                           ),
@@ -183,7 +192,7 @@ class _VoiceSelectorSheetState extends State<VoiceSelectorSheet> {
                         Text(
                           '21 giọng đọc CapCut tiếng Việt chuẩn cảm xúc',
                           style: TextStyle(
-                            color: AppColors.textMuted,
+                            color: palette.textMuted,
                             fontSize: 11,
                           ),
                         ),
@@ -192,7 +201,7 @@ class _VoiceSelectorSheetState extends State<VoiceSelectorSheet> {
                   ),
                   IconButton(
                     onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close_rounded, color: AppColors.textSecondary),
+                    icon: Icon(Icons.close_rounded, color: palette.textSecondary),
                     tooltip: 'Đóng',
                   ),
                 ],
@@ -205,21 +214,21 @@ class _VoiceSelectorSheetState extends State<VoiceSelectorSheet> {
               child: Container(
                 height: 38,
                 decoration: BoxDecoration(
-                  color: AppColors.darkSurfaceVariant,
+                  color: palette.surfaceAlt,
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: AppColors.cardBorder),
+                  border: Border.all(color: palette.border),
                 ),
                 child: Row(
                   children: [
                     const SizedBox(width: 10),
-                    const Icon(Icons.search_rounded, size: 18, color: AppColors.textMuted),
+                    Icon(Icons.search_rounded, size: 18, color: palette.textMuted),
                     const SizedBox(width: 8),
                     Expanded(
                       child: TextField(
-                        style: const TextStyle(fontSize: 12, color: AppColors.textPrimary),
-                        decoration: const InputDecoration(
+                        style: TextStyle(fontSize: 12, color: palette.textPrimary),
+                        decoration: InputDecoration(
                           hintText: 'Tìm giọng theo tên hoặc phong cách...',
-                          hintStyle: TextStyle(fontSize: 12, color: AppColors.textMuted),
+                          hintStyle: TextStyle(fontSize: 12, color: palette.textMuted),
                           border: InputBorder.none,
                           isDense: true,
                           contentPadding: EdgeInsets.zero,
@@ -238,9 +247,9 @@ class _VoiceSelectorSheetState extends State<VoiceSelectorSheet> {
                             _searchQuery = '';
                           });
                         },
-                        child: const Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 10),
-                          child: Icon(Icons.close_rounded, size: 16, color: AppColors.textMuted),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 10),
+                          child: Icon(Icons.close_rounded, size: 16, color: palette.textMuted),
                         ),
                       ),
                   ],
@@ -255,10 +264,10 @@ class _VoiceSelectorSheetState extends State<VoiceSelectorSheet> {
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
-                    color: AppColors.darkSurfaceVariant,
+                    color: palette.surfaceAlt,
                     borderRadius: BorderRadius.circular(10),
                     border: Border.all(
-                      color: widget.accentColor.withValues(alpha: 0.35),
+                      color: accent.withValues(alpha: 0.35),
                       width: 1,
                     ),
                   ),
@@ -271,7 +280,7 @@ class _VoiceSelectorSheetState extends State<VoiceSelectorSheet> {
                           Icon(
                             Icons.record_voice_over_rounded,
                             size: 14,
-                            color: widget.accentColor,
+                            color: accent,
                           ),
                           const SizedBox(width: 6),
                           Text(
@@ -279,7 +288,7 @@ class _VoiceSelectorSheetState extends State<VoiceSelectorSheet> {
                             style: TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.bold,
-                              color: widget.accentColor,
+                              color: accent,
                             ),
                           ),
                           const Spacer(),
@@ -292,11 +301,11 @@ class _VoiceSelectorSheetState extends State<VoiceSelectorSheet> {
                                       VoicePreviewHelper.defaultPreviewText;
                                 });
                               },
-                              child: const Text(
+                              child: Text(
                                 'Đặt lại câu mẫu',
                                 style: TextStyle(
                                   fontSize: 10,
-                                  color: Colors.white70,
+                                  color: palette.textSecondary,
                                   decoration: TextDecoration.underline,
                                 ),
                               ),
@@ -306,14 +315,14 @@ class _VoiceSelectorSheetState extends State<VoiceSelectorSheet> {
                       const SizedBox(height: 4),
                       TextField(
                         controller: _previewController,
-                        style: const TextStyle(fontSize: 12, color: Colors.white),
-                        decoration: const InputDecoration(
+                        style: TextStyle(fontSize: 12, color: palette.textPrimary),
+                        decoration: InputDecoration(
                           border: InputBorder.none,
                           isDense: true,
                           contentPadding: EdgeInsets.zero,
                           hintText: 'Nhập câu tiếng Việt muốn nghe thử...',
                           hintStyle:
-                              TextStyle(fontSize: 12, color: AppColors.textMuted),
+                              TextStyle(fontSize: 12, color: palette.textMuted),
                         ),
                         maxLines: 2,
                         minLines: 1,
@@ -330,18 +339,18 @@ class _VoiceSelectorSheetState extends State<VoiceSelectorSheet> {
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
               child: Row(
                 children: [
-                  _buildCategoryChip('all', 'Tất cả (${VoicePresets.vietnameseVoices.length})'),
+                  _buildCategoryChip(palette, accent, 'all', 'Tất cả (${VoicePresets.vietnameseVoices.length})'),
                   const SizedBox(width: 8),
-                  _buildCategoryChip('female', 'Giọng Nữ'),
+                  _buildCategoryChip(palette, accent, 'female', 'Giọng Nữ'),
                   const SizedBox(width: 8),
-                  _buildCategoryChip('male', 'Giọng Nam'),
+                  _buildCategoryChip(palette, accent, 'male', 'Giọng Nam'),
                   const SizedBox(width: 8),
-                  _buildCategoryChip('review', 'Review Phim'),
+                  _buildCategoryChip(palette, accent, 'review', 'Review Phim'),
                 ],
               ),
             ),
 
-            const Divider(color: AppColors.cardBorder, height: 1),
+            Divider(color: palette.border, height: 1),
 
             // Voices List
             Flexible(
@@ -351,7 +360,7 @@ class _VoiceSelectorSheetState extends State<VoiceSelectorSheet> {
                       child: Center(
                         child: Text(
                           'Không tìm thấy giọng đọc phù hợp.',
-                          style: TextStyle(color: AppColors.textMuted, fontSize: 13),
+                          style: TextStyle(color: palette.textMuted, fontSize: 13),
                         ),
                       ),
                     )
@@ -364,6 +373,11 @@ class _VoiceSelectorSheetState extends State<VoiceSelectorSheet> {
                         final isSelected = voice.voiceType == _selectedVoiceType;
                         final isMale = _isMaleVoice(voice);
                         final isReview = _isReviewPhimVoice(voice);
+                        final badgeColor = isSelected
+                            ? accent
+                            : (isReview
+                                ? reviewColor
+                                : (isMale ? maleColor : femaleColor));
 
                         return InkWell(
                           onTap: () {
@@ -374,16 +388,16 @@ class _VoiceSelectorSheetState extends State<VoiceSelectorSheet> {
                             });
                             Navigator.pop(context, voice);
                           },
-                          borderRadius: BorderRadius.circular(12),
+                          borderRadius: BorderRadius.circular(14),
                           child: Container(
                             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
                             decoration: BoxDecoration(
                               color: isSelected
-                                  ? widget.accentColor.withValues(alpha: 0.12)
-                                  : AppColors.darkSurfaceVariant,
-                              borderRadius: BorderRadius.circular(12),
+                                  ? accent.withValues(alpha: 0.12)
+                                  : palette.surfaceAlt,
+                              borderRadius: BorderRadius.circular(14),
                               border: Border.all(
-                                color: isSelected ? widget.accentColor : AppColors.cardBorder,
+                                color: isSelected ? accent : palette.border,
                                 width: isSelected ? 1.5 : 1,
                               ),
                             ),
@@ -394,23 +408,14 @@ class _VoiceSelectorSheetState extends State<VoiceSelectorSheet> {
                                   width: 36,
                                   height: 36,
                                   decoration: BoxDecoration(
-                                    color: (isSelected
-                                            ? widget.accentColor
-                                            : (isReview
-                                                ? Colors.amber
-                                                : (isMale ? Colors.blueAccent : Colors.pinkAccent)))
-                                        .withValues(alpha: 0.15),
+                                    color: badgeColor.withValues(alpha: 0.14),
                                     shape: BoxShape.circle,
                                   ),
                                   child: Icon(
                                     isReview
                                         ? Icons.movie_filter_rounded
                                         : (isMale ? Icons.face_rounded : Icons.face_3_rounded),
-                                    color: isSelected
-                                        ? widget.accentColor
-                                        : (isReview
-                                            ? Colors.amber
-                                            : (isMale ? Colors.blueAccent : Colors.pinkAccent)),
+                                    color: badgeColor,
                                     size: 20,
                                   ),
                                 ),
@@ -428,8 +433,8 @@ class _VoiceSelectorSheetState extends State<VoiceSelectorSheet> {
                                               voice.displayName,
                                               style: TextStyle(
                                                 color: isSelected
-                                                    ? widget.accentColor
-                                                    : AppColors.textPrimary,
+                                                    ? accent
+                                                    : palette.textPrimary,
                                                 fontSize: 14,
                                                 fontWeight: FontWeight.bold,
                                               ),
@@ -443,16 +448,16 @@ class _VoiceSelectorSheetState extends State<VoiceSelectorSheet> {
                                               padding: const EdgeInsets.symmetric(
                                                   horizontal: 5, vertical: 1),
                                               decoration: BoxDecoration(
-                                                color: Colors.amber.withValues(alpha: 0.2),
+                                                color: reviewColor.withValues(alpha: 0.16),
                                                 borderRadius: BorderRadius.circular(4),
                                                 border: Border.all(
-                                                    color: Colors.amber.withValues(alpha: 0.4),
+                                                    color: reviewColor.withValues(alpha: 0.4),
                                                     width: 0.8),
                                               ),
-                                              child: const Text(
+                                              child: Text(
                                                 'Phim',
                                                 style: TextStyle(
-                                                  color: Colors.amber,
+                                                  color: reviewColor,
                                                   fontSize: 9,
                                                   fontWeight: FontWeight.bold,
                                                 ),
@@ -466,8 +471,8 @@ class _VoiceSelectorSheetState extends State<VoiceSelectorSheet> {
                                         voice.description.isNotEmpty
                                             ? voice.description
                                             : 'Giọng đọc CapCut tự nhiên',
-                                        style: const TextStyle(
-                                          color: AppColors.textMuted,
+                                        style: TextStyle(
+                                          color: palette.textMuted,
                                           fontSize: 11,
                                         ),
                                         maxLines: 1,
@@ -508,16 +513,14 @@ class _VoiceSelectorSheetState extends State<VoiceSelectorSheet> {
                                             ),
                                             decoration: BoxDecoration(
                                               color: isThisVoice
-                                                  ? widget.accentColor
-                                                      .withValues(alpha: 0.22)
-                                                  : Colors.white.withValues(
-                                                      alpha: 0.06),
+                                                  ? accent.withValues(alpha: 0.18)
+                                                  : palette.surface,
                                               borderRadius:
                                                   BorderRadius.circular(14),
                                               border: Border.all(
                                                 color: isThisVoice
-                                                    ? widget.accentColor
-                                                    : Colors.white12,
+                                                    ? accent
+                                                    : palette.border,
                                                 width: 1,
                                               ),
                                             ),
@@ -531,7 +534,7 @@ class _VoiceSelectorSheetState extends State<VoiceSelectorSheet> {
                                                     child:
                                                         CircularProgressIndicator(
                                                       strokeWidth: 2,
-                                                      color: widget.accentColor,
+                                                      color: accent,
                                                     ),
                                                   )
                                                 else
@@ -542,8 +545,8 @@ class _VoiceSelectorSheetState extends State<VoiceSelectorSheet> {
                                                             .volume_up_rounded,
                                                     size: 15,
                                                     color: isThisVoice
-                                                        ? widget.accentColor
-                                                        : Colors.white70,
+                                                        ? accent
+                                                        : palette.textSecondary,
                                                   ),
                                                 const SizedBox(width: 4),
                                                 Text(
@@ -555,8 +558,8 @@ class _VoiceSelectorSheetState extends State<VoiceSelectorSheet> {
                                                     fontWeight:
                                                         FontWeight.bold,
                                                     color: isThisVoice
-                                                        ? widget.accentColor
-                                                        : Colors.white70,
+                                                        ? accent
+                                                        : palette.textSecondary,
                                                   ),
                                                 ),
                                               ],
@@ -572,13 +575,13 @@ class _VoiceSelectorSheetState extends State<VoiceSelectorSheet> {
                                 if (isSelected)
                                   Icon(
                                     Icons.check_circle_rounded,
-                                    color: widget.accentColor,
+                                    color: accent,
                                     size: 22,
                                   )
                                 else
                                   Icon(
                                     Icons.radio_button_unchecked_rounded,
-                                    color: AppColors.textMuted.withValues(alpha: 0.4),
+                                    color: palette.textMuted.withValues(alpha: 0.45),
                                     size: 20,
                                   ),
                               ],
@@ -594,7 +597,12 @@ class _VoiceSelectorSheetState extends State<VoiceSelectorSheet> {
     );
   }
 
-  Widget _buildCategoryChip(String catKey, String label) {
+  Widget _buildCategoryChip(
+    AppThemePalette palette,
+    Color accent,
+    String catKey,
+    String label,
+  ) {
     final isSelected = _selectedCategory == catKey;
     return InkWell(
       onTap: () {
@@ -608,18 +616,18 @@ class _VoiceSelectorSheetState extends State<VoiceSelectorSheet> {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
           color: isSelected
-              ? widget.accentColor.withValues(alpha: 0.2)
-              : AppColors.darkSurfaceVariant,
+              ? accent.withValues(alpha: palette.isDark ? 0.2 : 0.14)
+              : palette.surfaceAlt,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: isSelected ? widget.accentColor : AppColors.cardBorder,
+            color: isSelected ? accent : palette.border,
             width: isSelected ? 1.2 : 1,
           ),
         ),
         child: Text(
           label,
           style: TextStyle(
-            color: isSelected ? widget.accentColor : AppColors.textSecondary,
+            color: isSelected ? accent : palette.textSecondary,
             fontSize: 11.5,
             fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
           ),

@@ -409,7 +409,7 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('✅ Đã tải xong video Douyin ($sizeMb MB)!'),
-          backgroundColor: AppColors.primaryEmerald,
+          backgroundColor: AppThemePalette.of(context).accentFor(AppTabId.studio),
         ),
       );
     } catch (e) {
@@ -941,7 +941,8 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             action: _pendingDraft != null
                 ? SnackBarAction(
                     label: 'Tiếp tục ngay',
-                    textColor: AppColors.primaryEmerald,
+                    textColor: AppThemePalette.of(context)
+                        .accentFor(AppTabId.studio),
                     onPressed: () => _resumeDraft(_pendingDraft!),
                   )
                 : null,
@@ -972,29 +973,26 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Widget _buildResumeDraftCard(TranslationCheckpointDraft draft) {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.studio);
     final percent = draft.progressPercent;
     return Container(
       decoration: BoxDecoration(
+        color: palette.surface,
         gradient: LinearGradient(
           colors: [
-            AppColors.primaryEmerald.withValues(alpha: 0.15),
-            AppColors.darkSurfaceVariant,
+            accent.withValues(alpha: palette.isDark ? 0.18 : 0.10),
+            palette.surface,
           ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(20),
         border: Border.all(
-          color: AppColors.primaryEmerald.withValues(alpha: 0.4),
-          width: 1.5,
+          color: accent.withValues(alpha: 0.42),
+          width: 1.3,
         ),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.primaryEmerald.withValues(alpha: 0.08),
-            blurRadius: 16,
-            offset: const Offset(0, 4),
-          ),
-        ],
+        boxShadow: palette.cardShadows,
       ),
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -1005,28 +1003,28 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: AppColors.primaryEmerald.withValues(alpha: 0.2),
+                  color: accent.withValues(alpha: 0.16),
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.history_toggle_off,
-                  color: AppColors.primaryEmerald,
+                  color: accent,
                   size: 20,
                 ),
               ),
               const SizedBox(width: 10),
-              const Expanded(
+              Expanded(
                 child: Text(
                   'Tiếp tục phiên dịch dang dở',
                   style: TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.bold,
-                    color: Colors.white,
+                    color: palette.textPrimary,
                   ),
                 ),
               ),
               IconButton(
-                icon: const Icon(Icons.close, color: AppColors.textMuted, size: 20),
+                icon: Icon(Icons.close, color: palette.textMuted, size: 20),
                 tooltip: 'Bỏ qua',
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(),
@@ -1039,10 +1037,10 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             draft.title.isEmpty ? 'Video chưa hoàn thành' : draft.title,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w600,
-              color: AppColors.textPrimary,
+              color: palette.textPrimary,
             ),
           ),
           const SizedBox(height: 6),
@@ -1051,17 +1049,17 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             children: [
               Text(
                 'Đã dịch: ${draft.translatedCount}/${draft.totalItems} câu',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 12,
-                  color: AppColors.textSecondary,
+                  color: palette.textSecondary,
                 ),
               ),
               Text(
                 '$percent%',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.bold,
-                  color: AppColors.primaryEmerald,
+                  color: accent,
                 ),
               ),
             ],
@@ -1071,10 +1069,8 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             borderRadius: BorderRadius.circular(4),
             child: LinearProgressIndicator(
               value: draft.progress,
-              backgroundColor: Colors.white.withValues(alpha: 0.08),
-              valueColor: const AlwaysStoppedAnimation<Color>(
-                AppColors.primaryEmerald,
-              ),
+              backgroundColor: accent.withValues(alpha: 0.14),
+              valueColor: AlwaysStoppedAnimation<Color>(accent),
               minHeight: 6,
             ),
           ),
@@ -1084,11 +1080,11 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               Expanded(
                 child: ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primaryEmerald,
-                    foregroundColor: Colors.black,
-                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    backgroundColor: accent,
+                    foregroundColor: palette.onColor(accent),
+                    padding: const EdgeInsets.symmetric(vertical: 11),
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
+                      borderRadius: BorderRadius.circular(12),
                     ),
                     elevation: 0,
                   ),
@@ -1106,7 +1102,7 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               const SizedBox(width: 8),
               TextButton(
                 style: TextButton.styleFrom(
-                  foregroundColor: AppColors.textSecondary,
+                  foregroundColor: palette.textSecondary,
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 ),
                 onPressed: () => _discardDraft(draft),
@@ -1120,43 +1116,47 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Widget _buildOfflineDownloadToggle() {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.studio);
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFF1E202A),
-        borderRadius: BorderRadius.circular(8),
+        color: palette.surfaceAlt,
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(
           color: _downloadBilibiliVideo
-              ? AppColors.primaryEmerald.withValues(alpha: 0.6)
-              : const Color(0xFF2C3E32),
+              ? accent.withValues(alpha: 0.55)
+              : palette.border,
         ),
       ),
       child: SwitchListTile(
         dense: true,
         contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
-        title: const Row(
+        title: Row(
           children: [
             Icon(
               Icons.download_for_offline,
               size: 16,
-              color: AppColors.primaryEmerald,
+              color: accent,
             ),
-            SizedBox(width: 8),
-            Text(
-              'Tải video về máy để xem offline',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Tải video về máy để xem offline',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: palette.textPrimary,
+                ),
               ),
             ),
           ],
         ),
-        subtitle: const Text(
+        subtitle: Text(
           'Lưu vào cache máy để phát mượt mà 100%, không bị xoay vòng hoặc giật lag mạng.',
-          style: TextStyle(fontSize: 11, color: Colors.white60),
+          style: TextStyle(fontSize: 11, color: palette.textSecondary),
         ),
         value: _downloadBilibiliVideo,
-        activeTrackColor: AppColors.primaryEmerald,
+        activeTrackColor: accent,
         onChanged: (val) {
           setState(() {
             _downloadBilibiliVideo = val;
@@ -1168,6 +1168,8 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Widget _buildDouyinDetailsCard(DouyinVideoDetails details) {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.studio);
     final resText = (details.width > 0 && details.height > 0)
         ? '${details.width}x${details.height}'
         : 'MP4';
@@ -1181,16 +1183,16 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
-                color: const Color(0xFF1E202A),
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: const Color(0xFF2C3E32)),
+                color: accent.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: accent.withValues(alpha: 0.3)),
               ),
               child: Text(
                 '🎵 Douyin • Không watermark',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
-                  color: AppColors.primaryEmerald,
+                  color: accent,
                 ),
               ),
             ),
@@ -1198,25 +1200,25 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF1E202A),
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: const Color(0xFF2C3E32)),
+                  color: palette.surfaceAlt,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: palette.border),
                 ),
                 child: Text(
                   '@${details.author}',
-                  style: const TextStyle(fontSize: 11, color: Colors.white70),
+                  style: TextStyle(fontSize: 11, color: palette.textSecondary),
                 ),
               ),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
-                color: const Color(0xFF1E202A),
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: const Color(0xFF2C3E32)),
+                color: palette.surfaceAlt,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: palette.border),
               ),
               child: Text(
                 '$resText • ID: ${details.awemeId}',
-                style: const TextStyle(fontSize: 11, color: Colors.white70),
+                style: TextStyle(fontSize: 11, color: palette.textSecondary),
               ),
             ),
           ],
@@ -1229,27 +1231,27 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             width: double.infinity,
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: const Color(0xFF1E202A),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0xFF2C3E32)),
+              color: palette.surfaceAlt,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: palette.border),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Row(
+                Row(
                   children: [
                     Icon(
                       Icons.high_quality,
                       size: 16,
-                      color: AppColors.primaryEmerald,
+                      color: accent,
                     ),
-                    SizedBox(width: 8),
+                    const SizedBox(width: 8),
                     Text(
                       'Chất lượng MP4 Douyin:',
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
-                        color: Colors.white,
+                        color: palette.textPrimary,
                       ),
                     ),
                   ],
@@ -1268,13 +1270,15 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                               ? FontWeight.bold
                               : FontWeight.normal,
                           color: _selectedDouyinQuality == 'auto'
-                              ? Colors.black
-                              : Colors.white70,
+                              ? palette.onColor(accent)
+                              : palette.textSecondary,
                         ),
                       ),
                       selected: _selectedDouyinQuality == 'auto',
-                      selectedColor: AppColors.primaryEmerald,
-                      backgroundColor: const Color(0xFF14151B),
+                      selectedColor: accent,
+                      backgroundColor: palette.surface,
+                      side: BorderSide(color: palette.border),
+                      showCheckmark: false,
                       onSelected: (selected) {
                         if (selected) {
                           setState(() => _selectedDouyinQuality = 'auto');
@@ -1291,12 +1295,16 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             fontWeight: isSel
                                 ? FontWeight.bold
                                 : FontWeight.normal,
-                            color: isSel ? Colors.black : Colors.white70,
+                            color: isSel
+                                ? palette.onColor(accent)
+                                : palette.textSecondary,
                           ),
                         ),
                         selected: isSel,
-                        selectedColor: AppColors.primaryEmerald,
-                        backgroundColor: const Color(0xFF14151B),
+                        selectedColor: accent,
+                        backgroundColor: palette.surface,
+                        side: BorderSide(color: palette.border),
+                        showCheckmark: false,
                         onSelected: (selected) {
                           if (selected) {
                             setState(() => _selectedDouyinQuality = q.id);
@@ -1314,17 +1322,15 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         if (_isDownloadingDouyin) ...[
           LinearProgressIndicator(
             value: _douyinDownloadProgress > 0 ? _douyinDownloadProgress : null,
-            backgroundColor: const Color(0xFF1E202A),
-            valueColor: const AlwaysStoppedAnimation<Color>(
-              AppColors.primaryEmerald,
-            ),
+            backgroundColor: palette.surfaceAlt,
+            valueColor: AlwaysStoppedAnimation<Color>(accent),
             minHeight: 6,
           ),
           if (_douyinDownloadMessage != null) ...[
             const SizedBox(height: 6),
             Text(
               _douyinDownloadMessage!,
-              style: const TextStyle(fontSize: 11, color: Colors.white70),
+              style: TextStyle(fontSize: 11, color: palette.textSecondary),
             ),
           ],
         ] else
@@ -1333,12 +1339,12 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               Expanded(
                 child: OutlinedButton.icon(
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.primaryEmerald,
+                    foregroundColor: accent,
                     side: BorderSide(
-                      color: AppColors.primaryEmerald.withValues(alpha: 0.6),
+                      color: accent.withValues(alpha: 0.6),
                     ),
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: BorderRadius.circular(10),
                     ),
                     padding: const EdgeInsets.symmetric(vertical: 10),
                   ),
@@ -1383,8 +1389,8 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             style: TextStyle(
               fontSize: 11,
               color: _douyinDownloadMessage!.startsWith('❌')
-                  ? const Color(0xFFFFB74D)
-                  : AppColors.primaryEmerald,
+                  ? const Color(0xFFD97706)
+                  : accent,
             ),
           ),
         ],
@@ -1394,29 +1400,38 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.studio);
+    final secondary = palette.secondaryFor(AppTabId.studio);
+    final bg = palette.backgroundFor(AppTabId.studio);
+    final onAccent = palette.onColor(accent);
+    final hasFilePicked =
+        _selectedVideoPath != null &&
+        !NetworkHeaderHelper.isRemoteUrl(_selectedVideoPath!);
+
     return Scaffold(
-      backgroundColor: AppColors.darkBackground,
+      backgroundColor: bg,
       appBar: widget.hideAppBar
           ? null
           : AppBar(
-              backgroundColor: AppColors.darkBackground,
+              backgroundColor: bg,
               elevation: 0,
-              title: const Row(
+              title: Row(
                 children: [
-                  Icon(Icons.movie, color: AppColors.primaryEmerald, size: 26),
-                  SizedBox(width: 10),
+                  Icon(Icons.movie_rounded, color: accent, size: 26),
+                  const SizedBox(width: 10),
                   Text(
                     'CapSub AI Studio',
                     style: TextStyle(
                       fontWeight: FontWeight.bold,
-                      color: Colors.white,
+                      color: palette.textPrimary,
                     ),
                   ),
                 ],
               ),
               actions: [
                 IconButton(
-                  icon: const Icon(Icons.settings, color: Colors.white),
+                  icon: Icon(Icons.settings_rounded, color: palette.textPrimary),
                   tooltip: 'Cài đặt',
                   onPressed: () {
                     if (widget.onNavigateToSettings != null) {
@@ -1432,12 +1447,16 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ],
             ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 20),
+        physics: const BouncingScrollPhysics(),
+        padding: EdgeInsets.fromLTRB(
+          16,
+          4,
+          16,
+          palette.bottomContentPadding(extra: 18),
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const SizedBox(height: 12),
-
             // CARD KHÔI PHỤC PHIÊN DỊCH DANG DỞ
             if (_pendingDraft != null) ...[
               _buildResumeDraftCard(_pendingDraft!),
@@ -1447,9 +1466,10 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             // 1. NGUỒN VIDEO: TABS CHUYỂN ĐỔI (FILE MÁY / NHẬP LINK)
             Container(
               decoration: BoxDecoration(
-                color: AppColors.darkSurface,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.cardBorder),
+                color: palette.surface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: palette.border),
+                boxShadow: palette.cardShadows,
               ),
               padding: const EdgeInsets.all(4),
               child: Row(
@@ -1472,33 +1492,43 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           }
                         });
                       },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(vertical: 10),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 180),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 10,
+                        ),
                         decoration: BoxDecoration(
                           color: _inputMode == 0
-                              ? AppColors.primaryEmerald
+                              ? accent.withValues(alpha: 0.14)
                               : Colors.transparent,
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(12),
                         ),
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             Icon(
-                              Icons.video_file,
-                              size: 18,
+                              Icons.video_file_rounded,
+                              size: 17,
                               color: _inputMode == 0
-                                  ? Colors.black
-                                  : Colors.grey,
+                                  ? accent
+                                  : palette.textSecondary,
                             ),
                             const SizedBox(width: 6),
-                            Text(
-                              '📁 File Trên Máy',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.bold,
-                                color: _inputMode == 0
-                                    ? Colors.black
-                                    : Colors.grey,
+                            Flexible(
+                              child: Text(
+                                'File Trên Máy',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: _inputMode == 0
+                                      ? FontWeight.w800
+                                      : FontWeight.w600,
+                                  color: _inputMode == 0
+                                      ? accent
+                                      : palette.textSecondary,
+                                ),
                               ),
                             ),
                           ],
@@ -1506,7 +1536,7 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       ),
                     ),
                   ),
-                  const SizedBox(width: 6),
+                  const SizedBox(width: 4),
                   Expanded(
                     child: GestureDetector(
                       onTap: () {
@@ -1525,33 +1555,43 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           }
                         });
                       },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(vertical: 10),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 180),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 10,
+                        ),
                         decoration: BoxDecoration(
                           color: _inputMode == 1
-                              ? AppColors.primaryEmerald
+                              ? accent.withValues(alpha: 0.14)
                               : Colors.transparent,
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(12),
                         ),
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             Icon(
-                              Icons.link,
-                              size: 18,
+                              Icons.link_rounded,
+                              size: 17,
                               color: _inputMode == 1
-                                  ? Colors.black
-                                  : Colors.grey,
+                                  ? accent
+                                  : palette.textSecondary,
                             ),
                             const SizedBox(width: 6),
-                            Text(
-                              '🔗 Nhập Link Video',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.bold,
-                                color: _inputMode == 1
-                                    ? Colors.black
-                                    : Colors.grey,
+                            Flexible(
+                              child: Text(
+                                'Nhập Link Video',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: _inputMode == 1
+                                      ? FontWeight.w800
+                                      : FontWeight.w600,
+                                  color: _inputMode == 1
+                                      ? accent
+                                      : palette.textSecondary,
+                                ),
                               ),
                             ),
                           ],
@@ -1564,47 +1604,119 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ),
             const SizedBox(height: 14),
 
-            // 2. NỘI DUNG CHỌN NGUỒN VIDEO
+            // 2. NỘI DUNG CHỌN NGUỒN VIDEO (HERO CREATIVE CARD)
             if (_inputMode == 0)
-              // CARD CHỌN FILE TỪ THIẾT BỊ
               InkWell(
                 onTap: _pickFile,
-                borderRadius: BorderRadius.circular(16),
+                borderRadius: BorderRadius.circular(24),
                 child: Container(
-                  padding: const EdgeInsets.all(24),
+                  padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
-                    color: AppColors.darkSurface,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: AppColors.cardBorder),
+                    gradient: LinearGradient(
+                      colors: [accent, secondary],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(24),
+                    boxShadow: [
+                      BoxShadow(
+                        color: accent.withValues(alpha: 0.36),
+                        blurRadius: 22,
+                        offset: const Offset(0, 10),
+                      ),
+                    ],
                   ),
-                  child: Column(
+                  child: Stack(
+                    clipBehavior: Clip.none,
                     children: [
-                      const Icon(
-                        Icons.video_file,
-                        size: 48,
-                        color: AppColors.primaryEmerald,
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        _selectedVideoPath != null
-                            ? _fileName
-                            : 'Chạm để chọn Video hoặc Âm thanh',
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                          color: Colors.white,
+                      Positioned(
+                        right: -28,
+                        top: -28,
+                        child: Container(
+                          width: 96,
+                          height: 96,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.white.withValues(alpha: 0.14),
+                          ),
                         ),
                       ),
-                      const SizedBox(height: 4),
-                      Text(
-                        _selectedVideoPath != null
-                            ? '⏱️ ${_formatDuration(_fileDurationMs)}  •  💾 $_fileSizeMb'
-                            : 'Hỗ trợ MP4, MKV, MOV, MP3, M4A',
-                        style: const TextStyle(
-                          fontSize: 13,
-                          color: Colors.grey,
-                        ),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 9,
+                                    vertical: 3,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withValues(alpha: 0.22),
+                                    borderRadius: BorderRadius.circular(20),
+                                  ),
+                                  child: Text(
+                                    hasFilePicked ? 'ĐÃ SẴN SÀNG' : 'DỰ ÁN MỚI',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: 0.8,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                Text(
+                                  hasFilePicked
+                                      ? _fileName
+                                      : 'Chọn Video từ máy',
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 17,
+                                    color: Colors.white,
+                                    height: 1.25,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  hasFilePicked
+                                      ? '⏱️ ${_formatDuration(_fileDurationMs)}  •  💾 $_fileSizeMb'
+                                      : 'Hỗ trợ MP4, MKV, MOV, MP3, M4A',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.white.withValues(alpha: 0.88),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 14),
+                          Container(
+                            width: 50,
+                            height: 50,
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(18),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.14),
+                                  blurRadius: 12,
+                                  offset: const Offset(0, 4),
+                                ),
+                              ],
+                            ),
+                            child: Icon(
+                              hasFilePicked
+                                  ? Icons.check_rounded
+                                  : Icons.add_rounded,
+                              color: accent,
+                              size: 28,
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -1613,34 +1725,43 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             else
               // CARD NHẬP LINK VIDEO ONLINE
               Container(
-                padding: const EdgeInsets.all(18),
+                padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: AppColors.darkSurface,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: AppColors.cardBorder),
+                  color: palette.surface,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: palette.border),
+                  boxShadow: palette.cardShadows,
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Row(
+                    Row(
                       children: [
-                        Icon(
-                          Icons.link,
-                          color: AppColors.primaryEmerald,
-                          size: 22,
+                        Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color: accent.withValues(alpha: 0.14),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Icon(
+                            Icons.link_rounded,
+                            color: accent,
+                            size: 18,
+                          ),
                         ),
-                        SizedBox(width: 8),
+                        const SizedBox(width: 10),
                         Text(
                           'Dán Link Video Trực Tiếp',
                           style: TextStyle(
                             fontSize: 15,
                             fontWeight: FontWeight.bold,
-                            color: Colors.white,
+                            color: palette.textPrimary,
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 6),
+                    const SizedBox(height: 8),
                     Text(
                       switch (_linkSourceType) {
                         'douyin' =>
@@ -1650,7 +1771,7 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         _ =>
                           'Hỗ trợ link Douyin, Bilibili, MP4, M3U8... (Tự động nhận diện nguồn & vượt chặn)',
                       },
-                      style: const TextStyle(fontSize: 12, color: Colors.grey),
+                      style: TextStyle(fontSize: 12, color: palette.textSecondary),
                     ),
                     const SizedBox(height: 10),
                     Wrap(
@@ -1666,16 +1787,22 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           label: Text(
                             src.value,
                             style: TextStyle(
-                              fontSize: 11,
+                              fontSize: 11.5,
                               fontWeight: isSelected
                                   ? FontWeight.bold
-                                  : FontWeight.normal,
-                              color: isSelected ? Colors.black : Colors.white70,
+                                  : FontWeight.w500,
+                              color: isSelected
+                                  ? onAccent
+                                  : palette.textSecondary,
                             ),
                           ),
                           selected: isSelected,
-                          selectedColor: AppColors.primaryEmerald,
-                          backgroundColor: const Color(0xFF1E202A),
+                          selectedColor: accent,
+                          backgroundColor: palette.surfaceAlt,
+                          side: BorderSide(
+                            color: isSelected ? accent : palette.border,
+                          ),
+                          showCheckmark: false,
                           onSelected: (selected) {
                             if (selected) {
                               setState(() => _linkSourceType = src.key);
@@ -1687,7 +1814,7 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     const SizedBox(height: 10),
                     TextField(
                       controller: _urlController,
-                      style: const TextStyle(color: Colors.white, fontSize: 13),
+                      style: TextStyle(color: palette.textPrimary, fontSize: 13),
                       onChanged: (val) {
                         setState(() {
                           _probeStatusMessage = null;
@@ -1706,47 +1833,41 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             'https://www.bilibili.com/video/BV... hoặc b23.tv/...',
                           _ => 'https://v.douyin.com/... hoặc link video bất kỳ',
                         },
-                        hintStyle: const TextStyle(
-                          color: Colors.grey,
+                        hintStyle: TextStyle(
+                          color: palette.textMuted,
                           fontSize: 13,
                         ),
                         filled: true,
-                        fillColor: const Color(0xFF1E202A),
+                        fillColor: palette.surfaceAlt,
                         border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          borderSide: const BorderSide(
-                            color: AppColors.cardBorder,
-                          ),
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: palette.border),
                         ),
                         enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          borderSide: const BorderSide(
-                            color: AppColors.cardBorder,
-                          ),
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: palette.border),
                         ),
                         focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          borderSide: const BorderSide(
-                            color: AppColors.primaryEmerald,
-                          ),
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: accent, width: 1.5),
                         ),
                         suffixIcon: _urlController.text.isNotEmpty
                             ? IconButton(
-                                icon: const Icon(
+                                icon: Icon(
                                   Icons.clear,
-                                  color: Colors.grey,
+                                  color: palette.textMuted,
                                 ),
-                                  onPressed: () {
-                                    setState(() {
-                                      _urlController.clear();
-                                      _selectedVideoPath = null;
-                                      _fileName = '';
-                                      _fileDurationMs = 0;
-                                      _fileSizeMb = '';
-                                      _resetOnlineMetadataFields();
-                                      _probeStatusMessage = null;
-                                    });
-                                  },
+                                onPressed: () {
+                                  setState(() {
+                                    _urlController.clear();
+                                    _selectedVideoPath = null;
+                                    _fileName = '';
+                                    _fileDurationMs = 0;
+                                    _fileSizeMb = '';
+                                    _resetOnlineMetadataFields();
+                                    _probeStatusMessage = null;
+                                  });
+                                },
                               )
                             : null,
                       ),
@@ -1755,26 +1876,28 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     Row(
                       children: [
                         Expanded(
-                          child: ElevatedButton.icon(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF2A2A2A),
-                              foregroundColor: Colors.white,
+                          child: OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(
+                              backgroundColor: palette.surfaceAlt,
+                              foregroundColor: palette.textPrimary,
+                              side: BorderSide(color: palette.border),
                               shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
+                                borderRadius: BorderRadius.circular(12),
                               ),
                               padding: const EdgeInsets.symmetric(vertical: 12),
                             ),
                             onPressed: _pasteFromClipboard,
-                            icon: const Icon(
+                            icon: Icon(
                               Icons.content_paste,
-                              color: AppColors.primaryEmerald,
+                              color: accent,
                               size: 16,
                             ),
-                            label: const Text(
+                            label: Text(
                               'Dán Link',
                               style: TextStyle(
                                 fontSize: 13,
-                                color: Colors.white,
+                                fontWeight: FontWeight.w600,
+                                color: palette.textPrimary,
                               ),
                             ),
                           ),
@@ -1783,42 +1906,44 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         Expanded(
                           child: ElevatedButton.icon(
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: AppColors.primaryEmerald,
-                              foregroundColor: Colors.black,
-                              disabledBackgroundColor: AppColors.primaryEmerald
-                                  .withValues(alpha: 0.5),
+                              backgroundColor: accent,
+                              foregroundColor: onAccent,
+                              disabledBackgroundColor:
+                                  accent.withValues(alpha: 0.35),
+                              disabledForegroundColor:
+                                  onAccent.withValues(alpha: 0.6),
+                              elevation: 0,
                               shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
+                                borderRadius: BorderRadius.circular(12),
                               ),
                               padding: const EdgeInsets.symmetric(vertical: 12),
                             ),
-                            onPressed:
-                                (_urlController.text.isNotEmpty &&
+                            onPressed: (_urlController.text.isNotEmpty &&
                                     !_isProbingUrl)
                                 ? () => _probeUrl(_urlController.text)
                                 : null,
                             icon: _isProbingUrl
-                                ? const SizedBox(
+                                ? SizedBox(
                                     width: 16,
                                     height: 16,
                                     child: CircularProgressIndicator(
-                                      color: Colors.black,
+                                      color: onAccent,
                                       strokeWidth: 2,
                                     ),
                                   )
-                                : const Icon(
+                                : Icon(
                                     Icons.search,
-                                    color: Colors.black,
+                                    color: onAccent,
                                     size: 16,
                                   ),
                             label: Text(
                               _isProbingUrl
                                   ? 'Đang kiểm tra...'
                                   : 'Kiểm Tra Link',
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 13,
                                 fontWeight: FontWeight.bold,
-                                color: Colors.black,
+                                color: onAccent,
                               ),
                             ),
                           ),
@@ -1832,13 +1957,13 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         style: TextStyle(
                           fontSize: 12,
                           color: _selectedVideoPath != null
-                              ? AppColors.primaryEmerald
-                              : const Color(0xFFFFB74D),
+                              ? accent
+                              : const Color(0xFFD97706),
                         ),
                       ),
                     ],
 
-                    // Preview khi video online đã sẵn sàng giống bản gốc Android
+                    // Preview khi video online đã sẵn sàng
                     if (_selectedVideoPath != null &&
                         NetworkHeaderHelper.isRemoteUrl(
                           _selectedVideoPath!,
@@ -1848,12 +1973,10 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         width: double.infinity,
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: const Color(0xFF1E2E24),
-                          borderRadius: BorderRadius.circular(10),
+                          color: accent.withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(14),
                           border: Border.all(
-                            color: AppColors.primaryEmerald.withValues(
-                              alpha: 0.5,
-                            ),
+                            color: accent.withValues(alpha: 0.45),
                           ),
                         ),
                         child: Column(
@@ -1861,10 +1984,10 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           children: [
                             Row(
                               children: [
-                                const Icon(
+                                Icon(
                                   Icons.check_circle,
-                                  color: AppColors.primaryEmerald,
-                                  size: 28,
+                                  color: accent,
+                                  size: 26,
                                 ),
                                 const SizedBox(width: 10),
                                 Expanded(
@@ -1873,10 +1996,10 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                     children: [
                                       Text(
                                         _fileName,
-                                        style: const TextStyle(
+                                        style: TextStyle(
                                           fontWeight: FontWeight.bold,
                                           fontSize: 14,
-                                          color: Colors.white,
+                                          color: palette.textPrimary,
                                         ),
                                         maxLines: 2,
                                         overflow: TextOverflow.ellipsis,
@@ -1884,9 +2007,10 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                       const SizedBox(height: 2),
                                       Text(
                                         '⏱️ Thời lượng: ${_fileDurationMs > 0 ? _formatDuration(_fileDurationMs) : "Tự động"}  •  🌐 Stream trực tiếp',
-                                        style: const TextStyle(
+                                        style: TextStyle(
                                           fontSize: 12,
-                                          color: AppColors.primaryEmerald,
+                                          fontWeight: FontWeight.w600,
+                                          color: accent,
                                         ),
                                       ),
                                     ],
@@ -1895,24 +2019,24 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                               ],
                             ),
                             if (_bilibiliPages.length > 1) ...[
-                              const Divider(
-                                color: Color(0xFF2C3E32),
+                              Divider(
+                                color: palette.border,
                                 height: 20,
                               ),
                               Row(
                                 children: [
-                                  const Icon(
+                                  Icon(
                                     Icons.video_library,
                                     size: 14,
-                                    color: AppColors.primaryEmerald,
+                                    color: accent,
                                   ),
                                   const SizedBox(width: 6),
                                   Text(
                                     'Chọn tập / phần video (${_bilibiliPages.length} phần):',
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       fontSize: 12,
                                       fontWeight: FontWeight.w600,
-                                      color: Colors.white70,
+                                      color: palette.textSecondary,
                                     ),
                                   ),
                                 ],
@@ -1941,13 +2065,15 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                               ? FontWeight.bold
                                               : FontWeight.normal,
                                           color: isSelected
-                                              ? Colors.black
-                                              : Colors.white70,
+                                              ? onAccent
+                                              : palette.textSecondary,
                                         ),
                                       ),
                                       selected: isSelected,
-                                      selectedColor: AppColors.primaryEmerald,
-                                      backgroundColor: const Color(0xFF1E202A),
+                                      selectedColor: accent,
+                                      backgroundColor: palette.surface,
+                                      side: BorderSide(color: palette.border),
+                                      showCheckmark: false,
                                       onSelected: (selected) {
                                         if (selected &&
                                             page.page !=
@@ -1967,29 +2093,27 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                               Container(
                                 padding: const EdgeInsets.all(12),
                                 decoration: BoxDecoration(
-                                  color: const Color(0xFF1E202A),
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(
-                                    color: const Color(0xFF2C3E32),
-                                  ),
+                                  color: palette.surfaceAlt,
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(color: palette.border),
                                 ),
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    const Row(
+                                    Row(
                                       children: [
                                         Icon(
                                           Icons.high_quality,
                                           size: 16,
-                                          color: AppColors.primaryEmerald,
+                                          color: accent,
                                         ),
-                                        SizedBox(width: 8),
+                                        const SizedBox(width: 8),
                                         Text(
                                           'Chất lượng video:',
                                           style: TextStyle(
                                             fontSize: 12,
                                             fontWeight: FontWeight.bold,
-                                            color: Colors.white,
+                                            color: palette.textPrimary,
                                           ),
                                         ),
                                       ],
@@ -2004,24 +2128,32 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                         MapEntry('32', '480p (Mạng yếu)'),
                                         MapEntry('16', '360p (Siêu nhẹ)'),
                                       ].map((q) {
-                                        final isSel = _selectedVideoQuality == q.key;
+                                        final isSel =
+                                            _selectedVideoQuality == q.key;
                                         return ChoiceChip(
                                           label: Text(
                                             q.value,
                                             style: TextStyle(
                                               fontSize: 11,
-                                              fontWeight: isSel ? FontWeight.bold : FontWeight.normal,
-                                              color: isSel ? Colors.black : Colors.white70,
+                                              fontWeight: isSel
+                                                  ? FontWeight.bold
+                                                  : FontWeight.normal,
+                                              color: isSel
+                                                  ? onAccent
+                                                  : palette.textSecondary,
                                             ),
                                           ),
                                           selected: isSel,
-                                          selectedColor: AppColors.primaryEmerald,
-                                          backgroundColor: const Color(0xFF14151B),
+                                          selectedColor: accent,
+                                          backgroundColor: palette.surface,
+                                          side: BorderSide(color: palette.border),
+                                          showCheckmark: false,
                                           onSelected: (selected) {
                                             if (selected) {
                                               setState(() {
                                                 _selectedVideoQuality = q.key;
-                                                _settings?.preferredVideoQuality = q.key;
+                                                _settings?.preferredVideoQuality =
+                                                    q.key;
                                               });
                                             }
                                           },
@@ -2029,11 +2161,11 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                       }).toList(),
                                     ),
                                     const SizedBox(height: 6),
-                                    const Text(
+                                    Text(
                                       '💡 Mạng yếu hoặc 3G/4G chập chờn? Chọn 480p hoặc 360p để xem online và tải video siêu mượt không lo giật lag.',
                                       style: TextStyle(
                                         fontSize: 11,
-                                        color: Colors.white60,
+                                        color: palette.textMuted,
                                         fontStyle: FontStyle.italic,
                                       ),
                                     ),
@@ -2053,148 +2185,215 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 ),
               ),
 
-            const SizedBox(height: 24),
-
-            // 3. CẤU HÌNH NHẬN DIỆN & DỊCH THUẬT (ĐỒNG BỘ 100% BẢN GỐC ANDROID)
-            const Text(
-              'CẤU HÌNH NHẬN DIỆN & DỊCH THUẬT',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-                color: Colors.grey,
-                letterSpacing: 1.0,
-              ),
-            ),
-            const SizedBox(height: 12),
-
-            // Ngôn ngữ lời thoại gốc
-            SettingDropdown(
-              label: '🌐 Ngôn ngữ lời thoại gốc:',
-              currentValue: _selectedSourceLang,
-              options: _sourceLanguageOptions,
-              onSelect: (code, label) {
-                setState(() => _selectedSourceLang = code);
-                _settings?.defaultSourceLanguage = code;
-              },
-            ),
             const SizedBox(height: 16),
 
-            // Bộ máy Dịch thuật phụ đề: 2 Tầng siêu gọn (Provider Chips + Model Selector)
-            const Text(
-              '🤖 Bộ máy Dịch thuật phụ đề:',
-              style: TextStyle(
-                fontSize: 13,
-                color: Color(0xFFC0C0C0),
-                fontWeight: FontWeight.w500,
+            // 3. CẤU HÌNH NHẬN DIỆN & DỊCH THUẬT
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: palette.surface,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: palette.border),
+                boxShadow: palette.cardShadows,
               ),
-            ),
-            const SizedBox(height: 8),
-
-            // Tầng 1: Chọn Nền tảng (Provider Chips)
-            _buildEngineProviderChips(),
-            const SizedBox(height: 8),
-
-            // Tầng 2: Model selector tương ứng hoặc thông tin
-            _buildEngineModelSelector(),
-
-            // Ngôn ngữ dịch sang (Ngôn ngữ đích - chỉ hiện khi không chọn "none")
-            if (_selectedEngine != 'none') ...[
-              const SizedBox(height: 16),
-              SettingDropdown(
-                label: '🎯 Dịch sang ngôn ngữ:',
-                currentValue: _selectedTargetLang,
-                options: _targetLanguageOptions,
-                onSelect: (code, label) {
-                  setState(() => _selectedTargetLang = code);
-                  _settings?.targetLanguage = code;
-                  _settings?.targetLanguageLabel = label;
-                },
-              ),
-            ],
-
-            // Phong cách dịch ngữ cảnh (Chỉ hiện khi chọn AI: Gemini hoặc Groq)
-            if (AiModelRegistry.isAiTranslationModel(_selectedEngine)) ...[
-              const SizedBox(height: 16),
-              SettingDropdown(
-                label: '🎭 Phong cách dịch ngữ cảnh (AI):',
-                currentValue: _selectedStyle,
-                options: _styleOptions,
-                onSelect: (code, label) {
-                  setState(() => _selectedStyle = code);
-                  _settings?.selectedStyle = code;
-                },
-              ),
-
-              if (_selectedStyle == 'custom') ...[
-                const SizedBox(height: 10),
-                TextField(
-                  controller: _customPromptController,
-                  onChanged: (val) {
-                    _settings?.geminiCustomPrompt = val;
-                  },
-                  maxLines: 4,
-                  style: const TextStyle(color: Colors.white, fontSize: 13),
-                  decoration: InputDecoration(
-                    hintText: 'Nhập hướng dẫn prompt dịch cho AI (vd: Dịch theo lối cổ trang, xưng hô huynh/muội, giữ câu ngắn...)',
-                    hintStyle: const TextStyle(
-                      color: Colors.grey,
-                      fontSize: 13,
-                    ),
-                    filled: true,
-                    fillColor: AppColors.darkSurface,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: const BorderSide(color: Color(0xFF333544)),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: const BorderSide(color: Color(0xFF333544)),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: const BorderSide(
-                        color: AppColors.primaryEmerald,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Cấu hình AI & Dịch thuật',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w800,
+                            color: palette.textPrimary,
+                          ),
+                        ),
                       ),
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 9,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: accent.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text(
+                            _selectedEngine == 'none'
+                                ? 'Chỉ tạo sub gốc'
+                                : 'AI Dịch Ngữ Cảnh',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.bold,
+                              color: accent,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+
+                  // Ngôn ngữ lời thoại gốc
+                  SettingDropdown(
+                    label: '🌐 Ngôn ngữ lời thoại gốc:',
+                    currentValue: _selectedSourceLang,
+                    options: _sourceLanguageOptions,
+                    onSelect: (code, label) {
+                      setState(() => _selectedSourceLang = code);
+                      _settings?.defaultSourceLanguage = code;
+                    },
+                  ),
+                  const SizedBox(height: 14),
+
+                  // Bộ máy Dịch thuật phụ đề
+                  Text(
+                    '🤖 Bộ máy Dịch thuật phụ đề:',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: palette.textSecondary,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
-                ),
-              ],
-            ],
+                  const SizedBox(height: 8),
 
-            const SizedBox(height: 36),
+                  // Tầng 1: Chọn Nền tảng (Provider Chips)
+                  _buildEngineProviderChips(),
+                  const SizedBox(height: 8),
 
-            // 4. NÚT BẮT ĐẦU TẠO PHỤ ĐỀ (ĐỒNG BỘ 100% BẢN GỐC ANDROID)
-            SizedBox(
-              width: double.infinity,
-              height: 54,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primaryEmerald,
-                  foregroundColor: Colors.black,
-                  disabledBackgroundColor: AppColors.primaryEmerald.withValues(
-                    alpha: 0.3,
-                  ),
-                  disabledForegroundColor: Colors.black38,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  elevation: 0,
-                ),
-                onPressed: (_selectedVideoPath != null && !_isProcessing)
-                    ? _startProcessing
+                  // Tầng 2: Model selector tương ứng hoặc thông tin
+                  _buildEngineModelSelector(),
+
+                  // Ngôn ngữ dịch sang
+                  if (_selectedEngine != 'none') ...[
+                    const SizedBox(height: 14),
+                    SettingDropdown(
+                      label: '🎯 Dịch sang ngôn ngữ:',
+                      currentValue: _selectedTargetLang,
+                      options: _targetLanguageOptions,
+                      onSelect: (code, label) {
+                        setState(() => _selectedTargetLang = code);
+                        _settings?.targetLanguage = code;
+                        _settings?.targetLanguageLabel = label;
+                      },
+                    ),
+                  ],
+
+                  // Phong cách dịch ngữ cảnh (AI: Gemini hoặc Groq)
+                  if (AiModelRegistry.isAiTranslationModel(_selectedEngine)) ...[
+                    const SizedBox(height: 14),
+                    SettingDropdown(
+                      label: '🎭 Phong cách dịch ngữ cảnh (AI):',
+                      currentValue: _selectedStyle,
+                      options: _styleOptions,
+                      onSelect: (code, label) {
+                        setState(() => _selectedStyle = code);
+                        _settings?.selectedStyle = code;
+                      },
+                    ),
+                    if (_selectedStyle == 'custom') ...[
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: _customPromptController,
+                        onChanged: (val) {
+                          _settings?.geminiCustomPrompt = val;
+                        },
+                        maxLines: 4,
+                        style: TextStyle(
+                          color: palette.textPrimary,
+                          fontSize: 13,
+                        ),
+                        decoration: InputDecoration(
+                          hintText:
+                              'Nhập hướng dẫn prompt dịch cho AI (vd: Dịch theo lối cổ trang, xưng hô huynh/muội, giữ câu ngắn...)',
+                          hintStyle: TextStyle(
+                            color: palette.textMuted,
+                            fontSize: 13,
+                          ),
+                          filled: true,
+                          fillColor: palette.surfaceAlt,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(color: palette.border),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(color: palette.border),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(color: accent, width: 1.5),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 20),
+
+            // 4. NÚT BẮT ĐẦU TẠO PHỤ ĐỀ
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: (_selectedVideoPath != null && !_isProcessing)
+                    ? LinearGradient(colors: [accent, secondary])
                     : null,
-                child: const Text(
-                  '🚀 BẮT ĐẦU TẠO PHỤ ĐỀ & DỊCH THUẬT',
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black,
+                color: (_selectedVideoPath != null && !_isProcessing)
+                    ? null
+                    : accent.withValues(alpha: 0.25),
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: (_selectedVideoPath != null && !_isProcessing)
+                    ? [
+                        BoxShadow(
+                          color: accent.withValues(alpha: 0.34),
+                          blurRadius: 16,
+                          offset: const Offset(0, 6),
+                        ),
+                      ]
+                    : null,
+              ),
+              child: SizedBox(
+                width: double.infinity,
+                height: 54,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.transparent,
+                    shadowColor: Colors.transparent,
+                    foregroundColor: Colors.white,
+                    disabledBackgroundColor: Colors.transparent,
+                    disabledForegroundColor: palette.textMuted,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    elevation: 0,
+                  ),
+                  onPressed: (_selectedVideoPath != null && !_isProcessing)
+                      ? _startProcessing
+                      : null,
+                  child: Text(
+                    '🚀 BẮT ĐẦU TẠO PHỤ ĐỀ & DỊCH THUẬT',
+                    style: TextStyle(
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w800,
+                      color: (_selectedVideoPath != null && !_isProcessing)
+                          ? Colors.white
+                          : palette.textMuted,
+                    ),
                   ),
                 ),
               ),
             ),
-
-            const SizedBox(height: 30),
           ],
         ),
       ),
@@ -2202,13 +2401,15 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Widget _buildEngineProviderChips() {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.studio);
     final currentProvider = AiModelRegistry.detectProvider(_selectedEngine);
     return Row(
       children: [
         _buildProviderChip(
           label: 'CapCut',
           icon: Icons.bolt_rounded,
-          color: AppColors.primaryEmerald,
+          color: accent,
           isSelected: currentProvider == AiProvider.capcut,
           onTap: () {
             setState(() => _selectedEngine = 'capcut');
@@ -2233,7 +2434,7 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _buildProviderChip(
           label: 'Groq AI',
           icon: Icons.electric_bolt_rounded,
-          color: Colors.amber,
+          color: const Color(0xFFD97706),
           isSelected: currentProvider == AiProvider.groq,
           onTap: () {
             final model = _settings?.selectedGroqModel.isNotEmpty == true
@@ -2247,7 +2448,7 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _buildProviderChip(
           label: 'Không dịch',
           icon: Icons.block_rounded,
-          color: Colors.white54,
+          color: palette.textMuted,
           isSelected: currentProvider == AiProvider.none,
           onTap: () {
             setState(() => _selectedEngine = 'none');
@@ -2265,34 +2466,44 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     required bool isSelected,
     required VoidCallback onTap,
   }) {
+    final palette = AppThemePalette.of(context);
     return Expanded(
+      flex: label.length > 8 ? 13 : 10,
       child: GestureDetector(
         onTap: onTap,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 180),
-          padding: const EdgeInsets.symmetric(vertical: 7),
+          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 8),
           decoration: BoxDecoration(
-            color: isSelected ? color.withValues(alpha: 0.18) : const Color(0xFF1E202A),
-            borderRadius: BorderRadius.circular(10),
+            color: isSelected
+                ? color.withValues(alpha: 0.14)
+                : palette.surfaceAlt,
+            borderRadius: BorderRadius.circular(12),
             border: Border.all(
-              color: isSelected ? color : AppColors.cardBorder,
+              color: isSelected ? color : palette.border,
               width: isSelected ? 1.5 : 1,
             ),
           ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, size: 14, color: isSelected ? color : Colors.white60),
-              const SizedBox(width: 4),
+              Icon(
+                icon,
+                size: 13.5,
+                color: isSelected ? color : palette.textSecondary,
+              ),
+              const SizedBox(width: 3.5),
               Flexible(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 11.5,
-                    fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
-                    color: isSelected ? Colors.white : Colors.white70,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600,
+                      color: isSelected ? palette.textPrimary : palette.textSecondary,
+                    ),
                   ),
                 ),
               ),
@@ -2304,6 +2515,8 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Widget _buildEngineModelSelector() {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.studio);
     final currentProvider = AiModelRegistry.detectProvider(_selectedEngine);
 
     if (currentProvider == AiProvider.gemini) {
@@ -2315,10 +2528,10 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
             decoration: BoxDecoration(
-              color: AppColors.darkSurface,
-              borderRadius: BorderRadius.circular(10),
+              color: palette.surfaceAlt,
+              borderRadius: BorderRadius.circular(12),
               border: Border.all(
-                color: const Color(0xFF4285F4).withValues(alpha: 0.4),
+                color: const Color(0xFF4285F4).withValues(alpha: 0.45),
               ),
             ),
             child: DropdownButtonHideUnderline(
@@ -2327,10 +2540,13 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ? _selectedEngine
                     : _geminiEngineOptions.first.key,
                 isExpanded: true,
-                dropdownColor: AppColors.darkSurface,
-                icon: const Icon(Icons.arrow_drop_down, color: Color(0xFF4285F4)),
-                style: const TextStyle(
-                  color: Colors.white,
+                dropdownColor: palette.surface,
+                icon: const Icon(
+                  Icons.arrow_drop_down,
+                  color: Color(0xFF4285F4),
+                ),
+                style: TextStyle(
+                  color: palette.textPrimary,
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
                 ),
@@ -2339,8 +2555,8 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     value: entry.key,
                     child: Text(
                       entry.value,
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: palette.textPrimary,
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
                       ),
@@ -2378,10 +2594,10 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
             decoration: BoxDecoration(
-              color: AppColors.darkSurface,
-              borderRadius: BorderRadius.circular(10),
+              color: palette.surfaceAlt,
+              borderRadius: BorderRadius.circular(12),
               border: Border.all(
-                color: Colors.amber.withValues(alpha: 0.4),
+                color: const Color(0xFFD97706).withValues(alpha: 0.45),
               ),
             ),
             child: DropdownButtonHideUnderline(
@@ -2390,10 +2606,13 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ? _selectedEngine
                     : _groqEngineOptions.first.key,
                 isExpanded: true,
-                dropdownColor: AppColors.darkSurface,
-                icon: const Icon(Icons.arrow_drop_down, color: Colors.amber),
-                style: const TextStyle(
-                  color: Colors.white,
+                dropdownColor: palette.surface,
+                icon: const Icon(
+                  Icons.arrow_drop_down,
+                  color: Color(0xFFD97706),
+                ),
+                style: TextStyle(
+                  color: palette.textPrimary,
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
                 ),
@@ -2402,8 +2621,8 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     value: entry.key,
                     child: Text(
                       entry.value,
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: palette.textPrimary,
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
                       ),
@@ -2437,18 +2656,18 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         width: double.infinity,
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         decoration: BoxDecoration(
-          color: const Color(0xFF13141B),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: AppColors.cardBorder),
+          color: palette.surfaceAlt,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: palette.border),
         ),
-        child: const Row(
+        child: Row(
           children: [
-            Icon(Icons.check_circle_outline, size: 16, color: AppColors.primaryEmerald),
-            SizedBox(width: 8),
+            Icon(Icons.check_circle_outline, size: 16, color: accent),
+            const SizedBox(width: 8),
             Expanded(
               child: Text(
                 'Dịch trực tiếp qua CapCut Cloud (Miễn phí 100% - Không cần API Key)',
-                style: TextStyle(color: Colors.white70, fontSize: 12),
+                style: TextStyle(color: palette.textSecondary, fontSize: 12),
               ),
             ),
           ],
@@ -2460,18 +2679,18 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
-        color: const Color(0xFF13141B),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: AppColors.cardBorder),
+        color: palette.surfaceAlt,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: palette.border),
       ),
-      child: const Row(
+      child: Row(
         children: [
-          Icon(Icons.info_outline, size: 16, color: Colors.white54),
-          SizedBox(width: 8),
+          Icon(Icons.info_outline, size: 16, color: palette.textMuted),
+          const SizedBox(width: 8),
           Expanded(
             child: Text(
               'Giữ nguyên phụ đề tiếng gốc, không qua bước dịch thuật',
-              style: TextStyle(color: Colors.white54, fontSize: 12),
+              style: TextStyle(color: palette.textMuted, fontSize: 12),
             ),
           ),
         ],
@@ -2483,21 +2702,27 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     required String title,
     required String providerName,
   }) {
+    final palette = AppThemePalette.of(context);
+    const warnColor = Color(0xFFD97706);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: Colors.amber.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.amber.withValues(alpha: 0.4)),
+        color: warnColor.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: warnColor.withValues(alpha: 0.4)),
       ),
       child: Row(
         children: [
-          const Icon(Icons.warning_amber_rounded, size: 16, color: Colors.amber),
+          const Icon(Icons.warning_amber_rounded, size: 16, color: warnColor),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
               '$title! Vui lòng cấu hình key.',
-              style: const TextStyle(color: Colors.amber, fontSize: 12),
+              style: TextStyle(
+                color: palette.isDark ? Colors.amber : warnColor,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
           InkWell(
@@ -2505,19 +2730,20 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               if (widget.onNavigateToSettings != null) {
                 widget.onNavigateToSettings!();
               } else {
-                Navigator.pushNamed(context, '/settings').then((_) => _loadSettings());
+                Navigator.pushNamed(context, '/settings')
+                    .then((_) => _loadSettings());
               }
             },
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               decoration: BoxDecoration(
-                color: Colors.amber,
-                borderRadius: BorderRadius.circular(6),
+                color: warnColor,
+                borderRadius: BorderRadius.circular(8),
               ),
               child: const Text(
                 'Cài đặt',
                 style: TextStyle(
-                  color: Colors.black,
+                  color: Colors.white,
                   fontSize: 11,
                   fontWeight: FontWeight.bold,
                 ),
@@ -2530,7 +2756,7 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 }
 
-/// Dropdown custom đồng bộ 100% style của SettingDropdown.kt trên Jetpack Compose
+/// Dropdown custom theme-aware đồng bộ giao diện sáng/tối
 class SettingDropdown extends StatelessWidget {
   final String label;
   final String currentValue;
@@ -2547,7 +2773,9 @@ class SettingDropdown extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Xác định key hợp lệ
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.studio);
+
     final currentKey = options.any((e) => e.key == currentValue)
         ? currentValue
         : (options.any((e) => e.value == currentValue)
@@ -2559,30 +2787,30 @@ class SettingDropdown extends StatelessWidget {
       children: [
         Text(
           label,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 13,
-            color: Color(0xFFC0C0C0),
-            fontWeight: FontWeight.w500,
+            color: palette.textSecondary,
+            fontWeight: FontWeight.w600,
           ),
         ),
         const SizedBox(height: 6),
         Container(
           width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 14),
           decoration: BoxDecoration(
-            color: AppColors.darkSurface,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: AppColors.cardBorder),
+            color: palette.surfaceAlt,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: palette.border),
           ),
           child: DropdownButtonHideUnderline(
             child: DropdownButton<String>(
               value: currentKey,
               isExpanded: true,
-              dropdownColor: AppColors.darkSurface,
-              icon: const Icon(Icons.arrow_drop_down, color: Colors.grey),
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 14,
+              dropdownColor: palette.surface,
+              icon: Icon(Icons.keyboard_arrow_down_rounded, color: accent),
+              style: TextStyle(
+                color: palette.textPrimary,
+                fontSize: 13.5,
                 fontWeight: FontWeight.w600,
               ),
               items: options.map((entry) {
@@ -2590,9 +2818,9 @@ class SettingDropdown extends StatelessWidget {
                   value: entry.key,
                   child: Text(
                     entry.value,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
+                    style: TextStyle(
+                      color: palette.textPrimary,
+                      fontSize: 13.5,
                       fontWeight: FontWeight.w600,
                     ),
                     overflow: TextOverflow.ellipsis,

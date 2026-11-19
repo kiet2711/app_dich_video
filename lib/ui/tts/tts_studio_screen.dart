@@ -344,22 +344,27 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
               : 'auto');
     String? errorText;
 
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.studio);
+    final onAccent = palette.onColor(accent);
+
     showDialog(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          backgroundColor: AppColors.darkCard,
+          backgroundColor: palette.surface,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(20),
+            side: BorderSide(color: palette.border),
           ),
           title: Row(
-            children: const [
-              Icon(Icons.link, color: AppColors.primaryEmerald, size: 20),
-              SizedBox(width: 8),
+            children: [
+              Icon(Icons.link, color: accent, size: 20),
+              const SizedBox(width: 8),
               Text(
                 'Nhập Link Video Online',
                 style: TextStyle(
-                  color: Colors.white,
+                  color: palette.textPrimary,
                   fontSize: 16,
                   fontWeight: FontWeight.bold,
                 ),
@@ -379,7 +384,7 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                   _ =>
                     'Dán link video trực tiếp (Douyin, Bilibili, MP4, M3U8...):',
                 },
-                style: const TextStyle(color: Colors.grey, fontSize: 13),
+                style: TextStyle(color: palette.textSecondary, fontSize: 13),
               ),
               const SizedBox(height: 8),
               Wrap(
@@ -397,12 +402,14 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: isSel ? FontWeight.bold : FontWeight.normal,
-                        color: isSel ? Colors.black : Colors.white70,
+                        color: isSel ? onAccent : palette.textSecondary,
                       ),
                     ),
                     selected: isSel,
-                    selectedColor: AppColors.primaryEmerald,
-                    backgroundColor: const Color(0xFF14151B),
+                    selectedColor: accent,
+                    backgroundColor: palette.surfaceAlt,
+                    side: BorderSide(color: isSel ? accent : palette.border),
+                    showCheckmark: false,
                     onSelected: (selected) {
                       if (selected) {
                         setDialogState(() => selectedSource = src.key);
@@ -414,23 +421,31 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
               const SizedBox(height: 10),
               TextField(
                 controller: controller,
-                style: const TextStyle(color: Colors.white, fontSize: 13),
+                style: TextStyle(color: palette.textPrimary, fontSize: 13),
                 decoration: InputDecoration(
                   hintText: switch (selectedSource) {
                     'douyin' => 'https://v.douyin.com/... hoặc đoạn chia sẻ',
                     'bilibili' => 'https://www.bilibili.com/video/BV...',
                     _ => 'https://v.douyin.com/... hoặc link Bilibili/MP4',
                   },
-                  hintStyle: const TextStyle(color: Colors.grey, fontSize: 12),
+                  hintStyle: TextStyle(color: palette.textMuted, fontSize: 12),
                   filled: true,
-                  fillColor: const Color(0xFF14151B),
+                  fillColor: palette.surfaceAlt,
                   contentPadding: const EdgeInsets.symmetric(
                     horizontal: 12,
                     vertical: 10,
                   ),
                   border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: AppColors.cardBorder),
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide(color: palette.border),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide(color: palette.border),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide(color: accent),
                   ),
                 ),
                 onChanged: (val) {
@@ -464,15 +479,15 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                         });
                       }
                     },
-                    icon: const Icon(
+                    icon: Icon(
                       Icons.paste,
                       size: 14,
-                      color: AppColors.primaryEmerald,
+                      color: accent,
                     ),
-                    label: const Text(
+                    label: Text(
                       'Dán từ Clipboard',
                       style: TextStyle(
-                        color: AppColors.primaryEmerald,
+                        color: accent,
                         fontSize: 12,
                       ),
                     ),
@@ -481,7 +496,7 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                         horizontal: 10,
                         vertical: 4,
                       ),
-                      side: const BorderSide(color: AppColors.primaryEmerald),
+                      side: BorderSide(color: accent),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(8),
                       ),
@@ -494,7 +509,7 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                 Text(
                   errorText!,
                   style: const TextStyle(
-                    color: Color(0xFFFFB74D),
+                    color: Color(0xFFD97706),
                     fontSize: 12,
                   ),
                 ),
@@ -504,14 +519,15 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx),
-              child: const Text('Hủy', style: TextStyle(color: Colors.grey)),
+              child: Text('Hủy', style: TextStyle(color: palette.textSecondary)),
             ),
             ElevatedButton(
               style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primaryEmerald,
-                foregroundColor: Colors.black,
+                backgroundColor: accent,
+                foregroundColor: onAccent,
+                elevation: 0,
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(10),
                 ),
               ),
               onPressed: () {
@@ -593,11 +609,13 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
 
     if (!mounted) return;
     final messenger = ScaffoldMessenger.of(context);
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.studio);
     showModalBottomSheet(
       context: context,
-      backgroundColor: AppColors.darkCard,
+      backgroundColor: palette.surface,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (ctx) => Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
@@ -605,10 +623,10 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               'Chọn Video Từ Lịch Sử',
               style: TextStyle(
-                color: Colors.white,
+                color: palette.textPrimary,
                 fontSize: 16,
                 fontWeight: FontWeight.bold,
               ),
@@ -622,22 +640,26 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                 shrinkWrap: true,
                 itemCount: items.length,
                 separatorBuilder: (_, _) =>
-                    const Divider(color: AppColors.cardBorder),
+                    Divider(color: palette.border),
                 itemBuilder: (context, idx) {
                   final it = items[idx];
                   return ListTile(
                     contentPadding: EdgeInsets.zero,
-                    leading: const Icon(
+                    leading: Icon(
                       Icons.history,
-                      color: AppColors.primaryEmerald,
+                      color: accent,
                     ),
                     title: Text(
                       it.title,
-                      style: const TextStyle(color: Colors.white, fontSize: 14),
+                      style: TextStyle(
+                        color: palette.textPrimary,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                     subtitle: Text(
                       '${(it.durationMs / 1000).toStringAsFixed(0)}s • ${DateTime.fromMillisecondsSinceEpoch(it.timestamp).toLocal().toString().split(".")[0]}',
-                      style: const TextStyle(color: Colors.grey, fontSize: 11),
+                      style: TextStyle(color: palette.textMuted, fontSize: 11),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -894,18 +916,26 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
   }
 
   Future<void> _showChooseVideoSourceDialog() async {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.studio);
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        backgroundColor: AppColors.darkCard,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text(
-          'Chọn Video Nguồn',
-          style: TextStyle(color: Colors.white),
+        backgroundColor: palette.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+          side: BorderSide(color: palette.border),
         ),
-        content: const Text(
+        title: Text(
+          'Chọn Video Nguồn',
+          style: TextStyle(
+            color: palette.textPrimary,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        content: Text(
           'Chọn video trong máy hoặc nhập link video online để phát cùng phụ đề.',
-          style: TextStyle(color: Colors.grey),
+          style: TextStyle(color: palette.textSecondary),
         ),
         actions: [
           OutlinedButton.icon(
@@ -913,6 +943,10 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
               Navigator.pop(dialogContext);
               _pickVideoFromFiles();
             },
+            style: OutlinedButton.styleFrom(
+              foregroundColor: palette.textPrimary,
+              side: BorderSide(color: palette.border),
+            ),
             icon: const Icon(Icons.video_file),
             label: const Text('File máy'),
           ),
@@ -921,6 +955,11 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
               Navigator.pop(dialogContext);
               _showEnterLinkDialog();
             },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: accent,
+              foregroundColor: palette.onColor(accent),
+              elevation: 0,
+            ),
             icon: const Icon(Icons.link),
             label: const Text('Nhập Link'),
           ),
@@ -969,25 +1008,29 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.studio);
+    final bg = palette.backgroundFor(AppTabId.studio);
+
     return Scaffold(
-      backgroundColor: AppColors.darkBackground,
+      backgroundColor: bg,
       appBar: widget.hideAppBar
           ? null
           : AppBar(
-              backgroundColor: AppColors.darkBackground,
+              backgroundColor: bg,
               elevation: 0,
               title: Row(
-                children: const [
+                children: [
                   Icon(
                     Icons.record_voice_over,
-                    color: AppColors.primaryEmerald,
+                    color: accent,
                     size: 22,
                   ),
-                  SizedBox(width: 8),
+                  const SizedBox(width: 8),
                   Text(
                     'Lồng Tiếng AI (TTS Studio)',
                     style: TextStyle(
-                      color: Colors.white,
+                      color: palette.textPrimary,
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
                     ),
@@ -996,7 +1039,7 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
               ),
               actions: [
                 IconButton(
-                  icon: const Icon(Icons.settings, color: Colors.white70),
+                  icon: Icon(Icons.settings, color: palette.textSecondary),
                   onPressed: () {
                     Navigator.push(
                       context,
@@ -1007,7 +1050,13 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
               ],
             ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        physics: const BouncingScrollPhysics(),
+        padding: EdgeInsets.fromLTRB(
+          16,
+          4,
+          16,
+          palette.bottomContentPadding(extra: 18),
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -1040,6 +1089,11 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
   }
 
   Widget _buildCard4Actions(TtsGenerationState state) {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.studio);
+    final secondary = palette.secondaryFor(AppTabId.studio);
+    final onAccent = palette.onColor(accent);
+
     final document = _doc;
     final totalCount = document?.items.length ?? 0;
     final voicedCount =
@@ -1053,9 +1107,10 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppColors.darkCard,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.cardBorder),
+        color: palette.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: palette.border),
+        boxShadow: palette.cardShadows,
       ),
       child: state.isRunning
           ? _buildRunningProgress(state)
@@ -1065,7 +1120,7 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                 if (state.isFinished) ...[
                   _buildStatusRow(
                     Icons.check_circle,
-                    AppColors.primaryEmerald,
+                    secondary,
                     state.currentSentence.isEmpty
                         ? 'Đã hoàn thành lồng tiếng $totalCount câu thoại!'
                         : state.currentSentence,
@@ -1074,7 +1129,7 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                 ] else if (state.currentSentence.isNotEmpty) ...[
                   _buildStatusRow(
                     state.isCancelled ? Icons.cancel : Icons.warning_amber,
-                    const Color(0xFFFFB74D),
+                    const Color(0xFFD97706),
                     state.currentSentence,
                   ),
                   const SizedBox(height: 12),
@@ -1087,7 +1142,8 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                       'Mở bảng xử lý ${state.failedItems.length} câu lỗi',
                     ),
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: const Color(0xFFFFB74D),
+                      foregroundColor: const Color(0xFFD97706),
+                      side: const BorderSide(color: Color(0xFFD97706)),
                     ),
                   ),
                   const SizedBox(height: 10),
@@ -1105,8 +1161,14 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                         style: TextStyle(fontWeight: FontWeight.bold),
                       ),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primaryEmerald,
-                        foregroundColor: Colors.black,
+                        backgroundColor: accent,
+                        foregroundColor: onAccent,
+                        disabledBackgroundColor: accent.withValues(alpha: 0.25),
+                        disabledForegroundColor: palette.textMuted,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
                       ),
                     ),
                   ),
@@ -1116,9 +1178,16 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                       height: 48,
                       child: OutlinedButton.icon(
                         onPressed: _navigateToPlayer,
-                        icon: const Icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: accent,
+                          side: BorderSide(color: accent.withValues(alpha: 0.6)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        icon: Icon(
                           Icons.play_arrow,
-                          color: AppColors.primaryEmerald,
+                          color: accent,
                         ),
                         label: const Text(
                           'Xem Vietsub Ngay (Không Cần Lồng Tiếng)',
@@ -1137,8 +1206,12 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                         style: TextStyle(fontWeight: FontWeight.bold),
                       ),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primaryEmerald,
-                        foregroundColor: Colors.black,
+                        backgroundColor: accent,
+                        foregroundColor: onAccent,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
                       ),
                     ),
                   ),
@@ -1149,9 +1222,16 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                       onPressed: () => _startGenerateAllTts(
                         forceRegenerate: isFullyCompleted,
                       ),
-                      icon: const Icon(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: accent,
+                        side: BorderSide(color: accent.withValues(alpha: 0.6)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      icon: Icon(
                         Icons.record_voice_over,
-                        color: AppColors.primaryEmerald,
+                        color: accent,
                       ),
                       label: Text(
                         isFullyCompleted
@@ -1162,9 +1242,9 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                   ),
                   TextButton(
                     onPressed: _navigateToPlayer,
-                    child: const Text(
+                    child: Text(
                       'Hoặc xem video chỉ với Vietsub (âm thanh gốc)',
-                      style: TextStyle(color: Colors.grey, fontSize: 12),
+                      style: TextStyle(color: palette.textMuted, fontSize: 12),
                     ),
                   ),
                 ],
@@ -1174,6 +1254,9 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
   }
 
   Widget _buildRunningProgress(TtsGenerationState state) {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.studio);
+    final secondary = palette.secondaryFor(AppTabId.studio);
     final progress = state.totalCount > 0
         ? state.completedCount / state.totalCount
         : 0.0;
@@ -1185,16 +1268,16 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
           children: [
             Text(
               'Đang lồng tiếng: ${state.completedCount}/${state.totalCount} câu',
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: palette.textPrimary,
                 fontSize: 14,
                 fontWeight: FontWeight.w600,
               ),
             ),
             Text(
               '${(progress * 100).toInt()}%',
-              style: const TextStyle(
-                color: AppColors.primaryEmerald,
+              style: TextStyle(
+                color: accent,
                 fontSize: 14,
                 fontWeight: FontWeight.bold,
               ),
@@ -1207,20 +1290,20 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
           child: LinearProgressIndicator(
             value: progress,
             minHeight: 8,
-            color: AppColors.primaryEmerald,
-            backgroundColor: const Color(0xFF323444),
+            color: accent,
+            backgroundColor: palette.surfaceAlt,
           ),
         ),
         const SizedBox(height: 10),
         Text(
           'Tốc độ: ~${state.speedPerSec.toStringAsFixed(1)} câu/giây',
-          style: const TextStyle(color: Color(0xFF64B5F6), fontSize: 12),
+          style: TextStyle(color: secondary, fontSize: 12, fontWeight: FontWeight.w600),
         ),
         Text(
           state.currentSentence,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(color: Colors.grey, fontSize: 12),
+          style: TextStyle(color: palette.textSecondary, fontSize: 12),
         ),
         const SizedBox(height: 14),
         OutlinedButton.icon(
@@ -1231,7 +1314,8 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
           icon: const Icon(Icons.cancel, size: 16),
           label: const Text('Hủy tiến trình'),
           style: OutlinedButton.styleFrom(
-            foregroundColor: const Color(0xFFFF5252),
+            foregroundColor: const Color(0xFFEF4444),
+            side: const BorderSide(color: Color(0xFFEF4444)),
           ),
         ),
       ],
@@ -1259,6 +1343,8 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
   }
 
   Widget _buildCard0VideoSource() {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.studio);
     final hasVideo = _videoPath != null && _videoPath!.isNotEmpty;
     final isOnline = hasVideo && _videoPath!.startsWith('http');
     final durationSeconds = _videoDurationMs ~/ 1000;
@@ -1270,13 +1356,14 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: AppColors.darkCard,
-        borderRadius: BorderRadius.circular(16),
+        color: palette.surface,
+        borderRadius: BorderRadius.circular(20),
         border: Border.all(
           color: hasVideo
-              ? AppColors.primaryEmerald.withValues(alpha: 0.5)
-              : AppColors.cardBorder,
+              ? accent.withValues(alpha: 0.5)
+              : palette.border,
         ),
+        boxShadow: palette.cardShadows,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1284,10 +1371,10 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
+              Text(
                 '0. Video Nguồn',
                 style: TextStyle(
-                  color: Colors.white,
+                  color: palette.textPrimary,
                   fontSize: 15,
                   fontWeight: FontWeight.bold,
                 ),
@@ -1296,38 +1383,15 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                 children: [
                   OutlinedButton.icon(
                     onPressed: _pickVideoFromFiles,
-                    icon: const Icon(
+                    icon: Icon(
                       Icons.video_file,
                       size: 14,
-                      color: Colors.white,
+                      color: palette.textPrimary,
                     ),
-                    label: const Text(
+                    label: Text(
                       'File máy',
-                      style: TextStyle(color: Colors.white, fontSize: 12),
-                    ),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 4,
-                      ),
-                      side: const BorderSide(color: AppColors.cardBorder),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  OutlinedButton.icon(
-                    onPressed: _showEnterLinkDialog,
-                    icon: const Icon(
-                      Icons.link,
-                      size: 14,
-                      color: AppColors.primaryEmerald,
-                    ),
-                    label: const Text(
-                      'Nhập Link',
                       style: TextStyle(
-                        color: AppColors.primaryEmerald,
+                        color: palette.textPrimary,
                         fontSize: 12,
                       ),
                     ),
@@ -1336,9 +1400,35 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                         horizontal: 10,
                         vertical: 4,
                       ),
-                      side: const BorderSide(color: AppColors.primaryEmerald),
+                      side: BorderSide(color: palette.border),
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    onPressed: _showEnterLinkDialog,
+                    icon: Icon(
+                      Icons.link,
+                      size: 14,
+                      color: accent,
+                    ),
+                    label: Text(
+                      'Nhập Link',
+                      style: TextStyle(
+                        color: accent,
+                        fontSize: 12,
+                      ),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
+                      side: BorderSide(color: accent),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
                       ),
                     ),
                   ),
@@ -1351,16 +1441,16 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
             width: double.infinity,
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: const Color(0xFF14151B),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: Colors.white10),
+              color: palette.surfaceAlt,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: palette.border),
             ),
             child: hasVideo
                 ? Row(
                     children: [
-                      const Icon(
+                      Icon(
                         Icons.check_circle,
-                        color: AppColors.primaryEmerald,
+                        color: accent,
                         size: 18,
                       ),
                       const SizedBox(width: 8),
@@ -1370,8 +1460,8 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                           children: [
                             Text(
                               _videoFileName,
-                              style: const TextStyle(
-                                color: Colors.white,
+                              style: TextStyle(
+                                color: palette.textPrimary,
                                 fontSize: 14,
                                 fontWeight: FontWeight.w600,
                               ),
@@ -1383,9 +1473,7 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                               '⏱️ $durationText  •  💾 $_videoSizeLabel'
                               '${isOnline ? ' (Online)' : ''}',
                               style: TextStyle(
-                                color: isOnline
-                                    ? AppColors.primaryEmerald
-                                    : Colors.grey,
+                                color: isOnline ? accent : palette.textMuted,
                                 fontSize: 12,
                               ),
                             ),
@@ -1393,10 +1481,10 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                         ),
                       ),
                       IconButton(
-                        icon: const Icon(
+                        icon: Icon(
                           Icons.close,
                           size: 16,
-                          color: Colors.grey,
+                          color: palette.textMuted,
                         ),
                         onPressed: () {
                           setState(() => _videoPath = null);
@@ -1407,12 +1495,15 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                   )
                 : InkWell(
                     onTap: _showChooseVideoSourceDialog,
-                    child: const Center(
+                    child: Center(
                       child: Padding(
-                        padding: EdgeInsets.symmetric(vertical: 4),
+                        padding: const EdgeInsets.symmetric(vertical: 4),
                         child: Text(
                           'Chạm để chọn File từ máy hoặc dán Link online',
-                          style: TextStyle(color: Colors.grey, fontSize: 13),
+                          style: TextStyle(
+                            color: palette.textMuted,
+                            fontSize: 13,
+                          ),
                         ),
                       ),
                     ),
@@ -1424,6 +1515,10 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
   }
 
   Widget _buildCard1Subtitle() {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.studio);
+    final secondary = palette.secondaryFor(AppTabId.studio);
+
     final hasDoc = _doc != null && _doc!.items.isNotEmpty;
     final voicedCount = hasDoc
         ? _doc!.items
@@ -1437,9 +1532,10 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: AppColors.darkCard,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.cardBorder),
+        color: palette.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: palette.border),
+        boxShadow: palette.cardShadows,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1447,10 +1543,10 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
+              Text(
                 '1. Danh Sách Phụ Đề',
                 style: TextStyle(
-                  color: Colors.white,
+                  color: palette.textPrimary,
                   fontSize: 15,
                   fontWeight: FontWeight.bold,
                 ),
@@ -1459,38 +1555,38 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                 children: [
                   OutlinedButton.icon(
                     onPressed: _showHistoryPicker,
-                    icon: const Icon(
+                    icon: Icon(
                       Icons.play_arrow,
                       size: 14,
-                      color: Color(0xFF64B5F6),
+                      color: secondary,
                     ),
-                    label: const Text(
+                    label: Text(
                       'Lịch sử',
-                      style: TextStyle(color: Color(0xFF64B5F6), fontSize: 12),
+                      style: TextStyle(color: secondary, fontSize: 12),
                     ),
                     style: OutlinedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 8,
                         vertical: 4,
                       ),
-                      side: const BorderSide(color: Color(0xFF64B5F6)),
+                      side: BorderSide(color: secondary),
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(10),
                       ),
                     ),
                   ),
                   const SizedBox(width: 6),
                   OutlinedButton.icon(
                     onPressed: _pickSrtFile,
-                    icon: const Icon(
+                    icon: Icon(
                       Icons.file_upload,
                       size: 14,
-                      color: AppColors.primaryEmerald,
+                      color: accent,
                     ),
-                    label: const Text(
+                    label: Text(
                       'Nạp SRT',
                       style: TextStyle(
-                        color: AppColors.primaryEmerald,
+                        color: accent,
                         fontSize: 12,
                       ),
                     ),
@@ -1499,9 +1595,9 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                         horizontal: 8,
                         vertical: 4,
                       ),
-                      side: const BorderSide(color: AppColors.primaryEmerald),
+                      side: BorderSide(color: accent),
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(10),
                       ),
                     ),
                   ),
@@ -1515,15 +1611,15 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
               width: double.infinity,
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: const Color(0xFF1F2029),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: Colors.white10),
+                color: palette.surfaceAlt,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: palette.border),
               ),
               child: Row(
                 children: [
-                  const Icon(
+                  Icon(
                     Icons.subtitles,
-                    color: AppColors.primaryEmerald,
+                    color: accent,
                     size: 24,
                   ),
                   const SizedBox(width: 10),
@@ -1533,8 +1629,8 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                       children: [
                         Text(
                           'Đã sẵn sàng: ${_doc!.items.length} câu phụ đề',
-                          style: const TextStyle(
-                            color: Colors.white,
+                          style: TextStyle(
+                            color: palette.textPrimary,
                             fontSize: 14,
                             fontWeight: FontWeight.w600,
                           ),
@@ -1545,9 +1641,7 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                               ? 'Đã tạo giọng: $voicedCount / ${_doc!.items.length} câu'
                               : 'Chưa tạo giọng đọc',
                           style: TextStyle(
-                            color: voicedCount > 0
-                                ? AppColors.primaryEmerald
-                                : Colors.grey,
+                            color: voicedCount > 0 ? secondary : palette.textMuted,
                             fontSize: 12,
                           ),
                         ),
@@ -1555,7 +1649,7 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.close, size: 18, color: Colors.grey),
+                    icon: Icon(Icons.close, size: 18, color: palette.textMuted),
                     tooltip: 'Bỏ chọn phụ đề này',
                     onPressed: () => setState(() => _doc = null),
                   ),
@@ -1565,29 +1659,28 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
             const SizedBox(height: 10),
             SizedBox(
               width: double.infinity,
-              height: 38,
+              height: 40,
               child: OutlinedButton.icon(
                 onPressed: _openTranslateDialog,
-                icon: const Icon(
+                icon: Icon(
                   Icons.translate,
                   size: 16,
-                  color: Color(0xFF64B5F6),
+                  color: secondary,
                 ),
-                label: const Text(
+                label: Text(
                   'Dịch phụ đề bằng Gemini AI',
                   style: TextStyle(
-                    color: Color(0xFF64B5F6),
+                    color: secondary,
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
                 style: OutlinedButton.styleFrom(
-                  side: const BorderSide(color: Color(0xFF384055)),
+                  side: BorderSide(color: secondary.withValues(alpha: 0.45)),
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                  backgroundColor: const Color(0xFF1E222D)
-                      .withValues(alpha: 0.3),
+                  backgroundColor: secondary.withValues(alpha: 0.08),
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                 ),
               ),
@@ -1597,26 +1690,26 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
               width: double.infinity,
               padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
               decoration: BoxDecoration(
-                color: const Color(0xFF1F2029),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: Colors.white10),
+                color: palette.surfaceAlt,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: palette.border),
               ),
               child: Column(
-                children: const [
-                  Icon(Icons.subtitles, color: Colors.grey, size: 32),
-                  SizedBox(height: 8),
+                children: [
+                  Icon(Icons.subtitles, color: palette.textMuted, size: 32),
+                  const SizedBox(height: 8),
                   Text(
                     'Chưa có phụ đề để lồng tiếng',
                     style: TextStyle(
-                      color: Colors.white,
+                      color: palette.textPrimary,
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
-                  SizedBox(height: 4),
+                  const SizedBox(height: 4),
                   Text(
                     "Tạo phụ đề từ Tab 'Tạo Phụ Đề' hoặc bấm 'Nạp SRT' ở trên",
-                    style: TextStyle(color: Colors.grey, fontSize: 12),
+                    style: TextStyle(color: palette.textMuted, fontSize: 12),
                     textAlign: TextAlign.center,
                   ),
                 ],
@@ -1629,6 +1722,9 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
   }
 
   Widget _buildCard2VoiceSelector() {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.studio);
+
     final voices = List<VoiceItem>.from(VoicePresets.vietnameseVoices);
     final selectedIndex = voices.indexWhere(
       (voice) => voice.voiceType == _selectedVoice.voiceType,
@@ -1640,9 +1736,10 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: AppColors.darkCard,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.cardBorder),
+        color: palette.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: palette.border),
+        boxShadow: palette.cardShadows,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1650,10 +1747,10 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
+              Text(
                 '2. Chọn Giọng Đọc CapCut',
                 style: TextStyle(
-                  color: Colors.white,
+                  color: palette.textPrimary,
                   fontSize: 15,
                   fontWeight: FontWeight.bold,
                 ),
@@ -1664,6 +1761,7 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                   final picked = await VoiceSelectorSheet.show(
                     context,
                     currentVoiceType: _selectedVoice.voiceType,
+                    accentColor: accent,
                     allowPreview: true,
                     initialPreviewText: _previewTextController.text,
                     title: 'Chọn Giọng Đọc (Tab Studio)',
@@ -1674,29 +1772,29 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                     _linkExistingAudio();
                   }
                 },
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(10),
                 child: Container(
                   padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
                   decoration: BoxDecoration(
-                    color: AppColors.primaryEmerald.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(8),
+                    color: accent.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(10),
                     border: Border.all(
-                      color: AppColors.primaryEmerald.withValues(alpha: 0.3),
+                      color: accent.withValues(alpha: 0.35),
                     ),
                   ),
                   child: Row(
-                    children: const [
+                    children: [
                       Icon(
                         Icons.format_list_bulleted_rounded,
                         size: 13,
-                        color: AppColors.primaryEmerald,
+                        color: accent,
                       ),
-                      SizedBox(width: 4),
+                      const SizedBox(width: 4),
                       Text(
                         'Tất cả 21 giọng ↗',
                         style: TextStyle(
-                          color: AppColors.primaryEmerald,
+                          color: accent,
                           fontSize: 11,
                           fontWeight: FontWeight.bold,
                         ),
@@ -1713,10 +1811,10 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
-              color: const Color(0xFF14151B),
-              borderRadius: BorderRadius.circular(10),
+              color: palette.surfaceAlt,
+              borderRadius: BorderRadius.circular(12),
               border: Border.all(
-                color: AppColors.primaryEmerald.withValues(alpha: 0.3),
+                color: accent.withValues(alpha: 0.32),
                 width: 1,
               ),
             ),
@@ -1726,18 +1824,18 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
               children: [
                 Row(
                   children: [
-                    const Icon(
+                    Icon(
                       Icons.record_voice_over_rounded,
                       size: 14,
-                      color: AppColors.primaryEmerald,
+                      color: accent,
                     ),
                     const SizedBox(width: 6),
-                    const Text(
+                    Text(
                       'Câu nghe thử (100% tiếng Việt):',
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.bold,
-                        color: AppColors.primaryEmerald,
+                        color: accent,
                       ),
                     ),
                     const Spacer(),
@@ -1750,11 +1848,11 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                                 VoicePreviewHelper.defaultPreviewText;
                           });
                         },
-                        child: const Text(
+                        child: Text(
                           'Đặt lại câu mẫu',
                           style: TextStyle(
                             fontSize: 10,
-                            color: Colors.white70,
+                            color: palette.textSecondary,
                             decoration: TextDecoration.underline,
                           ),
                         ),
@@ -1764,14 +1862,14 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                 const SizedBox(height: 4),
                 TextField(
                   controller: _previewTextController,
-                  style: const TextStyle(fontSize: 12, color: Colors.white),
-                  decoration: const InputDecoration(
+                  style: TextStyle(fontSize: 12, color: palette.textPrimary),
+                  decoration: InputDecoration(
                     border: InputBorder.none,
                     isDense: true,
                     contentPadding: EdgeInsets.zero,
                     hintText: 'Nhập câu tiếng Việt muốn nghe thử...',
                     hintStyle:
-                        TextStyle(fontSize: 12, color: AppColors.textMuted),
+                        TextStyle(fontSize: 12, color: palette.textMuted),
                   ),
                   maxLines: 2,
                   minLines: 1,
@@ -1808,25 +1906,23 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                       ),
                       decoration: BoxDecoration(
                         color: isThisVoice
-                            ? AppColors.primaryEmerald.withValues(alpha: 0.25)
-                            : Colors.white.withValues(alpha: 0.08),
+                            ? accent.withValues(alpha: 0.16)
+                            : palette.surfaceAlt,
                         borderRadius: BorderRadius.circular(10),
                         border: Border.all(
-                          color: isThisVoice
-                              ? AppColors.primaryEmerald
-                              : Colors.white24,
+                          color: isThisVoice ? accent : palette.border,
                         ),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           if (isLoading)
-                            const SizedBox(
+                            SizedBox(
                               width: 14,
                               height: 14,
                               child: CircularProgressIndicator(
                                 strokeWidth: 2,
-                                color: AppColors.primaryEmerald,
+                                color: accent,
                               ),
                             )
                           else
@@ -1835,9 +1931,8 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                                   ? Icons.stop_rounded
                                   : Icons.volume_up_rounded,
                               size: 16,
-                              color: isThisVoice
-                                  ? AppColors.primaryEmerald
-                                  : Colors.white,
+                              color:
+                                  isThisVoice ? accent : palette.textPrimary,
                             ),
                           const SizedBox(width: 6),
                           Text(
@@ -1847,9 +1942,8 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                             style: TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.bold,
-                              color: isThisVoice
-                                  ? AppColors.primaryEmerald
-                                  : Colors.white,
+                              color:
+                                  isThisVoice ? accent : palette.textPrimary,
                             ),
                           ),
                         ],
@@ -1857,9 +1951,9 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                     ),
                   ),
                   const Spacer(),
-                  const Text(
+                  Text(
                     'Bấm loa trên từng thẻ để thử',
-                    style: TextStyle(fontSize: 10, color: Colors.white54),
+                    style: TextStyle(fontSize: 10, color: palette.textMuted),
                   ),
                 ],
               );
@@ -1887,12 +1981,12 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                     width: 155,
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF14151B),
-                      borderRadius: BorderRadius.circular(10),
+                      color: isSelected
+                          ? accent.withValues(alpha: 0.08)
+                          : palette.surfaceAlt,
+                      borderRadius: BorderRadius.circular(12),
                       border: Border.all(
-                        color: isSelected
-                            ? AppColors.primaryEmerald
-                            : AppColors.cardBorder,
+                        color: isSelected ? accent : palette.border,
                         width: isSelected ? 1.5 : 1.0,
                       ),
                     ),
@@ -1907,8 +2001,8 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                                 v.displayName,
                                 style: TextStyle(
                                   color: isSelected
-                                      ? AppColors.primaryEmerald
-                                      : Colors.white,
+                                      ? accent
+                                      : palette.textPrimary,
                                   fontWeight: FontWeight.bold,
                                   fontSize: 12,
                                 ),
@@ -1938,12 +2032,12 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                                   child: Padding(
                                     padding: const EdgeInsets.all(2),
                                     child: isLoading
-                                        ? const SizedBox(
+                                        ? SizedBox(
                                             width: 12,
                                             height: 12,
                                             child: CircularProgressIndicator(
                                               strokeWidth: 1.8,
-                                              color: AppColors.primaryEmerald,
+                                              color: accent,
                                             ),
                                           )
                                         : Icon(
@@ -1952,8 +2046,8 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                                                 : Icons.volume_up_rounded,
                                             size: 16,
                                             color: isThisVoice
-                                                ? AppColors.primaryEmerald
-                                                : Colors.white54,
+                                                ? accent
+                                                : palette.textMuted,
                                           ),
                                   ),
                                 );
@@ -1969,8 +2063,8 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                                 v.description.isNotEmpty
                                     ? v.description
                                     : 'Giọng đọc CapCut',
-                                style: const TextStyle(
-                                  color: Colors.grey,
+                                style: TextStyle(
+                                  color: palette.textMuted,
                                   fontSize: 10,
                                 ),
                                 maxLines: 1,
@@ -1978,9 +2072,9 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                               ),
                             ),
                             if (isSelected)
-                              const Icon(
+                              Icon(
                                 Icons.check_circle,
-                                color: AppColors.primaryEmerald,
+                                color: accent,
                                 size: 13,
                               ),
                           ],
@@ -1998,12 +2092,15 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
   }
 
   Widget _buildCard3ThreadCount() {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.studio);
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: AppColors.darkCard,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.cardBorder),
+        color: palette.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: palette.border),
+        boxShadow: palette.cardShadows,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2012,13 +2109,13 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Row(
-                children: const [
-                  Icon(Icons.speed, color: AppColors.primaryEmerald, size: 18),
-                  SizedBox(width: 6),
+                children: [
+                  Icon(Icons.speed, color: accent, size: 18),
+                  const SizedBox(width: 6),
                   Text(
                     '3. Số Luồng Song Song',
                     style: TextStyle(
-                      color: Colors.white,
+                      color: palette.textPrimary,
                       fontSize: 15,
                       fontWeight: FontWeight.bold,
                     ),
@@ -2027,8 +2124,8 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
               ),
               Text(
                 '$_threadCount luồng',
-                style: const TextStyle(
-                  color: AppColors.primaryEmerald,
+                style: TextStyle(
+                  color: accent,
                   fontSize: 15,
                   fontWeight: FontWeight.bold,
                 ),
@@ -2038,9 +2135,9 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
           const SizedBox(height: 6),
           SliderTheme(
             data: SliderTheme.of(context).copyWith(
-              activeTrackColor: AppColors.primaryEmerald,
-              thumbColor: AppColors.primaryEmerald,
-              inactiveTrackColor: const Color(0xFF323444),
+              activeTrackColor: accent,
+              thumbColor: accent,
+              inactiveTrackColor: palette.surfaceAlt,
             ),
             child: Slider(
               value: _threadCount.toDouble(),
@@ -2053,9 +2150,9 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
               },
             ),
           ),
-          const Text(
+          Text(
             'Mặc định 50 luồng. Hệ thống tự động phân chia và co giãn tốc độ đọc khớp khít mốc thời gian SRT.',
-            style: TextStyle(color: Colors.grey, fontSize: 12),
+            style: TextStyle(color: palette.textMuted, fontSize: 12),
           ),
         ],
       ),

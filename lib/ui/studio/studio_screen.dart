@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../data/model/subtitle_document.dart';
 import '../home/home_screen.dart';
@@ -52,194 +53,230 @@ class StudioScreenState extends State<StudioScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.studio);
+    final secondary = palette.secondaryFor(AppTabId.studio);
+    final bg = palette.backgroundFor(AppTabId.studio);
+
     return Scaffold(
-      backgroundColor: AppColors.darkBackground,
-      appBar: AppBar(
-        backgroundColor: AppColors.darkBackground,
-        elevation: 0,
-        titleSpacing: 16,
-        title: const Row(
+      backgroundColor: bg,
+      body: SafeArea(
+        bottom: false,
+        child: Column(
           children: [
-            Icon(Icons.movie_rounded, color: AppColors.primaryEmerald, size: 24),
-            SizedBox(width: 8),
-            Text(
-              'CapSub AI Studio',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 18,
-                color: Colors.white,
+            // Header kiểu CapCut / Creative Studio
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+              child: Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [accent, secondary],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(14),
+                      boxShadow: [
+                        BoxShadow(
+                          color: accent.withValues(alpha: 0.28),
+                          blurRadius: 10,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: const Icon(
+                      Icons.auto_awesome_rounded,
+                      color: Colors.white,
+                      size: 21,
+                    ),
+                  ),
+                  const SizedBox(width: 11),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'CapSub Studio',
+                          style: TextStyle(
+                            color: palette.textPrimary,
+                            fontSize: 16.5,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -0.2,
+                          ),
+                        ),
+                        const SizedBox(height: 1),
+                        Text(
+                          'Phụ đề & Lồng tiếng AI',
+                          style: TextStyle(
+                            color: palette.textMuted,
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Material(
+                    color: palette.surface,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      side: BorderSide(color: palette.border),
+                    ),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(14),
+                      onTap: () {
+                        HapticFeedback.selectionClick();
+                        if (widget.onNavigateToSettings != null) {
+                          widget.onNavigateToSettings!();
+                        } else {
+                          Navigator.pushNamed(context, '/settings');
+                        }
+                      },
+                      child: SizedBox(
+                        width: 40,
+                        height: 40,
+                        child: Icon(
+                          Icons.settings_rounded,
+                          color: palette.textSecondary,
+                          size: 20,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // Segmented Pill Switcher: [ Tạo Phụ Đề ] vs [ Lồng Tiếng AI ]
+            Container(
+              margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+              padding: const EdgeInsets.all(4),
+              decoration: BoxDecoration(
+                color: palette.surfaceAlt,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: palette.border),
+              ),
+              child: Row(
+                children: [
+                  _buildSubTabButton(
+                    index: 0,
+                    icon: Icons.auto_awesome_rounded,
+                    label: 'Tạo Phụ Đề',
+                    palette: palette,
+                    accent: accent,
+                  ),
+                  const SizedBox(width: 4),
+                  _buildSubTabButton(
+                    index: 1,
+                    icon: Icons.record_voice_over_rounded,
+                    label: 'Lồng Tiếng AI',
+                    palette: palette,
+                    accent: accent,
+                  ),
+                ],
+              ),
+            ),
+
+            // IndexedStack preserves scroll position & filled inputs of both screens
+            Expanded(
+              child: IndexedStack(
+                index: _subTabIndex,
+                children: [
+                  HomeScreen(
+                    key: _homeKey,
+                    hideAppBar: true,
+                    onNavigateToSettings: widget.onNavigateToSettings,
+                    onProcessCompleted: (doc, videoPath, [title]) {
+                      setState(() {
+                        _currentDoc = doc;
+                        _currentVideoPath = videoPath;
+                        _currentTitle = title;
+                        _subTabIndex = 1;
+                      });
+                    },
+                  ),
+                  TtsStudioScreen(
+                    key: ValueKey(
+                      'tts_${_currentVideoPath ?? ""}_${_currentDoc?.hashCode ?? 0}',
+                    ),
+                    hideAppBar: true,
+                    initialDoc: _currentDoc,
+                    initialVideoPath: _currentVideoPath,
+                    initialTitle: _currentTitle,
+                  ),
+                ],
               ),
             ),
           ],
         ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings_outlined, color: Colors.white70),
-            tooltip: 'Cài đặt',
-            onPressed: () {
-              if (widget.onNavigateToSettings != null) {
-                widget.onNavigateToSettings!();
-              } else {
-                Navigator.pushNamed(context, '/settings');
-              }
-            },
-          ),
-        ],
       ),
-      body: Column(
-        children: [
-          // Sub-Tabs Switcher: [ Tạo Phụ Đề ] vs [ Lồng Tiếng AI ]
-          Container(
-            margin: const EdgeInsets.fromLTRB(16, 2, 16, 10),
-            padding: const EdgeInsets.all(4),
-            decoration: BoxDecoration(
-              color: AppColors.darkSurfaceVariant,
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(
-                color: Colors.white.withValues(alpha: 0.08),
-                width: 0.8,
+    );
+  }
+
+  Widget _buildSubTabButton({
+    required int index,
+    required IconData icon,
+    required String label,
+    required AppThemePalette palette,
+    required Color accent,
+  }) {
+    final isSelected = _subTabIndex == index;
+    final onAccent = palette.onColor(accent);
+
+    return Expanded(
+      child: GestureDetector(
+        onTap: () {
+          if (_subTabIndex != index) {
+            HapticFeedback.selectionClick();
+            setState(() => _subTabIndex = index);
+          }
+        },
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOutCubic,
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 9),
+          decoration: BoxDecoration(
+            color: isSelected ? accent : Colors.transparent,
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: isSelected
+                ? [
+                    BoxShadow(
+                      color: accent.withValues(alpha: 0.34),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ]
+                : null,
+          ),
+          alignment: Alignment.center,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                size: 16,
+                color: isSelected ? onAccent : palette.textSecondary,
               ),
-            ),
-            child: Row(
-              children: [
-                // Sub-Tab 0: Tạo Phụ Đề
-                Expanded(
-                  child: GestureDetector(
-                    onTap: () {
-                      if (_subTabIndex != 0) {
-                        setState(() => _subTabIndex = 0);
-                      }
-                    },
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 200),
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      decoration: BoxDecoration(
-                        color: _subTabIndex == 0
-                            ? AppColors.primaryEmerald
-                            : Colors.transparent,
-                        borderRadius: BorderRadius.circular(20),
-                        boxShadow: _subTabIndex == 0
-                            ? [
-                                BoxShadow(
-                                  color: AppColors.primaryEmerald.withValues(alpha: 0.25),
-                                  blurRadius: 8,
-                                  offset: const Offset(0, 2),
-                                ),
-                              ]
-                            : null,
-                      ),
-                      alignment: Alignment.center,
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.subtitles_rounded,
-                            size: 16,
-                            color: _subTabIndex == 0 ? Colors.black : Colors.white60,
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            'Tạo Phụ Đề',
-                            style: TextStyle(
-                              color: _subTabIndex == 0 ? Colors.black : Colors.white70,
-                              fontSize: 13,
-                              fontWeight: _subTabIndex == 0
-                                  ? FontWeight.bold
-                                  : FontWeight.w500,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: isSelected ? onAccent : palette.textSecondary,
+                    fontSize: 13,
+                    fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600,
                   ),
                 ),
-
-                // Sub-Tab 1: Lồng Tiếng AI
-                Expanded(
-                  child: GestureDetector(
-                    onTap: () {
-                      if (_subTabIndex != 1) {
-                        setState(() => _subTabIndex = 1);
-                      }
-                    },
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 200),
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      decoration: BoxDecoration(
-                        color: _subTabIndex == 1
-                            ? AppColors.primaryEmerald
-                            : Colors.transparent,
-                        borderRadius: BorderRadius.circular(20),
-                        boxShadow: _subTabIndex == 1
-                            ? [
-                                BoxShadow(
-                                  color: AppColors.primaryEmerald.withValues(alpha: 0.25),
-                                  blurRadius: 8,
-                                  offset: const Offset(0, 2),
-                                ),
-                              ]
-                            : null,
-                      ),
-                      alignment: Alignment.center,
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.record_voice_over_rounded,
-                            size: 16,
-                            color: _subTabIndex == 1 ? Colors.black : Colors.white60,
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            'Lồng Tiếng AI',
-                            style: TextStyle(
-                              color: _subTabIndex == 1 ? Colors.black : Colors.white70,
-                              fontSize: 13,
-                              fontWeight: _subTabIndex == 1
-                                  ? FontWeight.bold
-                                  : FontWeight.w500,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
-
-          // IndexedStack preserves the scroll position and filled inputs of both screens
-          Expanded(
-            child: IndexedStack(
-              index: _subTabIndex,
-              children: [
-                HomeScreen(
-                  key: _homeKey,
-                  hideAppBar: true,
-                  onNavigateToSettings: widget.onNavigateToSettings,
-                  onProcessCompleted: (doc, videoPath, [title]) {
-                    setState(() {
-                      _currentDoc = doc;
-                      _currentVideoPath = videoPath;
-                      _currentTitle = title;
-                      _subTabIndex = 1; // Tự động trượt sang Tab Lồng Tiếng AI
-                    });
-                  },
-                ),
-                TtsStudioScreen(
-                  key: ValueKey(
-                    'tts_${_currentVideoPath ?? ""}_${_currentDoc?.hashCode ?? 0}',
-                  ),
-                  hideAppBar: true,
-                  initialDoc: _currentDoc,
-                  initialVideoPath: _currentVideoPath,
-                  initialTitle: _currentTitle,
-                ),
-              ],
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }

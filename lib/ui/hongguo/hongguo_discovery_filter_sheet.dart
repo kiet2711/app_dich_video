@@ -89,27 +89,31 @@ const List<HongguoQuickPreset> kHongguoQuickPresets = <HongguoQuickPreset>[
 /// Phản ánh đúng taxonomy nhiều trục của ByteDance (`genre`, `art_style`, `epoch`, `theme`, `role`, `gender`, `sort`...).
 class HongguoDiscoveryFilterSheet extends StatefulWidget {
   final HongguoDiscoverySelection initialSelection;
-  final Color accentColor;
+  final Color? accentColor;
 
   const HongguoDiscoveryFilterSheet({
     super.key,
     required this.initialSelection,
-    this.accentColor = const Color(0xFFFF6A00),
+    this.accentColor,
   });
 
   static Future<HongguoDiscoverySelection?> show(
     BuildContext context, {
     required HongguoDiscoverySelection initialSelection,
-    Color accentColor = const Color(0xFFFF6A00),
+    Color? accentColor,
   }) {
     HapticFeedback.mediumImpact();
+    final inheritedTheme = Theme.of(context);
     return showModalBottomSheet<HongguoDiscoverySelection>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => HongguoDiscoveryFilterSheet(
-        initialSelection: initialSelection,
-        accentColor: accentColor,
+      builder: (_) => Theme(
+        data: inheritedTheme,
+        child: HongguoDiscoveryFilterSheet(
+          initialSelection: initialSelection,
+          accentColor: accentColor,
+        ),
       ),
     );
   }
@@ -167,6 +171,8 @@ class _HongguoDiscoveryFilterSheetState
 
   @override
   Widget build(BuildContext context) {
+    final palette = AppThemePalette.of(context);
+    final accent = widget.accentColor ?? palette.accentFor(AppTabId.hongguo);
     final summary = _selection.buildSummaryLabel(_groups);
     final bottomInset = MediaQuery.of(context).padding.bottom;
 
@@ -174,10 +180,15 @@ class _HongguoDiscoveryFilterSheetState
       constraints: BoxConstraints(
         maxHeight: MediaQuery.of(context).size.height * 0.86,
       ),
-      decoration: const BoxDecoration(
-        color: AppColors.darkSurface,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
-        boxShadow: [BoxShadow(color: Colors.black87, blurRadius: 20)],
+      decoration: BoxDecoration(
+        color: palette.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: palette.isDark ? 0.55 : 0.16),
+            blurRadius: 20,
+          ),
+        ],
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -187,7 +198,7 @@ class _HongguoDiscoveryFilterSheetState
             width: 40,
             height: 4,
             decoration: BoxDecoration(
-              color: Colors.white24,
+              color: palette.border,
               borderRadius: BorderRadius.circular(2),
             ),
           ),
@@ -195,44 +206,44 @@ class _HongguoDiscoveryFilterSheetState
             padding: const EdgeInsets.fromLTRB(16, 4, 12, 10),
             child: Row(
               children: [
-                Icon(Icons.tune_rounded, color: widget.accentColor, size: 20),
+                Icon(Icons.tune_rounded, color: accent, size: 20),
                 const SizedBox(width: 8),
-                const Expanded(
+                Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
                         'Bộ lọc Thể loại Đa chiều',
                         style: TextStyle(
-                          color: Colors.white,
+                          color: palette.textPrimary,
                           fontSize: 16,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
                       Text(
                         'Kết hợp đồng thời Dạng phim + Bối cảnh + Đối tượng + Chủ đề',
-                        style: TextStyle(color: Colors.white54, fontSize: 11),
+                        style: TextStyle(color: palette.textMuted, fontSize: 11),
                       ),
                     ],
                   ),
                 ),
                 if (_refreshingGroups)
-                  const Padding(
-                    padding: EdgeInsets.only(right: 8),
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
                     child: SizedBox(
                       width: 14,
                       height: 14,
-                      child: CircularProgressIndicator(strokeWidth: 1.8),
+                      child: CircularProgressIndicator(strokeWidth: 1.8, color: accent),
                     ),
                   ),
                 IconButton(
-                  icon: const Icon(Icons.close_rounded, color: Colors.white54, size: 20),
+                  icon: Icon(Icons.close_rounded, color: palette.textMuted, size: 20),
                   onPressed: () => Navigator.pop(context),
                 ),
               ],
             ),
           ),
-          const Divider(color: Colors.white12, height: 1),
+          Divider(color: palette.border, height: 1),
           Expanded(
             child: SingleChildScrollView(
               physics: const BouncingScrollPhysics(),
@@ -241,10 +252,10 @@ class _HongguoDiscoveryFilterSheetState
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // 0. GỢI Ý NHANH 1 CHẠM
-                  const Text(
+                  Text(
                     '⚡ Chọn nhanh gu phổ biến',
                     style: TextStyle(
-                      color: Colors.white70,
+                      color: palette.textSecondary,
                       fontSize: 12.5,
                       fontWeight: FontWeight.bold,
                     ),
@@ -259,6 +270,8 @@ class _HongguoDiscoveryFilterSheetState
                         return Padding(
                           padding: const EdgeInsets.only(right: 8),
                           child: _buildChip(
+                            palette: palette,
+                            accent: accent,
                             label: preset.label,
                             isSelected: isSel,
                             onTap: () {
@@ -279,10 +292,10 @@ class _HongguoDiscoveryFilterSheetState
                   // 1. KHO NỘI DUNG (NGƯỜI THẬT / HOẠT HÌNH / PHIM AI)
                   Row(
                     children: [
-                      const Text(
+                      Text(
                         '1. Kho nội dung',
                         style: TextStyle(
-                          color: Colors.white70,
+                          color: palette.textSecondary,
                           fontSize: 13.5,
                           fontWeight: FontWeight.bold,
                         ),
@@ -291,7 +304,7 @@ class _HongguoDiscoveryFilterSheetState
                       Text(
                         'Tách riêng hệ sinh thái',
                         style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.38),
+                          color: palette.textMuted,
                           fontSize: 11,
                         ),
                       ),
@@ -304,6 +317,8 @@ class _HongguoDiscoveryFilterSheetState
                     children: HongguoGenreKind.values.map((kind) {
                       final isSel = _selection.genreKind == kind;
                       return _buildChip(
+                        palette: palette,
+                        accent: accent,
                         label: '${kind.emoji} ${kind.label}',
                         isSelected: isSel,
                         onTap: () => _selectGenreKind(kind),
@@ -314,7 +329,7 @@ class _HongguoDiscoveryFilterSheetState
 
                   // 2. CÁC TRỤC LỌC ĐA CHIỀU TỪ SERVER
                   for (final group in _orderedGroups(_groups)) ...[
-                    _buildGroupSection(group),
+                    _buildGroupSection(palette, accent, group),
                     const SizedBox(height: 16),
                   ],
                 ],
@@ -323,16 +338,16 @@ class _HongguoDiscoveryFilterSheetState
           ),
           Container(
             padding: EdgeInsets.fromLTRB(16, 10, 16, bottomInset + 12),
-            decoration: const BoxDecoration(
-              color: AppColors.darkSurface,
-              border: Border(top: BorderSide(color: Colors.white12)),
+            decoration: BoxDecoration(
+              color: palette.surface,
+              border: Border(top: BorderSide(color: palette.border)),
             ),
             child: Row(
               children: [
                 OutlinedButton(
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.white70,
-                    side: const BorderSide(color: Colors.white24),
+                    foregroundColor: palette.textSecondary,
+                    side: BorderSide(color: palette.border),
                     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(14),
@@ -358,8 +373,9 @@ class _HongguoDiscoveryFilterSheetState
                       ),
                     ),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: widget.accentColor,
-                      foregroundColor: Colors.white,
+                      backgroundColor: accent,
+                      foregroundColor: palette.onColor(accent),
+                      elevation: 0,
                       padding: const EdgeInsets.symmetric(vertical: 13, horizontal: 14),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(14),
@@ -396,7 +412,11 @@ class _HongguoDiscoveryFilterSheetState
     return sorted;
   }
 
-  Widget _buildGroupSection(HongguoSelectorGroup group) {
+  Widget _buildGroupSection(
+    AppThemePalette palette,
+    Color accent,
+    HongguoSelectorGroup group,
+  ) {
     final current = _selection.valueOf(group.type);
     final isSort = group.type == 'sort';
     final effectiveCurrent = isSort && current.isEmpty ? 'hot_score' : current;
@@ -426,19 +446,23 @@ class _HongguoDiscoveryFilterSheetState
           children: [
             Text(
               group.label,
-              style: const TextStyle(
-                color: Colors.white70,
+              style: TextStyle(
+                color: palette.textSecondary,
                 fontSize: 13,
                 fontWeight: FontWeight.bold,
               ),
             ),
             const SizedBox(width: 6),
             if (group.type == 'category_dim_epoch')
-              Text(
-                '(gồm Học đường, Đô thị, Cổ đại...)',
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.4),
-                  fontSize: 11,
+              Flexible(
+                child: Text(
+                  '(gồm Học đường, Đô thị, Cổ đại...)',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: palette.textMuted,
+                    fontSize: 11,
+                  ),
                 ),
               ),
           ],
@@ -450,6 +474,8 @@ class _HongguoDiscoveryFilterSheetState
           children: [
             if (!isSort)
               _buildChip(
+                palette: palette,
+                accent: accent,
                 label: 'Tất cả',
                 isSelected: effectiveCurrent.isEmpty,
                 onTap: () => setState(
@@ -458,6 +484,8 @@ class _HongguoDiscoveryFilterSheetState
               ),
             for (final opt in visibleOptions)
               _buildChip(
+                palette: palette,
+                accent: accent,
                 label: opt.viLabel,
                 isSelected: effectiveCurrent == opt.id,
                 onTap: () => setState(
@@ -469,6 +497,8 @@ class _HongguoDiscoveryFilterSheetState
               ),
             if (needsCollapse)
               _buildChip(
+                palette: palette,
+                accent: accent,
                 label: 'Xem tất cả (${group.options.length}) ▾',
                 isSelected: false,
                 onTap: () => setState(() => _expandedGroups.add(group.type)),
@@ -480,6 +510,8 @@ class _HongguoDiscoveryFilterSheetState
   }
 
   Widget _buildChip({
+    required AppThemePalette palette,
+    required Color accent,
     required String label,
     required bool isSelected,
     required VoidCallback onTap,
@@ -494,18 +526,18 @@ class _HongguoDiscoveryFilterSheetState
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
         decoration: BoxDecoration(
           color: isSelected
-              ? widget.accentColor.withValues(alpha: 0.18)
-              : Colors.white.withValues(alpha: 0.07),
+              ? accent.withValues(alpha: palette.isDark ? 0.2 : 0.14)
+              : palette.surfaceAlt,
           borderRadius: BorderRadius.circular(18),
           border: Border.all(
-            color: isSelected ? widget.accentColor : Colors.white12,
+            color: isSelected ? accent : palette.border,
             width: isSelected ? 1.3 : 0.8,
           ),
         ),
         child: Text(
           label,
           style: TextStyle(
-            color: isSelected ? widget.accentColor : Colors.white70,
+            color: isSelected ? accent : palette.textSecondary,
             fontSize: 12.5,
             fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
           ),

@@ -72,6 +72,8 @@ class _GeminiKeyTestDialogState extends State<GeminiKeyTestDialog> {
   }
 
   void _removeDeadKeys() {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.settings);
     final aliveKeys = _results
         .where((r) => r.isAlive)
         .map((r) => r.key)
@@ -87,22 +89,25 @@ class _GeminiKeyTestDialogState extends State<GeminiKeyTestDialog> {
           removedCount > 0
               ? 'Đã loại bỏ $removedCount key không khả dụng, giữ lại ${aliveKeys.length} key sẵn sàng dịch!'
               : 'Tất cả các key đều đang hoạt động tốt!',
+          style: TextStyle(color: palette.onColor(accent)),
         ),
-        backgroundColor: AppColors.primaryEmerald,
+        backgroundColor: accent,
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.settings);
     final aliveCount = _results.where((r) => r.isAlive).length;
     final deadCount = _results.where((r) => !r.isAlive).length;
 
     return Dialog(
-      backgroundColor: AppColors.darkSurface,
+      backgroundColor: palette.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(20),
-        side: const BorderSide(color: AppColors.cardBorder),
+        side: BorderSide(color: palette.border),
       ),
       insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       child: ConstrainedBox(
@@ -119,38 +124,38 @@ class _GeminiKeyTestDialogState extends State<GeminiKeyTestDialog> {
                   Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      color: AppColors.primaryEmerald.withValues(alpha: 0.12),
+                      color: accent.withValues(alpha: 0.14),
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: const Icon(
+                    child: Icon(
                       Icons.bolt_rounded,
-                      color: AppColors.primaryEmerald,
+                      color: accent,
                       size: 24,
                     ),
                   ),
                   const SizedBox(width: 12),
-                  const Expanded(
+                  Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
                           'Kiểm tra Gemini API Key',
                           style: TextStyle(
-                            color: Colors.white,
+                            color: palette.textPrimary,
                             fontSize: 16,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                        SizedBox(height: 2),
+                        const SizedBox(height: 2),
                         Text(
                           'Gọi thử AI thực tế để phát hiện key chết hoặc lỗi 429',
-                          style: TextStyle(color: Colors.white60, fontSize: 12),
+                          style: TextStyle(color: palette.textSecondary, fontSize: 12),
                         ),
                       ],
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.close, color: Colors.white54, size: 20),
+                    icon: Icon(Icons.close, color: palette.textMuted, size: 20),
                     onPressed: () => Navigator.of(context).pop(),
                   ),
                 ],
@@ -161,16 +166,16 @@ class _GeminiKeyTestDialogState extends State<GeminiKeyTestDialog> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF13141B),
+                  color: palette.surfaceAlt,
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppColors.cardBorder),
+                  border: Border.all(color: palette.border),
                 ),
                 child: Row(
                   children: [
-                    const Text(
+                    Text(
                       'Model kiểm tra:',
                       style: TextStyle(
-                        color: Colors.white70,
+                        color: palette.textSecondary,
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
                       ),
@@ -184,14 +189,14 @@ class _GeminiKeyTestDialogState extends State<GeminiKeyTestDialog> {
                               ? _selectedModel
                               : 'gemini-3.5-flash-lite',
                           isExpanded: true,
-                          dropdownColor: const Color(0xFF1E202A),
-                          icon: const Icon(
+                          dropdownColor: palette.surface,
+                          icon: Icon(
                             Icons.keyboard_arrow_down,
-                            color: AppColors.primaryEmerald,
+                            color: accent,
                             size: 18,
                           ),
-                          style: const TextStyle(
-                            color: Colors.white,
+                          style: TextStyle(
+                            color: palette.textPrimary,
                             fontSize: 12,
                             fontWeight: FontWeight.bold,
                           ),
@@ -234,29 +239,32 @@ class _GeminiKeyTestDialogState extends State<GeminiKeyTestDialog> {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF13141B),
+                    color: palette.surfaceAlt,
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: AppColors.cardBorder),
+                    border: Border.all(color: palette.border),
                   ),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceAround,
                     children: [
                       _buildSummaryItem(
+                        palette: palette,
                         label: 'Tổng số key',
                         count: '${_results.length}',
-                        color: Colors.white70,
+                        color: palette.textPrimary,
                       ),
-                      Container(width: 1, height: 24, color: AppColors.cardBorder),
+                      Container(width: 1, height: 24, color: palette.border),
                       _buildSummaryItem(
+                        palette: palette,
                         label: '🟢 Sẵn sàng',
                         count: '$aliveCount',
-                        color: AppColors.primaryEmerald,
+                        color: accent,
                       ),
-                      Container(width: 1, height: 24, color: AppColors.cardBorder),
+                      Container(width: 1, height: 24, color: palette.border),
                       _buildSummaryItem(
+                        palette: palette,
                         label: '🔴 Lỗi / Hết ngạch',
                         count: '$deadCount',
-                        color: deadCount > 0 ? Colors.redAccent : Colors.white38,
+                        color: deadCount > 0 ? Colors.redAccent : palette.textMuted,
                       ),
                     ],
                   ),
@@ -271,14 +279,12 @@ class _GeminiKeyTestDialogState extends State<GeminiKeyTestDialog> {
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            const CircularProgressIndicator(
-                              color: AppColors.primaryEmerald,
-                            ),
+                            CircularProgressIndicator(color: accent),
                             const SizedBox(height: 16),
                             Text(
                               'Đang gọi thử AI Google ($_selectedModel)...',
-                              style: const TextStyle(
-                                color: Colors.white70,
+                              style: TextStyle(
+                                color: palette.textSecondary,
                                 fontSize: 13,
                               ),
                             ),
@@ -286,10 +292,10 @@ class _GeminiKeyTestDialogState extends State<GeminiKeyTestDialog> {
                         ),
                       )
                     : _results.isEmpty
-                        ? const Center(
+                        ? Center(
                             child: Text(
                               'Không có API Key nào để kiểm tra.',
-                              style: TextStyle(color: Colors.white54),
+                              style: TextStyle(color: palette.textMuted),
                             ),
                           )
                         : ListView.separated(
@@ -299,7 +305,13 @@ class _GeminiKeyTestDialogState extends State<GeminiKeyTestDialog> {
                               final item = _results[index];
                               final isChecking =
                                   _recheckingIndices.contains(index);
-                              return _buildKeyItemCard(index, item, isChecking);
+                              return _buildKeyItemCard(
+                                palette,
+                                accent,
+                                index,
+                                item,
+                                isChecking,
+                              );
                             },
                           ),
               ),
@@ -313,8 +325,9 @@ class _GeminiKeyTestDialogState extends State<GeminiKeyTestDialog> {
                     Expanded(
                       child: ElevatedButton.icon(
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.redAccent.withValues(alpha: 0.15),
+                          backgroundColor: Colors.redAccent.withValues(alpha: 0.14),
                           foregroundColor: Colors.redAccent,
+                          elevation: 0,
                           side: const BorderSide(color: Colors.redAccent, width: 1),
                           padding: const EdgeInsets.symmetric(vertical: 12),
                           shape: RoundedRectangleBorder(
@@ -337,8 +350,8 @@ class _GeminiKeyTestDialogState extends State<GeminiKeyTestDialog> {
                   Expanded(
                     child: OutlinedButton.icon(
                       style: OutlinedButton.styleFrom(
-                        foregroundColor: AppColors.primaryEmerald,
-                        side: const BorderSide(color: AppColors.primaryEmerald),
+                        foregroundColor: accent,
+                        side: BorderSide(color: accent),
                         padding: const EdgeInsets.symmetric(vertical: 12),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(10),
@@ -365,6 +378,7 @@ class _GeminiKeyTestDialogState extends State<GeminiKeyTestDialog> {
   }
 
   Widget _buildSummaryItem({
+    required AppThemePalette palette,
     required String label,
     required String count,
     required Color color,
@@ -383,13 +397,15 @@ class _GeminiKeyTestDialogState extends State<GeminiKeyTestDialog> {
         const SizedBox(height: 2),
         Text(
           label,
-          style: const TextStyle(color: Colors.white54, fontSize: 11),
+          style: TextStyle(color: palette.textMuted, fontSize: 11),
         ),
       ],
     );
   }
 
   Widget _buildKeyItemCard(
+    AppThemePalette palette,
+    Color accent,
     int index,
     GeminiKeyCheckResult item,
     bool isChecking,
@@ -400,7 +416,7 @@ class _GeminiKeyTestDialogState extends State<GeminiKeyTestDialog> {
 
     switch (item.status) {
       case GeminiKeyStatus.alive:
-        statusColor = AppColors.primaryEmerald;
+        statusColor = accent;
         statusIcon = Icons.check_circle_rounded;
         statusBadge = 'SỐNG (${item.latencyMs}ms)';
         break;
@@ -410,12 +426,13 @@ class _GeminiKeyTestDialogState extends State<GeminiKeyTestDialog> {
         statusBadge = 'CHẾT (400)';
         break;
       case GeminiKeyStatus.permissionDenied:
-        statusColor = Colors.orangeAccent;
+        statusColor =
+            palette.isDark ? Colors.orangeAccent : const Color(0xFFEA580C);
         statusIcon = Icons.block_rounded;
         statusBadge = 'CHẶN QUYỀN (403)';
         break;
       case GeminiKeyStatus.quotaExceeded:
-        statusColor = Colors.amber;
+        statusColor = palette.isDark ? Colors.amber : const Color(0xFFD97706);
         statusIcon = Icons.warning_amber_rounded;
         statusBadge = 'HẾT HẠN NGẠCH (429)';
         break;
@@ -425,7 +442,7 @@ class _GeminiKeyTestDialogState extends State<GeminiKeyTestDialog> {
         statusBadge = 'LỖI MẠNG';
         break;
       case GeminiKeyStatus.unknown:
-        statusColor = Colors.grey;
+        statusColor = palette.textMuted;
         statusIcon = Icons.help_outline_rounded;
         statusBadge = 'LỖI KHÁC';
         break;
@@ -434,12 +451,12 @@ class _GeminiKeyTestDialogState extends State<GeminiKeyTestDialog> {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFF1E202A),
+        color: palette.surfaceAlt,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
           color: item.isAlive
-              ? AppColors.cardBorder
-              : statusColor.withValues(alpha: 0.4),
+              ? palette.border
+              : statusColor.withValues(alpha: 0.45),
         ),
       ),
       child: Column(
@@ -451,7 +468,7 @@ class _GeminiKeyTestDialogState extends State<GeminiKeyTestDialog> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
-                  color: statusColor.withValues(alpha: 0.15),
+                  color: statusColor.withValues(alpha: 0.14),
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Row(
@@ -476,7 +493,7 @@ class _GeminiKeyTestDialogState extends State<GeminiKeyTestDialog> {
                 visualDensity: VisualDensity.compact,
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(),
-                icon: const Icon(Icons.copy_rounded, size: 16, color: Colors.white54),
+                icon: Icon(Icons.copy_rounded, size: 16, color: palette.textMuted),
                 tooltip: 'Sao chép key',
                 onPressed: () {
                   Clipboard.setData(ClipboardData(text: item.key));
@@ -491,12 +508,12 @@ class _GeminiKeyTestDialogState extends State<GeminiKeyTestDialog> {
               const SizedBox(width: 8),
               // Single recheck button
               if (isChecking)
-                const SizedBox(
+                SizedBox(
                   width: 16,
                   height: 16,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-                    color: AppColors.primaryEmerald,
+                    color: accent,
                   ),
                 )
               else
@@ -504,10 +521,10 @@ class _GeminiKeyTestDialogState extends State<GeminiKeyTestDialog> {
                   visualDensity: VisualDensity.compact,
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(),
-                  icon: const Icon(
+                  icon: Icon(
                     Icons.refresh_rounded,
                     size: 18,
-                    color: Colors.white54,
+                    color: palette.textMuted,
                   ),
                   tooltip: 'Kiểm tra lại key này',
                   onPressed: () => _recheckSingle(index),
@@ -518,8 +535,8 @@ class _GeminiKeyTestDialogState extends State<GeminiKeyTestDialog> {
           // Masked Key string
           Text(
             item.maskedKey,
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: palette.textPrimary,
               fontSize: 13,
               fontFamily: 'monospace',
               fontWeight: FontWeight.w600,
@@ -531,7 +548,7 @@ class _GeminiKeyTestDialogState extends State<GeminiKeyTestDialog> {
             item.message,
             style: TextStyle(
               color: item.isAlive
-                  ? Colors.white60
+                  ? palette.textSecondary
                   : statusColor.withValues(alpha: 0.9),
               fontSize: 11,
             ),

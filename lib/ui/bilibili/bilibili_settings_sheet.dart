@@ -72,10 +72,12 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
 
   Future<void> _pickVoice() async {
     HapticFeedback.selectionClick();
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.bilibili);
     final picked = await VoiceSelectorSheet.show(
       context,
       currentVoiceType: _selectedVoice.voiceType,
-      accentColor: const Color(0xFF00AEEC),
+      accentColor: accent,
       title: 'Chọn Giọng Đọc Bilibili',
     );
 
@@ -116,6 +118,9 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = AppThemePalette.of(context);
+    final accent = palette.accentFor(AppTabId.bilibili);
+    final secondary = palette.secondaryFor(AppTabId.bilibili);
     final settings = _settings;
     final bottomPadding = MediaQuery.of(context).viewInsets.bottom;
 
@@ -124,9 +129,9 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
         maxHeight: MediaQuery.of(context).size.height * 0.90,
       ),
       padding: EdgeInsets.fromLTRB(20, 12, 20, 20 + bottomPadding),
-      decoration: const BoxDecoration(
-        color: AppTheme.darkSurface,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       ),
       child: SafeArea(
         top: false,
@@ -134,36 +139,34 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Drag handle
             Center(
               child: Container(
                 margin: const EdgeInsets.only(bottom: 12),
                 width: 44,
                 height: 4,
                 decoration: BoxDecoration(
-                  color: Colors.white24,
+                  color: palette.border,
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
             ),
 
-            // Header
             Row(
               children: [
                 Container(
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF00AEEC).withValues(alpha: 0.15),
+                    color: secondary.withValues(alpha: 0.14),
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: const Icon(Icons.settings_rounded, color: Color(0xFF00AEEC), size: 20),
+                  child: Icon(Icons.settings_rounded, color: secondary, size: 20),
                 ),
                 const SizedBox(width: 12),
-                const Expanded(
+                Expanded(
                   child: Text(
                     'Cài đặt Bilibili',
                     style: TextStyle(
-                      color: AppTheme.textPrimary,
+                      color: palette.textPrimary,
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
                     ),
@@ -171,7 +174,7 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                 ),
                 IconButton(
                   onPressed: () => Navigator.of(context).pop(),
-                  icon: const Icon(Icons.close_rounded, color: Colors.white70),
+                  icon: Icon(Icons.close_rounded, color: palette.textSecondary),
                   tooltip: 'Đóng',
                 ),
               ],
@@ -179,43 +182,42 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
 
             const SizedBox(height: 10),
 
-            // Scrollable Settings Content
             Flexible(
               child: SingleChildScrollView(
                 physics: const BouncingScrollPhysics(),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // ===== 1. CHỌN CHẾ ĐỘ DỊCH (CAPCUT VS AI) =====
-                    const Text(
+                    Text(
                       'CHẾ ĐỘ DỊCH PHỤ ĐỀ (BILIBILI):',
                       style: TextStyle(
-                        color: AppTheme.textSecondary,
+                        color: palette.textSecondary,
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
                         letterSpacing: 0.5,
                       ),
                     ),
                     const SizedBox(height: 4),
-                    const Text(
+                    Text(
                       'Tùy chọn phương thức bóc tách & dịch thuật khi xem video Bilibili.',
-                      style: TextStyle(color: AppTheme.textMuted, fontSize: 11),
+                      style: TextStyle(color: palette.textMuted, fontSize: 11),
                     ),
                     const SizedBox(height: 10),
 
-                    // Lựa chọn chế độ dịch: 1 hàng 2 ô
                     IntrinsicHeight(
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           Expanded(
                             child: _buildModeOption(
+                              palette: palette,
+                              activeColor: secondary,
                               mode: 'capcut',
                               title: 'CapCut Free',
                               badge: 'MIỄN PHÍ',
-                              badgeColor: Colors.amber,
+                              badgeColor: const Color(0xFFD97706),
                               icon: Icons.bolt_rounded,
-                              iconColor: Colors.amber,
+                              iconColor: const Color(0xFFD97706),
                               description: 'Không cần API Key\nBóc tách âm & dịch nhanh',
                               isSelected: _translationMode == 'capcut',
                               onTap: () {
@@ -227,12 +229,14 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                           const SizedBox(width: 8),
                           Expanded(
                             child: _buildModeOption(
+                              palette: palette,
+                              activeColor: secondary,
                               mode: 'api_online',
                               title: 'AI Online',
                               badge: 'GEMINI/GROQ',
-                              badgeColor: const Color(0xFF00AEEC),
+                              badgeColor: secondary,
                               icon: Icons.auto_awesome_rounded,
-                              iconColor: const Color(0xFF00AEEC),
+                              iconColor: secondary,
                               description: 'Dịch AI ngữ cảnh\nChuẩn xác & mượt mà',
                               isSelected: _translationMode == 'api_online',
                               onTap: () {
@@ -247,36 +251,36 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
 
                     const SizedBox(height: 18),
 
-                    // ===== 2. CÁCH LẤY FILE PHỤ ĐỀ (SRT) =====
-                    const Text(
+                    Text(
                       'CÁCH LẤY FILE PHỤ ĐỀ (SRT):',
                       style: TextStyle(
-                        color: AppTheme.textSecondary,
+                        color: palette.textSecondary,
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
                         letterSpacing: 0.5,
                       ),
                     ),
                     const SizedBox(height: 4),
-                    const Text(
+                    Text(
                       'Tùy chọn ưu tiên lấy phụ đề Bilibili có sẵn hoặc nhảy qua CapCut nhận diện trực tiếp.',
-                      style: TextStyle(color: AppTheme.textMuted, fontSize: 11),
+                      style: TextStyle(color: palette.textMuted, fontSize: 11),
                     ),
                     const SizedBox(height: 10),
 
-                    // Lựa chọn cách lấy file SRT: 1 hàng 2 ô
                     IntrinsicHeight(
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           Expanded(
                             child: _buildModeOption(
+                              palette: palette,
+                              activeColor: secondary,
                               mode: 'bilibili_first',
                               title: 'Ưu tiên Bilibili',
                               badge: 'MẶC ĐỊNH',
-                              badgeColor: const Color(0xFF00AEEC),
+                              badgeColor: secondary,
                               icon: Icons.subtitles_rounded,
-                              iconColor: const Color(0xFF00AEEC),
+                              iconColor: secondary,
                               description: 'Lấy phụ đề có sẵn\nKhông có mới qua CapCut',
                               isSelected: _subtitleSource == 'bilibili_first',
                               onTap: () {
@@ -288,12 +292,14 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                           const SizedBox(width: 8),
                           Expanded(
                             child: _buildModeOption(
+                              palette: palette,
+                              activeColor: secondary,
                               mode: 'capcut_always',
                               title: 'Chuyển sang CapCut',
                               badge: 'BỎ QUA GỐC',
-                              badgeColor: Colors.amber,
+                              badgeColor: const Color(0xFFD97706),
                               icon: Icons.graphic_eq_rounded,
-                              iconColor: Colors.amber,
+                              iconColor: const Color(0xFFD97706),
                               description: 'Bỏ qua phụ đề Bilibili (tránh sai)\nNhận diện thẳng âm thanh qua CapCut',
                               isSelected: _subtitleSource == 'capcut_always',
                               onTap: () {
@@ -319,22 +325,22 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                         child: Container(
                           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                           decoration: BoxDecoration(
-                            color: Colors.amber.withValues(alpha: 0.12),
+                            color: const Color(0xFFD97706).withValues(alpha: 0.12),
                             borderRadius: BorderRadius.circular(10),
                             border: Border.all(
-                              color: Colors.amber.withValues(alpha: 0.4),
+                              color: const Color(0xFFD97706).withValues(alpha: 0.4),
                             ),
                           ),
                           child: const Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(Icons.refresh_rounded, color: Colors.amber, size: 16),
+                              Icon(Icons.refresh_rounded, color: Color(0xFFD97706), size: 16),
                               SizedBox(width: 6),
                               Flexible(
                                 child: Text(
                                   'Tạo lại phụ đề cho video này theo thiết lập mới',
                                   style: TextStyle(
-                                    color: Colors.amber,
+                                    color: Color(0xFFD97706),
                                     fontSize: 12,
                                     fontWeight: FontWeight.bold,
                                   ),
@@ -349,33 +355,32 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
 
                     const SizedBox(height: 18),
 
-                    // ===== 3. CHỌN GIỌNG LỒNG TIẾNG AI =====
-                    const Text(
+                    Text(
                       'GIỌNG LỒNG TIẾNG AI (BILIBILI):',
                       style: TextStyle(
-                        color: AppTheme.textSecondary,
+                        color: palette.textSecondary,
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
                         letterSpacing: 0.5,
                       ),
                     ),
                     const SizedBox(height: 4),
-                    const Text(
+                    Text(
                       'Giọng đọc AI tự động phát khi bật chế độ "Lồng tiếng AI" cho video.',
-                      style: TextStyle(color: AppTheme.textMuted, fontSize: 11),
+                      style: TextStyle(color: palette.textMuted, fontSize: 11),
                     ),
                     const SizedBox(height: 8),
 
                     InkWell(
                       onTap: _pickVoice,
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(14),
                       child: Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: AppTheme.darkSurfaceVariant,
-                          borderRadius: BorderRadius.circular(12),
+                          color: palette.surfaceAlt,
+                          borderRadius: BorderRadius.circular(14),
                           border: Border.all(
-                            color: const Color(0xFF00AEEC).withValues(alpha: 0.3),
+                            color: accent.withValues(alpha: 0.35),
                           ),
                         ),
                         child: Row(
@@ -383,12 +388,12 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                             Container(
                               padding: const EdgeInsets.all(10),
                               decoration: BoxDecoration(
-                                color: const Color(0xFF00AEEC).withValues(alpha: 0.15),
+                                color: accent.withValues(alpha: 0.14),
                                 shape: BoxShape.circle,
                               ),
-                              child: const Icon(
+                              child: Icon(
                                 Icons.record_voice_over_rounded,
-                                color: Color(0xFF00AEEC),
+                                color: accent,
                                 size: 20,
                               ),
                             ),
@@ -402,8 +407,8 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                                       Flexible(
                                         child: Text(
                                           _selectedVoice.displayName,
-                                          style: const TextStyle(
-                                            color: AppTheme.textPrimary,
+                                          style: TextStyle(
+                                            color: palette.textPrimary,
                                             fontSize: 14,
                                             fontWeight: FontWeight.bold,
                                           ),
@@ -416,13 +421,13 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                                         padding: const EdgeInsets.symmetric(
                                             horizontal: 6, vertical: 1),
                                         decoration: BoxDecoration(
-                                          color: const Color(0xFF00AEEC).withValues(alpha: 0.2),
+                                          color: accent.withValues(alpha: 0.16),
                                           borderRadius: BorderRadius.circular(4),
                                         ),
-                                        child: const Text(
+                                        child: Text(
                                           'Đang dùng',
                                           style: TextStyle(
-                                            color: Color(0xFF00AEEC),
+                                            color: accent,
                                             fontSize: 10,
                                             fontWeight: FontWeight.bold,
                                           ),
@@ -435,8 +440,8 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                                     _selectedVoice.description.isNotEmpty
                                         ? _selectedVoice.description
                                         : 'Giọng đọc chuẩn tiếng Việt',
-                                    style: const TextStyle(
-                                      color: AppTheme.textSecondary,
+                                    style: TextStyle(
+                                      color: palette.textSecondary,
                                       fontSize: 11,
                                     ),
                                     maxLines: 1,
@@ -448,26 +453,26 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                               decoration: BoxDecoration(
-                                color: const Color(0xFF00AEEC).withValues(alpha: 0.15),
-                                borderRadius: BorderRadius.circular(8),
+                                color: accent.withValues(alpha: 0.14),
+                                borderRadius: BorderRadius.circular(10),
                                 border: Border.all(
-                                  color: const Color(0xFF00AEEC).withValues(alpha: 0.4),
+                                  color: accent.withValues(alpha: 0.4),
                                 ),
                               ),
-                              child: const Row(
+                              child: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   Text(
                                     'Đổi giọng',
                                     style: TextStyle(
-                                      color: Color(0xFF00AEEC),
+                                      color: accent,
                                       fontSize: 11.5,
                                       fontWeight: FontWeight.bold,
                                     ),
                                   ),
-                                  SizedBox(width: 2),
+                                  const SizedBox(width: 2),
                                   Icon(Icons.chevron_right_rounded,
-                                      size: 16, color: Color(0xFF00AEEC)),
+                                      size: 16, color: accent),
                                 ],
                               ),
                             ),
@@ -478,54 +483,53 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
 
                     const SizedBox(height: 18),
 
-                    // ===== 4. TỐI ƯU PHÁT VIDEO, CDN & TẢI VỀ =====
-                    const Text(
+                    Text(
                       'TỐI ƯU PHÁT VIDEO & TẢI VỀ (DASH THỐNG NHẤT):',
                       style: TextStyle(
-                        color: AppTheme.textSecondary,
+                        color: palette.textSecondary,
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
                         letterSpacing: 0.5,
                       ),
                     ),
                     const SizedBox(height: 4),
-                    const Text(
+                    Text(
                       'Gộp hình & tiếng DASH trực tiếp trong một demuxer giúp tua nhanh, không mất tiếng hoặc đứng hình.',
-                      style: TextStyle(color: AppTheme.textMuted, fontSize: 11),
+                      style: TextStyle(color: palette.textMuted, fontSize: 11),
                     ),
                     const SizedBox(height: 8),
 
                     if (settings != null)
                       Material(
-                        color: AppTheme.darkSurfaceVariant,
+                        color: palette.surfaceAlt,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(16),
-                          side: const BorderSide(color: AppTheme.cardBorder),
+                          side: BorderSide(color: palette.border),
                         ),
                         clipBehavior: Clip.antiAlias,
                         child: Column(
                           children: [
-                            // Độ phân giải ưu tiên (chuẩn QN '80'/'64'/'32'/'16')
                             ListTile(
-                              leading: const Icon(Icons.high_quality_rounded, color: Color(0xFF00AEEC)),
-                              title: const Text(
+                              leading: Icon(Icons.high_quality_rounded, color: secondary),
+                              title: Text(
                                 'Độ phân giải ưu tiên',
-                                style: TextStyle(color: AppTheme.textPrimary, fontSize: 13.5),
+                                style: TextStyle(color: palette.textPrimary, fontSize: 13.5),
                               ),
                               subtitle: Text(
                                 _getQualityLabel(_qualityKey),
-                                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11.5),
+                                style: TextStyle(color: palette.textSecondary, fontSize: 11.5),
                               ),
                               trailing: DropdownButtonHideUnderline(
                                 child: DropdownButton<String>(
                                   value: _qualityKey,
-                                  dropdownColor: AppTheme.darkSurfaceVariant,
-                                  icon: const Icon(Icons.arrow_drop_down, color: Colors.white70),
-                                  items: const [
-                                    DropdownMenuItem(value: '80', child: Text('1080p FHD', style: TextStyle(color: Colors.white, fontSize: 12.5))),
-                                    DropdownMenuItem(value: '64', child: Text('720p HD', style: TextStyle(color: Colors.white, fontSize: 12.5))),
-                                    DropdownMenuItem(value: '32', child: Text('480p SD', style: TextStyle(color: Colors.white, fontSize: 12.5))),
-                                    DropdownMenuItem(value: '16', child: Text('360p Nhẹ', style: TextStyle(color: Colors.white, fontSize: 12.5))),
+                                  dropdownColor: palette.surface,
+                                  icon: Icon(Icons.arrow_drop_down, color: palette.textSecondary),
+                                  style: TextStyle(color: palette.textPrimary, fontSize: 12.5),
+                                  items: [
+                                    DropdownMenuItem(value: '80', child: Text('1080p FHD', style: TextStyle(color: palette.textPrimary, fontSize: 12.5))),
+                                    DropdownMenuItem(value: '64', child: Text('720p HD', style: TextStyle(color: palette.textPrimary, fontSize: 12.5))),
+                                    DropdownMenuItem(value: '32', child: Text('480p SD', style: TextStyle(color: palette.textPrimary, fontSize: 12.5))),
+                                    DropdownMenuItem(value: '16', child: Text('360p Nhẹ', style: TextStyle(color: palette.textPrimary, fontSize: 12.5))),
                                   ],
                                   onChanged: (val) {
                                     if (val != null) {
@@ -538,17 +542,16 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                                 ),
                               ),
                             ),
-                            const Divider(color: AppTheme.cardBorder, height: 1),
-                            // Máy chủ CDN ưu tiên (kiểu PiliPlus, né MCDN chậm)
+                            Divider(color: palette.border, height: 1),
                             ListTile(
-                              leading: const Icon(Icons.dns_rounded, color: Color(0xFF00AEEC)),
-                              title: const Text(
+                              leading: Icon(Icons.dns_rounded, color: secondary),
+                              title: Text(
                                 'Máy chủ CDN phát video',
-                                style: TextStyle(color: AppTheme.textPrimary, fontSize: 13.5),
+                                style: TextStyle(color: palette.textPrimary, fontSize: 13.5),
                               ),
                               subtitle: Text(
                                 BilibiliCdnService.fromCode(_cdnService).label,
-                                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11.5),
+                                style: TextStyle(color: palette.textSecondary, fontSize: 11.5),
                               ),
                               trailing: SizedBox(
                                 width: 140,
@@ -556,8 +559,8 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                                   child: DropdownButton<String>(
                                     isExpanded: true,
                                     value: _cdnService,
-                                    dropdownColor: AppTheme.darkSurfaceVariant,
-                                    icon: const Icon(Icons.arrow_drop_down, color: Colors.white70),
+                                    dropdownColor: palette.surface,
+                                    icon: Icon(Icons.arrow_drop_down, color: palette.textSecondary),
                                     items: BilibiliCdnService.values
                                         .map(
                                           (cdn) => DropdownMenuItem<String>(
@@ -566,7 +569,7 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                                               cdn.label,
                                               maxLines: 1,
                                               overflow: TextOverflow.ellipsis,
-                                              style: const TextStyle(color: Colors.white, fontSize: 12),
+                                              style: TextStyle(color: palette.textPrimary, fontSize: 12),
                                             ),
                                           ),
                                         )
@@ -581,19 +584,18 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                                 ),
                               ),
                             ),
-                            const Divider(color: AppTheme.cardBorder, height: 1),
-                            // Giải mã phần cứng GPU (tắt nếu gặp lỗi đen màn hình)
+                            Divider(color: palette.border, height: 1),
                             SwitchListTile(
                               dense: true,
-                              activeThumbColor: const Color(0xFF00AEEC),
-                              secondary: const Icon(Icons.developer_board_rounded, color: Color(0xFF00AEEC)),
-                              title: const Text(
+                              activeThumbColor: secondary,
+                              secondary: Icon(Icons.developer_board_rounded, color: secondary),
+                              title: Text(
                                 'Giải mã phần cứng (Hardware)',
-                                style: TextStyle(color: AppTheme.textPrimary, fontSize: 13.5),
+                                style: TextStyle(color: palette.textPrimary, fontSize: 13.5),
                               ),
-                              subtitle: const Text(
+                              subtitle: Text(
                                 'Tăng tốc GPU giảm giật lag khi tua; tắt nếu máy bị đen hình còn tiếng',
-                                style: TextStyle(color: AppTheme.textMuted, fontSize: 11),
+                                style: TextStyle(color: palette.textMuted, fontSize: 11),
                               ),
                               value: _hardwareDecode,
                               onChanged: (val) {
@@ -601,28 +603,27 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                                 setState(() => _hardwareDecode = val);
                               },
                             ),
-                            const Divider(color: AppTheme.cardBorder, height: 1),
-                            // Buffer RAM Slider/Dropdown
+                            Divider(color: palette.border, height: 1),
                             ListTile(
-                              leading: const Icon(Icons.memory_rounded, color: Color(0xFF00AEEC)),
-                              title: const Text(
+                              leading: Icon(Icons.memory_rounded, color: secondary),
+                              title: Text(
                                 'Bộ nhớ đệm RAM phát video',
-                                style: TextStyle(color: AppTheme.textPrimary, fontSize: 13.5),
+                                style: TextStyle(color: palette.textPrimary, fontSize: 13.5),
                               ),
                               subtitle: Text(
                                 _getBufferLabel(_bufferSizeMb),
-                                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11.5),
+                                style: TextStyle(color: palette.textSecondary, fontSize: 11.5),
                               ),
                               trailing: DropdownButtonHideUnderline(
                                 child: DropdownButton<int>(
                                   value: _bufferSizeMb,
-                                  dropdownColor: AppTheme.darkSurfaceVariant,
-                                  icon: const Icon(Icons.arrow_drop_down, color: Colors.white70),
-                                  items: const [
-                                    DropdownMenuItem(value: 32, child: Text('32 MB (Tiết kiệm)', style: TextStyle(color: Colors.white, fontSize: 12.5))),
-                                    DropdownMenuItem(value: 64, child: Text('64 MB (Cân bằng)', style: TextStyle(color: Colors.white, fontSize: 12.5))),
-                                    DropdownMenuItem(value: 128, child: Text('128 MB (Khuyên dùng)', style: TextStyle(color: Colors.white, fontSize: 12.5))),
-                                    DropdownMenuItem(value: 256, child: Text('256 MB (Cực đại)', style: TextStyle(color: Colors.white, fontSize: 12.5))),
+                                  dropdownColor: palette.surface,
+                                  icon: Icon(Icons.arrow_drop_down, color: palette.textSecondary),
+                                  items: [
+                                    DropdownMenuItem(value: 32, child: Text('32 MB (Tiết kiệm)', style: TextStyle(color: palette.textPrimary, fontSize: 12.5))),
+                                    DropdownMenuItem(value: 64, child: Text('64 MB (Cân bằng)', style: TextStyle(color: palette.textPrimary, fontSize: 12.5))),
+                                    DropdownMenuItem(value: 128, child: Text('128 MB (Khuyên dùng)', style: TextStyle(color: palette.textPrimary, fontSize: 12.5))),
+                                    DropdownMenuItem(value: 256, child: Text('256 MB (Cực đại)', style: TextStyle(color: palette.textPrimary, fontSize: 12.5))),
                                   ],
                                   onChanged: (val) {
                                     if (val != null) {
@@ -635,19 +636,18 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                                 ),
                               ),
                             ),
-                            const Divider(color: AppTheme.cardBorder, height: 1),
-                            // Download offline toggle
+                            Divider(color: palette.border, height: 1),
                             SwitchListTile(
                               dense: true,
-                              activeThumbColor: const Color(0xFF00AEEC),
-                              secondary: const Icon(Icons.download_rounded, color: Color(0xFF00AEEC)),
-                              title: const Text(
+                              activeThumbColor: secondary,
+                              secondary: Icon(Icons.download_rounded, color: secondary),
+                              title: Text(
                                 'Tự động tải video về máy',
-                                style: TextStyle(color: AppTheme.textPrimary, fontSize: 13.5),
+                                style: TextStyle(color: palette.textPrimary, fontSize: 13.5),
                               ),
-                              subtitle: const Text(
+                              subtitle: Text(
                                 'Tải trước MP4 để phát offline 100% mượt mà không giật lag',
-                                style: TextStyle(color: AppTheme.textMuted, fontSize: 11),
+                                style: TextStyle(color: palette.textMuted, fontSize: 11),
                               ),
                               value: _downloadOffline,
                               onChanged: (val) {
@@ -666,13 +666,12 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
 
             const SizedBox(height: 10),
 
-            // Nút Lưu Cài Đặt
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF00AEEC),
-                  foregroundColor: Colors.white,
+                  backgroundColor: accent,
+                  foregroundColor: palette.onColor(accent),
                   padding: const EdgeInsets.symmetric(vertical: 13),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
@@ -694,6 +693,8 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
   }
 
   Widget _buildModeOption({
+    required AppThemePalette palette,
+    required Color activeColor,
     required String mode,
     required String title,
     required String badge,
@@ -704,7 +705,6 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
     required bool isSelected,
     required VoidCallback onTap,
   }) {
-    const activeColor = Color(0xFF00AEEC);
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
@@ -714,10 +714,10 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
         decoration: BoxDecoration(
           color: isSelected
               ? activeColor.withValues(alpha: 0.12)
-              : AppTheme.darkSurfaceVariant,
+              : palette.surfaceAlt,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: isSelected ? activeColor : AppTheme.cardBorder,
+            color: isSelected ? activeColor : palette.border,
             width: isSelected ? 1.5 : 1,
           ),
         ),
@@ -741,7 +741,7 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                       ? Icons.radio_button_checked_rounded
                       : Icons.radio_button_off_rounded,
                   size: 18,
-                  color: isSelected ? activeColor : AppTheme.textMuted,
+                  color: isSelected ? activeColor : palette.textMuted,
                 ),
               ],
             ),
@@ -754,7 +754,7 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: isSelected ? activeColor : AppTheme.textPrimary,
+                      color: isSelected ? activeColor : palette.textPrimary,
                       fontSize: 13,
                       fontWeight: FontWeight.bold,
                     ),
@@ -790,8 +790,8 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
               description,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: AppTheme.textSecondary,
+              style: TextStyle(
+                color: palette.textSecondary,
                 fontSize: 10.5,
                 height: 1.25,
               ),
