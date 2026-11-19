@@ -94,22 +94,22 @@ const Map<String, AppThemeModePreset> appThemeModes = {
   'fresh': AppThemeModePreset(
     id: 'fresh',
     name: 'Tươi sáng',
-    tag: 'Mặc định',
+    tag: 'Xanh · Hồng',
     isDark: false,
-    surface: Color(0xFFFFFFFF),
-    surfaceAlt: Color(0xFFF3F5F9),
-    border: Color(0x140F172A),
+    surface: Color(0xFCFFFFFF),
+    surfaceAlt: Color(0xFFEEF3FC),
+    border: Color(0x2B4A5E96),
     textPrimary: Color(0xFF0F172A),
-    textSecondary: Color(0xFF475569),
-    textMuted: Color(0xFF8894A6),
-    navBg: Color(0xF0FFFFFF),
-    tabBgStudio: Color(0xFFF3F5FF),
-    tabBgHongguo: Color(0xFFFFF6F3),
-    tabBgBilibili: Color(0xFFF4F7FA),
-    tabBgHistory: Color(0xFFF6F4FF),
-    tabBgSettings: Color(0xFFF5F7FA),
-    previewColors: [Color(0xFFFFFFFF), Color(0xFFEEF4FF)],
-    previewDot: Color(0xFFFF4D2D),
+    textSecondary: Color(0xFF334155),
+    textMuted: Color(0xFF52637A),
+    navBg: Color(0xE8FFFFFF),
+    tabBgStudio: Color(0xFFE5EEFF),
+    tabBgHongguo: Color(0xFFFFE9E5),
+    tabBgBilibili: Color(0xFFFFE9F2),
+    tabBgHistory: Color(0xFFEDE6FF),
+    tabBgSettings: Color(0xFFE6EFFD),
+    previewColors: [Color(0xFFD6EAFF), Color(0xFFFFDFEE)],
+    previewDot: Color(0xFFFB7299),
   ),
   'pure': AppThemeModePreset(
     id: 'pure',
@@ -118,10 +118,10 @@ const Map<String, AppThemeModePreset> appThemeModes = {
     isDark: false,
     surface: Color(0xFFFFFFFF),
     surfaceAlt: Color(0xFFF4F5F7),
-    border: Color(0x120F172A),
+    border: Color(0x1F0F172A),
     textPrimary: Color(0xFF111827),
-    textSecondary: Color(0xFF4B5563),
-    textMuted: Color(0xFF9CA3AF),
+    textSecondary: Color(0xFF374151),
+    textMuted: Color(0xFF64748B),
     navBg: Color(0xF7FFFFFF),
     tabBgStudio: Color(0xFFFFFFFF),
     tabBgHongguo: Color(0xFFFFFFFF),
@@ -140,8 +140,8 @@ const Map<String, AppThemeModePreset> appThemeModes = {
     surfaceAlt: Color(0xFFF5EFE4),
     border: Color(0x1F785A32),
     textPrimary: Color(0xFF292018),
-    textSecondary: Color(0xFF6B5A48),
-    textMuted: Color(0xFF9C8A77),
+    textSecondary: Color(0xFF534334),
+    textMuted: Color(0xFF746250),
     navBg: Color(0xF2FFFCF5),
     tabBgStudio: Color(0xFFFAF5EC),
     tabBgHongguo: Color(0xFFFDF3EC),
@@ -342,6 +342,57 @@ class AppThemePalette extends ThemeExtension<AppThemePalette> {
 
   Color backgroundFor(AppTabId tab) => mode.backgroundFor(tab);
 
+  LinearGradient? backgroundGradientFor(AppTabId tab) {
+    if (mode.id == 'fresh') {
+      final colors = switch (tab) {
+        AppTabId.studio => const [
+            Color(0xFFDCEEFF),
+            Color(0xFFEDF0FF),
+            Color(0xFFFFE6F4),
+          ],
+        AppTabId.hongguo => const [
+            Color(0xFFFFE2DA),
+            Color(0xFFFFEDF2),
+            Color(0xFFE7F2FF),
+          ],
+        AppTabId.bilibili => const [
+            Color(0xFFFFE2EF),
+            Color(0xFFF2EEFF),
+            Color(0xFFD9F2FF),
+          ],
+        AppTabId.history => const [
+            Color(0xFFE9E2FF),
+            Color(0xFFFFE8F5),
+            Color(0xFFDDF1FF),
+          ],
+        AppTabId.settings => const [
+            Color(0xFFDCEEFF),
+            Color(0xFFF3EBFF),
+            Color(0xFFFFE5F2),
+          ],
+      };
+      return LinearGradient(
+        colors: colors,
+        stops: const [0.0, 0.52, 1.0],
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+      );
+    }
+    if (mode.id == 'warm') {
+      return const LinearGradient(
+        colors: [
+          Color(0xFFFDF2E2),
+          Color(0xFFFAF0E6),
+          Color(0xFFFFECE5),
+        ],
+        stops: [0.0, 0.55, 1.0],
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+      );
+    }
+    return null;
+  }
+
   AppAccentOption accentOptionFor(AppTabId tab) {
     final key = tab == AppTabId.settings ? AppTabId.studio : tab;
     final storedPrimary = switch (key) {
@@ -370,6 +421,27 @@ class AppThemePalette extends ThemeExtension<AppThemePalette> {
   Color onColor(Color bg) =>
       bg.computeLuminance() > 0.56 ? Colors.black : Colors.white;
 
+  /// Đảm bảo chữ màu nhấn trên nền sáng đủ độ tương phản, không bị chói mờ.
+  Color readableAccent(Color color) {
+    if (isDark) return color;
+    final hsl = HSLColor.fromColor(color);
+    if (hsl.lightness <= 0.42) return color;
+    return hsl
+        .withLightness((hsl.lightness - 0.14).clamp(0.32, 0.42))
+        .withSaturation((hsl.saturation + 0.06).clamp(0.0, 1.0))
+        .toColor();
+  }
+
+  /// Decoration dùng chung cho modal bottom sheet theo nền hiện tại của tab.
+  BoxDecoration sheetDecorationFor(AppTabId tab, {double radius = 24}) {
+    final gradient = backgroundGradientFor(tab);
+    return BoxDecoration(
+      color: gradient == null ? surface : null,
+      gradient: gradient,
+      borderRadius: BorderRadius.vertical(top: Radius.circular(radius)),
+    );
+  }
+
   List<BoxShadow> get cardShadows {
     if (mode.id == 'amoled') {
       return const <BoxShadow>[];
@@ -385,7 +457,7 @@ class AppThemePalette extends ThemeExtension<AppThemePalette> {
     }
     return [
       BoxShadow(
-        color: const Color(0xFF0F172A).withValues(alpha: 0.06),
+        color: const Color(0xFF3B5998).withValues(alpha: 0.08),
         blurRadius: 18,
         offset: const Offset(0, 6),
       ),
@@ -591,6 +663,11 @@ ThemeData buildAppTheme([AppThemePalette? palette]) {
       elevation: 0,
       scrolledUnderElevation: 0,
       surfaceTintColor: Colors.transparent,
+      systemOverlayStyle: SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: p.isDark ? Brightness.light : Brightness.dark,
+        statusBarBrightness: p.isDark ? Brightness.dark : Brightness.light,
+      ),
       iconTheme: IconThemeData(color: p.textPrimary),
       titleTextStyle: TextStyle(
         color: p.textPrimary,
@@ -619,6 +696,20 @@ ThemeData buildAppTheme([AppThemePalette? palette]) {
         fontSize: 13.5,
       ),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+    ),
+    switchTheme: SwitchThemeData(
+      thumbColor: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.selected)) return Colors.white;
+        return p.isDark ? const Color(0xFFCBD5E1) : Colors.white;
+      }),
+      trackColor: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.selected)) return studioAccent;
+        return p.isDark ? const Color(0xFF334155) : const Color(0xFFCBD5E1);
+      }),
+      trackOutlineColor: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.selected)) return Colors.transparent;
+        return p.isDark ? const Color(0xFF475569) : const Color(0xFF94A3B8);
+      }),
     ),
     snackBarTheme: SnackBarThemeData(
       behavior: SnackBarBehavior.floating,
@@ -679,4 +770,38 @@ ThemeData buildDarkCinemaTheme() {
     useMaterial3: true,
     extensions: <ThemeExtension<dynamic>>[midnight],
   );
+}
+
+class AppTabBackdrop extends StatelessWidget {
+  final AppTabId tab;
+  final Widget child;
+
+  const AppTabBackdrop({
+    super.key,
+    required this.tab,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = AppThemePalette.of(context);
+    final gradient = palette.backgroundGradientFor(tab);
+    final overlay = SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness:
+          palette.isDark ? Brightness.light : Brightness.dark,
+      statusBarBrightness:
+          palette.isDark ? Brightness.dark : Brightness.light,
+    );
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: overlay,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: gradient == null ? palette.backgroundFor(tab) : null,
+          gradient: gradient,
+        ),
+        child: child,
+      ),
+    );
+  }
 }

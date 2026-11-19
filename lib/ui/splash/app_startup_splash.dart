@@ -127,6 +127,7 @@ class _AppStartupSplashState extends State<AppStartupSplash>
     final palette = AppThemePalette.of(context);
     final accent = palette.accentFor(AppTabId.studio);
     final secondary = palette.secondaryFor(AppTabId.studio);
+    final freshGradient = palette.backgroundGradientFor(AppTabId.studio);
     final bgTop = palette.isDark
         ? const Color(0xFF171B2A)
         : Color.lerp(palette.surface, accent, 0.08)!;
@@ -134,12 +135,13 @@ class _AppStartupSplashState extends State<AppStartupSplash>
 
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: bgBottom,
-        gradient: RadialGradient(
-          center: const Alignment(0.0, -0.18),
-          radius: 0.9,
-          colors: [bgTop, bgBottom],
-        ),
+        color: freshGradient == null ? bgBottom : null,
+        gradient: freshGradient ??
+            RadialGradient(
+              center: const Alignment(0.0, -0.18),
+              radius: 0.9,
+              colors: [bgTop, bgBottom],
+            ),
       ),
       child: SafeArea(
         child: Stack(

@@ -56,11 +56,12 @@ class StudioScreenState extends State<StudioScreen> {
     final palette = AppThemePalette.of(context);
     final accent = palette.accentFor(AppTabId.studio);
     final secondary = palette.secondaryFor(AppTabId.studio);
-    final bg = palette.backgroundFor(AppTabId.studio);
 
-    return Scaffold(
-      backgroundColor: bg,
-      body: SafeArea(
+    return AppTabBackdrop(
+      tab: AppTabId.studio,
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        body: SafeArea(
         bottom: false,
         child: Column(
           children: [
@@ -212,6 +213,7 @@ class StudioScreenState extends State<StudioScreen> {
             ),
           ],
         ),
+      ),
       ),
     );
   }

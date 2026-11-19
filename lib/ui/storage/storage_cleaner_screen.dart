@@ -255,15 +255,16 @@ class _StorageCleanerScreenState extends State<StorageCleanerScreen> {
   Widget build(BuildContext context) {
     final palette = AppThemePalette.of(context);
     final accent = palette.accentFor(AppTabId.history);
-    final bg = palette.backgroundFor(AppTabId.history);
 
     final filtered = _filteredItems;
     final allSelected = filtered.isNotEmpty && filtered.every((it) => _selectedPaths.contains(it.path));
 
-    return Scaffold(
-      backgroundColor: bg,
-      appBar: AppBar(
-        backgroundColor: bg,
+    return AppTabBackdrop(
+      tab: AppTabId.history,
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        appBar: AppBar(
+          backgroundColor: Colors.transparent,
         elevation: 0,
         scrolledUnderElevation: 0,
         foregroundColor: palette.textPrimary,
@@ -373,6 +374,7 @@ class _StorageCleanerScreenState extends State<StorageCleanerScreen> {
                   ),
               ],
             ),
+      ),
     );
   }
 

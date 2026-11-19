@@ -28,25 +28,60 @@ class MediaStorage {
     'com.capcut.capsub/media',
   );
 
+  static bool _isPickerActive = false;
+  static DateTime? _suppressBackUntil;
+
+  static bool get shouldSuppressBackMinimize {
+    if (_isPickerActive) return true;
+    final until = _suppressBackUntil;
+    return until != null && DateTime.now().isBefore(until);
+  }
+
   static bool isContentUri(String value) {
     return Uri.tryParse(value)?.scheme.toLowerCase() == 'content';
   }
 
-  /// Android giữ URI do Storage Access Framework cấp để đọc trực tiếp file gốc.
-  /// Nếu nhà cung cấp không cho giữ quyền lâu dài, app mới tạo bản sao dự phòng.
-  /// iOS vẫn sao chép vào Application Support vì URL của document picker có thể
-  /// chỉ truy cập được tạm thời.
+  /// Android hỗ trợ chọn từ Thư viện Video (Photo Picker) hoặc Tệp & Thư mục (SAF).
+  /// iOS hỗ trợ Photos hoặc ứng dụng Tệp (Files).
   static Future<MediaSelection?> pickPersistentMedia({
     required bool videoOnly,
     List<String> allowedExtensions = const [],
     MediaSourceOption? sourceOption,
     BuildContext? context,
   }) async {
-    if (Platform.isAndroid) {
-      final picked = await _channel.invokeMapMethod<String, dynamic>(
-        'pickMedia',
-        {'videoOnly': videoOnly},
+    MediaSourceOption? selectedOption = sourceOption;
+    if (selectedOption == null &&
+        context != null &&
+        (Platform.isAndroid || Platform.isIOS)) {
+      selectedOption = await showMediaSourceSheet(
+        context,
+        videoOnly: videoOnly,
       );
+      if (selectedOption == null) {
+        return null;
+      }
+    }
+
+    if (Platform.isAndroid) {
+      final sourceKey = selectedOption == MediaSourceOption.photos
+          ? 'photos'
+          : (selectedOption == MediaSourceOption.files
+                ? 'files'
+                : (videoOnly ? 'photos' : 'files'));
+
+      _isPickerActive = true;
+      final Map<String, dynamic>? picked;
+      try {
+        picked = await _channel.invokeMapMethod<String, dynamic>('pickMedia', {
+          'videoOnly': videoOnly,
+          'source': sourceKey,
+        });
+      } finally {
+        _isPickerActive = false;
+        _suppressBackUntil = DateTime.now().add(
+          const Duration(milliseconds: 900),
+        );
+      }
       if (picked == null) return null;
 
       final uri = picked['uri'] as String? ?? '';
@@ -78,17 +113,6 @@ class MediaStorage {
         sizeBytes: copiedBytes?.toInt() ?? await destination.length(),
         usesDirectUri: false,
       );
-    }
-
-    MediaSourceOption? selectedOption = sourceOption;
-    if (selectedOption == null && context != null && Platform.isIOS) {
-      selectedOption = await showMediaSourceSheet(
-        context,
-        videoOnly: videoOnly,
-      );
-      if (selectedOption == null) {
-        return null;
-      }
     }
 
     final effectiveExtensions = allowedExtensions.isNotEmpty
@@ -129,118 +153,207 @@ class MediaStorage {
     );
   }
 
-  /// Hiển thị Action Sheet lựa chọn giữa Photos (Thư viện ảnh) và Ứng dụng Tệp (Files)
+  /// Hiển thị Action Sheet lựa chọn giữa Thư viện Video (Ảnh/Gallery) và Tệp (Files)
   static Future<MediaSourceOption?> showMediaSourceSheet(
     BuildContext context, {
     bool videoOnly = false,
   }) async {
+    final isAndroid = Platform.isAndroid;
     return showModalBottomSheet<MediaSourceOption>(
       context: context,
-      backgroundColor: AppColors.darkCard,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        final palette = AppThemePalette.of(ctx);
+        final accent = palette.accentFor(AppTabId.studio);
+        final secondary = palette.secondaryFor(AppTabId.studio);
+        final readableAccent = palette.readableAccent(accent);
+        final readableSecondary = palette.readableAccent(secondary);
+        final hasGradient =
+            palette.backgroundGradientFor(AppTabId.studio) != null;
+        final cardBg = hasGradient ? palette.surface : palette.surfaceAlt;
+        final cardShadows =
+            hasGradient ? palette.cardShadows : const <BoxShadow>[];
+
+        return Container(
+          decoration: palette.sheetDecorationFor(AppTabId.studio, radius: 22),
+          child: SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(18, 12, 18, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'Chọn nguồn media',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 12),
+                      decoration: BoxDecoration(
+                        color: palette.textMuted.withValues(alpha: 0.45),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
                     ),
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.close, color: Colors.grey, size: 20),
-                    onPressed: () => Navigator.pop(ctx),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Chọn nguồn media',
+                        style: TextStyle(
+                          color: palette.textPrimary,
+                          fontSize: 16.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      IconButton(
+                        icon: Icon(
+                          Icons.close_rounded,
+                          color: palette.textPrimary,
+                          size: 20,
+                        ),
+                        onPressed: () => Navigator.pop(ctx),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  InkWell(
+                    onTap: () => Navigator.pop(ctx, MediaSourceOption.photos),
+                    borderRadius: BorderRadius.circular(14),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 12,
+                      ),
+                      decoration: BoxDecoration(
+                        color: cardBg,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: palette.border, width: 1.1),
+                        boxShadow: cardShadows,
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: secondary.withValues(alpha: 0.14),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Icon(
+                              Icons.video_library_rounded,
+                              color: readableSecondary,
+                              size: 22,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  isAndroid
+                                      ? 'Thư viện Video trên máy'
+                                      : 'Video từ Photos',
+                                  style: TextStyle(
+                                    color: palette.textPrimary,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 14.5,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  isAndroid
+                                      ? 'Chọn trực tiếp video trong Ảnh / Gallery'
+                                      : 'Chọn video từ ứng dụng Ảnh của máy',
+                                  style: TextStyle(
+                                    color: palette.textSecondary,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Icon(
+                            Icons.chevron_right_rounded,
+                            color: palette.textMuted,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  InkWell(
+                    onTap: () => Navigator.pop(ctx, MediaSourceOption.files),
+                    borderRadius: BorderRadius.circular(14),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 12,
+                      ),
+                      decoration: BoxDecoration(
+                        color: cardBg,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: palette.border, width: 1.1),
+                        boxShadow: cardShadows,
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: accent.withValues(alpha: 0.14),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Icon(
+                              Icons.folder_open_rounded,
+                              color: readableAccent,
+                              size: 22,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  videoOnly
+                                      ? 'Tệp video trong thư mục'
+                                      : (isAndroid
+                                            ? 'Tệp & Âm thanh (Thư mục)'
+                                            : 'Tệp trên máy (Files)'),
+                                  style: TextStyle(
+                                    color: palette.textPrimary,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 14.5,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  isAndroid
+                                      ? 'Duyệt Tải về / Bộ nhớ máy (MP4, MKV, MP3, M4A...)'
+                                      : 'Chọn từ iCloud Drive, Tải về hoặc Trên iPhone',
+                                  style: TextStyle(
+                                    color: palette.textSecondary,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Icon(
+                            Icons.chevron_right_rounded,
+                            color: palette.textMuted,
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
-              ListTile(
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 4,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  side: const BorderSide(color: AppColors.cardBorder),
-                ),
-                leading: Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: AppColors.primaryEmerald.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Icon(
-                    Icons.video_library_rounded,
-                    color: AppColors.primaryEmerald,
-                    size: 22,
-                  ),
-                ),
-                title: const Text(
-                  'Video từ Photos',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 15,
-                  ),
-                ),
-                subtitle: const Text(
-                  'Chọn video từ ứng dụng Ảnh của máy',
-                  style: TextStyle(color: Colors.grey, fontSize: 12),
-                ),
-                onTap: () => Navigator.pop(ctx, MediaSourceOption.photos),
-              ),
-              const SizedBox(height: 10),
-              ListTile(
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 4,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  side: const BorderSide(color: AppColors.cardBorder),
-                ),
-                leading: Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Icon(
-                    Icons.folder_open_rounded,
-                    color: Colors.blueAccent,
-                    size: 22,
-                  ),
-                ),
-                title: Text(
-                  videoOnly ? 'Tệp video (Files)' : 'Tệp trên máy (Files)',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 15,
-                  ),
-                ),
-                subtitle: const Text(
-                  'Chọn từ iCloud Drive, Tải về hoặc Trên iPhone',
-                  style: TextStyle(color: Colors.grey, fontSize: 12),
-                ),
-                onTap: () => Navigator.pop(ctx, MediaSourceOption.files),
-              ),
-              const SizedBox(height: 8),
-            ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 

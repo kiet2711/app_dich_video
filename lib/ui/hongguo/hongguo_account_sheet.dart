@@ -65,7 +65,11 @@ class _HongguoAccountSheetState extends State<HongguoAccountSheet>
     _loginTabController = TabController(length: 2, vsync: this);
     final cloud = HongguoCloudAccountService.instance;
     if (cloud.state.value.isLoggedIn) {
-      unawaited(cloud.refreshAll());
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          unawaited(cloud.refreshAll());
+        }
+      });
     } else {
       unawaited(
         cloud.initialize().then((_) {

@@ -111,6 +111,12 @@ void main() {
         await tester.pumpAndSettle();
 
         expect(find.text('Giao diện & Màu sắc'), findsOneWidget);
+        expect(find.text('Viên thuốc nổi'), findsNothing);
+
+        // Tap to expand Giao diện & Màu sắc Kiểu A Accordion
+        await tester.tap(find.text('Giao diện & Màu sắc'));
+        await tester.pumpAndSettle();
+
         expect(find.text('Viên thuốc nổi'), findsOneWidget);
         expect(find.text('Liền đáy gốc'), findsOneWidget);
 

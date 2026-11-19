@@ -775,7 +775,6 @@ class _HongguoScreenState extends State<HongguoScreen> {
   Widget build(BuildContext context) {
     final palette = AppThemePalette.of(context);
     final accent = palette.accentFor(AppTabId.hongguo);
-    final bg = palette.backgroundFor(AppTabId.hongguo);
 
     final libraryGroups = HongguoDiscoveryService.instance.getSelectorGroups(
       _librarySelection.genreKind,
@@ -783,59 +782,62 @@ class _HongguoScreenState extends State<HongguoScreen> {
     final librarySummary = _librarySelection.buildSummaryLabel(libraryGroups);
     final activeCount = _librarySelection.activeFilterCount;
 
-    return Scaffold(
-      backgroundColor: bg,
-      body: SafeArea(
-        child: Column(
-          children: [
-            // 1. THANH HEADER TRÊN CÙNG PHONG CÁCH HỒNG QUẢ
-            // (Avatar đăng nhập | Thanh tìm kiếm | Lướt Shorts | Cài đặt)
-            _buildHeaderSection(),
+    return AppTabBackdrop(
+      tab: AppTabId.hongguo,
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        body: SafeArea(
+          child: Column(
+            children: [
+              // 1. THANH HEADER TRÊN CÙNG PHONG CÁCH HỒNG QUẢ
+              // (Avatar đăng nhập | Thanh tìm kiếm | Lướt Shorts | Cài đặt)
+              _buildHeaderSection(),
 
-            const SizedBox(height: 4),
+              const SizedBox(height: 4),
 
-            // 2. THANH 3 TAB CẤP 1 GỌN GÀNG (ĐỀ XUẤT | KHO LỌC SÂU | BẢNG XẾP HẠNG)
-            _buildPrimaryTabBar(),
+              // 2. THANH 3 TAB CẤP 1 GỌN GÀNG (ĐỀ XUẤT | KHO LỌC SÂU | BẢNG XẾP HẠNG)
+              _buildPrimaryTabBar(),
 
-            // 2.5 THANH LỌC THEO TỪNG TAB (HOẶC PHẠM VI TÌM KIẾM)
-            if (_isSearchMode)
-              _buildSearchScopeBar()
-            else if (!_isAiResultMode && _primaryTab == 'discover')
-              _buildDiscoverScopeBar()
-            else if (!_isAiResultMode && _primaryTab == 'library')
-              _buildLibraryFilterBar(libraryGroups, activeCount)
-            else if (!_isAiResultMode && _primaryTab == 'rank')
-              _buildRankBoardBar(),
+              // 2.5 THANH LỌC THEO TỪNG TAB (HOẶC PHẠM VI TÌM KIẾM)
+              if (_isSearchMode)
+                _buildSearchScopeBar()
+              else if (!_isAiResultMode && _primaryTab == 'discover')
+                _buildDiscoverScopeBar()
+              else if (!_isAiResultMode && _primaryTab == 'library')
+                _buildLibraryFilterBar(libraryGroups, activeCount)
+              else if (!_isAiResultMode && _primaryTab == 'rank')
+                _buildRankBoardBar(),
 
-            const SizedBox(height: 6),
+              const SizedBox(height: 6),
 
-            // 3.5 THANH TRẠNG THÁI & LÀM MỚI / ĐỔI LOẠT PHIM MỚI
-            _buildStatusActionBar(librarySummary),
+              // 3.5 THANH TRẠNG THÁI & LÀM MỚI / ĐỔI LOẠT PHIM MỚI
+              _buildStatusActionBar(librarySummary),
 
-            // 4. LƯỚI PHIM VỚI PULL-TO-REFRESH + NÚT TRỢ LÝ AI NỔI
-            Expanded(
-              child: Stack(
-                children: [
-                  RefreshIndicator(
-                    color: accent,
-                    backgroundColor: palette.surface,
-                    onRefresh: _isSearchMode && _currentSearchQuery.isNotEmpty
-                        ? () => _loadSearchPage(_currentPage)
-                        : () => _loadDramas(resetCursor: true),
-                    child: _buildBody(),
-                  ),
-                  Positioned(
-                    right: 14,
-                    bottom: 12,
-                    child: _buildAssistantFloatingButton(),
-                  ),
-                ],
+              // 4. LƯỚI PHIM VỚI PULL-TO-REFRESH + NÚT TRỢ LÝ AI NỔI
+              Expanded(
+                child: Stack(
+                  children: [
+                    RefreshIndicator(
+                      color: accent,
+                      backgroundColor: palette.surface,
+                      onRefresh: _isSearchMode && _currentSearchQuery.isNotEmpty
+                          ? () => _loadSearchPage(_currentPage)
+                          : () => _loadDramas(resetCursor: true),
+                      child: _buildBody(),
+                    ),
+                    Positioned(
+                      right: 14,
+                      bottom: 12,
+                      child: _buildAssistantFloatingButton(),
+                    ),
+                  ],
+                ),
               ),
-            ),
 
-            // 5. THANH DƯỚI CÙNG (TẢI THÊM ĐỀ XUẤT THU GỌN / PHÂN TRANG + DỊCH TIÊU ĐỀ)
-            _buildBottomActionBar(),
-          ],
+              // 5. THANH DƯỚI CÙNG (TẢI THÊM ĐỀ XUẤT THU GỌN / PHÂN TRANG + DỊCH TIÊU ĐỀ)
+              _buildBottomActionBar(),
+            ],
+          ),
         ),
       ),
     );
@@ -845,11 +847,10 @@ class _HongguoScreenState extends State<HongguoScreen> {
     final palette = AppThemePalette.of(context);
     final accent = palette.accentFor(AppTabId.hongguo);
     final secondary = palette.secondaryFor(AppTabId.hongguo);
-    final bg = palette.backgroundFor(AppTabId.hongguo);
 
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 8, 8, 6),
-      color: bg,
+      color: Colors.transparent,
       child: Row(
         children: [
           // Ảnh đại diện đăng nhập bên trái
@@ -1878,7 +1879,9 @@ class _HongguoScreenState extends State<HongguoScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
-        color: palette.surface,
+        color: palette.isDark
+            ? palette.surface
+            : palette.surface.withValues(alpha: 0.72),
         border: Border(top: BorderSide(color: palette.border)),
       ),
       child: Row(
@@ -1987,7 +1990,9 @@ class _HongguoScreenState extends State<HongguoScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
-        color: palette.surface,
+        color: palette.isDark
+            ? palette.surface
+            : palette.surface.withValues(alpha: 0.72),
         border: Border(top: BorderSide(color: palette.border)),
       ),
       child: Row(

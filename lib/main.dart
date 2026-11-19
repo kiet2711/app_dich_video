@@ -7,6 +7,7 @@ import 'package:media_kit/media_kit.dart';
 
 import 'data/repository/settings_repository.dart';
 import 'domain/font/custom_font_manager.dart';
+import 'domain/media/media_storage.dart';
 import 'player/app_player_controller.dart';
 import 'player/global_player_manager.dart';
 import 'player/pip_manager.dart';
@@ -151,22 +152,25 @@ class _MainNavigationState extends State<MainNavigation> {
           canPop: false,
           onPopInvokedWithResult: (didPop, _) {
             if (didPop) return;
-            if (Platform.isAndroid) {
+            if (Platform.isAndroid && !MediaStorage.shouldSuppressBackMinimize) {
               const MethodChannel('com.capcut.capsub/media')
                   .invokeMethod('moveToBack');
             }
           },
-          child: Scaffold(
-            backgroundColor: palette.backgroundFor(activeTabId),
-            extendBody: palette.isFloatingNav && !isFullScreen,
-            body: Stack(
-              children: [
-                IndexedStack(index: _currentIndex, children: screens),
-                const GlobalPlayerOverlay(),
-              ],
+          child: AppTabBackdrop(
+            tab: activeTabId,
+            child: Scaffold(
+              backgroundColor: Colors.transparent,
+              extendBody: palette.isFloatingNav && !isFullScreen,
+              body: Stack(
+                children: [
+                  IndexedStack(index: _currentIndex, children: screens),
+                  const GlobalPlayerOverlay(),
+                ],
+              ),
+              bottomNavigationBar:
+                  isFullScreen ? null : _buildBottomBar(context, palette),
             ),
-            bottomNavigationBar:
-                isFullScreen ? null : _buildBottomBar(context, palette),
           ),
         );
       },

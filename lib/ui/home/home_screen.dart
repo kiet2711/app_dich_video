@@ -47,11 +47,9 @@ class HomeScreen extends StatefulWidget {
 class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   SettingsRepository? _settings;
   TranslationCheckpointDraft? _pendingDraft;
-  int _inputMode = 0; // 0: File máy, 1: Link video online
 
   void loadOnlineVideo(String url, {String? title}) {
     setState(() {
-      _inputMode = 1; // Tự động chọn tab Link video online
       _urlController.text = url;
       if (title != null && title.isNotEmpty) {
         _fileName = title.endsWith('.mp4') ? title : '$title.mp4';
@@ -73,7 +71,6 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   List<BilibiliPageInfo> _bilibiliPages = [];
   int _selectedBilibiliPage = 1;
   BilibiliVideoDetails? _bilibiliDetails;
-  String _linkSourceType = 'auto'; // 'auto' | 'douyin' | 'bilibili'
   DouyinVideoDetails? _douyinDetails;
   String _selectedDouyinQuality = 'auto';
   String? _douyinCachedPath;
@@ -84,7 +81,6 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   String _selectedSourceLang = 'zh-CN';
   String _selectedEngine = 'gemini-3.1-flash-lite';
   String _selectedTargetLang = 'vi-VN';
-  String _selectedStyle = 'Zhihu';
   final _customPromptController = TextEditingController();
 
   bool _isProcessing = false;
@@ -140,14 +136,6 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     MapEntry('th-TH', '🇹🇭 Tiếng Thái (ไทย)'),
   ];
 
-  static const _styleOptions = [
-    MapEntry('Zhihu', '🎬 Phim Ngắn Zhihu (Vả mặt, kịch tính)'),
-    MapEntry('ThuanViet', '📖 Thuần Việt Văn Học (Trau chuốt, mượt mà)'),
-    MapEntry('CoTrang', '⚔️ Cổ Trang Tiên Hiệp (Hán Việt chuẩn)'),
-    MapEntry('Auto', '✨ Tự Động AI (Theo ngữ cảnh)'),
-    MapEntry('custom', '✍️ Tự nhập Prompt tùy chỉnh...'),
-  ];
-
   @override
   void initState() {
     super.initState();
@@ -170,7 +158,6 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _selectedSourceLang = s.defaultSourceLanguage;
       _selectedEngine = s.selectedModel;
       _selectedTargetLang = s.targetLanguage;
-      _selectedStyle = s.selectedStyle;
       _customPromptController.text = s.geminiCustomPrompt;
       _downloadBilibiliVideo = s.downloadBilibiliVideo;
       _selectedVideoQuality = s.preferredVideoQuality;
@@ -205,10 +192,9 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _selectedSourceLang = draft.sourceLanguage;
       _selectedTargetLang = draft.targetLanguage;
       if (NetworkHeaderHelper.isRemoteUrl(draft.videoPath)) {
-        _inputMode = 1;
         _urlController.text = draft.videoPath;
       } else {
-        _inputMode = 0;
+        _urlController.clear();
       }
       _probeStatusMessage = '⚡ Đang tiếp tục phiên dịch dang dở (${draft.translatedCount}/${draft.totalItems} câu - ${draft.progressPercent}%)...';
     });
@@ -274,6 +260,7 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final durationMs = await AudioExtractor.probeDuration(picked.location);
       if (!mounted) return;
       setState(() {
+        _urlController.clear();
         _selectedVideoPath = picked.location;
         _fileName = picked.name;
         _fileSizeMb = picked.sizeBytes > 0
@@ -567,11 +554,6 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _douyinCachedPath = douyinCache;
         _douyinDownloadProgress = douyinCache != null ? 1.0 : 0.0;
         _douyinDownloadMessage = null;
-        if (resolvedDouyin != null) {
-          _linkSourceType = 'douyin';
-        } else if (_bilibiliDetails != null) {
-          _linkSourceType = 'bilibili';
-        }
         if (draftMsg != null) {
           _probeStatusMessage = draftMsg;
         }
@@ -735,14 +717,15 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       return;
     }
 
+    final customPrompt = _customPromptController.text.trim();
+    final effectiveStyle = customPrompt.isNotEmpty ? 'custom' : 'Auto';
+
     _settings!
       ..defaultSourceLanguage = _selectedSourceLang
       ..selectedModel = _selectedEngine
       ..targetLanguage = _selectedTargetLang
-      ..selectedStyle = _selectedStyle;
-    if (_selectedStyle == 'custom') {
-      _settings!.geminiCustomPrompt = _customPromptController.text.trim();
-    }
+      ..selectedStyle = effectiveStyle
+      ..geminiCustomPrompt = customPrompt;
 
     setState(() {
       _isProcessing = true;
@@ -761,10 +744,8 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       apiKeys: _settings!.geminiApiKeys,
       groqApiKeys: _settings!.groqApiKeys,
       translationEngine: _selectedEngine,
-      stylePreset: _selectedStyle,
-      customPrompt: _selectedStyle == 'custom'
-          ? _customPromptController.text.trim()
-          : '',
+      stylePreset: effectiveStyle,
+      customPrompt: customPrompt,
       targetLanguage: _selectedTargetLang,
       geminiThreadCount: _settings!.geminiThreadCount,
       geminiBatchSize: _settings!.geminiBatchSize,
@@ -1403,18 +1384,28 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final palette = AppThemePalette.of(context);
     final accent = palette.accentFor(AppTabId.studio);
     final secondary = palette.secondaryFor(AppTabId.studio);
-    final bg = palette.backgroundFor(AppTabId.studio);
     final onAccent = palette.onColor(accent);
     final hasFilePicked =
         _selectedVideoPath != null &&
         !NetworkHeaderHelper.isRemoteUrl(_selectedVideoPath!);
+    final hasRemoteUrl =
+        _selectedVideoPath != null &&
+        NetworkHeaderHelper.isRemoteUrl(_selectedVideoPath!);
+    final hasAnyMedia = hasFilePicked || hasRemoteUrl;
+    final trimmedUrl = _urlController.text.trim();
+    final hasPendingTypedUrl =
+        trimmedUrl.isNotEmpty &&
+        trimmedUrl != (_selectedVideoPath ?? '') &&
+        NetworkHeaderHelper.isRemoteUrl(
+          NetworkHeaderHelper.extractCleanUrl(trimmedUrl),
+        );
 
-    return Scaffold(
-      backgroundColor: bg,
+    final scaffold = Scaffold(
+      backgroundColor: Colors.transparent,
       appBar: widget.hideAppBar
           ? null
           : AppBar(
-              backgroundColor: bg,
+              backgroundColor: Colors.transparent,
               elevation: 0,
               title: Row(
                 children: [
@@ -1463,272 +1454,307 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               const SizedBox(height: 14),
             ],
 
-            // 1. NGUỒN VIDEO: TABS CHUYỂN ĐỔI (FILE MÁY / NHẬP LINK)
+            // 1. HERO CARD HỢP NHẤT: CHỌN FILE HOẶC DÁN LINK VIDEO ONLINE
             Container(
+              padding: const EdgeInsets.all(18),
               decoration: BoxDecoration(
-                color: palette.surface,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: palette.border),
-                boxShadow: palette.cardShadows,
-              ),
-              padding: const EdgeInsets.all(4),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: GestureDetector(
-                      onTap: () {
-                        setState(() {
-                          _inputMode = 0;
-                          if (_selectedVideoPath != null &&
-                              NetworkHeaderHelper.isRemoteUrl(
-                                _selectedVideoPath!,
-                              )) {
-                            _selectedVideoPath = null;
-                            _fileName = '';
-                            _fileDurationMs = 0;
-                            _fileSizeMb = '';
-                            _resetOnlineMetadataFields();
-                            _probeStatusMessage = null;
-                          }
-                        });
-                      },
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 180),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 10,
-                        ),
-                        decoration: BoxDecoration(
-                          color: _inputMode == 0
-                              ? accent.withValues(alpha: 0.14)
-                              : Colors.transparent,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              Icons.video_file_rounded,
-                              size: 17,
-                              color: _inputMode == 0
-                                  ? accent
-                                  : palette.textSecondary,
-                            ),
-                            const SizedBox(width: 6),
-                            Flexible(
-                              child: Text(
-                                'File Trên Máy',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: _inputMode == 0
-                                      ? FontWeight.w800
-                                      : FontWeight.w600,
-                                  color: _inputMode == 0
-                                      ? accent
-                                      : palette.textSecondary,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: GestureDetector(
-                      onTap: () {
-                        setState(() {
-                          _inputMode = 1;
-                          if (_selectedVideoPath != null &&
-                              !NetworkHeaderHelper.isRemoteUrl(
-                                _selectedVideoPath!,
-                              )) {
-                            _selectedVideoPath = null;
-                            _fileName = '';
-                            _fileDurationMs = 0;
-                            _fileSizeMb = '';
-                            _resetOnlineMetadataFields();
-                            _probeStatusMessage = null;
-                          }
-                        });
-                      },
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 180),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 10,
-                        ),
-                        decoration: BoxDecoration(
-                          color: _inputMode == 1
-                              ? accent.withValues(alpha: 0.14)
-                              : Colors.transparent,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              Icons.link_rounded,
-                              size: 17,
-                              color: _inputMode == 1
-                                  ? accent
-                                  : palette.textSecondary,
-                            ),
-                            const SizedBox(width: 6),
-                            Flexible(
-                              child: Text(
-                                'Nhập Link Video',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: _inputMode == 1
-                                      ? FontWeight.w800
-                                      : FontWeight.w600,
-                                  color: _inputMode == 1
-                                      ? accent
-                                      : palette.textSecondary,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
+                gradient: LinearGradient(
+                  colors: [accent, secondary],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: [
+                  BoxShadow(
+                    color: accent.withValues(alpha: 0.34),
+                    blurRadius: 22,
+                    offset: const Offset(0, 10),
                   ),
                 ],
               ),
-            ),
-            const SizedBox(height: 14),
-
-            // 2. NỘI DUNG CHỌN NGUỒN VIDEO (HERO CREATIVE CARD)
-            if (_inputMode == 0)
-              InkWell(
-                onTap: _pickFile,
-                borderRadius: BorderRadius.circular(24),
-                child: Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [accent, secondary],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                    borderRadius: BorderRadius.circular(24),
-                    boxShadow: [
-                      BoxShadow(
-                        color: accent.withValues(alpha: 0.36),
-                        blurRadius: 22,
-                        offset: const Offset(0, 10),
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Positioned(
+                    right: -28,
+                    top: -28,
+                    child: Container(
+                      width: 96,
+                      height: 96,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.white.withValues(alpha: 0.14),
                       ),
-                    ],
+                    ),
                   ),
-                  child: Stack(
-                    clipBehavior: Clip.none,
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Positioned(
-                        right: -28,
-                        top: -28,
-                        child: Container(
-                          width: 96,
-                          height: 96,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: Colors.white.withValues(alpha: 0.14),
-                          ),
+                      InkWell(
+                        onTap: _pickFile,
+                        borderRadius: BorderRadius.circular(16),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 9,
+                                      vertical: 3,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white.withValues(alpha: 0.22),
+                                      borderRadius: BorderRadius.circular(20),
+                                    ),
+                                    child: Text(
+                                      hasRemoteUrl
+                                          ? 'VIDEO ONLINE'
+                                          : (hasFilePicked
+                                                ? 'ĐÃ SẴN SÀNG'
+                                                : 'DỰ ÁN MỚI'),
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w800,
+                                        letterSpacing: 0.8,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 10),
+                                  Text(
+                                    hasAnyMedia
+                                        ? _fileName
+                                        : 'Chọn Video từ máy',
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 17,
+                                      color: Colors.white,
+                                      height: 1.25,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    hasFilePicked
+                                        ? '⏱️ ${_formatDuration(_fileDurationMs)}  •  💾 $_fileSizeMb'
+                                        : (hasRemoteUrl
+                                              ? '⏱️ ${_fileDurationMs > 0 ? _formatDuration(_fileDurationMs) : "Tự động"}  •  🌐 Trực tuyến'
+                                              : 'Hỗ trợ MP4, MOV, âm thanh & SRT'),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.white.withValues(alpha: 0.9),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 14),
+                            Container(
+                              width: 50,
+                              height: 50,
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(18),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withValues(alpha: 0.14),
+                                    blurRadius: 12,
+                                    offset: const Offset(0, 4),
+                                  ),
+                                ],
+                              ),
+                              child: Icon(
+                                hasAnyMedia
+                                    ? Icons.check_rounded
+                                    : Icons.add_rounded,
+                                color: accent,
+                                size: 28,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
+                      const SizedBox(height: 14),
                       Row(
                         children: [
                           Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 9,
-                                    vertical: 3,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withValues(alpha: 0.22),
-                                    borderRadius: BorderRadius.circular(20),
-                                  ),
-                                  child: Text(
-                                    hasFilePicked ? 'ĐÃ SẴN SÀNG' : 'DỰ ÁN MỚI',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.w800,
-                                      letterSpacing: 0.8,
-                                    ),
-                                  ),
+                            child: Container(
+                              height: 44,
+                              decoration: BoxDecoration(
+                                color: Colors.white.withValues(alpha: 0.18),
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(
+                                  color: Colors.white.withValues(alpha: 0.28),
                                 ),
-                                const SizedBox(height: 10),
-                                Text(
-                                  hasFilePicked
-                                      ? _fileName
-                                      : 'Chọn Video từ máy',
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 17,
-                                    color: Colors.white,
-                                    height: 1.25,
-                                  ),
+                              ),
+                              child: TextField(
+                                controller: _urlController,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w500,
                                 ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  hasFilePicked
-                                      ? '⏱️ ${_formatDuration(_fileDurationMs)}  •  💾 $_fileSizeMb'
-                                      : 'Hỗ trợ MP4, MKV, MOV, MP3, M4A',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.white.withValues(alpha: 0.88),
+                                cursorColor: Colors.white,
+                                textInputAction: TextInputAction.search,
+                                onSubmitted: (val) => _probeUrl(val),
+                                onChanged: (val) {
+                                  setState(() {
+                                    _probeStatusMessage = null;
+                                    if (val.trim().isEmpty && hasRemoteUrl) {
+                                      _selectedVideoPath = null;
+                                      _fileName = '';
+                                      _fileDurationMs = 0;
+                                      _fileSizeMb = '';
+                                      _resetOnlineMetadataFields();
+                                    }
+                                  });
+                                },
+                                decoration: InputDecoration(
+                                  isDense: true,
+                                  border: InputBorder.none,
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    vertical: 11,
                                   ),
+                                  prefixIcon: Icon(
+                                    Icons.link_rounded,
+                                    color: Colors.white.withValues(alpha: 0.9),
+                                    size: 18,
+                                  ),
+                                  prefixIconConstraints: const BoxConstraints(
+                                    minWidth: 38,
+                                    minHeight: 38,
+                                  ),
+                                  hintText: 'Dán link Bilibili, Douyin...',
+                                  hintStyle: TextStyle(
+                                    color: Colors.white.withValues(alpha: 0.85),
+                                    fontSize: 12.5,
+                                  ),
+                                  suffixIcon: _urlController.text.isNotEmpty
+                                      ? IconButton(
+                                          padding: EdgeInsets.zero,
+                                          constraints: const BoxConstraints(
+                                            minWidth: 32,
+                                            minHeight: 32,
+                                          ),
+                                          icon: Icon(
+                                            Icons.close_rounded,
+                                            size: 16,
+                                            color: Colors.white.withValues(
+                                              alpha: 0.9,
+                                            ),
+                                          ),
+                                          onPressed: () {
+                                            setState(() {
+                                              _urlController.clear();
+                                              if (hasRemoteUrl) {
+                                                _selectedVideoPath = null;
+                                                _fileName = '';
+                                                _fileDurationMs = 0;
+                                                _fileSizeMb = '';
+                                                _resetOnlineMetadataFields();
+                                              }
+                                              _probeStatusMessage = null;
+                                            });
+                                          },
+                                        )
+                                      : null,
                                 ),
-                              ],
+                              ),
                             ),
                           ),
-                          const SizedBox(width: 14),
-                          Container(
-                            width: 50,
-                            height: 50,
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(18),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.14),
-                                  blurRadius: 12,
-                                  offset: const Offset(0, 4),
+                          const SizedBox(width: 8),
+                          SizedBox(
+                            height: 44,
+                            child: ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.white,
+                                foregroundColor: accent,
+                                elevation: 0,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
                                 ),
-                              ],
-                            ),
-                            child: Icon(
-                              hasFilePicked
-                                  ? Icons.check_rounded
-                                  : Icons.add_rounded,
-                              color: accent,
-                              size: 28,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                              ),
+                              onPressed: _isProbingUrl
+                                  ? null
+                                  : (hasPendingTypedUrl
+                                        ? () => _probeUrl(_urlController.text)
+                                        : _pasteFromClipboard),
+                              child: _isProbingUrl
+                                  ? SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        color: accent,
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : Text(
+                                      hasPendingTypedUrl ? 'Kiểm tra' : 'Dán',
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w800,
+                                        color: accent,
+                                      ),
+                                    ),
                             ),
                           ),
                         ],
                       ),
                     ],
                   ),
-                ),
-              )
-            else
-              // CARD NHẬP LINK VIDEO ONLINE
+                ],
+              ),
+            ),
+
+            if (_probeStatusMessage != null) ...[
+              const SizedBox(height: 10),
               Container(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
                 decoration: BoxDecoration(
                   color: palette.surface,
-                  borderRadius: BorderRadius.circular(20),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: _selectedVideoPath != null
+                        ? accent.withValues(alpha: 0.35)
+                        : const Color(0xFFD97706).withValues(alpha: 0.45),
+                  ),
+                ),
+                child: Text(
+                  _probeStatusMessage!,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                    color: _selectedVideoPath != null
+                        ? accent
+                        : const Color(0xFFD97706),
+                  ),
+                ),
+              ),
+            ],
+
+            // Preview chi tiết khi video online đã sẵn sàng (tập Bilibili, chất lượng, Douyin)
+            if (hasRemoteUrl &&
+                (_bilibiliPages.length > 1 ||
+                    _bilibiliDetails != null ||
+                    _douyinDetails != null)) ...[
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: palette.surface,
+                  borderRadius: BorderRadius.circular(18),
                   border: Border.all(color: palette.border),
                   boxShadow: palette.cardShadows,
                 ),
@@ -1737,247 +1763,117 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   children: [
                     Row(
                       children: [
-                        Container(
-                          width: 32,
-                          height: 32,
-                          decoration: BoxDecoration(
-                            color: accent.withValues(alpha: 0.14),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Icon(
-                            Icons.link_rounded,
-                            color: accent,
-                            size: 18,
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Text(
-                          'Dán Link Video Trực Tiếp',
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.bold,
-                            color: palette.textPrimary,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      switch (_linkSourceType) {
-                        'douyin' =>
-                          'Nguồn Douyin: Hỗ trợ link v.douyin.com/..., douyin.com/video/... hoặc dán nguyên đoạn chia sẻ — tự động lấy MP4 không logo.',
-                        'bilibili' =>
-                          'Nguồn Bilibili: Hỗ trợ link bilibili.com/video/BV..., b23.tv/... (hỗ trợ chọn tập & phụ đề có sẵn).',
-                        _ =>
-                          'Hỗ trợ link Douyin, Bilibili, MP4, M3U8... (Tự động nhận diện nguồn & vượt chặn)',
-                      },
-                      style: TextStyle(fontSize: 12, color: palette.textSecondary),
-                    ),
-                    const SizedBox(height: 10),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 6,
-                      children: const [
-                        MapEntry('auto', '🌐 Tự động / MP4'),
-                        MapEntry('douyin', '🎵 Douyin'),
-                        MapEntry('bilibili', '📺 Bilibili'),
-                      ].map((src) {
-                        final isSelected = _linkSourceType == src.key;
-                        return ChoiceChip(
-                          label: Text(
-                            src.value,
-                            style: TextStyle(
-                              fontSize: 11.5,
-                              fontWeight: isSelected
-                                  ? FontWeight.bold
-                                  : FontWeight.w500,
-                              color: isSelected
-                                  ? onAccent
-                                  : palette.textSecondary,
-                            ),
-                          ),
-                          selected: isSelected,
-                          selectedColor: accent,
-                          backgroundColor: palette.surfaceAlt,
-                          side: BorderSide(
-                            color: isSelected ? accent : palette.border,
-                          ),
-                          showCheckmark: false,
-                          onSelected: (selected) {
-                            if (selected) {
-                              setState(() => _linkSourceType = src.key);
-                            }
-                          },
-                        );
-                      }).toList(),
-                    ),
-                    const SizedBox(height: 10),
-                    TextField(
-                      controller: _urlController,
-                      style: TextStyle(color: palette.textPrimary, fontSize: 13),
-                      onChanged: (val) {
-                        setState(() {
-                          _probeStatusMessage = null;
-                          if (DouyinResolver.isDouyinPageUrl(val)) {
-                            _linkSourceType = 'douyin';
-                          } else if (BilibiliResolver.isBilibiliPageUrl(val)) {
-                            _linkSourceType = 'bilibili';
-                          }
-                        });
-                      },
-                      decoration: InputDecoration(
-                        hintText: switch (_linkSourceType) {
-                          'douyin' =>
-                            'https://v.douyin.com/... hoặc đoạn chia sẻ Douyin',
-                          'bilibili' =>
-                            'https://www.bilibili.com/video/BV... hoặc b23.tv/...',
-                          _ => 'https://v.douyin.com/... hoặc link video bất kỳ',
-                        },
-                        hintStyle: TextStyle(
-                          color: palette.textMuted,
-                          fontSize: 13,
-                        ),
-                        filled: true,
-                        fillColor: palette.surfaceAlt,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide(color: palette.border),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide(color: palette.border),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide(color: accent, width: 1.5),
-                        ),
-                        suffixIcon: _urlController.text.isNotEmpty
-                            ? IconButton(
-                                icon: Icon(
-                                  Icons.clear,
-                                  color: palette.textMuted,
-                                ),
-                                onPressed: () {
-                                  setState(() {
-                                    _urlController.clear();
-                                    _selectedVideoPath = null;
-                                    _fileName = '';
-                                    _fileDurationMs = 0;
-                                    _fileSizeMb = '';
-                                    _resetOnlineMetadataFields();
-                                    _probeStatusMessage = null;
-                                  });
-                                },
-                              )
-                            : null,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            style: OutlinedButton.styleFrom(
-                              backgroundColor: palette.surfaceAlt,
-                              foregroundColor: palette.textPrimary,
-                              side: BorderSide(color: palette.border),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                            ),
-                            onPressed: _pasteFromClipboard,
-                            icon: Icon(
-                              Icons.content_paste,
-                              color: accent,
-                              size: 16,
-                            ),
-                            label: Text(
-                              'Dán Link',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                                color: palette.textPrimary,
-                              ),
-                            ),
-                          ),
+                        Icon(
+                          Icons.check_circle,
+                          color: accent,
+                          size: 22,
                         ),
                         const SizedBox(width: 8),
                         Expanded(
-                          child: ElevatedButton.icon(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: accent,
-                              foregroundColor: onAccent,
-                              disabledBackgroundColor:
-                                  accent.withValues(alpha: 0.35),
-                              disabledForegroundColor:
-                                  onAccent.withValues(alpha: 0.6),
-                              elevation: 0,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _fileName,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13.5,
+                                  color: palette.textPrimary,
+                                ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
                               ),
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                            ),
-                            onPressed: (_urlController.text.isNotEmpty &&
-                                    !_isProbingUrl)
-                                ? () => _probeUrl(_urlController.text)
-                                : null,
-                            icon: _isProbingUrl
-                                ? SizedBox(
-                                    width: 16,
-                                    height: 16,
-                                    child: CircularProgressIndicator(
-                                      color: onAccent,
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : Icon(
-                                    Icons.search,
-                                    color: onAccent,
-                                    size: 16,
-                                  ),
-                            label: Text(
-                              _isProbingUrl
-                                  ? 'Đang kiểm tra...'
-                                  : 'Kiểm Tra Link',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.bold,
-                                color: onAccent,
+                              const SizedBox(height: 2),
+                              Text(
+                                '⏱️ Thời lượng: ${_fileDurationMs > 0 ? _formatDuration(_fileDurationMs) : "Tự động"}  •  🌐 Stream trực tiếp',
+                                style: TextStyle(
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w600,
+                                  color: accent,
+                                ),
                               ),
-                            ),
+                            ],
                           ),
                         ),
                       ],
                     ),
-                    if (_probeStatusMessage != null) ...[
-                      const SizedBox(height: 10),
-                      Text(
-                        _probeStatusMessage!,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: _selectedVideoPath != null
-                              ? accent
-                              : const Color(0xFFD97706),
+                    if (_bilibiliPages.length > 1) ...[
+                      Divider(
+                        color: palette.border,
+                        height: 20,
+                      ),
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.video_library,
+                            size: 14,
+                            color: accent,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Chọn tập / phần video (${_bilibiliPages.length} phần):',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: palette.textSecondary,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        height: 36,
+                        child: ListView.separated(
+                          scrollDirection: Axis.horizontal,
+                          itemCount: _bilibiliPages.length,
+                          separatorBuilder: (_, _) =>
+                              const SizedBox(width: 6),
+                          itemBuilder: (context, index) {
+                            final page = _bilibiliPages[index];
+                            final isSelected =
+                                page.page == _selectedBilibiliPage;
+                            final partName = page.part.isNotEmpty
+                                ? page.part
+                                : 'Phần ${page.page}';
+                            return ChoiceChip(
+                              label: Text(
+                                'P${page.page}: $partName',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: isSelected
+                                      ? FontWeight.bold
+                                      : FontWeight.normal,
+                                  color: isSelected
+                                      ? onAccent
+                                      : palette.textSecondary,
+                                ),
+                              ),
+                              selected: isSelected,
+                              selectedColor: accent,
+                              backgroundColor: palette.surfaceAlt,
+                              side: BorderSide(color: palette.border),
+                              showCheckmark: false,
+                              onSelected: (selected) {
+                                if (selected &&
+                                    page.page != _selectedBilibiliPage) {
+                                  _onSelectBilibiliPage(page.page);
+                                }
+                              },
+                            );
+                          },
                         ),
                       ),
                     ],
-
-                    // Preview khi video online đã sẵn sàng
-                    if (_selectedVideoPath != null &&
-                        NetworkHeaderHelper.isRemoteUrl(
-                          _selectedVideoPath!,
-                        )) ...[
-                      const SizedBox(height: 12),
+                    if (_bilibiliDetails != null) ...[
+                      const SizedBox(height: 10),
+                      _buildOfflineDownloadToggle(),
+                      const SizedBox(height: 10),
                       Container(
-                        width: double.infinity,
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: accent.withValues(alpha: 0.08),
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(
-                            color: accent.withValues(alpha: 0.45),
-                          ),
+                          color: palette.surfaceAlt,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: palette.border),
                         ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1985,205 +1881,83 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             Row(
                               children: [
                                 Icon(
-                                  Icons.check_circle,
+                                  Icons.high_quality,
+                                  size: 16,
                                   color: accent,
-                                  size: 26,
                                 ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        _fileName,
-                                        style: TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 14,
-                                          color: palette.textPrimary,
-                                        ),
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                      const SizedBox(height: 2),
-                                      Text(
-                                        '⏱️ Thời lượng: ${_fileDurationMs > 0 ? _formatDuration(_fileDurationMs) : "Tự động"}  •  🌐 Stream trực tiếp',
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w600,
-                                          color: accent,
-                                        ),
-                                      ),
-                                    ],
+                                const SizedBox(width: 8),
+                                Text(
+                                  'Chất lượng video:',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                    color: palette.textPrimary,
                                   ),
                                 ),
                               ],
                             ),
-                            if (_bilibiliPages.length > 1) ...[
-                              Divider(
-                                color: palette.border,
-                                height: 20,
-                              ),
-                              Row(
-                                children: [
-                                  Icon(
-                                    Icons.video_library,
-                                    size: 14,
-                                    color: accent,
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    'Chọn tập / phần video (${_bilibiliPages.length} phần):',
+                            const SizedBox(height: 8),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 6,
+                              children: const [
+                                MapEntry('80', '1080p (FHD)'),
+                                MapEntry('64', '720p (HD - Mặc định)'),
+                                MapEntry('32', '480p (Mạng yếu)'),
+                                MapEntry('16', '360p (Siêu nhẹ)'),
+                              ].map((q) {
+                                final isSel = _selectedVideoQuality == q.key;
+                                return ChoiceChip(
+                                  label: Text(
+                                    q.value,
                                     style: TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w600,
-                                      color: palette.textSecondary,
+                                      fontSize: 11,
+                                      fontWeight: isSel
+                                          ? FontWeight.bold
+                                          : FontWeight.normal,
+                                      color: isSel
+                                          ? onAccent
+                                          : palette.textSecondary,
                                     ),
                                   ),
-                                ],
-                              ),
-                              const SizedBox(height: 8),
-                              SizedBox(
-                                height: 36,
-                                child: ListView.separated(
-                                  scrollDirection: Axis.horizontal,
-                                  itemCount: _bilibiliPages.length,
-                                  separatorBuilder: (_, _) =>
-                                      const SizedBox(width: 6),
-                                  itemBuilder: (context, index) {
-                                    final page = _bilibiliPages[index];
-                                    final isSelected =
-                                        page.page == _selectedBilibiliPage;
-                                    final partName = page.part.isNotEmpty
-                                        ? page.part
-                                        : 'Phần ${page.page}';
-                                    return ChoiceChip(
-                                      label: Text(
-                                        'P${page.page}: $partName',
-                                        style: TextStyle(
-                                          fontSize: 11,
-                                          fontWeight: isSelected
-                                              ? FontWeight.bold
-                                              : FontWeight.normal,
-                                          color: isSelected
-                                              ? onAccent
-                                              : palette.textSecondary,
-                                        ),
-                                      ),
-                                      selected: isSelected,
-                                      selectedColor: accent,
-                                      backgroundColor: palette.surface,
-                                      side: BorderSide(color: palette.border),
-                                      showCheckmark: false,
-                                      onSelected: (selected) {
-                                        if (selected &&
-                                            page.page !=
-                                                _selectedBilibiliPage) {
-                                          _onSelectBilibiliPage(page.page);
-                                        }
-                                      },
-                                    );
+                                  selected: isSel,
+                                  selectedColor: accent,
+                                  backgroundColor: palette.surface,
+                                  side: BorderSide(color: palette.border),
+                                  showCheckmark: false,
+                                  onSelected: (selected) {
+                                    if (selected) {
+                                      setState(() {
+                                        _selectedVideoQuality = q.key;
+                                        _settings?.preferredVideoQuality =
+                                            q.key;
+                                      });
+                                    }
                                   },
-                                ),
+                                );
+                              }).toList(),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              '💡 Mạng yếu hoặc 3G/4G chập chờn? Chọn 480p hoặc 360p để xem online và tải video siêu mượt không lo giật lag.',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: palette.textMuted,
+                                fontStyle: FontStyle.italic,
                               ),
-                            ],
-                            if (_bilibiliDetails != null) ...[
-                              const SizedBox(height: 10),
-                              _buildOfflineDownloadToggle(),
-                              const SizedBox(height: 10),
-                              Container(
-                                padding: const EdgeInsets.all(12),
-                                decoration: BoxDecoration(
-                                  color: palette.surfaceAlt,
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(color: palette.border),
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        Icon(
-                                          Icons.high_quality,
-                                          size: 16,
-                                          color: accent,
-                                        ),
-                                        const SizedBox(width: 8),
-                                        Text(
-                                          'Chất lượng video:',
-                                          style: TextStyle(
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.bold,
-                                            color: palette.textPrimary,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 8),
-                                    Wrap(
-                                      spacing: 8,
-                                      runSpacing: 6,
-                                      children: const [
-                                        MapEntry('80', '1080p (FHD)'),
-                                        MapEntry('64', '720p (HD - Mặc định)'),
-                                        MapEntry('32', '480p (Mạng yếu)'),
-                                        MapEntry('16', '360p (Siêu nhẹ)'),
-                                      ].map((q) {
-                                        final isSel =
-                                            _selectedVideoQuality == q.key;
-                                        return ChoiceChip(
-                                          label: Text(
-                                            q.value,
-                                            style: TextStyle(
-                                              fontSize: 11,
-                                              fontWeight: isSel
-                                                  ? FontWeight.bold
-                                                  : FontWeight.normal,
-                                              color: isSel
-                                                  ? onAccent
-                                                  : palette.textSecondary,
-                                            ),
-                                          ),
-                                          selected: isSel,
-                                          selectedColor: accent,
-                                          backgroundColor: palette.surface,
-                                          side: BorderSide(color: palette.border),
-                                          showCheckmark: false,
-                                          onSelected: (selected) {
-                                            if (selected) {
-                                              setState(() {
-                                                _selectedVideoQuality = q.key;
-                                                _settings?.preferredVideoQuality =
-                                                    q.key;
-                                              });
-                                            }
-                                          },
-                                        );
-                                      }).toList(),
-                                    ),
-                                    const SizedBox(height: 6),
-                                    Text(
-                                      '💡 Mạng yếu hoặc 3G/4G chập chờn? Chọn 480p hoặc 360p để xem online và tải video siêu mượt không lo giật lag.',
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        color: palette.textMuted,
-                                        fontStyle: FontStyle.italic,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                            if (_douyinDetails != null) ...[
-                              const SizedBox(height: 10),
-                              _buildDouyinDetailsCard(_douyinDetails!),
-                            ],
+                            ),
                           ],
                         ),
                       ),
                     ],
+                    if (_douyinDetails != null) ...[
+                      const SizedBox(height: 10),
+                      _buildDouyinDetailsCard(_douyinDetails!),
+                    ],
                   ],
                 ),
               ),
+            ],
 
             const SizedBox(height: 16),
 
@@ -2243,16 +2017,19 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   ),
                   const SizedBox(height: 14),
 
-                  // Ngôn ngữ lời thoại gốc
-                  SettingDropdown(
-                    label: '🌐 Ngôn ngữ lời thoại gốc:',
-                    currentValue: _selectedSourceLang,
-                    options: _sourceLanguageOptions,
-                    onSelect: (code, label) {
-                      setState(() => _selectedSourceLang = code);
-                      _settings?.defaultSourceLanguage = code;
-                    },
+                  // Ngôn ngữ gốc -> Dịch sang (kiểu A -> B gọn gàng)
+                  Text(
+                    _selectedEngine == 'none'
+                        ? '🌐 Ngôn ngữ lời thoại gốc:'
+                        : '🌐 Ngôn ngữ gốc ➔ Dịch sang:',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: palette.textSecondary,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
+                  const SizedBox(height: 8),
+                  _buildLanguagePairRow(palette, accent),
                   const SizedBox(height: 14),
 
                   // Bộ máy Dịch thuật phụ đề
@@ -2273,69 +2050,78 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   // Tầng 2: Model selector tương ứng hoặc thông tin
                   _buildEngineModelSelector(),
 
-                  // Ngôn ngữ dịch sang
-                  if (_selectedEngine != 'none') ...[
-                    const SizedBox(height: 14),
-                    SettingDropdown(
-                      label: '🎯 Dịch sang ngôn ngữ:',
-                      currentValue: _selectedTargetLang,
-                      options: _targetLanguageOptions,
-                      onSelect: (code, label) {
-                        setState(() => _selectedTargetLang = code);
-                        _settings?.targetLanguage = code;
-                        _settings?.targetLanguageLabel = label;
-                      },
-                    ),
-                  ],
-
-                  // Phong cách dịch ngữ cảnh (AI: Gemini hoặc Groq)
+                  // Ô nhập phong cách / ghi chú dịch (không bắt buộc — trống = AI tự nhận diện)
                   if (AiModelRegistry.isAiTranslationModel(_selectedEngine)) ...[
                     const SizedBox(height: 14),
-                    SettingDropdown(
-                      label: '🎭 Phong cách dịch ngữ cảnh (AI):',
-                      currentValue: _selectedStyle,
-                      options: _styleOptions,
-                      onSelect: (code, label) {
-                        setState(() => _selectedStyle = code);
-                        _settings?.selectedStyle = code;
-                      },
+                    Text(
+                      '🎭 Phong cách dịch (AI):',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: palette.textSecondary,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
-                    if (_selectedStyle == 'custom') ...[
-                      const SizedBox(height: 10),
-                      TextField(
-                        controller: _customPromptController,
-                        onChanged: (val) {
-                          _settings?.geminiCustomPrompt = val;
-                        },
-                        maxLines: 4,
-                        style: TextStyle(
-                          color: palette.textPrimary,
-                          fontSize: 13,
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: _customPromptController,
+                      onChanged: (val) {
+                        setState(() {});
+                        final trimmed = val.trim();
+                        _settings?.geminiCustomPrompt = trimmed;
+                        _settings?.selectedStyle =
+                            trimmed.isNotEmpty ? 'custom' : 'Auto';
+                      },
+                      minLines: 2,
+                      maxLines: 3,
+                      style: TextStyle(
+                        color: palette.textPrimary,
+                        fontSize: 13,
+                      ),
+                      decoration: InputDecoration(
+                        hintText:
+                            'Có thể nhập phong cách/ghi chú (vd: cổ trang, tổng tài, hài hước...) hoặc để trống — AI sẽ tự nhận diện.',
+                        hintStyle: TextStyle(
+                          color: palette.textMuted,
+                          fontSize: 12.5,
+                          height: 1.35,
                         ),
-                        decoration: InputDecoration(
-                          hintText:
-                              'Nhập hướng dẫn prompt dịch cho AI (vd: Dịch theo lối cổ trang, xưng hô huynh/muội, giữ câu ngắn...)',
-                          hintStyle: TextStyle(
-                            color: palette.textMuted,
-                            fontSize: 13,
-                          ),
-                          filled: true,
-                          fillColor: palette.surfaceAlt,
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide(color: palette.border),
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide(color: palette.border),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide(color: accent, width: 1.5),
-                          ),
+                        filled: true,
+                        fillColor: palette.surfaceAlt,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 10,
+                        ),
+                        suffixIcon: _customPromptController.text.isNotEmpty
+                            ? IconButton(
+                                tooltip: 'Xóa để AI tự nhận diện',
+                                icon: Icon(
+                                  Icons.close_rounded,
+                                  size: 18,
+                                  color: palette.textMuted,
+                                ),
+                                onPressed: () {
+                                  setState(() {
+                                    _customPromptController.clear();
+                                    _settings?.geminiCustomPrompt = '';
+                                    _settings?.selectedStyle = 'Auto';
+                                  });
+                                },
+                              )
+                            : null,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: palette.border),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: palette.border),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: accent, width: 1.5),
                         ),
                       ),
-                    ],
+                    ),
                   ],
                 ],
               ),
@@ -2395,6 +2181,164 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             ),
           ],
+        ),
+      ),
+    );
+    return widget.hideAppBar
+        ? scaffold
+        : AppTabBackdrop(tab: AppTabId.studio, child: scaffold);
+  }
+
+  String _shortLanguageLabel(String fullLabel) =>
+      fullLabel.replaceAll(RegExp(r'\s*\([^)]*\)'), '').trim();
+
+  Widget _buildLanguagePairRow(AppThemePalette palette, Color accent) {
+    return Row(
+      children: [
+        Expanded(
+          child: _buildCompactLanguageDropdown(
+            palette: palette,
+            accent: accent,
+            currentValue: _selectedSourceLang,
+            options: _sourceLanguageOptions,
+            onSelect: (code, label) {
+              setState(() => _selectedSourceLang = code);
+              _settings?.defaultSourceLanguage = code;
+            },
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+          child: Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              color: _selectedEngine == 'none'
+                  ? palette.surfaceAlt
+                  : accent.withValues(alpha: 0.14),
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: _selectedEngine == 'none'
+                    ? palette.border
+                    : accent.withValues(alpha: 0.3),
+              ),
+            ),
+            child: Icon(
+              Icons.arrow_forward_rounded,
+              size: 16,
+              color: _selectedEngine == 'none' ? palette.textMuted : accent,
+            ),
+          ),
+        ),
+        Expanded(
+          child: _selectedEngine == 'none'
+              ? Container(
+                  height: 46,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  decoration: BoxDecoration(
+                    color: palette.surfaceAlt,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: palette.border),
+                  ),
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    '🚫 Không dịch',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: palette.textMuted,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                )
+              : _buildCompactLanguageDropdown(
+                  palette: palette,
+                  accent: accent,
+                  currentValue: _selectedTargetLang,
+                  options: _targetLanguageOptions,
+                  onSelect: (code, label) {
+                    setState(() => _selectedTargetLang = code);
+                    _settings?.targetLanguage = code;
+                    _settings?.targetLanguageLabel = label;
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCompactLanguageDropdown({
+    required AppThemePalette palette,
+    required Color accent,
+    required String currentValue,
+    required List<MapEntry<String, String>> options,
+    required void Function(String code, String label) onSelect,
+  }) {
+    final currentKey = options.any((e) => e.key == currentValue)
+        ? currentValue
+        : (options.any((e) => e.value == currentValue)
+              ? options.firstWhere((e) => e.value == currentValue).key
+              : (options.isNotEmpty ? options.first.key : null));
+
+    return Container(
+      height: 46,
+      padding: const EdgeInsets.only(left: 10, right: 6),
+      decoration: BoxDecoration(
+        color: palette.surfaceAlt,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: palette.border),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: currentKey,
+          isExpanded: true,
+          dropdownColor: palette.surface,
+          icon: Icon(
+            Icons.keyboard_arrow_down_rounded,
+            color: accent,
+            size: 20,
+          ),
+          selectedItemBuilder: (context) => options
+              .map(
+                (entry) => Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    _shortLanguageLabel(entry.value),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: palette.textPrimary,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              )
+              .toList(),
+          items: options
+              .map(
+                (entry) => DropdownMenuItem<String>(
+                  value: entry.key,
+                  child: Text(
+                    entry.value,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: palette.textPrimary,
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              )
+              .toList(),
+          onChanged: (val) {
+            if (val != null) {
+              final opt = options.firstWhere((e) => e.key == val);
+              onSelect(val, opt.value);
+            }
+          },
         ),
       ),
     );

@@ -1471,7 +1471,6 @@ class _HistoryScreenState extends State<HistoryScreen>
         final palette = AppThemePalette.of(context);
         final accent = palette.accentFor(AppTabId.history);
         final secondary = palette.secondaryFor(AppTabId.history);
-        final bg = palette.backgroundFor(AppTabId.history);
         final hgAccent = palette.accentFor(AppTabId.hongguo);
         final biliAccent = palette.accentFor(AppTabId.bilibili);
         const watchLaterAmber = Color(0xFFF59E0B);
@@ -1493,9 +1492,11 @@ class _HistoryScreenState extends State<HistoryScreen>
               _exitMultiSelectMode();
             }
           },
-          child: Scaffold(
-            backgroundColor: bg,
-            appBar: _isMultiSelectMode
+          child: AppTabBackdrop(
+            tab: AppTabId.history,
+            child: Scaffold(
+              backgroundColor: Colors.transparent,
+              appBar: _isMultiSelectMode
                 ? AppBar(
                     backgroundColor: palette.surface,
                     elevation: 0,
@@ -1547,7 +1548,7 @@ class _HistoryScreenState extends State<HistoryScreen>
                     ],
                   )
                 : AppBar(
-                    backgroundColor: bg,
+                    backgroundColor: Colors.transparent,
                     elevation: 0,
                     scrolledUnderElevation: 0,
                     toolbarHeight: 64,
@@ -1880,6 +1881,7 @@ class _HistoryScreenState extends State<HistoryScreen>
                   ],
                 ],
               ),
+            ),
             ),
           ),
         );

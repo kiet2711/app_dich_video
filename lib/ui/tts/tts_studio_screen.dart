@@ -1010,14 +1010,13 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
   Widget build(BuildContext context) {
     final palette = AppThemePalette.of(context);
     final accent = palette.accentFor(AppTabId.studio);
-    final bg = palette.backgroundFor(AppTabId.studio);
 
-    return Scaffold(
-      backgroundColor: bg,
+    final scaffold = Scaffold(
+      backgroundColor: Colors.transparent,
       appBar: widget.hideAppBar
           ? null
           : AppBar(
-              backgroundColor: bg,
+              backgroundColor: Colors.transparent,
               elevation: 0,
               title: Row(
                 children: [
@@ -1086,6 +1085,9 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
         ),
       ),
     );
+    return widget.hideAppBar
+        ? scaffold
+        : AppTabBackdrop(tab: AppTabId.studio, child: scaffold);
   }
 
   Widget _buildCard4Actions(TtsGenerationState state) {

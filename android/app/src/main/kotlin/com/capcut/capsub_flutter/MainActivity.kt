@@ -24,8 +24,10 @@ import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.util.Rational
+import android.webkit.MimeTypeMap
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -167,7 +169,9 @@ class MainActivity : FlutterActivity() {
             when (call.method) {
                 "pickMedia" -> {
                     val videoOnly = call.argument<Boolean>("videoOnly") ?: false
-                    openPersistentMediaPicker(videoOnly, result)
+                    val source = call.argument<String>("source")
+                        ?: if (videoOnly) "photos" else "files"
+                    openPersistentMediaPicker(videoOnly, source, result)
                 }
                 "copyContentUri" -> {
                     val uri = call.argument<String>("uri") ?: ""
@@ -528,21 +532,66 @@ class MainActivity : FlutterActivity() {
             || Build.PRODUCT.contains("simulator")
     }
 
-    private fun openPersistentMediaPicker(videoOnly: Boolean, result: MethodChannel.Result) {
+    override fun onResume() {
+        super.onResume()
+        // onActivityResult luôn chạy trước onResume khi picker đóng bình thường;
+        // nếu vẫn còn pending ở đây tức là user thoát về app theo đường khác.
+        pendingMediaPickResult?.let { stale ->
+            pendingMediaPickResult = null
+            stale.success(null)
+        }
+    }
+
+    private fun openPersistentMediaPicker(
+        videoOnly: Boolean,
+        source: String,
+        result: MethodChannel.Result,
+    ) {
         if (pendingMediaPickResult != null) {
             result.error("PICKER_ACTIVE", "Một trình chọn media khác đang mở", null)
             return
         }
         pendingMediaPickResult = result
-        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-            addCategory(Intent.CATEGORY_OPENABLE)
-            type = if (videoOnly) "video/*" else "*/*"
-            if (!videoOnly) {
-                putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("video/*", "audio/*"))
+
+        val intent: Intent = if (source == "photos") {
+            val candidates = mutableListOf<Intent>()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                candidates.add(
+                    Intent("android.provider.action.PICK_IMAGES").apply {
+                        type = "video/*"
+                    }
+                )
             }
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+            candidates.add(
+                Intent(Intent.ACTION_PICK, MediaStore.Video.Media.EXTERNAL_CONTENT_URI).apply {
+                    type = "video/*"
+                }
+            )
+            candidates.add(
+                Intent(Intent.ACTION_GET_CONTENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "video/*"
+                }
+            )
+            candidates.firstOrNull { it.resolveActivity(packageManager) != null }
+                ?: Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "video/*"
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+                }
+        } else {
+            Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = if (videoOnly) "video/*" else "*/*"
+                if (!videoOnly) {
+                    putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("video/*", "audio/*"))
+                }
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+            }
         }
+
         try {
             @Suppress("DEPRECATION")
             startActivityForResult(intent, REQUEST_PICK_MEDIA)
@@ -614,7 +663,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun queryOpenableMetadata(uri: Uri): Map<String, Any> {
-        var name = uri.lastPathSegment ?: "media"
+        var name = File(uri.lastPathSegment ?: "media").name.ifBlank { "media" }
         var size = -1L
         contentResolver.query(
             uri,
@@ -632,6 +681,17 @@ class MainActivity : FlutterActivity() {
                 if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) {
                     size = cursor.getLong(sizeIndex)
                 }
+            }
+        }
+        if (!name.contains('.')) {
+            val mimeType = contentResolver.getType(uri)
+            val ext = mimeType?.let { MimeTypeMap.getSingleton().getExtensionFromMimeType(it) }
+            if (!ext.isNullOrBlank()) {
+                name = "$name.$ext"
+            } else if (mimeType?.startsWith("video/") == true) {
+                name = "$name.mp4"
+            } else if (mimeType?.startsWith("audio/") == true) {
+                name = "$name.m4a"
             }
         }
         return mutableMapOf<String, Any>("name" to name).apply {

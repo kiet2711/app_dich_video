@@ -18,12 +18,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   SettingsRepository? _settings;
   final _apiKeysController = TextEditingController();
   final _groqApiKeysController = TextEditingController();
-  final _customPromptController = TextEditingController();
-  final _bilibiliSessDataController = TextEditingController();
   int _selectedAiProviderTab = 0; // 0: Gemini, 1: Groq
   bool _isAutoResilientExpanded = false;
 
-  // Kiểu A Accordion expansion states (collapsed by default so Appearance sits first)
+  // Kiểu A Accordion expansion states (all collapsed by default)
+  bool _expandAppearance = false;
   bool _expandAi = false;
   bool _expandCapcut = false;
   bool _expandFont = false;
@@ -42,8 +41,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _settings = s;
       _apiKeysController.text = s.geminiApiKeys.join('\n');
       _groqApiKeysController.text = s.groqApiKeys.join('\n');
-      _customPromptController.text = s.geminiCustomPrompt;
-      _bilibiliSessDataController.text = s.bilibiliSessData;
     });
   }
 
@@ -55,34 +52,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
         .toList();
   }
 
-  void _save() {
-    if (_settings == null) return;
-    _settings!.geminiApiKeys = _parseKeys(_apiKeysController.text);
-    _settings!.groqApiKeys = _parseKeys(_groqApiKeysController.text);
-    _settings!.geminiCustomPrompt = _customPromptController.text.trim();
-    _settings!.bilibiliSessData = _bilibiliSessDataController.text.trim();
-
-    final palette = AppThemePalette.of(context);
-    final accent = palette.accentFor(AppTabId.settings);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          'Đã lưu cài đặt thành công!',
-          style: TextStyle(
-            color: palette.onColor(accent),
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        backgroundColor: accent,
-      ),
-    );
-  }
-
   void _openKeyTestDialog() {
     final keys = _parseKeys(_apiKeysController.text);
 
     if (_settings != null && keys.isNotEmpty) {
-      // Tự đồng bộ key đã nhập để Trợ lý AI & bộ dịch dùng được ngay kể cả khi chưa bấm nút Lưu
+      // Tự đồng bộ key đã nhập để Trợ lý AI & bộ dịch dùng được ngay
       _settings!.geminiApiKeys = keys;
     }
 
@@ -119,6 +93,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void _openGroqKeyTestDialog() {
     final keys = _parseKeys(_groqApiKeysController.text);
 
+    if (_settings != null && keys.isNotEmpty) {
+      _settings!.groqApiKeys = keys;
+    }
+
     if (keys.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -151,10 +129,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   void dispose() {
+    if (_settings != null) {
+      _settings!.geminiApiKeys = _parseKeys(_apiKeysController.text);
+      _settings!.groqApiKeys = _parseKeys(_groqApiKeysController.text);
+    }
     _apiKeysController.dispose();
     _groqApiKeysController.dispose();
-    _customPromptController.dispose();
-    _bilibiliSessDataController.dispose();
     super.dispose();
   }
 
@@ -165,12 +145,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
       builder: (context, _) {
         final palette = AppThemePalette.of(context);
         final accent = palette.accentFor(AppTabId.settings);
-        final bg = palette.backgroundFor(AppTabId.settings);
 
         if (_settings == null) {
-          return Scaffold(
-            backgroundColor: bg,
-            body: Center(child: CircularProgressIndicator(color: accent)),
+          return AppTabBackdrop(
+            tab: AppTabId.settings,
+            child: Scaffold(
+              backgroundColor: Colors.transparent,
+              body: Center(child: CircularProgressIndicator(color: accent)),
+            ),
           );
         }
 
@@ -185,140 +167,130 @@ class _SettingsScreenState extends State<SettingsScreen> {
             : _settings!.selectedFontFamily;
         final cdnSummary = '${_settings!.downloadThreadCount} luồng tải';
 
-        return Scaffold(
-          backgroundColor: bg,
-          appBar: AppBar(
-            backgroundColor: bg,
-            elevation: 0,
-            scrolledUnderElevation: 0,
-            foregroundColor: palette.textPrimary,
-            title: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
+        return AppTabBackdrop(
+          tab: AppTabId.settings,
+          child: Scaffold(
+            backgroundColor: Colors.transparent,
+            appBar: AppBar(
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              scrolledUnderElevation: 0,
+              foregroundColor: palette.textPrimary,
+              title: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Cài đặt hệ thống',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 18,
+                      color: palette.textPrimary,
+                    ),
+                  ),
+                  Text(
+                    'Giao diện, AI dịch thuật & tối ưu xử lý',
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w500,
+                      color: palette.textMuted,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            body: ListView(
+              padding: EdgeInsets.fromLTRB(
+                16,
+                8,
+                16,
+                MediaQuery.paddingOf(context).bottom + 24,
+              ),
               children: [
-                Text(
-                  'Cài đặt hệ thống',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w800,
-                    fontSize: 18,
-                    color: palette.textPrimary,
-                  ),
+                // Card 1 (Accordion): Giao diện & Màu sắc
+                _buildAccordionCard(
+                  palette: palette,
+                  accent: accent,
+                  icon: Icons.palette_rounded,
+                  iconBgColor: accent,
+                  title: 'Giao diện & Màu sắc',
+                  summary:
+                      '${palette.mode.name} • ${palette.isFloatingNav ? "Viên thuốc nổi" : "Liền đáy gốc"}',
+                  isExpanded: _expandAppearance,
+                  onToggle: () =>
+                      setState(() => _expandAppearance = !_expandAppearance),
+                  child: _buildAppearanceSectionBody(palette, accent),
                 ),
-                Text(
-                  'Giao diện, AI dịch thuật & tối ưu xử lý',
-                  style: TextStyle(
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w500,
-                    color: palette.textMuted,
-                  ),
+                const SizedBox(height: 12),
+
+                // Card 2 (Accordion): AI Dịch thuật (Gemini & Groq)
+                _buildAccordionCard(
+                  palette: palette,
+                  accent: accent,
+                  icon: Icons.auto_awesome_rounded,
+                  iconBgColor: accent,
+                  title: 'AI Dịch thuật (Gemini & Groq)',
+                  summary: aiSummary,
+                  isExpanded: _expandAi,
+                  onToggle: () => setState(() => _expandAi = !_expandAi),
+                  child: _buildAiSectionBody(palette, accent),
                 ),
+                const SizedBox(height: 12),
+
+                // Card 3 (Accordion): Đa luồng & Phân đoạn CapCut
+                _buildAccordionCard(
+                  palette: palette,
+                  accent: accent,
+                  icon: Icons.speed_rounded,
+                  iconBgColor: palette.secondaryFor(AppTabId.studio),
+                  title: 'Đa luồng & Phân đoạn CapCut',
+                  summary: capcutSummary,
+                  isExpanded: _expandCapcut,
+                  onToggle: () =>
+                      setState(() => _expandCapcut = !_expandCapcut),
+                  child: _buildCapcutSectionBody(palette, accent),
+                ),
+                const SizedBox(height: 12),
+
+                // Card 4 (Accordion): Phông chữ phụ đề
+                _buildAccordionCard(
+                  palette: palette,
+                  accent: accent,
+                  icon: Icons.font_download_rounded,
+                  iconBgColor: palette.accentFor(AppTabId.bilibili),
+                  title: 'Phông chữ phụ đề',
+                  summary: fontSummary,
+                  isExpanded: _expandFont,
+                  onToggle: () => setState(() => _expandFont = !_expandFont),
+                  child: _buildFontSectionBody(palette, accent),
+                ),
+                const SizedBox(height: 12),
+
+                // Card 5 (Accordion): Tải video online (CDN)
+                _buildAccordionCard(
+                  palette: palette,
+                  accent: accent,
+                  icon: Icons.rocket_launch_rounded,
+                  iconBgColor: palette.accentFor(AppTabId.hongguo),
+                  title: 'Tải video online (CDN)',
+                  summary: cdnSummary,
+                  isExpanded: _expandCdn,
+                  onToggle: () => setState(() => _expandCdn = !_expandCdn),
+                  child: _buildCdnSectionBody(palette, accent),
+                ),
+                const SizedBox(height: 12),
+
+                // Card 6: Quản lý bộ nhớ & Dọn dẹp rác
+                _buildStorageCard(palette),
               ],
             ),
-            actions: [
-              IconButton(
-                tooltip: 'Lưu cài đặt',
-                icon: Icon(Icons.check_rounded, color: accent),
-                onPressed: _save,
-              ),
-            ],
-          ),
-          body: ListView(
-            padding: EdgeInsets.fromLTRB(
-              16,
-              8,
-              16,
-              MediaQuery.paddingOf(context).bottom + 24,
-            ),
-            children: [
-              // Card 1 (Always Open): Giao diện & Màu sắc
-              _buildAppearanceCard(palette, accent),
-              const SizedBox(height: 14),
-
-              // Card 2 (Accordion): AI Dịch thuật (Gemini & Groq)
-              _buildAccordionCard(
-                palette: palette,
-                accent: accent,
-                icon: Icons.auto_awesome_rounded,
-                iconBgColor: accent,
-                title: 'AI Dịch thuật (Gemini & Groq)',
-                summary: aiSummary,
-                isExpanded: _expandAi,
-                onToggle: () => setState(() => _expandAi = !_expandAi),
-                child: _buildAiSectionBody(palette, accent),
-              ),
-              const SizedBox(height: 12),
-
-              // Card 3 (Accordion): Đa luồng & Phân đoạn CapCut
-              _buildAccordionCard(
-                palette: palette,
-                accent: accent,
-                icon: Icons.speed_rounded,
-                iconBgColor: palette.secondaryFor(AppTabId.studio),
-                title: 'Đa luồng & Phân đoạn CapCut',
-                summary: capcutSummary,
-                isExpanded: _expandCapcut,
-                onToggle: () => setState(() => _expandCapcut = !_expandCapcut),
-                child: _buildCapcutSectionBody(palette, accent),
-              ),
-              const SizedBox(height: 12),
-
-              // Card 4 (Accordion): Phông chữ phụ đề
-              _buildAccordionCard(
-                palette: palette,
-                accent: accent,
-                icon: Icons.font_download_rounded,
-                iconBgColor: palette.accentFor(AppTabId.bilibili),
-                title: 'Phông chữ phụ đề',
-                summary: fontSummary,
-                isExpanded: _expandFont,
-                onToggle: () => setState(() => _expandFont = !_expandFont),
-                child: _buildFontSectionBody(palette, accent),
-              ),
-              const SizedBox(height: 12),
-
-              // Card 5 (Accordion): Tải video online (CDN)
-              _buildAccordionCard(
-                palette: palette,
-                accent: accent,
-                icon: Icons.rocket_launch_rounded,
-                iconBgColor: palette.accentFor(AppTabId.hongguo),
-                title: 'Tải video online (CDN)',
-                summary: cdnSummary,
-                isExpanded: _expandCdn,
-                onToggle: () => setState(() => _expandCdn = !_expandCdn),
-                child: _buildCdnSectionBody(palette, accent),
-              ),
-              const SizedBox(height: 12),
-
-              // Card 6: Quản lý bộ nhớ & Dọn dẹp rác
-              _buildStorageCard(palette),
-              const SizedBox(height: 20),
-
-              ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: accent,
-                  foregroundColor: palette.onColor(accent),
-                  elevation: 0,
-                  padding: const EdgeInsets.symmetric(vertical: 15),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                ),
-                icon: const Icon(Icons.save_rounded),
-                onPressed: _save,
-                label: const Text(
-                  'Lưu Cài Đặt',
-                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
-                ),
-              ),
-            ],
           ),
         );
       },
     );
   }
 
-  Widget _buildAppearanceCard(AppThemePalette palette, Color accent) {
+  Widget _buildAppearanceSectionBody(AppThemePalette palette, Color accent) {
     final presets = appThemeModes.values.toList();
     final tabEntries = <(AppTabId tab, String label, IconData icon)>[
       (AppTabId.studio, 'Studio & TTS', Icons.auto_fix_high_rounded),
@@ -327,81 +299,45 @@ class _SettingsScreenState extends State<SettingsScreen> {
       (AppTabId.history, 'Lịch Sử', Icons.history_rounded),
     ];
 
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: palette.surface,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: palette.border),
-        boxShadow: palette.cardShadows,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: accent.withValues(alpha: 0.14),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(Icons.palette_rounded, color: accent, size: 22),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 1. Nền giao diện (5 tông màu) + nút khôi phục mặc định
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'NỀN GIAO DIỆN',
+              style: TextStyle(
+                color: palette.textMuted,
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.7,
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Giao diện & Màu sắc',
-                      style: TextStyle(
-                        color: palette.textPrimary,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '${palette.mode.name} • ${palette.isFloatingNav ? "Viên thuốc nổi" : "Liền đáy gốc"}',
-                      style: TextStyle(
-                        color: accent,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              TextButton.icon(
-                onPressed: () => AppThemeController.instance.resetToDefaults(),
-                icon: Icon(Icons.refresh_rounded, size: 16, color: palette.textMuted),
-                label: Text(
-                  'Mặc định',
-                  style: TextStyle(color: palette.textMuted, fontSize: 12),
-                ),
-                style: TextButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-
-          // 1. Nền giao diện (5 tông màu)
-          Text(
-            'NỀN GIAO DIỆN',
-            style: TextStyle(
-              color: palette.textMuted,
-              fontSize: 11,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0.7,
             ),
-          ),
-          const SizedBox(height: 8),
+            TextButton.icon(
+              onPressed: () => AppThemeController.instance.resetToDefaults(),
+              icon: Icon(
+                Icons.refresh_rounded,
+                size: 16,
+                color: palette.textMuted,
+              ),
+              label: Text(
+                'Mặc định',
+                style: TextStyle(color: palette.textMuted, fontSize: 12),
+              ),
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 4,
+                ),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
           SizedBox(
             height: 88,
             child: ListView.separated(
@@ -413,7 +349,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 final preset = presets[i];
                 final isSelected = palette.mode.id == preset.id;
                 return InkWell(
-                  onTap: () => AppThemeController.instance.setThemeMode(preset.id),
+                  onTap: () =>
+                      AppThemeController.instance.setThemeMode(preset.id),
                   borderRadius: BorderRadius.circular(14),
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 180),
@@ -421,7 +358,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
                       color: isSelected
-                          ? accent.withValues(alpha: palette.isDark ? 0.16 : 0.08)
+                          ? accent.withValues(
+                              alpha: palette.isDark ? 0.16 : 0.08,
+                            )
                           : palette.surfaceAlt,
                       borderRadius: BorderRadius.circular(14),
                       border: Border.all(
@@ -463,7 +402,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               ),
                             ),
                             if (isSelected)
-                              Icon(Icons.check_circle_rounded, color: accent, size: 16),
+                              Icon(
+                                Icons.check_circle_rounded,
+                                color: accent,
+                                size: 16,
+                              ),
                           ],
                         ),
                         Column(
@@ -570,7 +513,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ],
           ),
         ],
-      ),
     );
   }
 
@@ -607,7 +549,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             return Tooltip(
               message: opt.name,
               child: GestureDetector(
-                onTap: () => AppThemeController.instance.setTabAccent(tab, opt.primary),
+                onTap: () =>
+                    AppThemeController.instance.setTabAccent(tab, opt.primary),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 160),
                   width: 24,
@@ -700,10 +643,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     subtitle,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: palette.textMuted,
-                      fontSize: 10.5,
-                    ),
+                    style: TextStyle(color: palette.textMuted, fontSize: 10.5),
                   ),
                 ],
               ),
@@ -803,10 +743,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Divider(height: 1, color: palette.border),
-                      Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: child,
-                      ),
+                      Padding(padding: const EdgeInsets.all(16), child: child),
                     ],
                   )
                 : const SizedBox.shrink(),
@@ -817,8 +754,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _buildAiSectionBody(AppThemePalette palette, Color accent) {
-    final groqAmber =
-        palette.isDark ? Colors.amber : const Color(0xFFD97706);
+    final groqAmber = palette.isDark ? Colors.amber : const Color(0xFFD97706);
 
     int resilientActiveCount = 0;
     if (_settings!.enableSmartModelFallback) resilientActiveCount++;
@@ -847,7 +783,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     padding: const EdgeInsets.symmetric(vertical: 8),
                     decoration: BoxDecoration(
                       color: _selectedAiProviderTab == 0
-                          ? accent.withValues(alpha: palette.isDark ? 0.2 : 0.12)
+                          ? accent.withValues(
+                              alpha: palette.isDark ? 0.2 : 0.12,
+                            )
                           : Colors.transparent,
                       borderRadius: BorderRadius.circular(8),
                       border: Border.all(
@@ -897,7 +835,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     padding: const EdgeInsets.symmetric(vertical: 8),
                     decoration: BoxDecoration(
                       color: _selectedAiProviderTab == 1
-                          ? groqAmber.withValues(alpha: palette.isDark ? 0.2 : 0.12)
+                          ? groqAmber.withValues(
+                              alpha: palette.isDark ? 0.2 : 0.12,
+                            )
                           : Colors.transparent,
                       borderRadius: BorderRadius.circular(8),
                       border: Border.all(
@@ -946,7 +886,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _buildProviderConfigPanel(
             palette: palette,
             tabColor: accent,
-            keyListLabel: 'Danh sách Gemini API Key (mỗi dòng 1 key để xoay vòng):',
+            keyListLabel:
+                'Danh sách Gemini API Key (mỗi dòng 1 key để xoay vòng):',
             controller: _apiKeysController,
             hintText: 'Dán các API Key tại đây...',
             testButtonLabel: 'Kiểm tra Key Gemini (Sống / Chết)',
@@ -961,8 +902,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             threadCount: _settings!.geminiThreadCount,
             onThreadChanged: (v) =>
                 setState(() => _settings!.geminiThreadCount = v),
-            batchHint:
-                'Số câu phụ đề gửi lên Gemini trong mỗi lượt dịch (Khuyên dùng: 45 câu).',
+            batchHint: 'Số câu phụ đề gửi lên Gemini trong mỗi lượt dịch (Khuyên dùng: 45 câu).',
             batchValue: _settings!.geminiBatchSize,
             onBatchChanged: (v) =>
                 setState(() => _settings!.geminiBatchSize = v),
@@ -972,22 +912,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _buildProviderConfigPanel(
             palette: palette,
             tabColor: groqAmber,
-            keyListLabel:
-                'Danh sách Groq API Key (bắt đầu bằng "gsk_...", mỗi dòng 1 key):',
+            keyListLabel: 'Danh sách Groq API Key (bắt đầu bằng "gsk_...", mỗi dòng 1 key):',
             controller: _groqApiKeysController,
             hintText: 'Dán các Groq API Key (gsk_...) tại đây...',
             testButtonLabel: 'Kiểm tra Key Groq (Sống / Chết)',
             testButtonIcon: Icons.electric_bolt_rounded,
             onTestPressed: _openGroqKeyTestDialog,
+            onKeysChanged: (val) {
+              if (_settings != null) {
+                _settings!.groqApiKeys = _parseKeys(val);
+              }
+            },
             threadTitle: 'SỐ LUỒNG DỊCH SONG SONG (GROQ):',
             threadCount: _settings!.groqThreadCount,
             onThreadChanged: (v) =>
                 setState(() => _settings!.groqThreadCount = v),
-            batchHint:
-                'Số câu phụ đề gửi lên Groq trong mỗi lượt dịch (Groq xử lý siêu nhanh trên LPU).',
+            batchHint: 'Số câu phụ đề gửi lên Groq trong mỗi lượt dịch (Groq xử lý siêu nhanh trên LPU).',
             batchValue: _settings!.groqBatchSize,
-            onBatchChanged: (v) =>
-                setState(() => _settings!.groqBatchSize = v),
+            onBatchChanged: (v) => setState(() => _settings!.groqBatchSize = v),
             batch100Label: '100 câu / request (Cực nhanh trên LPU Groq)',
           ),
 
@@ -998,9 +940,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           decoration: BoxDecoration(
             color: palette.surfaceAlt,
             borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: accent.withValues(alpha: 0.3),
-            ),
+            border: Border.all(color: accent.withValues(alpha: 0.3)),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1012,8 +952,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   });
                 },
                 child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 11,
+                  ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -1222,8 +1164,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     required ValueChanged<int> onBatchChanged,
     required String batch100Label,
   }) {
-    final safeBatch =
-        [30, 45, 60, 80, 100].contains(batchValue) ? batchValue : 45;
+    final safeBatch = [30, 45, 60, 80, 100].contains(batchValue)
+        ? batchValue
+        : 45;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1408,10 +1351,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 DropdownMenuItem<int>(
                   value: 100,
-                  child: Text(
-                    batch100Label,
-                    overflow: TextOverflow.ellipsis,
-                  ),
+                  child: Text(batch100Label, overflow: TextOverflow.ellipsis),
                 ),
               ],
               onChanged: (val) {
@@ -1840,7 +1780,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _buildStorageCard(AppThemePalette palette) {
-    final amber = palette.isDark ? Colors.orangeAccent : const Color(0xFFEA580C);
+    final amber = palette.isDark
+        ? Colors.orangeAccent
+        : const Color(0xFFEA580C);
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -1883,7 +1825,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     const SizedBox(height: 3),
                     Text(
                       'Quét chi tiết video, audio TTS, phụ đề và rác tạm',
-                      style: TextStyle(color: palette.textSecondary, fontSize: 12),
+                      style: TextStyle(
+                        color: palette.textSecondary,
+                        fontSize: 12,
+                      ),
                     ),
                   ],
                 ),

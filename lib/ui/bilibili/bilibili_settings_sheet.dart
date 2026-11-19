@@ -85,7 +85,7 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
       setState(() {
         _selectedVoice = picked;
       });
-      _settings?.bilibiliSelectedTtsVoice = picked.voiceType;
+      _persistSettings();
     }
   }
 
@@ -104,16 +104,10 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
     settings.playerBufferSizeMb = _bufferSizeMb;
   }
 
-  Future<void> _saveAndClose() async {
-    HapticFeedback.lightImpact();
+  @override
+  void dispose() {
     _persistSettings();
-    Navigator.of(context).pop();
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Đã cập nhật cài đặt Bilibili thành công!'),
-        duration: Duration(seconds: 2),
-      ),
-    );
+    super.dispose();
   }
 
   @override
@@ -121,6 +115,14 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
     final palette = AppThemePalette.of(context);
     final accent = palette.accentFor(AppTabId.bilibili);
     final secondary = palette.secondaryFor(AppTabId.bilibili);
+    final hasGradient =
+        palette.backgroundGradientFor(AppTabId.bilibili) != null;
+    final cardBg = hasGradient ? palette.surface : palette.surfaceAlt;
+    final cardShadows =
+        hasGradient ? palette.cardShadows : const <BoxShadow>[];
+    final readableAccent = palette.readableAccent(accent);
+    final readableSecondary = palette.readableAccent(secondary);
+    final readableAmber = palette.readableAccent(const Color(0xFFD97706));
     final settings = _settings;
     final bottomPadding = MediaQuery.of(context).viewInsets.bottom;
 
@@ -129,10 +131,7 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
         maxHeight: MediaQuery.of(context).size.height * 0.90,
       ),
       padding: EdgeInsets.fromLTRB(20, 12, 20, 20 + bottomPadding),
-      decoration: BoxDecoration(
-        color: palette.surface,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-      ),
+      decoration: palette.sheetDecorationFor(AppTabId.bilibili),
       child: SafeArea(
         top: false,
         child: Column(
@@ -145,7 +144,7 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                 width: 44,
                 height: 4,
                 decoration: BoxDecoration(
-                  color: palette.border,
+                  color: palette.textMuted.withValues(alpha: 0.45),
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
@@ -156,10 +155,19 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                 Container(
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    color: secondary.withValues(alpha: 0.14),
+                    color: hasGradient
+                        ? palette.surface
+                        : secondary.withValues(alpha: 0.14),
                     borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: secondary.withValues(alpha: 0.28),
+                    ),
                   ),
-                  child: Icon(Icons.settings_rounded, color: secondary, size: 20),
+                  child: Icon(
+                    Icons.settings_rounded,
+                    color: readableSecondary,
+                    size: 20,
+                  ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -174,7 +182,7 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                 ),
                 IconButton(
                   onPressed: () => Navigator.of(context).pop(),
-                  icon: Icon(Icons.close_rounded, color: palette.textSecondary),
+                  icon: Icon(Icons.close_rounded, color: palette.textPrimary),
                   tooltip: 'Đóng',
                 ),
               ],
@@ -191,16 +199,20 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                     Text(
                       'CHẾ ĐỘ DỊCH PHỤ ĐỀ (BILIBILI):',
                       style: TextStyle(
-                        color: palette.textSecondary,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 0.5,
+                        color: palette.textPrimary,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.4,
                       ),
                     ),
                     const SizedBox(height: 4),
                     Text(
                       'Tùy chọn phương thức bóc tách & dịch thuật khi xem video Bilibili.',
-                      style: TextStyle(color: palette.textMuted, fontSize: 11),
+                      style: TextStyle(
+                        color: palette.textSecondary,
+                        fontSize: 12,
+                        height: 1.35,
+                      ),
                     ),
                     const SizedBox(height: 10),
 
@@ -211,6 +223,8 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                           Expanded(
                             child: _buildModeOption(
                               palette: palette,
+                              cardBg: cardBg,
+                              cardShadows: cardShadows,
                               activeColor: secondary,
                               mode: 'capcut',
                               title: 'CapCut Free',
@@ -223,6 +237,7 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                               onTap: () {
                                 HapticFeedback.selectionClick();
                                 setState(() => _translationMode = 'capcut');
+                                _persistSettings();
                               },
                             ),
                           ),
@@ -230,6 +245,8 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                           Expanded(
                             child: _buildModeOption(
                               palette: palette,
+                              cardBg: cardBg,
+                              cardShadows: cardShadows,
                               activeColor: secondary,
                               mode: 'api_online',
                               title: 'AI Online',
@@ -242,6 +259,7 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                               onTap: () {
                                 HapticFeedback.selectionClick();
                                 setState(() => _translationMode = 'api_online');
+                                _persistSettings();
                               },
                             ),
                           ),
@@ -254,16 +272,20 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                     Text(
                       'CÁCH LẤY FILE PHỤ ĐỀ (SRT):',
                       style: TextStyle(
-                        color: palette.textSecondary,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 0.5,
+                        color: palette.textPrimary,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.4,
                       ),
                     ),
                     const SizedBox(height: 4),
                     Text(
                       'Tùy chọn ưu tiên lấy phụ đề Bilibili có sẵn hoặc nhảy qua CapCut nhận diện trực tiếp.',
-                      style: TextStyle(color: palette.textMuted, fontSize: 11),
+                      style: TextStyle(
+                        color: palette.textSecondary,
+                        fontSize: 12,
+                        height: 1.35,
+                      ),
                     ),
                     const SizedBox(height: 10),
 
@@ -274,6 +296,8 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                           Expanded(
                             child: _buildModeOption(
                               palette: palette,
+                              cardBg: cardBg,
+                              cardShadows: cardShadows,
                               activeColor: secondary,
                               mode: 'bilibili_first',
                               title: 'Ưu tiên Bilibili',
@@ -286,6 +310,7 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                               onTap: () {
                                 HapticFeedback.selectionClick();
                                 setState(() => _subtitleSource = 'bilibili_first');
+                                _persistSettings();
                               },
                             ),
                           ),
@@ -293,6 +318,8 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                           Expanded(
                             child: _buildModeOption(
                               palette: palette,
+                              cardBg: cardBg,
+                              cardShadows: cardShadows,
                               activeColor: secondary,
                               mode: 'capcut_always',
                               title: 'Chuyển sang CapCut',
@@ -305,6 +332,7 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                               onTap: () {
                                 HapticFeedback.selectionClick();
                                 setState(() => _subtitleSource = 'capcut_always');
+                                _persistSettings();
                               },
                             ),
                           ),
@@ -331,17 +359,21 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                               color: const Color(0xFFD97706).withValues(alpha: 0.4),
                             ),
                           ),
-                          child: const Row(
+                          child: Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(Icons.refresh_rounded, color: Color(0xFFD97706), size: 16),
-                              SizedBox(width: 6),
+                              Icon(
+                                Icons.refresh_rounded,
+                                color: readableAmber,
+                                size: 16,
+                              ),
+                              const SizedBox(width: 6),
                               Flexible(
                                 child: Text(
                                   'Tạo lại phụ đề cho video này theo thiết lập mới',
                                   style: TextStyle(
-                                    color: Color(0xFFD97706),
-                                    fontSize: 12,
+                                    color: readableAmber,
+                                    fontSize: 12.5,
                                     fontWeight: FontWeight.bold,
                                   ),
                                   overflow: TextOverflow.ellipsis,
@@ -358,16 +390,20 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                     Text(
                       'GIỌNG LỒNG TIẾNG AI (BILIBILI):',
                       style: TextStyle(
-                        color: palette.textSecondary,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 0.5,
+                        color: palette.textPrimary,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.4,
                       ),
                     ),
                     const SizedBox(height: 4),
                     Text(
                       'Giọng đọc AI tự động phát khi bật chế độ "Lồng tiếng AI" cho video.',
-                      style: TextStyle(color: palette.textMuted, fontSize: 11),
+                      style: TextStyle(
+                        color: palette.textSecondary,
+                        fontSize: 12,
+                        height: 1.35,
+                      ),
                     ),
                     const SizedBox(height: 8),
 
@@ -377,11 +413,13 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                       child: Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: palette.surfaceAlt,
+                          color: cardBg,
                           borderRadius: BorderRadius.circular(14),
                           border: Border.all(
-                            color: accent.withValues(alpha: 0.35),
+                            color: accent.withValues(alpha: 0.45),
+                            width: 1.2,
                           ),
+                          boxShadow: cardShadows,
                         ),
                         child: Row(
                           children: [
@@ -427,7 +465,7 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                                         child: Text(
                                           'Đang dùng',
                                           style: TextStyle(
-                                            color: accent,
+                                            color: readableAccent,
                                             fontSize: 10,
                                             fontWeight: FontWeight.bold,
                                           ),
@@ -442,7 +480,8 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                                         : 'Giọng đọc chuẩn tiếng Việt',
                                     style: TextStyle(
                                       color: palette.textSecondary,
-                                      fontSize: 11,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w500,
                                     ),
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
@@ -465,14 +504,17 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                                   Text(
                                     'Đổi giọng',
                                     style: TextStyle(
-                                      color: accent,
+                                      color: readableAccent,
                                       fontSize: 11.5,
                                       fontWeight: FontWeight.bold,
                                     ),
                                   ),
                                   const SizedBox(width: 2),
-                                  Icon(Icons.chevron_right_rounded,
-                                      size: 16, color: accent),
+                                  Icon(
+                                    Icons.chevron_right_rounded,
+                                    size: 16,
+                                    color: readableAccent,
+                                  ),
                                 ],
                               ),
                             ),
@@ -486,204 +528,285 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                     Text(
                       'TỐI ƯU PHÁT VIDEO & TẢI VỀ (DASH THỐNG NHẤT):',
                       style: TextStyle(
-                        color: palette.textSecondary,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 0.5,
+                        color: palette.textPrimary,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.4,
                       ),
                     ),
                     const SizedBox(height: 4),
                     Text(
                       'Gộp hình & tiếng DASH trực tiếp trong một demuxer giúp tua nhanh, không mất tiếng hoặc đứng hình.',
-                      style: TextStyle(color: palette.textMuted, fontSize: 11),
+                      style: TextStyle(
+                        color: palette.textSecondary,
+                        fontSize: 12,
+                        height: 1.35,
+                      ),
                     ),
                     const SizedBox(height: 8),
 
                     if (settings != null)
-                      Material(
-                        color: palette.surfaceAlt,
-                        shape: RoundedRectangleBorder(
+                      Container(
+                        decoration: BoxDecoration(
+                          color: cardBg,
                           borderRadius: BorderRadius.circular(16),
-                          side: BorderSide(color: palette.border),
+                          border: Border.all(
+                            color: palette.border,
+                            width: 1.1,
+                          ),
+                          boxShadow: cardShadows,
                         ),
-                        clipBehavior: Clip.antiAlias,
-                        child: Column(
-                          children: [
-                            ListTile(
-                              leading: Icon(Icons.high_quality_rounded, color: secondary),
-                              title: Text(
-                                'Độ phân giải ưu tiên',
-                                style: TextStyle(color: palette.textPrimary, fontSize: 13.5),
-                              ),
-                              subtitle: Text(
-                                _getQualityLabel(_qualityKey),
-                                style: TextStyle(color: palette.textSecondary, fontSize: 11.5),
-                              ),
-                              trailing: DropdownButtonHideUnderline(
-                                child: DropdownButton<String>(
-                                  value: _qualityKey,
-                                  dropdownColor: palette.surface,
-                                  icon: Icon(Icons.arrow_drop_down, color: palette.textSecondary),
-                                  style: TextStyle(color: palette.textPrimary, fontSize: 12.5),
-                                  items: [
-                                    DropdownMenuItem(value: '80', child: Text('1080p FHD', style: TextStyle(color: palette.textPrimary, fontSize: 12.5))),
-                                    DropdownMenuItem(value: '64', child: Text('720p HD', style: TextStyle(color: palette.textPrimary, fontSize: 12.5))),
-                                    DropdownMenuItem(value: '32', child: Text('480p SD', style: TextStyle(color: palette.textPrimary, fontSize: 12.5))),
-                                    DropdownMenuItem(value: '16', child: Text('360p Nhẹ', style: TextStyle(color: palette.textPrimary, fontSize: 12.5))),
-                                  ],
-                                  onChanged: (val) {
-                                    if (val != null) {
-                                      HapticFeedback.selectionClick();
-                                      setState(() {
-                                        _qualityKey = val;
-                                      });
-                                    }
-                                  },
+                        child: Material(
+                          color: Colors.transparent,
+                          borderRadius: BorderRadius.circular(16),
+                          clipBehavior: Clip.antiAlias,
+                          child: Column(
+                            children: [
+                              ListTile(
+                                leading: Icon(
+                                  Icons.high_quality_rounded,
+                                  color: readableSecondary,
                                 ),
-                              ),
-                            ),
-                            Divider(color: palette.border, height: 1),
-                            ListTile(
-                              leading: Icon(Icons.dns_rounded, color: secondary),
-                              title: Text(
-                                'Máy chủ CDN phát video',
-                                style: TextStyle(color: palette.textPrimary, fontSize: 13.5),
-                              ),
-                              subtitle: Text(
-                                BilibiliCdnService.fromCode(_cdnService).label,
-                                style: TextStyle(color: palette.textSecondary, fontSize: 11.5),
-                              ),
-                              trailing: SizedBox(
-                                width: 140,
-                                child: DropdownButtonHideUnderline(
+                                title: Text(
+                                  'Độ phân giải ưu tiên',
+                                  style: TextStyle(
+                                    color: palette.textPrimary,
+                                    fontSize: 13.5,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                subtitle: Text(
+                                  _getQualityLabel(_qualityKey),
+                                  style: TextStyle(
+                                    color: palette.textSecondary,
+                                    fontSize: 12,
+                                    height: 1.3,
+                                  ),
+                                ),
+                                trailing: DropdownButtonHideUnderline(
                                   child: DropdownButton<String>(
-                                    isExpanded: true,
-                                    value: _cdnService,
+                                    value: _qualityKey,
                                     dropdownColor: palette.surface,
-                                    icon: Icon(Icons.arrow_drop_down, color: palette.textSecondary),
-                                    items: BilibiliCdnService.values
-                                        .map(
-                                          (cdn) => DropdownMenuItem<String>(
-                                            value: cdn.code,
-                                            child: Text(
-                                              cdn.label,
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                              style: TextStyle(color: palette.textPrimary, fontSize: 12),
-                                            ),
-                                          ),
-                                        )
-                                        .toList(),
+                                    icon: Icon(
+                                      Icons.arrow_drop_down,
+                                      color: palette.textPrimary,
+                                    ),
+                                    style: TextStyle(
+                                      color: palette.textPrimary,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                    items: [
+                                      DropdownMenuItem(value: '80', child: Text('1080p FHD', style: TextStyle(color: palette.textPrimary, fontSize: 13, fontWeight: FontWeight.w600))),
+                                      DropdownMenuItem(value: '64', child: Text('720p HD', style: TextStyle(color: palette.textPrimary, fontSize: 13, fontWeight: FontWeight.w600))),
+                                      DropdownMenuItem(value: '32', child: Text('480p SD', style: TextStyle(color: palette.textPrimary, fontSize: 13, fontWeight: FontWeight.w600))),
+                                      DropdownMenuItem(value: '16', child: Text('360p Nhẹ', style: TextStyle(color: palette.textPrimary, fontSize: 13, fontWeight: FontWeight.w600))),
+                                    ],
                                     onChanged: (val) {
                                       if (val != null) {
                                         HapticFeedback.selectionClick();
-                                        setState(() => _cdnService = val);
+                                        setState(() {
+                                          _qualityKey = val;
+                                        });
+                                        _persistSettings();
                                       }
                                     },
                                   ),
                                 ),
                               ),
-                            ),
-                            Divider(color: palette.border, height: 1),
-                            SwitchListTile(
-                              dense: true,
-                              activeThumbColor: secondary,
-                              secondary: Icon(Icons.developer_board_rounded, color: secondary),
-                              title: Text(
-                                'Giải mã phần cứng (Hardware)',
-                                style: TextStyle(color: palette.textPrimary, fontSize: 13.5),
-                              ),
-                              subtitle: Text(
-                                'Tăng tốc GPU giảm giật lag khi tua; tắt nếu máy bị đen hình còn tiếng',
-                                style: TextStyle(color: palette.textMuted, fontSize: 11),
-                              ),
-                              value: _hardwareDecode,
-                              onChanged: (val) {
-                                HapticFeedback.selectionClick();
-                                setState(() => _hardwareDecode = val);
-                              },
-                            ),
-                            Divider(color: palette.border, height: 1),
-                            ListTile(
-                              leading: Icon(Icons.memory_rounded, color: secondary),
-                              title: Text(
-                                'Bộ nhớ đệm RAM phát video',
-                                style: TextStyle(color: palette.textPrimary, fontSize: 13.5),
-                              ),
-                              subtitle: Text(
-                                _getBufferLabel(_bufferSizeMb),
-                                style: TextStyle(color: palette.textSecondary, fontSize: 11.5),
-                              ),
-                              trailing: DropdownButtonHideUnderline(
-                                child: DropdownButton<int>(
-                                  value: _bufferSizeMb,
-                                  dropdownColor: palette.surface,
-                                  icon: Icon(Icons.arrow_drop_down, color: palette.textSecondary),
-                                  items: [
-                                    DropdownMenuItem(value: 32, child: Text('32 MB (Tiết kiệm)', style: TextStyle(color: palette.textPrimary, fontSize: 12.5))),
-                                    DropdownMenuItem(value: 64, child: Text('64 MB (Cân bằng)', style: TextStyle(color: palette.textPrimary, fontSize: 12.5))),
-                                    DropdownMenuItem(value: 128, child: Text('128 MB (Khuyên dùng)', style: TextStyle(color: palette.textPrimary, fontSize: 12.5))),
-                                    DropdownMenuItem(value: 256, child: Text('256 MB (Cực đại)', style: TextStyle(color: palette.textPrimary, fontSize: 12.5))),
-                                  ],
-                                  onChanged: (val) {
-                                    if (val != null) {
-                                      HapticFeedback.selectionClick();
-                                      setState(() {
-                                        _bufferSizeMb = val;
-                                      });
-                                    }
-                                  },
+                              Divider(color: palette.border, height: 1),
+                              ListTile(
+                                leading: Icon(
+                                  Icons.dns_rounded,
+                                  color: readableSecondary,
+                                ),
+                                title: Text(
+                                  'Máy chủ CDN phát video',
+                                  style: TextStyle(
+                                    color: palette.textPrimary,
+                                    fontSize: 13.5,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                subtitle: Text(
+                                  BilibiliCdnService.fromCode(_cdnService).label,
+                                  style: TextStyle(
+                                    color: palette.textSecondary,
+                                    fontSize: 12,
+                                    height: 1.3,
+                                  ),
+                                ),
+                                trailing: SizedBox(
+                                  width: 140,
+                                  child: DropdownButtonHideUnderline(
+                                    child: DropdownButton<String>(
+                                      isExpanded: true,
+                                      value: _cdnService,
+                                      dropdownColor: palette.surface,
+                                      icon: Icon(
+                                        Icons.arrow_drop_down,
+                                        color: palette.textPrimary,
+                                      ),
+                                      items: BilibiliCdnService.values
+                                          .map(
+                                            (cdn) => DropdownMenuItem<String>(
+                                              value: cdn.code,
+                                              child: Text(
+                                                cdn.label,
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: TextStyle(
+                                                  color: palette.textPrimary,
+                                                  fontSize: 12.5,
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                              ),
+                                            ),
+                                          )
+                                          .toList(),
+                                      onChanged: (val) {
+                                        if (val != null) {
+                                          HapticFeedback.selectionClick();
+                                          setState(() => _cdnService = val);
+                                          _persistSettings();
+                                        }
+                                      },
+                                    ),
+                                  ),
                                 ),
                               ),
-                            ),
-                            Divider(color: palette.border, height: 1),
-                            SwitchListTile(
-                              dense: true,
-                              activeThumbColor: secondary,
-                              secondary: Icon(Icons.download_rounded, color: secondary),
-                              title: Text(
-                                'Tự động tải video về máy',
-                                style: TextStyle(color: palette.textPrimary, fontSize: 13.5),
+                              Divider(color: palette.border, height: 1),
+                              SwitchListTile(
+                                dense: true,
+                                activeThumbColor: Colors.white,
+                                activeTrackColor: secondary,
+                                inactiveThumbColor: palette.isDark
+                                    ? const Color(0xFFCBD5E1)
+                                    : Colors.white,
+                                inactiveTrackColor: palette.isDark
+                                    ? const Color(0xFF334155)
+                                    : const Color(0xFFCBD5E1),
+                                secondary: Icon(
+                                  Icons.developer_board_rounded,
+                                  color: readableSecondary,
+                                ),
+                                title: Text(
+                                  'Giải mã phần cứng (Hardware)',
+                                  style: TextStyle(
+                                    color: palette.textPrimary,
+                                    fontSize: 13.5,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                subtitle: Text(
+                                  'Tăng tốc GPU giảm giật lag khi tua; tắt nếu máy bị đen hình còn tiếng',
+                                  style: TextStyle(
+                                    color: palette.textSecondary,
+                                    fontSize: 12,
+                                    height: 1.3,
+                                  ),
+                                ),
+                                value: _hardwareDecode,
+                                onChanged: (val) {
+                                  HapticFeedback.selectionClick();
+                                  setState(() => _hardwareDecode = val);
+                                  _persistSettings();
+                                },
                               ),
-                              subtitle: Text(
-                                'Tải trước MP4 để phát offline 100% mượt mà không giật lag',
-                                style: TextStyle(color: palette.textMuted, fontSize: 11),
+                              Divider(color: palette.border, height: 1),
+                              ListTile(
+                                leading: Icon(
+                                  Icons.memory_rounded,
+                                  color: readableSecondary,
+                                ),
+                                title: Text(
+                                  'Bộ nhớ đệm RAM phát video',
+                                  style: TextStyle(
+                                    color: palette.textPrimary,
+                                    fontSize: 13.5,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                subtitle: Text(
+                                  _getBufferLabel(_bufferSizeMb),
+                                  style: TextStyle(
+                                    color: palette.textSecondary,
+                                    fontSize: 12,
+                                    height: 1.3,
+                                  ),
+                                ),
+                                trailing: DropdownButtonHideUnderline(
+                                  child: DropdownButton<int>(
+                                    value: _bufferSizeMb,
+                                    dropdownColor: palette.surface,
+                                    icon: Icon(
+                                      Icons.arrow_drop_down,
+                                      color: palette.textPrimary,
+                                    ),
+                                    items: [
+                                      DropdownMenuItem(value: 32, child: Text('32 MB (Tiết kiệm)', style: TextStyle(color: palette.textPrimary, fontSize: 13, fontWeight: FontWeight.w600))),
+                                      DropdownMenuItem(value: 64, child: Text('64 MB (Cân bằng)', style: TextStyle(color: palette.textPrimary, fontSize: 13, fontWeight: FontWeight.w600))),
+                                      DropdownMenuItem(value: 128, child: Text('128 MB (Khuyên dùng)', style: TextStyle(color: palette.textPrimary, fontSize: 13, fontWeight: FontWeight.w600))),
+                                      DropdownMenuItem(value: 256, child: Text('256 MB (Cực đại)', style: TextStyle(color: palette.textPrimary, fontSize: 13, fontWeight: FontWeight.w600))),
+                                    ],
+                                    onChanged: (val) {
+                                      if (val != null) {
+                                        HapticFeedback.selectionClick();
+                                        setState(() {
+                                          _bufferSizeMb = val;
+                                        });
+                                        _persistSettings();
+                                      }
+                                    },
+                                  ),
+                                ),
                               ),
-                              value: _downloadOffline,
-                              onChanged: (val) {
-                                setState(() => _downloadOffline = val);
-                              },
-                            ),
-                          ],
+                              Divider(color: palette.border, height: 1),
+                              SwitchListTile(
+                                dense: true,
+                                activeThumbColor: Colors.white,
+                                activeTrackColor: secondary,
+                                inactiveThumbColor: palette.isDark
+                                    ? const Color(0xFFCBD5E1)
+                                    : Colors.white,
+                                inactiveTrackColor: palette.isDark
+                                    ? const Color(0xFF334155)
+                                    : const Color(0xFFCBD5E1),
+                                secondary: Icon(
+                                  Icons.download_rounded,
+                                  color: readableSecondary,
+                                ),
+                                title: Text(
+                                  'Tự động tải video về máy',
+                                  style: TextStyle(
+                                    color: palette.textPrimary,
+                                    fontSize: 13.5,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                subtitle: Text(
+                                  'Tải trước MP4 để phát offline 100% mượt mà không giật lag',
+                                  style: TextStyle(
+                                    color: palette.textSecondary,
+                                    fontSize: 12,
+                                    height: 1.3,
+                                  ),
+                                ),
+                                value: _downloadOffline,
+                                onChanged: (val) {
+                                  HapticFeedback.selectionClick();
+                                  setState(() => _downloadOffline = val);
+                                  _persistSettings();
+                                },
+                              ),
+                            ],
+                          ),
                         ),
                       ),
 
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 8),
                   ],
                 ),
-              ),
-            ),
-
-            const SizedBox(height: 10),
-
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: accent,
-                  foregroundColor: palette.onColor(accent),
-                  padding: const EdgeInsets.symmetric(vertical: 13),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  elevation: 0,
-                ),
-                icon: const Icon(Icons.check_circle_rounded, size: 18),
-                label: const Text(
-                  'Lưu Cài Đặt',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                ),
-                onPressed: _saveAndClose,
               ),
             ),
           ],
@@ -694,6 +817,8 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
 
   Widget _buildModeOption({
     required AppThemePalette palette,
+    required Color cardBg,
+    required List<BoxShadow> cardShadows,
     required Color activeColor,
     required String mode,
     required String title,
@@ -705,6 +830,8 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
     required bool isSelected,
     required VoidCallback onTap,
   }) {
+    final readableActive = palette.readableAccent(activeColor);
+    final readableBadge = palette.readableAccent(badgeColor);
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
@@ -713,13 +840,17 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
         decoration: BoxDecoration(
           color: isSelected
-              ? activeColor.withValues(alpha: 0.12)
-              : palette.surfaceAlt,
+              ? Color.alphaBlend(
+                  activeColor.withValues(alpha: palette.isDark ? 0.18 : 0.11),
+                  cardBg,
+                )
+              : cardBg,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
             color: isSelected ? activeColor : palette.border,
-            width: isSelected ? 1.5 : 1,
+            width: isSelected ? 1.8 : 1.1,
           ),
+          boxShadow: cardShadows,
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -741,7 +872,7 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                       ? Icons.radio_button_checked_rounded
                       : Icons.radio_button_off_rounded,
                   size: 18,
-                  color: isSelected ? activeColor : palette.textMuted,
+                  color: isSelected ? activeColor : palette.textSecondary,
                 ),
               ],
             ),
@@ -754,9 +885,9 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: isSelected ? activeColor : palette.textPrimary,
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold,
+                      color: isSelected ? readableActive : palette.textPrimary,
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
                 ),
@@ -777,9 +908,9 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
                   child: Text(
                     badge,
                     style: TextStyle(
-                      color: badgeColor,
-                      fontSize: 8.5,
-                      fontWeight: FontWeight.bold,
+                      color: readableBadge,
+                      fontSize: 9,
+                      fontWeight: FontWeight.w800,
                     ),
                   ),
                 ),
@@ -792,8 +923,9 @@ class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 color: palette.textSecondary,
-                fontSize: 10.5,
-                height: 1.25,
+                fontSize: 11.5,
+                fontWeight: FontWeight.w500,
+                height: 1.3,
               ),
             ),
           ],
