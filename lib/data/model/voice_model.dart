@@ -190,5 +190,8 @@ class VoicePresets {
     ),
   ];
 
-  static final VoiceItem defaultVoice = vietnameseVoices[0];
+  static final VoiceItem defaultVoice = vietnameseVoices.firstWhere(
+    (v) => v.voiceType == 'BV074_streaming_dsp',
+    orElse: () => vietnameseVoices[0],
+  );
 }

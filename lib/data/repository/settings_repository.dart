@@ -91,7 +91,8 @@ class SettingsRepository {
     );
   }
 
-  String get selectedModel => prefs.getString('selected_model') ?? 'capcut';
+  String get selectedModel =>
+      prefs.getString('selected_model') ?? 'gemini-3.1-flash-lite';
   set selectedModel(String v) => prefs.setString('selected_model', v);
 
   String get selectedGroqModel =>
@@ -133,7 +134,7 @@ class SettingsRepository {
   double get blackBoxOpacity => prefs.getDouble('blackbox_opacity') ?? 0.92;
   set blackBoxOpacity(double v) => prefs.setDouble('blackbox_opacity', v);
 
-  double get subtitleOffsetY => prefs.getDouble('sub_offset_y') ?? 0.0;
+  double get subtitleOffsetY => prefs.getDouble('sub_offset_y') ?? 90.0;
   set subtitleOffsetY(double v) => prefs.setDouble('sub_offset_y', v);
 
   String get subtitleColorHex => prefs.getString('sub_color_hex') ?? '#FFFFFF';
@@ -147,11 +148,11 @@ class SettingsRepository {
   set isTtsPlaybackEnabled(bool v) => prefs.setBool('tts_playback_enabled', v);
 
   double get originalVideoVolume =>
-      prefs.getDouble('original_video_volume') ?? 0.25;
+      prefs.getDouble('original_video_volume') ?? 0.57;
   set originalVideoVolume(double v) =>
       prefs.setDouble('original_video_volume', v.clamp(0.0, 1.0));
 
-  double get ttsVolume => prefs.getDouble('tts_volume') ?? 1.0;
+  double get ttsVolume => prefs.getDouble('tts_volume') ?? 0.72;
   set ttsVolume(double v) => prefs.setDouble('tts_volume', v.clamp(0.0, 1.0));
 
   double get ttsVoicePitch =>
@@ -182,12 +183,12 @@ class SettingsRepository {
   set targetLanguageLabel(String v) => prefs.setString('target_lang_label', v);
 
   int get geminiThreadCount =>
-      (prefs.getInt('gemini_thread_count') ?? 2).clamp(1, 20);
+      (prefs.getInt('gemini_thread_count') ?? 7).clamp(1, 20);
   set geminiThreadCount(int v) =>
       prefs.setInt('gemini_thread_count', v.clamp(1, 20));
 
   int get geminiBatchSize =>
-      (prefs.getInt('gemini_batch_size') ?? 45).clamp(10, 200);
+      (prefs.getInt('gemini_batch_size') ?? 100).clamp(10, 200);
   set geminiBatchSize(int v) =>
       prefs.setInt('gemini_batch_size', v.clamp(10, 200));
 
@@ -221,12 +222,12 @@ class SettingsRepository {
       prefs.setInt('download_thread_count', v.clamp(8, 32));
 
   int get capcutSttConcurrency =>
-      (prefs.getInt('capcut_stt_concurrency') ?? 3).clamp(1, 20);
+      (prefs.getInt('capcut_stt_concurrency') ?? 10).clamp(1, 20);
   set capcutSttConcurrency(int v) =>
       prefs.setInt('capcut_stt_concurrency', v.clamp(1, 20));
 
   int get audioSliceConcurrency =>
-      (prefs.getInt('audio_slice_concurrency') ?? 3).clamp(1, 20);
+      (prefs.getInt('audio_slice_concurrency') ?? 10).clamp(1, 20);
   set audioSliceConcurrency(int v) =>
       prefs.setInt('audio_slice_concurrency', v.clamp(1, 20));
 
@@ -243,7 +244,7 @@ class SettingsRepository {
       prefs.setInt('tts_thread_count', v.clamp(1, 100));
 
   String get selectedTtsVoice =>
-      prefs.getString('selected_tts_voice') ?? 'ICL_uranus_vi_female_yuenan1';
+      prefs.getString('selected_tts_voice') ?? 'BV074_streaming_dsp';
   set selectedTtsVoice(String v) => prefs.setString('selected_tts_voice', v);
 
   String get bilibiliSessData => _bilibiliSessData;
@@ -289,12 +290,12 @@ class SettingsRepository {
   }
 
   String get bilibiliPreferredQuality =>
-      prefs.getString('bilibili_preferred_quality') ?? '1080';
+      prefs.getString('bilibili_preferred_quality') ?? '80';
   set bilibiliPreferredQuality(String v) =>
       prefs.setString('bilibili_preferred_quality', v);
 
   int get prefetchEpisodeCount =>
-      (prefs.getInt('prefetch_episode_count') ?? 1).clamp(1, 5);
+      (prefs.getInt('prefetch_episode_count') ?? 2).clamp(1, 5);
   set prefetchEpisodeCount(int v) =>
       prefs.setInt('prefetch_episode_count', v.clamp(1, 5));
 
@@ -341,7 +342,7 @@ class SettingsRepository {
 
   /// Chế độ dịch riêng của Hồng Quả: 'capcut' (CapCut Free) hoặc 'api_online' (API Online tự động xoay model & key)
   String get hongguoTranslationMode =>
-      prefs.getString('hongguo_translation_mode') ?? 'capcut';
+      prefs.getString('hongguo_translation_mode') ?? 'api_online';
   set hongguoTranslationMode(String v) =>
       prefs.setString('hongguo_translation_mode', v);
 
@@ -408,14 +409,14 @@ class SettingsRepository {
 
   /// Lưu Tab hiện tại của màn hình Lướt Hồng Quả: 'follow', 'comic', 'real', 'discover'
   String get hongguoFeedTab {
-    final stored = prefs.getString('hongguo_feed_tab') ?? 'discover';
+    final stored = prefs.getString('hongguo_feed_tab') ?? 'comic';
     if (stored == 'follow' ||
         stored == 'comic' ||
         stored == 'real' ||
         stored == 'discover') {
       return stored;
     }
-    return 'discover';
+    return 'comic';
   }
   set hongguoFeedTab(String v) =>
       prefs.setString('hongguo_feed_tab', v);
@@ -485,13 +486,13 @@ class SettingsRepository {
 
   /// Chế độ dịch riêng của Bilibili: 'capcut' (CapCut Free) hoặc 'api_online' (AI Online)
   String get bilibiliTranslationMode =>
-      prefs.getString('bilibili_translation_mode') ?? 'capcut';
+      prefs.getString('bilibili_translation_mode') ?? 'api_online';
   set bilibiliTranslationMode(String v) =>
       prefs.setString('bilibili_translation_mode', v);
 
-  /// Dung lượng bộ nhớ đệm RAM cho trình phát MediaKit (MB): 32, 64 (mặc định), 128, 256
+  /// Dung lượng bộ nhớ đệm RAM cho trình phát MediaKit (MB): 32, 64, 128 (mặc định), 256
   int get playerBufferSizeMb =>
-      (prefs.getInt('player_buffer_size_mb') ?? 64).clamp(32, 256);
+      (prefs.getInt('player_buffer_size_mb') ?? 128).clamp(32, 256);
   set playerBufferSizeMb(int v) =>
       prefs.setInt('player_buffer_size_mb', v.clamp(32, 256));
 
@@ -541,9 +542,9 @@ class SettingsRepository {
   set hongguoCustomPrompt(String v) =>
       prefs.setString('hongguo_custom_prompt', v);
 
-  /// Chất lượng video ưu tiên khi phát online hoặc tải về: '80' (1080p), '64' (720p - mặc định), '32' (480p), '16' (360p)
+  /// Chất lượng video ưu tiên khi phát online hoặc tải về: '80' (1080p - mặc định), '64' (720p), '32' (480p), '16' (360p)
   String get preferredVideoQuality =>
-      prefs.getString('preferred_video_quality') ?? '64';
+      prefs.getString('preferred_video_quality') ?? '80';
   set preferredVideoQuality(String v) =>
       prefs.setString('preferred_video_quality', v);
 

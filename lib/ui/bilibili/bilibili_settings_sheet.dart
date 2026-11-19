@@ -32,14 +32,14 @@ class BilibiliSettingsSheet extends StatefulWidget {
 class _BilibiliSettingsSheetState extends State<BilibiliSettingsSheet> {
   SettingsRepository? _settings;
 
-  String _translationMode = 'capcut';
+  String _translationMode = 'api_online';
   String _subtitleSource = 'bilibili_first';
   String _cdnService = 'auto';
   bool _hardwareDecode = true;
-  String _qualityKey = '64';
+  String _qualityKey = '80';
   VoiceItem _selectedVoice = VoicePresets.defaultVoice;
   bool _downloadOffline = false;
-  int _bufferSizeMb = 64;
+  int _bufferSizeMb = 128;
 
   @override
   void initState() {

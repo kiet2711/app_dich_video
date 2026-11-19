@@ -82,7 +82,7 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   String? _douyinDownloadMessage;
 
   String _selectedSourceLang = 'zh-CN';
-  String _selectedEngine = 'capcut';
+  String _selectedEngine = 'gemini-3.1-flash-lite';
   String _selectedTargetLang = 'vi-VN';
   String _selectedStyle = 'Zhihu';
   final _customPromptController = TextEditingController();
@@ -91,7 +91,7 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   SubtitlingPipeline? _activePipeline;
   bool _cancelRequested = false;
   bool _downloadBilibiliVideo = false;
-  String _selectedVideoQuality = '64';
+  String _selectedVideoQuality = '80';
 
   // Danh mục tuỳ chọn đồng bộ 100% bản gốc Android HomeScreen.kt
   static const _sourceLanguageOptions = [

@@ -74,21 +74,21 @@ void main() {
     });
 
     test('Gemini batch size default and updating works properly', () {
-      expect(settings.geminiBatchSize, equals(45));
+      expect(settings.geminiBatchSize, equals(100));
 
       settings.geminiBatchSize = 80;
       expect(settings.geminiBatchSize, equals(80));
 
-      settings.geminiBatchSize = 100;
-      expect(settings.geminiBatchSize, equals(100));
+      settings.geminiBatchSize = 45;
+      expect(settings.geminiBatchSize, equals(45));
     });
 
     test('Audio slice concurrency and chunk duration getters/setters work properly', () {
-      expect(settings.audioSliceConcurrency, equals(3));
+      expect(settings.audioSliceConcurrency, equals(10));
       settings.audioSliceConcurrency = 5;
       expect(settings.audioSliceConcurrency, equals(5));
-      settings.audioSliceConcurrency = 10;
-      expect(settings.audioSliceConcurrency, equals(10));
+      settings.audioSliceConcurrency = 3;
+      expect(settings.audioSliceConcurrency, equals(3));
       settings.audioSliceConcurrency = 25;
       expect(settings.audioSliceConcurrency, equals(20));
       settings.audioSliceConcurrency = 0;
@@ -108,7 +108,7 @@ void main() {
 
     test('CapCut STT, Gemini, and Groq concurrency getters/setters clamp up to 20 threads', () {
       // CapCut STT
-      expect(settings.capcutSttConcurrency, equals(3));
+      expect(settings.capcutSttConcurrency, equals(10));
       settings.capcutSttConcurrency = 20;
       expect(settings.capcutSttConcurrency, equals(20));
       settings.capcutSttConcurrency = 30;
@@ -152,5 +152,30 @@ void main() {
         );
       },
     );
+
+    test('Fresh install defaults match configured profile with no API keys', () async {
+      await settings.prefs.clear();
+      expect(settings.geminiApiKeys, isEmpty);
+      expect(settings.groqApiKeys, isEmpty);
+      expect(settings.bilibiliSessData, isEmpty);
+      expect(settings.selectedModel, equals('gemini-3.1-flash-lite'));
+      expect(settings.selectedTtsVoice, equals('BV074_streaming_dsp'));
+      expect(settings.bilibiliSelectedTtsVoice, equals('BV074_streaming_dsp'));
+      expect(settings.hongguoSelectedTtsVoice, equals('BV074_streaming_dsp'));
+      expect(settings.geminiThreadCount, equals(7));
+      expect(settings.geminiBatchSize, equals(100));
+      expect(settings.capcutSttConcurrency, equals(10));
+      expect(settings.audioSliceConcurrency, equals(10));
+      expect(settings.preferredVideoQuality, equals('80'));
+      expect(settings.bilibiliPreferredQuality, equals('80'));
+      expect(settings.bilibiliTranslationMode, equals('api_online'));
+      expect(settings.hongguoTranslationMode, equals('api_online'));
+      expect(settings.hongguoFeedTab, equals('comic'));
+      expect(settings.prefetchEpisodeCount, equals(2));
+      expect(settings.playerBufferSizeMb, equals(128));
+      expect(settings.subtitleOffsetY, equals(90.0));
+      expect(settings.originalVideoVolume, closeTo(0.57, 0.001));
+      expect(settings.ttsVolume, closeTo(0.72, 0.001));
+    });
   });
 }

@@ -31,7 +31,7 @@ class _HongguoSettingsSheetState extends State<HongguoSettingsSheet> {
   String _videoResolverEngine = 'local';
   VoiceItem _selectedVoice = VoicePresets.defaultVoice;
   bool _autoPlay = true;
-  int _prefetchCount = 1;
+  int _prefetchCount = 2;
   bool _autoDeleteWatched = true;
   bool _isLoading = true;
 

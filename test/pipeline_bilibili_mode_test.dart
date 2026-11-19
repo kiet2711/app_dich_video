@@ -37,13 +37,13 @@ void main() {
       expect(settings.bilibiliStreamMode, equals('muxed'));
     });
 
-    test('SettingsRepository defaults playerBufferSizeMb to 64 and clamps properly', () async {
+    test('SettingsRepository defaults playerBufferSizeMb to 128 and clamps properly', () async {
       SharedPreferences.setMockInitialValues({});
       final settings = await SettingsRepository.getInstance();
-      expect(settings.playerBufferSizeMb, equals(64));
-
-      settings.playerBufferSizeMb = 128;
       expect(settings.playerBufferSizeMb, equals(128));
+
+      settings.playerBufferSizeMb = 64;
+      expect(settings.playerBufferSizeMb, equals(64));
 
       settings.playerBufferSizeMb = 500;
       expect(settings.playerBufferSizeMb, equals(256));
