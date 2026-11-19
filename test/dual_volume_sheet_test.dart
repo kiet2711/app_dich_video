@@ -57,5 +57,65 @@ void main() {
       expect(find.text('${(latestOrig * 100).toInt()}%'), findsOneWidget);
     },
   );
+
+  testWidgets(
+    'DualVolumeSheet voice tuning presets and reset update callbacks live',
+    (tester) async {
+      double latestPitch = 1.0;
+      double latestWarmth = 0.0;
+      double latestBrightness = 0.0;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => ElevatedButton(
+                onPressed: () {
+                  showModalBottomSheet<void>(
+                    context: context,
+                    isScrollControlled: true,
+                    builder: (_) => DualVolumeSheet(
+                      originalVolume: 0.25,
+                      aiVolume: 1.0,
+                      voicePitch: latestPitch,
+                      voiceWarmth: latestWarmth,
+                      voiceBrightness: latestBrightness,
+                      onOriginalVolumeChanged: (_) {},
+                      onAiVolumeChanged: (_) {},
+                      onVoiceToneChanged: ({
+                        required pitch,
+                        required warmth,
+                        required brightness,
+                      }) {
+                        latestPitch = pitch;
+                        latestWarmth = warmth;
+                        latestBrightness = brightness;
+                      },
+                    ),
+                  );
+                },
+                child: const Text('Open'),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Giảm the thé'));
+      await tester.pump();
+      expect(latestPitch, closeTo(0.94, 0.001));
+      expect(latestWarmth, closeTo(0.45, 0.001));
+      expect(latestBrightness, closeTo(-0.45, 0.001));
+
+      await tester.tap(find.text('Đặt lại'));
+      await tester.pump();
+      expect(latestPitch, 1.0);
+      expect(latestWarmth, 0.0);
+      expect(latestBrightness, 0.0);
+    },
+  );
 }
 

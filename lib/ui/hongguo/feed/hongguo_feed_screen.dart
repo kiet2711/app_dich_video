@@ -193,7 +193,8 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     Future.delayed(const Duration(milliseconds: 350), () {
       if (!mounted || _isPlayerBuffering || _activeController == null) return;
       if (!_activeController!.value.isPlaying || _isManuallyPaused) return;
-      if (_cascadingPreloadCancelToken == null || _cascadingPreloadCancelToken!.isCancelled) {
+      if (_cascadingPreloadCancelToken == null ||
+          _cascadingPreloadCancelToken!.isCancelled) {
         unawaited(_preloadAheadEpisodes(_currentIndex));
       }
     });
@@ -414,28 +415,32 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     if (rawTitle.isNotEmpty &&
         OfflineMlKitTranslator.getCachedTitle(rawTitle) == null &&
         _translatingTitles.add(rawTitle)) {
-      OfflineMlKitTranslator.translateHongguoTitle(rawTitle).then((_) {
-        _translatingTitles.remove(rawTitle);
-        if (mounted && _isTranslationEnabled) {
-          setState(() {});
-        }
-      }).catchError((_) {
-        _translatingTitles.remove(rawTitle);
-      });
+      OfflineMlKitTranslator.translateHongguoTitle(rawTitle)
+          .then((_) {
+            _translatingTitles.remove(rawTitle);
+            if (mounted && _isTranslationEnabled) {
+              setState(() {});
+            }
+          })
+          .catchError((_) {
+            _translatingTitles.remove(rawTitle);
+          });
     }
 
     final rawIntro = item.detail.intro.trim();
     if (rawIntro.isNotEmpty &&
         OfflineMlKitTranslator.getCachedIntro(rawIntro) == null &&
         _translatingIntros.add(rawIntro)) {
-      OfflineMlKitTranslator.translateHongguoIntro(rawIntro).then((_) {
-        _translatingIntros.remove(rawIntro);
-        if (mounted && _isTranslationEnabled) {
-          setState(() {});
-        }
-      }).catchError((_) {
-        _translatingIntros.remove(rawIntro);
-      });
+      OfflineMlKitTranslator.translateHongguoIntro(rawIntro)
+          .then((_) {
+            _translatingIntros.remove(rawIntro);
+            if (mounted && _isTranslationEnabled) {
+              setState(() {});
+            }
+          })
+          .catchError((_) {
+            _translatingIntros.remove(rawIntro);
+          });
     }
   }
 
@@ -787,7 +792,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
           player.play();
         } else if (_stallTickCount >= 55 && !_isRecoveringDowngrade) {
           _stallTickCount = 0;
-          unawaited(_attemptFeedAutoDowngrade(_currentIndex, reason: 'stall_20s'));
+          unawaited(
+            _attemptFeedAutoDowngrade(_currentIndex, reason: 'stall_20s'),
+          );
         }
       } else {
         _stallTickCount = 0;
@@ -818,7 +825,8 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       await HongguoCodecCapabilities.instance.learnFailure(curRendition);
       _excludedRenditionKeys.add(curRendition.uniqueKey);
 
-      final support = await HongguoCodecCapabilities.instance.getHardwareSupport();
+      final support = await HongguoCodecCapabilities.instance
+          .getHardwareSupport();
       final next = info.ladder!.selectDowngrade(
         curRendition,
         hardwareSupport: support,
@@ -847,7 +855,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       }
       _activeVideoInfo = downgradedInfo;
       _preloadedSources[mediaKey] = _FeedPlaybackSource(
-        url: (_liveTranslator?.isEnabled == true && downgradedInfo.isDrmProtected)
+        url:
+            (_liveTranslator?.isEnabled == true &&
+                downgradedInfo.isDrmProtected)
             ? HongguoStreamProxyServer.instance.getStreamUrl(
                 vid: item.vid,
                 seriesId: item.detail.seriesId,
@@ -857,8 +867,8 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         decryptionKey: (_liveTranslator?.isEnabled == true)
             ? null
             : (downgradedInfo.isDrmProtected
-                ? downgradedInfo.contentKeyHex
-                : null),
+                  ? downgradedInfo.contentKeyHex
+                  : null),
         videoInfo: downgradedInfo,
         vid: item.vid,
         seriesId: item.detail.seriesId,
@@ -913,7 +923,8 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
   /// Mở bộ chọn chất lượng stream ngay trên màn hình Feed.
   Future<void> _showFeedQualitySheet() async {
-    final availableTiers = _activeVideoInfo?.ladder?.availableQualityTiers ??
+    final availableTiers =
+        _activeVideoInfo?.ladder?.availableQualityTiers ??
         const <String>['1080', '720', '480', '360'];
     await showModalBottomSheet<void>(
       context: context,
@@ -952,8 +963,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
                       selected
                           ? Icons.radio_button_checked
                           : Icons.radio_button_off,
-                      color:
-                          selected ? AppColors.primaryEmerald : Colors.white54,
+                      color: selected
+                          ? AppColors.primaryEmerald
+                          : Colors.white54,
                     ),
                     title: Text(
                       opt.title,
@@ -961,8 +973,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
                         color: selected
                             ? AppColors.primaryEmerald
                             : Colors.white,
-                        fontWeight:
-                            selected ? FontWeight.w700 : FontWeight.normal,
+                        fontWeight: selected
+                            ? FontWeight.w700
+                            : FontWeight.normal,
                       ),
                     ),
                     onTap: () async {
@@ -991,7 +1004,8 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         _activeVideoInfo = info;
       }
       final posMs = _activeController?.value.position.inMilliseconds ?? 0;
-      final durMs = _activeController?.value.duration.inMilliseconds ??
+      final durMs =
+          _activeController?.value.duration.inMilliseconds ??
           info?.durationMs ??
           0;
       HongguoCloudAccountService.instance.scheduleProgressUpload(
@@ -1023,13 +1037,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
     if (_liveTranslator?.isEnabled == true) {
       final startMs = _pendingInitialSeekMs ?? _currentPos.inMilliseconds;
+      unawaited(_syncLiveTranslatorForIndex(index, startPosMs: startMs));
       unawaited(
-        _syncLiveTranslatorForIndex(index, startPosMs: startMs),
-      );
-      unawaited(
-        _activeController?.setVolume(
-          _settings?.originalVideoVolume ?? 0.25,
-        ),
+        _activeController?.setVolume(_settings?.originalVideoVolume ?? 0.25),
       );
     }
 
@@ -1108,8 +1118,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       await previousController?.muteAndPause();
       await preparedController.unmuteAndPlay(
         rate: _playbackSpeed,
-        playlistMode:
-            _isAutoNextEpisode ? PlaylistMode.none : PlaylistMode.loop,
+        playlistMode: _isAutoNextEpisode
+            ? PlaylistMode.none
+            : PlaylistMode.loop,
       );
 
       if (!_isActivationCurrent(
@@ -1238,8 +1249,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       }
 
       // 2. Lấy nguồn phát trực tiếp (ưu tiên từ bộ đệm RAM đã nạp sẵn)
-      _FeedPlaybackSource? source =
-          forceReload ? null : _preloadedSources[mediaKey];
+      _FeedPlaybackSource? source = forceReload
+          ? null
+          : _preloadedSources[mediaKey];
       if (source == null || source.url.isEmpty) {
         source = await _resolveEpisodeStreamSource(
           item,
@@ -1291,8 +1303,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
             headers: source.headers.isNotEmpty
                 ? source.headers
                 : const {
-                    'User-Agent':
-                        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
                     'Referer': 'https://novel.snssdk.com/',
                   },
             play: false,
@@ -1637,7 +1648,10 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         !identical(_activeController, controller);
   }
 
-  Future<void> _prepareStandbyPlayer(int index, {CancelToken? cancelToken}) async {
+  Future<void> _prepareStandbyPlayer(
+    int index, {
+    CancelToken? cancelToken,
+  }) async {
     if (!mounted || index < 0 || index >= _feedItems.length) return;
     if (cancelToken?.isCancelled == true) return;
 
@@ -1664,12 +1678,13 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     try {
       await _preloadNextPage(index, warmStream: true, cancelToken: cancelToken);
       if (!_isStandbyRequestCurrent(
-        requestId: requestId,
-        feedGeneration: feedGeneration,
-        index: index,
-        mediaKey: mediaKey,
-        controller: controller,
-      ) || (cancelToken?.isCancelled == true)) {
+            requestId: requestId,
+            feedGeneration: feedGeneration,
+            index: index,
+            mediaKey: mediaKey,
+            controller: controller,
+          ) ||
+          (cancelToken?.isCancelled == true)) {
         return;
       }
 
@@ -1678,12 +1693,13 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       if (source == null || source.url.isEmpty) {
         source = await _resolveEpisodeStreamSource(item);
         if (!_isStandbyRequestCurrent(
-          requestId: requestId,
-          feedGeneration: feedGeneration,
-          index: index,
-          mediaKey: mediaKey,
-          controller: controller,
-        ) || (cancelToken?.isCancelled == true)) {
+              requestId: requestId,
+              feedGeneration: feedGeneration,
+              index: index,
+              mediaKey: mediaKey,
+              controller: controller,
+            ) ||
+            (cancelToken?.isCancelled == true)) {
           return;
         }
         _preloadedSources[mediaKey] = source;
@@ -1707,8 +1723,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
             headers: source.headers.isNotEmpty
                 ? source.headers
                 : const {
-                    'User-Agent':
-                        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
                     'Referer': 'https://novel.snssdk.com/',
                   },
             play: false,
@@ -1774,37 +1789,55 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
     // Đợi 500ms để video hiện tại bắt đầu phát và ổn định nhịp render/audio
     await Future<void>.delayed(const Duration(milliseconds: 500));
-    if (!isStillCurrent() || cancelToken.isCancelled || _isPlayerBuffering) return;
+    if (!isStillCurrent() || cancelToken.isCancelled || _isPlayerBuffering)
+      return;
 
     // 1. Bước 1: Nạp N+1 (Standby player + Chunk 0 2MB)
     final nextIndex = currentIndex + 1;
     if (nextIndex < _feedItems.length) {
       await _prepareStandbyPlayer(nextIndex, cancelToken: cancelToken);
     }
-    if (!isStillCurrent() || cancelToken.isCancelled || _isPlayerBuffering) return;
+    if (!isStillCurrent() || cancelToken.isCancelled || _isPlayerBuffering)
+      return;
 
     // 2. Bước 2: Nạp metadata & warm-up kết nối CDN cho N+2 (DNS, TLS, TCP)
     final secondNextIndex = currentIndex + 2;
     if (secondNextIndex < _feedItems.length) {
       await Future<void>.delayed(const Duration(milliseconds: 250));
-      if (!isStillCurrent() || cancelToken.isCancelled || _isPlayerBuffering) return;
-      await _preloadNextPage(secondNextIndex, warmStream: true, cancelToken: cancelToken);
+      if (!isStillCurrent() || cancelToken.isCancelled || _isPlayerBuffering)
+        return;
+      await _preloadNextPage(
+        secondNextIndex,
+        warmStream: true,
+        cancelToken: cancelToken,
+      );
     }
-    if (!isStillCurrent() || cancelToken.isCancelled || _isPlayerBuffering) return;
+    if (!isStillCurrent() || cancelToken.isCancelled || _isPlayerBuffering)
+      return;
 
     // 3. Bước 3: Nạp metadata & warm-up kết nối CDN cho N+3
     final thirdNextIndex = currentIndex + 3;
     if (thirdNextIndex < _feedItems.length) {
       await Future<void>.delayed(const Duration(milliseconds: 300));
-      if (!isStillCurrent() || cancelToken.isCancelled || _isPlayerBuffering) return;
-      await _preloadNextPage(thirdNextIndex, warmStream: true, cancelToken: cancelToken);
+      if (!isStillCurrent() || cancelToken.isCancelled || _isPlayerBuffering)
+        return;
+      await _preloadNextPage(
+        thirdNextIndex,
+        warmStream: true,
+        cancelToken: cancelToken,
+      );
     }
-    if (!isStillCurrent() || cancelToken.isCancelled || _isPlayerBuffering) return;
+    if (!isStillCurrent() || cancelToken.isCancelled || _isPlayerBuffering)
+      return;
 
     // 4. Bước 4: Nạp trước URL cho N+4 (warmStream: false, chuẩn bị sẵn link CDN)
     final fourthNextIndex = currentIndex + 4;
     if (fourthNextIndex < _feedItems.length) {
-      await _preloadNextPage(fourthNextIndex, warmStream: false, cancelToken: cancelToken);
+      await _preloadNextPage(
+        fourthNextIndex,
+        warmStream: false,
+        cancelToken: cancelToken,
+      );
     }
   }
 
@@ -1994,8 +2027,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     _isLoadingMore = false;
 
     // 1. Lưu lại vị trí và danh sách của tab hiện tại trước khi chuyển
-    final prevTargetIds =
-        _cacheListForTab(tabKey).map((e) => e.detail.seriesId).toSet();
+    final prevTargetIds = _cacheListForTab(tabKey)
+        .map((e) => e.detail.seriesId)
+        .toSet();
     if (_currentFeedTab == tabKey) {
       prevTargetIds.addAll(_feedItems.map((e) => e.detail.seriesId));
     }
@@ -2047,8 +2081,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
           final kind = isComic
               ? HongguoGenreKind.comicSeries
               : HongguoGenreKind.realPlay;
-          final overrideSel =
-              isComic ? _comicSelectionOverride : _realSelectionOverride;
+          final overrideSel = isComic
+              ? _comicSelectionOverride
+              : _realSelectionOverride;
           final currentCursor = isComic ? _comicCursor : _realCursor;
 
           final batch = await _fetchChannelBatch(
@@ -2367,7 +2402,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       isPlaying: _waitingLiveWarmupResume
           ? true
           : ((_activeController?.value.isPlaying ?? false) &&
-              !_isManuallyPaused),
+                !_isManuallyPaused),
       isBuffering: _isPlayerBuffering,
       isScrubbing: _isScrubbing,
       playbackSpeed: speed,
@@ -2523,8 +2558,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
                       selected
                           ? Icons.radio_button_checked
                           : Icons.radio_button_off,
-                      color:
-                          selected ? AppColors.primaryEmerald : Colors.white54,
+                      color: selected
+                          ? AppColors.primaryEmerald
+                          : Colors.white54,
                     ),
                     title: Text(
                       speed == 1.0 ? '$label (Mặc định)' : label,
@@ -2532,8 +2568,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
                         color: selected
                             ? AppColors.primaryEmerald
                             : Colors.white,
-                        fontWeight:
-                            selected ? FontWeight.w700 : FontWeight.normal,
+                        fontWeight: selected
+                            ? FontWeight.w700
+                            : FontWeight.normal,
                       ),
                     ),
                     onTap: () async {
@@ -2565,7 +2602,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       );
       if (resolvedTotal <= 1) return;
       final idx = _feedItems.indexWhere(
-        (it) => it.detail.seriesId == seriesId && it.episodeIndex == item.episodeIndex,
+        (it) =>
+            it.detail.seriesId == seriesId &&
+            it.episodeIndex == item.episodeIndex,
       );
       if (idx == -1) return;
       final epIdx = item.episodeIndex.clamp(1, fullDetail.episodes.length);
@@ -2617,9 +2656,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
             Icon(Icons.touch_app_rounded, color: Colors.white, size: 16),
             SizedBox(width: 8),
             Expanded(
-              child: Text(
-                'Đã ẩn giao diện. Chạm vào màn hình để hiện lại.',
-              ),
+              child: Text('Đã ẩn giao diện. Chạm vào màn hình để hiện lại.'),
             ),
           ],
         ),
@@ -2689,12 +2726,11 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         (_currentIndex >= 0 && _currentIndex < _feedItems.length)
         ? _feedItems[_currentIndex]
         : null;
-    final rawTiers = _activeVideoInfo?.ladder?.availableQualityTiers ??
+    final rawTiers =
+        _activeVideoInfo?.ladder?.availableQualityTiers ??
         const <String>['1080', '720', '480', '360'];
     final ascTiers = List<String>.from(rawTiers)
-      ..sort(
-        (a, b) => (int.tryParse(a) ?? 0).compareTo(int.tryParse(b) ?? 0),
-      );
+      ..sort((a, b) => (int.tryParse(a) ?? 0).compareTo(int.tryParse(b) ?? 0));
     final qualityOptions = <({String key, String label})>[
       for (final t in ascTiers) (key: t, label: '${t}P'),
       const (key: 'auto', label: 'Tự động'),
@@ -2914,61 +2950,64 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
                                 borderRadius: BorderRadius.circular(10),
                               ),
                               child: Row(
-                                children: _feedPlaybackSpeeds.map((speed) {
-                                  final selected =
-                                      (_playbackSpeed - speed).abs() < 0.01;
-                                  return Expanded(
-                                    child: GestureDetector(
-                                      behavior: HitTestBehavior.opaque,
-                                      onTap: () async {
-                                        if (selected) return;
-                                        await _applyPlaybackSpeed(speed);
-                                        if (sheetCtx.mounted) {
-                                          setSheetState(() {});
-                                        }
-                                      },
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          vertical: 7,
-                                        ),
-                                        alignment: Alignment.center,
-                                        decoration: BoxDecoration(
-                                          color: selected
-                                              ? AppColors.primaryEmerald
-                                                    .withValues(alpha: 0.22)
-                                              : Colors.transparent,
-                                          borderRadius: BorderRadius.circular(
-                                            8,
-                                          ),
-                                          border: selected
-                                              ? Border.all(
-                                                  color: AppColors
-                                                      .primaryEmerald
-                                                      .withValues(alpha: 0.7),
-                                                  width: 0.8,
-                                                )
-                                              : null,
-                                        ),
-                                        child: FittedBox(
-                                          fit: BoxFit.scaleDown,
-                                          child: Text(
-                                            _formatPlaybackSpeed(speed),
-                                            maxLines: 1,
-                                            style: TextStyle(
+                                children: _feedPlaybackSpeeds
+                                    .map((speed) {
+                                      final selected =
+                                          (_playbackSpeed - speed).abs() < 0.01;
+                                      return Expanded(
+                                        child: GestureDetector(
+                                          behavior: HitTestBehavior.opaque,
+                                          onTap: () async {
+                                            if (selected) return;
+                                            await _applyPlaybackSpeed(speed);
+                                            if (sheetCtx.mounted) {
+                                              setSheetState(() {});
+                                            }
+                                          },
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              vertical: 7,
+                                            ),
+                                            alignment: Alignment.center,
+                                            decoration: BoxDecoration(
                                               color: selected
                                                   ? AppColors.primaryEmerald
-                                                  : Colors.white70,
-                                              fontSize: 11.5,
-                                              fontWeight: selected
-                                                  ? FontWeight.w700
-                                                  : FontWeight.w500,
+                                                        .withValues(alpha: 0.22)
+                                                  : Colors.transparent,
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
+                                              border: selected
+                                                  ? Border.all(
+                                                      color: AppColors
+                                                          .primaryEmerald
+                                                          .withValues(
+                                                            alpha: 0.7,
+                                                          ),
+                                                      width: 0.8,
+                                                    )
+                                                  : null,
+                                            ),
+                                            child: FittedBox(
+                                              fit: BoxFit.scaleDown,
+                                              child: Text(
+                                                _formatPlaybackSpeed(speed),
+                                                maxLines: 1,
+                                                style: TextStyle(
+                                                  color: selected
+                                                      ? AppColors.primaryEmerald
+                                                      : Colors.white70,
+                                                  fontSize: 11.5,
+                                                  fontWeight: selected
+                                                      ? FontWeight.w700
+                                                      : FontWeight.w500,
+                                                ),
+                                              ),
                                             ),
                                           ),
                                         ),
-                                      ),
-                                    ),
-                                  );
-                                }).toList(growable: false),
+                                      );
+                                    })
+                                    .toList(growable: false),
                               ),
                             ),
 
@@ -3018,57 +3057,61 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
                                 borderRadius: BorderRadius.circular(10),
                               ),
                               child: Row(
-                                children: qualityOptions.map((opt) {
-                                  final selected = _preferredQuality == opt.key;
-                                  return Expanded(
-                                    child: GestureDetector(
-                                      behavior: HitTestBehavior.opaque,
-                                      onTap: () async {
-                                        Navigator.of(ctx).pop();
-                                        await _selectFeedQuality(opt.key);
-                                      },
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          vertical: 7,
-                                        ),
-                                        alignment: Alignment.center,
-                                        decoration: BoxDecoration(
-                                          color: selected
-                                              ? AppColors.primaryEmerald
-                                                    .withValues(alpha: 0.22)
-                                              : Colors.transparent,
-                                          borderRadius: BorderRadius.circular(
-                                            8,
-                                          ),
-                                          border: selected
-                                              ? Border.all(
-                                                  color: AppColors
-                                                      .primaryEmerald
-                                                      .withValues(alpha: 0.7),
-                                                  width: 0.8,
-                                                )
-                                              : null,
-                                        ),
-                                        child: FittedBox(
-                                          fit: BoxFit.scaleDown,
-                                          child: Text(
-                                            opt.label,
-                                            maxLines: 1,
-                                            style: TextStyle(
+                                children: qualityOptions
+                                    .map((opt) {
+                                      final selected =
+                                          _preferredQuality == opt.key;
+                                      return Expanded(
+                                        child: GestureDetector(
+                                          behavior: HitTestBehavior.opaque,
+                                          onTap: () async {
+                                            Navigator.of(ctx).pop();
+                                            await _selectFeedQuality(opt.key);
+                                          },
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              vertical: 7,
+                                            ),
+                                            alignment: Alignment.center,
+                                            decoration: BoxDecoration(
                                               color: selected
                                                   ? AppColors.primaryEmerald
-                                                  : Colors.white70,
-                                              fontSize: 11.5,
-                                              fontWeight: selected
-                                                  ? FontWeight.w700
-                                                  : FontWeight.w500,
+                                                        .withValues(alpha: 0.22)
+                                                  : Colors.transparent,
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
+                                              border: selected
+                                                  ? Border.all(
+                                                      color: AppColors
+                                                          .primaryEmerald
+                                                          .withValues(
+                                                            alpha: 0.7,
+                                                          ),
+                                                      width: 0.8,
+                                                    )
+                                                  : null,
+                                            ),
+                                            child: FittedBox(
+                                              fit: BoxFit.scaleDown,
+                                              child: Text(
+                                                opt.label,
+                                                maxLines: 1,
+                                                style: TextStyle(
+                                                  color: selected
+                                                      ? AppColors.primaryEmerald
+                                                      : Colors.white70,
+                                                  fontSize: 11.5,
+                                                  fontWeight: selected
+                                                      ? FontWeight.w700
+                                                      : FontWeight.w500,
+                                                ),
+                                              ),
                                             ),
                                           ),
                                         ),
-                                      ),
-                                    ),
-                                  );
-                                }).toList(growable: false),
+                                      );
+                                    })
+                                    .toList(growable: false),
                               ),
                             ),
 
@@ -3201,6 +3244,50 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
                                   ),
                                 ),
                               ],
+                            ),
+                            const SizedBox(height: 8),
+                            GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: () {
+                                Navigator.of(ctx).pop();
+                                _openDualVolumeSheet();
+                              },
+                              child: Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 8,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF15171E),
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(
+                                    color: AppColors.primaryEmerald.withValues(
+                                      alpha: 0.45,
+                                    ),
+                                    width: 0.8,
+                                  ),
+                                ),
+                                child: const Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Icons.graphic_eq_rounded,
+                                      color: AppColors.primaryEmerald,
+                                      size: 16,
+                                    ),
+                                    SizedBox(width: 6),
+                                    Text(
+                                      'Âm lượng & Tinh chỉnh Giọng AI',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
                             ),
                           ],
                         ),
@@ -3352,9 +3439,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
                               if (sheetCtx.mounted) setSheetState(() {});
                             },
                             child: Text(
-                              _outsideButtonCount < 4
-                                  ? 'Hiện cả 4'
-                                  : 'Thu gọn',
+                              _outsideButtonCount < 4 ? 'Hiện cả 4' : 'Thu gọn',
                               style: const TextStyle(
                                 color: AppColors.primaryEmerald,
                                 fontSize: 12.5,
@@ -3657,9 +3742,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
                 top: MediaQuery.of(context).padding.top + 54,
                 left: 20,
                 right: 20,
-                child: Center(
-                  child: _build2xSpeedPill(),
-                ),
+                child: Center(child: _build2xSpeedPill()),
               ),
 
             // 5. Banner tiến trình Dịch AI / Lồng tiếng trực tiếp
@@ -3754,7 +3837,8 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
               ),
 
             // 7. Cử chỉ vuốt mép trái sang phải để Back (khi xem trọn bộ hoặc clean mode)
-            if ((_isDramaEpisodeMode || _isCleanMode) && !_isLandscapeFullscreen)
+            if ((_isDramaEpisodeMode || _isCleanMode) &&
+                !_isLandscapeFullscreen)
               Positioned(
                 left: 0,
                 top: 0,
@@ -5150,29 +5234,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       },
       onLongPress: () {
         HapticFeedback.mediumImpact();
-        if (_settings != null) {
-          showModalBottomSheet(
-            context: context,
-            backgroundColor: Colors.transparent,
-            isScrollControlled: true,
-            builder: (ctx) => DualVolumeSheet(
-              originalVolume: _settings!.originalVideoVolume,
-              aiVolume: _settings!.ttsVolume,
-              onOriginalVolumeChanged: (val) {
-                _settings!.originalVideoVolume = val;
-                if (_isTtsActive) {
-                  _activeController?.setVolume(val);
-                }
-                setState(() {});
-              },
-              onAiVolumeChanged: (val) {
-                _settings!.ttsVolume = val;
-                _ttsScheduler?.setVolume(val);
-                setState(() {});
-              },
-            ),
-          );
-        }
+        _openDualVolumeSheet();
       },
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -5460,9 +5522,8 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         },
         onToggleEnabled: _toggleLiveTranslate,
         onOpenGeminiSettings: () async {
-          await Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => const SettingsScreen()),
-          );
+          await Navigator.of(context)
+              .push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
           if (mounted) setState(() {});
         },
       ),
@@ -6128,7 +6189,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       );
 
       if (videoInfo.isDrmProtected) {
-        final keyBytes = Uint8List.fromList(hex.decode(videoInfo.contentKeyHex));
+        final keyBytes = Uint8List.fromList(
+          hex.decode(videoInfo.contentKeyHex),
+        );
         final remote = HongguoRemoteVideo(url: streamUrl, contentKey: keyBytes);
         try {
           await remote.streamDecryptedToFile(tempMp4);
@@ -6154,10 +6217,10 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
       final preRealDurationMs =
           await HongguoLocalEngine.resolveEffectiveDurationMs(
-        localFilePath: tempAudio.path,
-        vid: itemToProcess.vid,
-        videoInfo: videoInfo,
-      );
+            localFilePath: tempAudio.path,
+            vid: itemToProcess.vid,
+            videoInfo: videoInfo,
+          );
 
       try {
         if (tempMp4.existsSync()) await tempMp4.delete();
@@ -6309,7 +6372,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       title: '${item.detail.title} - Tập ${item.episodeIndex}',
       document: doc,
       durationMs: effectiveDurationMs,
-      lastPositionMs: (positionMs != null && positionMs > 0) ? positionMs : null,
+      lastPositionMs: (positionMs != null && positionMs > 0)
+          ? positionMs
+          : null,
       ttsVoice: ttsVoice,
       seriesId: seriesId,
       seriesCover: item.detail.cover,
@@ -6338,7 +6403,8 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     final now = DateTime.now();
     if (!force &&
         _lastMarkedWatchedDocKey == docKey &&
-        (now.difference(_lastHistoryPositionSaveAt) < _historyPositionSaveInterval ||
+        (now.difference(_lastHistoryPositionSaveAt) <
+                _historyPositionSaveInterval ||
             positionMs == _lastHistorySavedPositionMs)) {
       return;
     }
@@ -6522,14 +6588,70 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     }
   }
 
+  Future<void> _openDualVolumeSheet() async {
+    final settings = _settings ?? await SettingsRepository.getInstance();
+    _settings = settings;
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) => DualVolumeSheet(
+        originalVolume: settings.originalVideoVolume,
+        aiVolume: settings.ttsVolume,
+        voicePitch: settings.ttsVoicePitch,
+        voiceWarmth: settings.ttsVoiceWarmth,
+        voiceBrightness: settings.ttsVoiceBrightness,
+        onOriginalVolumeChanged: (val) {
+          settings.originalVideoVolume = val;
+          if (_isTtsActive) {
+            _activeController?.setVolume(val);
+          }
+          setState(() {});
+        },
+        onAiVolumeChanged: (val) {
+          settings.ttsVolume = val;
+          _ttsScheduler?.setVolume(val);
+          setState(() {});
+        },
+        onVoiceToneChanged:
+            ({required pitch, required warmth, required brightness}) {
+              settings.ttsVoicePitch = pitch;
+              settings.ttsVoiceWarmth = warmth;
+              settings.ttsVoiceBrightness = brightness;
+              unawaited(
+                _ttsScheduler?.setVoiceTone(
+                  pitch: pitch,
+                  warmth: warmth,
+                  brightness: brightness,
+                ),
+              );
+            },
+      ),
+    );
+  }
+
   /// Bắt đầu phát âm thanh lồng tiếng AI đồng bộ với video
   Future<void> _startTtsPlayback(SubtitleDocument doc) async {
     if (_liveTranslator?.isEnabled == true) {
       _cancelLiveWarmupPause(finishTranslatorWarmup: true);
       await _liveTranslator!.stop();
     }
-    _ttsScheduler ??= TtsAudioScheduler(doc);
+    final pitch = _settings?.ttsVoicePitch ?? 1.0;
+    final warmth = _settings?.ttsVoiceWarmth ?? 0.0;
+    final brightness = _settings?.ttsVoiceBrightness ?? 0.0;
+    _ttsScheduler ??= TtsAudioScheduler.withTone(
+      doc,
+      pitch: pitch,
+      warmth: warmth,
+      brightness: brightness,
+    );
     _ttsScheduler!.setDocument(doc);
+    await _ttsScheduler!.setVoiceTone(
+      pitch: pitch,
+      warmth: warmth,
+      brightness: brightness,
+    );
     await _ttsScheduler!.setVolume(_settings?.ttsVolume ?? 1.0);
     await _ttsScheduler!.setEnabled(true);
     _isTtsActive = true;
@@ -6763,7 +6885,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       );
 
       if (videoInfo.isDrmProtected) {
-        final keyBytes = Uint8List.fromList(hex.decode(videoInfo.contentKeyHex));
+        final keyBytes = Uint8List.fromList(
+          hex.decode(videoInfo.contentKeyHex),
+        );
         final remote = HongguoRemoteVideo(url: streamUrl, contentKey: keyBytes);
         try {
           await remote.streamDecryptedToFile(
@@ -6882,11 +7006,11 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
       final manualRealDurationMs =
           await HongguoLocalEngine.resolveEffectiveDurationMs(
-        localFilePath: audioPath,
-        vid: item.vid,
-        videoInfo: videoInfo,
-        playerDurationMs: _currentDur.inMilliseconds,
-      );
+            localFilePath: audioPath,
+            vid: item.vid,
+            videoInfo: videoInfo,
+            playerDurationMs: _currentDur.inMilliseconds,
+          );
 
       final doc = await pipeline.execute(
         videoPath: audioPath,
@@ -7100,16 +7224,20 @@ class _ByteDanceEpisodePickerSheetState
     final rawTitle = _currentDetail.title.trim();
     if (rawTitle.isNotEmpty &&
         OfflineMlKitTranslator.getCachedTitle(rawTitle) == null) {
-      OfflineMlKitTranslator.translateHongguoTitle(rawTitle).then((_) {
-        if (mounted) setState(() {});
-      }).catchError((_) {});
+      OfflineMlKitTranslator.translateHongguoTitle(rawTitle)
+          .then((_) {
+            if (mounted) setState(() {});
+          })
+          .catchError((_) {});
     }
     final rawIntro = _currentDetail.intro.trim();
     if (rawIntro.isNotEmpty &&
         OfflineMlKitTranslator.getCachedIntro(rawIntro) == null) {
-      OfflineMlKitTranslator.translateHongguoIntro(rawIntro).then((_) {
-        if (mounted) setState(() {});
-      }).catchError((_) {});
+      OfflineMlKitTranslator.translateHongguoIntro(rawIntro)
+          .then((_) {
+            if (mounted) setState(() {});
+          })
+          .catchError((_) {});
     }
   }
 

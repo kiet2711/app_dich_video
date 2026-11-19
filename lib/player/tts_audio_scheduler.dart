@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:just_audio/just_audio.dart';
 
 import '../data/model/subtitle_document.dart';
@@ -38,6 +39,322 @@ class _VideoState {
   });
 }
 
+abstract class _TtsPlayerBackend {
+  bool get playing;
+  bool get isCompleted;
+  double get speed;
+  Duration get position;
+
+  Future<Duration?> setFilePath(String path);
+  Future<void> play();
+  Future<void> pause();
+  Future<void> stop();
+  Future<void> seek(Duration position);
+  Future<void> setSpeed(double speed);
+  Future<void> setVolume(double volume);
+  Future<void> setVoiceTone({
+    required double pitch,
+    required double warmth,
+    required double brightness,
+  });
+  Future<int> getExactPositionMs();
+  Future<void> dispose();
+}
+
+class _JustAudioTtsPlayer implements _TtsPlayerBackend {
+  final AndroidEqualizer? _equalizer;
+  late final AudioPlayer _player;
+
+  _JustAudioTtsPlayer({required bool enableAndroidEq})
+    : _equalizer = enableAndroidEq ? AndroidEqualizer() : null {
+    _player = _equalizer == null
+        ? AudioPlayer()
+        : AudioPlayer(
+            audioPipeline: AudioPipeline(androidAudioEffects: [_equalizer]),
+          );
+  }
+
+  @override
+  bool get playing => _player.playing;
+
+  @override
+  bool get isCompleted => _player.processingState == ProcessingState.completed;
+
+  @override
+  double get speed => _player.speed;
+
+  @override
+  Duration get position => _player.position;
+
+  @override
+  Future<Duration?> setFilePath(String path) => _player.setFilePath(path);
+
+  @override
+  Future<void> play() => _player.play();
+
+  @override
+  Future<void> pause() => _player.pause();
+
+  @override
+  Future<void> stop() => _player.stop();
+
+  @override
+  Future<void> seek(Duration position) => _player.seek(position);
+
+  @override
+  Future<void> setSpeed(double speed) => _player.setSpeed(speed);
+
+  @override
+  Future<void> setVolume(double volume) => _player.setVolume(volume);
+
+  @override
+  Future<void> setVoiceTone({
+    required double pitch,
+    required double warmth,
+    required double brightness,
+  }) async {
+    try {
+      await _player.setPitch(pitch);
+    } catch (_) {}
+
+    final eq = _equalizer;
+    if (eq == null) return;
+    try {
+      final eqActive = warmth.abs() >= 0.01 || brightness.abs() >= 0.01;
+      await eq.setEnabled(eqActive);
+      if (!eqActive) return;
+      final params = await eq.parameters.timeout(
+        const Duration(milliseconds: 250),
+      );
+      for (final band in params.bands) {
+        final gainDb = TtsAudioScheduler.computeEqualizerBandGainDb(
+          centerFrequencyHz: band.centerFrequency,
+          warmth: warmth,
+          brightness: brightness,
+          minDb: params.minDecibels,
+          maxDb: params.maxDecibels,
+        );
+        await band.setGain(gainDb);
+      }
+    } catch (_) {}
+  }
+
+  @override
+  Future<int> getExactPositionMs() async => _player.position.inMilliseconds;
+
+  @override
+  Future<void> dispose() => _player.dispose();
+}
+
+class _IosChannelTtsPlayer implements _TtsPlayerBackend {
+  static const MethodChannel _channel = MethodChannel(
+    'com.capcut.capsub/ios_tts_player',
+  );
+  static const List<double> _eqBandsHz = [60.0, 230.0, 910.0, 3600.0, 14000.0];
+  static int _nextPlayerId = 1;
+  static final Map<int, _IosChannelTtsPlayer> _instances = {};
+  static bool _handlerRegistered = false;
+
+  static void _ensureHandlerRegistered() {
+    if (_handlerRegistered) return;
+    _handlerRegistered = true;
+    _channel.setMethodCallHandler((call) async {
+      if (call.method == 'onCompleted') {
+        final args = call.arguments;
+        if (args is Map) {
+          final id = (args['playerId'] as num?)?.toInt();
+          if (id != null) {
+            _instances[id]?._handleNativeCompleted();
+          }
+        }
+      }
+    });
+  }
+
+  final int _playerId;
+  final Stopwatch _playWatch = Stopwatch();
+  int _basePositionMs = 0;
+  int _durationMs = 0;
+  double _speed = 1.0;
+  bool _playing = false;
+  bool _completed = false;
+  bool _disposed = false;
+
+  _IosChannelTtsPlayer() : _playerId = _nextPlayerId++ {
+    _ensureHandlerRegistered();
+    _instances[_playerId] = this;
+  }
+
+  void _handleNativeCompleted() {
+    if (_disposed) return;
+    _playing = false;
+    _completed = true;
+    _playWatch.stop();
+    _playWatch.reset();
+    _basePositionMs = _durationMs;
+  }
+
+  int _estimatedPositionMs() {
+    final elapsedMs = (_playWatch.elapsedMilliseconds * _speed).round();
+    final pos = _basePositionMs + elapsedMs;
+    if (_durationMs > 0) return pos.clamp(0, _durationMs);
+    return max(0, pos);
+  }
+
+  @override
+  bool get playing => _playing;
+
+  @override
+  bool get isCompleted => _completed;
+
+  @override
+  double get speed => _speed;
+
+  @override
+  Duration get position => Duration(milliseconds: _estimatedPositionMs());
+
+  @override
+  Future<Duration?> setFilePath(String path) async {
+    if (_disposed) return null;
+    _playing = false;
+    _completed = false;
+    _playWatch.stop();
+    _playWatch.reset();
+    _basePositionMs = 0;
+    final durMs = await _channel.invokeMethod<int>('setFilePath', {
+      'playerId': _playerId,
+      'path': path,
+    });
+    _durationMs = durMs ?? 0;
+    return durMs != null ? Duration(milliseconds: durMs) : null;
+  }
+
+  @override
+  Future<void> play() async {
+    if (_disposed) return;
+    if (_completed) {
+      _basePositionMs = 0;
+      _completed = false;
+    }
+    _playing = true;
+    _playWatch.start();
+    await _channel.invokeMethod('play', {'playerId': _playerId});
+  }
+
+  @override
+  Future<void> pause() async {
+    if (_disposed) return;
+    _basePositionMs = _estimatedPositionMs();
+    _playWatch.stop();
+    _playWatch.reset();
+    _playing = false;
+    await _channel.invokeMethod('pause', {'playerId': _playerId});
+  }
+
+  @override
+  Future<void> stop() async {
+    if (_disposed) return;
+    _playing = false;
+    _completed = false;
+    _playWatch.stop();
+    _playWatch.reset();
+    _basePositionMs = 0;
+    await _channel.invokeMethod('stop', {'playerId': _playerId});
+  }
+
+  @override
+  Future<void> seek(Duration position) async {
+    if (_disposed) return;
+    final targetMs = max(0, position.inMilliseconds);
+    _basePositionMs = _durationMs > 0 ? targetMs.clamp(0, _durationMs) : targetMs;
+    _completed = false;
+    _playWatch.reset();
+    if (_playing) _playWatch.start();
+    await _channel.invokeMethod('seek', {
+      'playerId': _playerId,
+      'positionMs': _basePositionMs,
+    });
+  }
+
+  @override
+  Future<void> setSpeed(double speed) async {
+    if (_disposed) return;
+    if (_playing) {
+      _basePositionMs = _estimatedPositionMs();
+      _playWatch.reset();
+      _playWatch.start();
+    }
+    _speed = speed;
+    await _channel.invokeMethod('setSpeed', {
+      'playerId': _playerId,
+      'speed': speed,
+    });
+  }
+
+  @override
+  Future<void> setVolume(double volume) async {
+    if (_disposed) return;
+    await _channel.invokeMethod('setVolume', {
+      'playerId': _playerId,
+      'volume': volume,
+    });
+  }
+
+  @override
+  Future<void> setVoiceTone({
+    required double pitch,
+    required double warmth,
+    required double brightness,
+  }) async {
+    if (_disposed) return;
+    final eqActive = warmth.abs() >= 0.01 || brightness.abs() >= 0.01;
+    final gains = _eqBandsHz
+        .map(
+          (freq) => TtsAudioScheduler.computeEqualizerBandGainDb(
+            centerFrequencyHz: freq,
+            warmth: warmth,
+            brightness: brightness,
+            minDb: -15.0,
+            maxDb: 15.0,
+          ),
+        )
+        .toList(growable: false);
+    await _channel.invokeMethod('setVoiceTone', {
+      'playerId': _playerId,
+      'pitch': pitch,
+      'eqEnabled': eqActive,
+      'bandGainsDb': gains,
+    });
+  }
+
+  @override
+  Future<int> getExactPositionMs() async {
+    if (_disposed) return 0;
+    final ms = await _channel.invokeMethod<int>('getPositionMs', {
+      'playerId': _playerId,
+    });
+    if (ms != null) {
+      _basePositionMs = ms;
+      _playWatch.reset();
+      if (_playing) _playWatch.start();
+      return ms;
+    }
+    return _estimatedPositionMs();
+  }
+
+  @override
+  Future<void> dispose() async {
+    if (_disposed) return;
+    _disposed = true;
+    _playing = false;
+    _playWatch.stop();
+    _instances.remove(_playerId);
+    try {
+      await _channel.invokeMethod('dispose', {'playerId': _playerId});
+    } catch (_) {}
+  }
+}
+
 /// Đồng bộ track TTS độc lập với video bằng hai AudioPlayer luân phiên.
 ///
 /// Player dự phòng luôn nạp trước câu kế tiếp. Khi timeline chạm startMs, việc
@@ -46,7 +363,7 @@ class TtsAudioScheduler {
   static const int lateStartToleranceMs = 100;
   static const int resyncThresholdMs = 180;
 
-  final List<AudioPlayer> _players = [AudioPlayer(), AudioPlayer()];
+  late final List<_TtsPlayerBackend> _players;
   final List<_PreparedAudio?> _prepared = [null, null];
   final List<int?> _preparingItemIds = [null, null];
   final List<int> _loadEpochs = [0, 0];
@@ -63,8 +380,36 @@ class TtsAudioScheduler {
   bool _enabled = true;
   bool _disposed = false;
   double _volume = 1;
+  double _pitch = 1.0;
+  double _warmth = 0.0;
+  double _brightness = 0.0;
 
-  TtsAudioScheduler([this._document]);
+  TtsAudioScheduler([this._document]) {
+    _initPlayers();
+  }
+
+  TtsAudioScheduler.withTone(
+    this._document, {
+    double pitch = 1.0,
+    double warmth = 0.0,
+    double brightness = 0.0,
+  }) : _pitch = pitch.clamp(0.75, 1.25),
+       _warmth = warmth.clamp(-1.0, 1.0),
+       _brightness = brightness.clamp(-1.0, 1.0) {
+    _initPlayers();
+  }
+
+  void _initPlayers() {
+    final useIosNative = !kIsWeb && Platform.isIOS;
+    final useAndroidEq = !kIsWeb && Platform.isAndroid;
+    _players = List<_TtsPlayerBackend>.generate(
+      2,
+      (_) => useIosNative
+          ? _IosChannelTtsPlayer()
+          : _JustAudioTtsPlayer(enableAndroidEq: useAndroidEq),
+      growable: false,
+    );
+  }
 
   void setDocument(SubtitleDocument? document) {
     _document = document;
@@ -87,6 +432,27 @@ class TtsAudioScheduler {
   Future<void> setVolume(double volume) async {
     _volume = volume.clamp(0, 1);
     await Future.wait(_players.map((player) => player.setVolume(_volume)));
+  }
+
+  Future<void> setVoiceTone({
+    double? pitch,
+    double? warmth,
+    double? brightness,
+  }) async {
+    if (pitch != null) _pitch = pitch.clamp(0.75, 1.25);
+    if (warmth != null) _warmth = warmth.clamp(-1.0, 1.0);
+    if (brightness != null) _brightness = brightness.clamp(-1.0, 1.0);
+    if (_disposed) return;
+    await Future.wait([_applyToneToPlayer(0), _applyToneToPlayer(1)]);
+  }
+
+  Future<void> _applyToneToPlayer(int index) async {
+    if (_disposed || index < 0 || index >= _players.length) return;
+    await _players[index].setVoiceTone(
+      pitch: _pitch,
+      warmth: _warmth,
+      brightness: _brightness,
+    );
   }
 
   /// Nạp trước câu đang chứa [positionMs], hoặc câu gần nhất sau vị trí này.
@@ -162,8 +528,7 @@ class TtsAudioScheduler {
         await _resyncOnce(player, item, state.positionMs);
       }
       if (updateEpoch != _timelineEpoch) return;
-      if (!player.playing &&
-          player.processingState != ProcessingState.completed) {
+      if (!player.playing && !player.isCompleted) {
         unawaited(player.play());
       }
       _preloadAfter(item);
@@ -218,6 +583,7 @@ class TtsAudioScheduler {
       ),
     );
     await player.setVolume(_volume);
+    unawaited(_applyToneToPlayer(preparedIndex));
     unawaited(player.play());
     _preloadAfter(item);
   }
@@ -254,7 +620,7 @@ class TtsAudioScheduler {
   Future<void> resume() async {
     if (!_enabled || _currentPlayerIndex < 0) return;
     final player = _players[_currentPlayerIndex];
-    if (player.processingState != ProcessingState.completed) {
+    if (!player.isCompleted) {
       unawaited(player.play());
     }
   }
@@ -303,6 +669,7 @@ class TtsAudioScheduler {
       item.playbackSpeed = speed;
       await player.setSpeed(speed);
       await player.setVolume(_volume);
+      await _applyToneToPlayer(playerIndex);
       _prepared[playerIndex] = _PreparedAudio(
         itemId: item.id,
         path: path,
@@ -322,7 +689,7 @@ class TtsAudioScheduler {
   }
 
   Future<void> _resyncOnce(
-    AudioPlayer player,
+    _TtsPlayerBackend player,
     SubtitleItem item,
     int videoPositionMs,
   ) async {
@@ -333,7 +700,8 @@ class TtsAudioScheduler {
       speed: prepared.speed,
       explicitSeek: true,
     ).clamp(0, prepared.durationMs);
-    final driftMs = (player.position.inMilliseconds - expectedMs).abs();
+    final actualMs = await player.getExactPositionMs();
+    final driftMs = (actualMs - expectedMs).abs();
     if (driftMs > resyncThresholdMs && expectedMs < prepared.durationMs) {
       await player.seek(Duration(milliseconds: expectedMs));
     }
@@ -422,5 +790,39 @@ class TtsAudioScheduler {
     final safeTimelineOffset = max(0, timelineOffsetMs);
     if (!explicitSeek && safeTimelineOffset <= lateStartToleranceMs) return 0;
     return (safeTimelineOffset * speed.clamp(0.5, 2.2)).round();
+  }
+
+  /// Quy đổi hai thông số Độ ấm (warmth) và Độ sáng (brightness) sang mức dB cho từng band EQ.
+  @visibleForTesting
+  static double computeEqualizerBandGainDb({
+    required double centerFrequencyHz,
+    required double warmth,
+    required double brightness,
+    required double minDb,
+    required double maxDb,
+  }) {
+    final w = warmth.clamp(-1.0, 1.0);
+    final b = brightness.clamp(-1.0, 1.0);
+    double gain = 0.0;
+
+    if (centerFrequencyHz <= 140) {
+      // Dải trầm nền: tăng nhẹ khi tăng độ ấm
+      gain = w * 4.0;
+    } else if (centerFrequencyHz <= 450) {
+      // Dải trung trầm (độ dày và độ ấm của giọng nói)
+      gain = w * 6.0;
+    } else if (centerFrequencyHz < 2200) {
+      // Dải trung (900Hz - 2kHz): giảm nhẹ khi cần bớt chói/the thé hoặc làm ấm giọng
+      final deHarsh = (b < 0 ? b * 2.5 : b * 1.5) - (w > 0 ? w * 1.8 : 0.0);
+      gain = deHarsh;
+    } else if (centerFrequencyHz < 6500) {
+      // Dải 2.2kHz - 6.5kHz: vùng gây cảm giác "the thé", giảm mạnh khi kéo brightness < 0
+      gain = b < 0 ? b * 8.5 : b * 5.0;
+    } else {
+      // Dải treble cao (>= 6.5kHz): độ sáng và độ xì âm
+      gain = b < 0 ? b * 9.0 : b * 6.0;
+    }
+
+    return gain.clamp(minDb, maxDb).toDouble();
   }
 }

@@ -154,6 +154,21 @@ class SettingsRepository {
   double get ttsVolume => prefs.getDouble('tts_volume') ?? 1.0;
   set ttsVolume(double v) => prefs.setDouble('tts_volume', v.clamp(0.0, 1.0));
 
+  double get ttsVoicePitch =>
+      (prefs.getDouble('tts_voice_pitch') ?? 1.0).clamp(0.75, 1.25);
+  set ttsVoicePitch(double v) =>
+      prefs.setDouble('tts_voice_pitch', v.clamp(0.75, 1.25));
+
+  double get ttsVoiceWarmth =>
+      (prefs.getDouble('tts_voice_warmth') ?? 0.0).clamp(-1.0, 1.0);
+  set ttsVoiceWarmth(double v) =>
+      prefs.setDouble('tts_voice_warmth', v.clamp(-1.0, 1.0));
+
+  double get ttsVoiceBrightness =>
+      (prefs.getDouble('tts_voice_brightness') ?? 0.0).clamp(-1.0, 1.0);
+  set ttsVoiceBrightness(double v) =>
+      prefs.setDouble('tts_voice_brightness', v.clamp(-1.0, 1.0));
+
   String get geminiCustomPrompt =>
       prefs.getString('gemini_custom_prompt') ?? '';
   set geminiCustomPrompt(String v) =>

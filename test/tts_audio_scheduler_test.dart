@@ -94,4 +94,63 @@ void main() {
       );
     });
   });
+
+  group('TtsAudioScheduler.computeEqualizerBandGainDb', () {
+    test('returns 0 dB when warmth and brightness are neutral', () {
+      for (final freq in [60.0, 230.0, 910.0, 3600.0, 14000.0]) {
+        expect(
+          TtsAudioScheduler.computeEqualizerBandGainDb(
+            centerFrequencyHz: freq,
+            warmth: 0.0,
+            brightness: 0.0,
+            minDb: -15.0,
+            maxDb: 15.0,
+          ),
+          0.0,
+        );
+      }
+    });
+
+    test('warmth boosts low-mid and negative brightness cuts shrill high bands', () {
+      final lowMid = TtsAudioScheduler.computeEqualizerBandGainDb(
+        centerFrequencyHz: 230.0,
+        warmth: 0.5,
+        brightness: -0.5,
+        minDb: -15.0,
+        maxDb: 15.0,
+      );
+      final shrillHigh = TtsAudioScheduler.computeEqualizerBandGainDb(
+        centerFrequencyHz: 3600.0,
+        warmth: 0.5,
+        brightness: -0.5,
+        minDb: -15.0,
+        maxDb: 15.0,
+      );
+      expect(lowMid, greaterThan(0.0));
+      expect(shrillHigh, lessThan(0.0));
+    });
+
+    test('clamps gain within device equalizer minDb..maxDb limits', () {
+      expect(
+        TtsAudioScheduler.computeEqualizerBandGainDb(
+          centerFrequencyHz: 14000.0,
+          warmth: 0.0,
+          brightness: -1.0,
+          minDb: -6.0,
+          maxDb: 6.0,
+        ),
+        -6.0,
+      );
+      expect(
+        TtsAudioScheduler.computeEqualizerBandGainDb(
+          centerFrequencyHz: 230.0,
+          warmth: 1.0,
+          brightness: 0.0,
+          minDb: -4.0,
+          maxDb: 4.0,
+        ),
+        4.0,
+      );
+    });
+  });
 }

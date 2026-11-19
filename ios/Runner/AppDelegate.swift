@@ -9,6 +9,7 @@ import VideoToolbox
   private let pcmQueue = DispatchQueue(label: "com.capcut.capsub.pcm")
   private var pcmSessions: [String: IosPcmStreamSession] = [:]
   private var livePcmPlayer: IosLivePcmPlayer?
+  private var iosTtsPool: IosTtsAudioPool?
 
   override func application(
     _ application: UIApplication,
@@ -210,6 +211,20 @@ import VideoToolbox
       default:
         result(FlutterMethodNotImplemented)
       }
+    }
+
+    let iosTtsChannel = FlutterMethodChannel(
+      name: "com.capcut.capsub/ios_tts_player",
+      binaryMessenger: registrar.messenger()
+    )
+    let ttsPool = IosTtsAudioPool(channel: iosTtsChannel)
+    self.iosTtsPool = ttsPool
+    iosTtsChannel.setMethodCallHandler { [weak ttsPool] call, result in
+      guard let ttsPool = ttsPool else {
+        result(nil)
+        return
+      }
+      ttsPool.handleMethodCall(call, result: result)
     }
   }
 
@@ -1164,5 +1179,520 @@ private final class IosLivePcmPlayer: @unchecked Sendable {
         self.channel.invokeMethod("onPlaybackStateChanged", arguments: nowPlaying)
       }
     }
+  }
+}
+
+private final class IosTtsAudioPool {
+  private let channel: FlutterMethodChannel
+  private let lock = NSLock()
+  private var players: [Int: IosTtsAudioPlayer] = [:]
+
+  init(channel: FlutterMethodChannel) {
+    self.channel = channel
+  }
+
+  func handleMethodCall(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    let args = call.arguments as? [String: Any]
+    guard let playerId = (args?["playerId"] as? NSNumber)?.intValue else {
+      result(FlutterError(code: "INVALID_ARGS", message: "Missing playerId", details: nil))
+      return
+    }
+
+    switch call.method {
+    case "setFilePath":
+      guard let path = args?["path"] as? String, !path.isEmpty else {
+        result(nil)
+        return
+      }
+      let player = getOrCreatePlayer(playerId)
+      player.setFilePath(path, completion: result)
+
+    case "play":
+      getPlayer(playerId)?.play(completion: result) ?? result(false)
+
+    case "pause":
+      getPlayer(playerId)?.pause(completion: result) ?? result(false)
+
+    case "stop":
+      getPlayer(playerId)?.stop(completion: result) ?? result(true)
+
+    case "seek":
+      let posMs = (args?["positionMs"] as? NSNumber)?.intValue ?? 0
+      getPlayer(playerId)?.seek(positionMs: posMs, completion: result) ?? result(false)
+
+    case "setSpeed":
+      let speed = (args?["speed"] as? NSNumber)?.doubleValue ?? 1.0
+      getPlayer(playerId)?.setSpeed(speed, completion: result) ?? result(false)
+
+    case "setVolume":
+      let volume = (args?["volume"] as? NSNumber)?.doubleValue ?? 1.0
+      getPlayer(playerId)?.setVolume(volume, completion: result) ?? result(false)
+
+    case "setVoiceTone":
+      let pitch = (args?["pitch"] as? NSNumber)?.doubleValue ?? 1.0
+      let eqEnabled = (args?["eqEnabled"] as? NSNumber)?.boolValue ?? false
+      let bandGains = (args?["bandGainsDb"] as? [NSNumber])?.map { $0.doubleValue } ?? [0, 0, 0, 0, 0]
+      getOrCreatePlayer(playerId).setVoiceTone(
+        pitch: pitch,
+        bandGainsDb: bandGains,
+        eqEnabled: eqEnabled,
+        completion: result
+      )
+
+    case "getPositionMs":
+      getPlayer(playerId)?.getPositionMs(completion: result) ?? result(0)
+
+    case "dispose":
+      if let removed = removePlayer(playerId) {
+        removed.dispose()
+      }
+      result(true)
+
+    default:
+      result(FlutterMethodNotImplemented)
+    }
+  }
+
+  private func getPlayer(_ id: Int) -> IosTtsAudioPlayer? {
+    lock.lock()
+    defer { lock.unlock() }
+    return players[id]
+  }
+
+  private func getOrCreatePlayer(_ id: Int) -> IosTtsAudioPlayer {
+    lock.lock()
+    defer { lock.unlock() }
+    if let existing = players[id] {
+      return existing
+    }
+    let created = IosTtsAudioPlayer(playerId: id) { [weak self] completedId in
+      DispatchQueue.main.async {
+        self?.channel.invokeMethod("onCompleted", arguments: ["playerId": completedId])
+      }
+    }
+    players[id] = created
+    return created
+  }
+
+  private func removePlayer(_ id: Int) -> IosTtsAudioPlayer? {
+    lock.lock()
+    defer { lock.unlock() }
+    return players.removeValue(forKey: id)
+  }
+}
+
+private final class IosTtsAudioPlayer {
+  private static let eqFrequencies: [Float] = [60.0, 230.0, 910.0, 3600.0, 14000.0]
+
+  private let playerId: Int
+  private let onCompleted: (Int) -> Void
+  private let queue = DispatchQueue(label: "com.capcut.capsub.ios_tts")
+
+  private var engine: AVAudioEngine?
+  private var playerNode: AVAudioPlayerNode?
+  private var timePitch: AVAudioUnitTimePitch?
+  private var equalizer: AVAudioUnitEQ?
+  private var engineFormat: AVAudioFormat?
+  private var configObserver: NSObjectProtocol?
+
+  private var audioFile: AVAudioFile?
+  private var totalFrames: AVAudioFramePosition = 0
+  private var seekFrame: AVAudioFramePosition = 0
+  private var hasScheduledSegment = false
+  private var scheduleToken: UInt64 = 0
+
+  private var isPlaying = false
+  private var isPaused = false
+  private var isCompleted = false
+  private var pausedFrame: AVAudioFramePosition?
+  private var disposed = false
+
+  private var playbackRate: Float = 1.0
+  private var pitchFactor: Float = 1.0
+  private var volume: Float = 1.0
+  private var eqEnabled = false
+  private var bandGainsDb: [Float] = [0, 0, 0, 0, 0]
+
+  init(playerId: Int, onCompleted: @escaping (Int) -> Void) {
+    self.playerId = playerId
+    self.onCompleted = onCompleted
+  }
+
+  func setFilePath(_ path: String, completion: @escaping (Int?) -> Void) {
+    queue.async { [weak self] in
+      guard let self = self, !self.disposed else {
+        DispatchQueue.main.async { completion(nil) }
+        return
+      }
+      do {
+        let url = URL(fileURLWithPath: path)
+        let file = try AVAudioFile(forReading: url)
+        let format = file.processingFormat
+        let frames = file.length
+        guard format.sampleRate > 0, frames > 0 else {
+          DispatchQueue.main.async { completion(nil) }
+          return
+        }
+
+        self.scheduleToken &+= 1
+        self.playerNode?.stop()
+        self.hasScheduledSegment = false
+        self.isPlaying = false
+        self.isPaused = false
+        self.isCompleted = false
+        self.pausedFrame = nil
+        self.seekFrame = 0
+        self.audioFile = file
+        self.totalFrames = frames
+
+        _ = self.setupEngineIfNeeded(format: format)
+        let durationMs = Int((Double(frames) / format.sampleRate) * 1000.0)
+        DispatchQueue.main.async { completion(durationMs) }
+      } catch {
+        print("[IosTtsAudioPlayer] setFilePath error: \(error)")
+        DispatchQueue.main.async { completion(nil) }
+      }
+    }
+  }
+
+  func play(completion: @escaping (Bool) -> Void) {
+    queue.async { [weak self] in
+      guard let self = self, !self.disposed, let file = self.audioFile else {
+        DispatchQueue.main.async { completion(false) }
+        return
+      }
+      guard self.setupEngineIfNeeded(format: file.processingFormat),
+            self.ensureEngineRunningLocked(),
+            let node = self.playerNode else {
+        DispatchQueue.main.async { completion(false) }
+        return
+      }
+
+      if self.isCompleted {
+        self.seekFrame = 0
+        self.isCompleted = false
+        self.hasScheduledSegment = false
+      }
+
+      if !self.hasScheduledSegment {
+        self.scheduleFromCurrentFrameLocked()
+      }
+
+      self.applyEffectsLocked()
+      node.volume = self.volume
+      node.play()
+      self.isPlaying = true
+      self.isPaused = false
+      self.pausedFrame = nil
+      DispatchQueue.main.async { completion(true) }
+    }
+  }
+
+  func pause(completion: @escaping (Bool) -> Void) {
+    queue.async { [weak self] in
+      guard let self = self, !self.disposed else {
+        DispatchQueue.main.async { completion(false) }
+        return
+      }
+      if self.isPlaying {
+        self.pausedFrame = self.currentFrameLocked()
+        self.playerNode?.pause()
+      }
+      self.isPlaying = false
+      self.isPaused = true
+      DispatchQueue.main.async { completion(true) }
+    }
+  }
+
+  func stop(completion: @escaping (Bool) -> Void) {
+    queue.async { [weak self] in
+      guard let self = self, !self.disposed else {
+        DispatchQueue.main.async { completion(true) }
+        return
+      }
+      self.scheduleToken &+= 1
+      self.playerNode?.stop()
+      self.hasScheduledSegment = false
+      self.seekFrame = 0
+      self.pausedFrame = nil
+      self.isPlaying = false
+      self.isPaused = false
+      self.isCompleted = false
+      DispatchQueue.main.async { completion(true) }
+    }
+  }
+
+  func seek(positionMs: Int, completion: @escaping (Bool) -> Void) {
+    queue.async { [weak self] in
+      guard let self = self, !self.disposed, let file = self.audioFile else {
+        DispatchQueue.main.async { completion(false) }
+        return
+      }
+      let sampleRate = file.processingFormat.sampleRate
+      let targetFrame = AVAudioFramePosition((Double(max(0, positionMs)) / 1000.0) * sampleRate)
+      self.seekFrame = min(max(0, targetFrame), max(0, self.totalFrames - 1))
+      self.pausedFrame = self.isPaused ? self.seekFrame : nil
+      self.isCompleted = false
+
+      let wasPlaying = self.isPlaying
+      self.scheduleToken &+= 1
+      self.playerNode?.stop()
+      self.hasScheduledSegment = false
+      self.scheduleFromCurrentFrameLocked()
+
+      if wasPlaying, self.ensureEngineRunningLocked() {
+        self.playerNode?.play()
+        self.isPlaying = true
+        self.isPaused = false
+      }
+      DispatchQueue.main.async { completion(true) }
+    }
+  }
+
+  func setSpeed(_ speed: Double, completion: @escaping (Bool) -> Void) {
+    queue.async { [weak self] in
+      guard let self = self, !self.disposed else {
+        DispatchQueue.main.async { completion(false) }
+        return
+      }
+      self.playbackRate = Float(max(0.25, min(4.5, speed)))
+      self.applyEffectsLocked()
+      DispatchQueue.main.async { completion(true) }
+    }
+  }
+
+  func setVolume(_ volume: Double, completion: @escaping (Bool) -> Void) {
+    queue.async { [weak self] in
+      guard let self = self, !self.disposed else {
+        DispatchQueue.main.async { completion(false) }
+        return
+      }
+      self.volume = Float(max(0.0, min(1.0, volume)))
+      self.playerNode?.volume = self.volume
+      DispatchQueue.main.async { completion(true) }
+    }
+  }
+
+  func setVoiceTone(
+    pitch: Double,
+    bandGainsDb: [Double],
+    eqEnabled: Bool,
+    completion: @escaping (Bool) -> Void
+  ) {
+    queue.async { [weak self] in
+      guard let self = self, !self.disposed else {
+        DispatchQueue.main.async { completion(false) }
+        return
+      }
+      self.pitchFactor = Float(max(0.5, min(2.0, pitch)))
+      self.eqEnabled = eqEnabled
+      var nextGains: [Float] = []
+      for i in 0..<Self.eqFrequencies.count {
+        let g = i < bandGainsDb.count ? bandGainsDb[i] : 0.0
+        nextGains.append(Float(max(-15.0, min(15.0, g))))
+      }
+      self.bandGainsDb = nextGains
+      self.applyEffectsLocked()
+      DispatchQueue.main.async { completion(true) }
+    }
+  }
+
+  func getPositionMs(completion: @escaping (Int) -> Void) {
+    queue.async { [weak self] in
+      guard let self = self, !self.disposed, let file = self.audioFile else {
+        DispatchQueue.main.async { completion(0) }
+        return
+      }
+      let ms = self.currentPositionMsLocked(sampleRate: file.processingFormat.sampleRate)
+      DispatchQueue.main.async { completion(ms) }
+    }
+  }
+
+  func dispose() {
+    queue.async { [weak self] in
+      guard let self = self, !self.disposed else { return }
+      self.disposed = true
+      self.scheduleToken &+= 1
+      self.teardownEngineLocked()
+      self.audioFile = nil
+    }
+  }
+
+  private func currentFrameLocked() -> AVAudioFramePosition {
+    if isCompleted {
+      return totalFrames
+    }
+    if isPaused, let pf = pausedFrame {
+      return pf
+    }
+    var currentFrame = seekFrame
+    if let node = playerNode,
+       hasScheduledSegment,
+       let renderTime = node.lastRenderTime,
+       let playerTime = node.playerTime(forNodeTime: renderTime) {
+      currentFrame = min(totalFrames, seekFrame + max(0, playerTime.sampleTime))
+    }
+    return currentFrame
+  }
+
+  private func currentPositionMsLocked(sampleRate: Double) -> Int {
+    guard sampleRate > 0 else { return 0 }
+    return Int((Double(currentFrameLocked()) / sampleRate) * 1000.0)
+  }
+
+  private func scheduleFromCurrentFrameLocked() {
+    guard let file = audioFile, let node = playerNode else { return }
+    guard seekFrame < totalFrames else {
+      hasScheduledSegment = false
+      isCompleted = true
+      isPlaying = false
+      return
+    }
+
+    let remaining = AVAudioFrameCount(totalFrames - seekFrame)
+    let token = scheduleToken &+ 1
+    scheduleToken = token
+    hasScheduledSegment = true
+    isCompleted = false
+
+    node.scheduleSegment(
+      file,
+      startingFrame: seekFrame,
+      frameCount: remaining,
+      at: nil,
+      completionCallbackType: .dataPlayedBack
+    ) { [weak self] _ in
+      self?.queue.async { [weak self] in
+        guard let self = self, !self.disposed, self.scheduleToken == token else { return }
+        self.isPlaying = false
+        self.isPaused = false
+        self.isCompleted = true
+        self.hasScheduledSegment = false
+        self.seekFrame = self.totalFrames
+        self.onCompleted(self.playerId)
+      }
+    }
+  }
+
+  @discardableResult
+  private func setupEngineIfNeeded(format: AVAudioFormat) -> Bool {
+    if let existingFormat = engineFormat,
+       engine != nil,
+       playerNode != nil,
+       timePitch != nil,
+       equalizer != nil,
+       abs(existingFormat.sampleRate - format.sampleRate) < 1.0,
+       existingFormat.channelCount == format.channelCount {
+      return true
+    }
+
+    teardownEngineLocked()
+
+    let eng = AVAudioEngine()
+    let node = AVAudioPlayerNode()
+    let tp = AVAudioUnitTimePitch()
+    tp.overlap = 8.0
+
+    let eq = AVAudioUnitEQ(numberOfBands: Self.eqFrequencies.count)
+    for (idx, freq) in Self.eqFrequencies.enumerated() {
+      let band = eq.bands[idx]
+      band.filterType = .parametric
+      band.frequency = freq
+      band.bandwidth = 1.0
+      band.gain = idx < bandGainsDb.count ? bandGainsDb[idx] : 0.0
+      band.bypass = false
+    }
+
+    eng.attach(node)
+    eng.attach(tp)
+    eng.attach(eq)
+    eng.connect(node, to: tp, format: format)
+    eng.connect(tp, to: eq, format: format)
+    eng.connect(eq, to: eng.mainMixerNode, format: format)
+
+    node.volume = volume
+
+    configObserver = NotificationCenter.default.addObserver(
+      forName: .AVAudioEngineConfigurationChange,
+      object: eng,
+      queue: nil
+    ) { [weak self] _ in
+      self?.queue.async {
+        guard let self = self, !self.disposed else { return }
+        if self.isPlaying, self.ensureEngineRunningLocked() {
+          self.playerNode?.play()
+        }
+      }
+    }
+
+    self.engine = eng
+    self.playerNode = node
+    self.timePitch = tp
+    self.equalizer = eq
+    self.engineFormat = format
+    self.applyEffectsLocked()
+    return true
+  }
+
+  private func applyEffectsLocked() {
+    if let tp = timePitch {
+      let needsRate = abs(playbackRate - 1.0) >= 0.005
+      let needsPitch = abs(pitchFactor - 1.0) >= 0.005
+      if !needsRate && !needsPitch {
+        tp.rate = 1.0
+        tp.pitch = 0.0
+        tp.bypass = true
+      } else {
+        tp.bypass = false
+        tp.rate = playbackRate
+        tp.pitch = Float(1200.0 * log2(Double(pitchFactor)))
+      }
+    }
+    if let eq = equalizer {
+      eq.bypass = !eqEnabled
+      for idx in 0..<min(eq.bands.count, bandGainsDb.count) {
+        eq.bands[idx].gain = bandGainsDb[idx]
+      }
+    }
+  }
+
+  @discardableResult
+  private func ensureEngineRunningLocked() -> Bool {
+    guard let eng = engine else { return false }
+    let session = AVAudioSession.sharedInstance()
+    do {
+      if session.category != .playback || !session.categoryOptions.contains(.mixWithOthers) {
+        try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+      }
+      try session.setActive(true)
+    } catch {
+      print("[IosTtsAudioPlayer] AVAudioSession error: \(error)")
+    }
+
+    if !eng.isRunning {
+      do {
+        eng.prepare()
+        try eng.start()
+      } catch {
+        print("[IosTtsAudioPlayer] engine.start error: \(error)")
+        return false
+      }
+    }
+    return eng.isRunning
+  }
+
+  private func teardownEngineLocked() {
+    if let observer = configObserver {
+      NotificationCenter.default.removeObserver(observer)
+      configObserver = nil
+    }
+    playerNode?.stop()
+    engine?.stop()
+    engine = nil
+    playerNode = nil
+    timePitch = nil
+    equalizer = nil
+    engineFormat = nil
+    hasScheduledSegment = false
   }
 }

@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
 import '../../player/app_player_controller.dart';
 
 import '../../data/model/subtitle_document.dart';
@@ -218,7 +219,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     }
     if (_isTranslatingOnDemand) return;
 
-    final bool isBilibili = _bilibiliDetails != null || BilibiliResolver.isBilibiliUrl(_sourceVideoUrl);
+    final bool isBilibili =
+        _bilibiliDetails != null ||
+        BilibiliResolver.isBilibiliUrl(_sourceVideoUrl);
     final bool isHongguo = widget.dramaDetail != null;
 
     final String selectedVoiceType;
@@ -240,8 +243,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       try {
         final history = await HistoryRepository.getInstance();
         final item = history.getHistory().where((h) {
-          if (h.videoPath == _sourceVideoUrl || h.videoPath == _currentVideoPath) return true;
-          if (HistoryRepository.matchesBilibiliUrl(h.videoPath, _sourceVideoUrl)) return true;
+          if (h.videoPath == _sourceVideoUrl ||
+              h.videoPath == _currentVideoPath)
+            return true;
+          if (HistoryRepository.matchesBilibiliUrl(
+            h.videoPath,
+            _sourceVideoUrl,
+          ))
+            return true;
           return false;
         }).firstOrNull;
 
@@ -252,6 +261,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
               _currentDocument = loadedDoc;
               _ttsScheduler.dispose();
               _ttsScheduler = TtsAudioScheduler(loadedDoc);
+              _ttsScheduler = _createTtsScheduler(loadedDoc);
             });
           }
         }
@@ -270,7 +280,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('🎉 Phụ đề Vietsub đã sẵn sàng (đã tắt lồng tiếng)!'),
+              content: Text(
+                '🎉 Phụ đề Vietsub đã sẵn sàng (đã tắt lồng tiếng)!',
+              ),
               backgroundColor: Color(0xFF00AEEC),
               duration: Duration(seconds: 2),
             ),
@@ -373,7 +385,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         });
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Không tìm thấy phụ đề hoặc không trích xuất được âm thanh.'),
+            content: Text(
+              'Không tìm thấy phụ đề hoặc không trích xuất được âm thanh.',
+            ),
             duration: Duration(seconds: 3),
           ),
         );
@@ -385,6 +399,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         _currentDocument = doc;
         _ttsScheduler.dispose();
         _ttsScheduler = TtsAudioScheduler(doc);
+        _ttsScheduler = _createTtsScheduler(doc);
       });
 
       // Lưu lại vào Lịch sử
@@ -443,13 +458,16 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     // 1. Liên kết các file âm thanh đã có trong cache
     await TtsCacheHelper.linkAudioFiles(_currentDocument, voice.voiceType);
 
-    final unlinked = _currentDocument.items.where(
-      (item) =>
-          (item.audioFilePath == null || item.audioFilePath!.isEmpty) &&
-          TtsGenerationManager.isPronounceable(item.translatedText),
-    ).toList();
+    final unlinked = _currentDocument.items
+        .where(
+          (item) =>
+              (item.audioFilePath == null || item.audioFilePath!.isEmpty) &&
+              TtsGenerationManager.isPronounceable(item.translatedText),
+        )
+        .toList();
 
-    if (_settings.isTtsPlaybackEnabled && (_liveTranslator?.isEnabled ?? false)) {
+    if (_settings.isTtsPlaybackEnabled &&
+        (_liveTranslator?.isEnabled ?? false)) {
       _cancelLiveWarmupPause(finishTranslatorWarmup: true);
       unawaited(_liveTranslator!.stop());
     }
@@ -459,6 +477,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         _settings.isTtsPlaybackEnabled = true;
         _ttsScheduler.dispose();
         _ttsScheduler = TtsAudioScheduler(_currentDocument);
+        _ttsScheduler = _createTtsScheduler(_currentDocument);
       });
       final pos = _controller?.value.position.inMilliseconds ?? 0;
       await _ttsScheduler.onSeek(pos);
@@ -480,7 +499,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     setState(() {
       _isTranslatingOnDemand = true;
       _settings.isTtsPlaybackEnabled = true;
-      _onDemandProgressMessage = 'Phụ đề đã có sẵn! Đang lồng tiếng AI (${voice.displayName})...';
+      _onDemandProgressMessage =
+          'Phụ đề đã có sẵn! Đang lồng tiếng AI (${voice.displayName})...';
       _onDemandProgressPct = 0.1;
     });
 
@@ -497,6 +517,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         });
       }
     }
+
     ttsManager.progress.addListener(onTtsProgress);
 
     try {
@@ -510,6 +531,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         setState(() {
           _ttsScheduler.dispose();
           _ttsScheduler = TtsAudioScheduler(_currentDocument);
+          _ttsScheduler = _createTtsScheduler(_currentDocument);
         });
         final pos = _controller?.value.position.inMilliseconds ?? 0;
         await _ttsScheduler.onSeek(pos);
@@ -536,7 +558,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('🎉 Đã hoàn tất Lồng tiếng AI (${voice.displayName})!'),
+            content: Text(
+              '🎉 Đã hoàn tất Lồng tiếng AI (${voice.displayName})!',
+            ),
             backgroundColor: AppTheme.primaryEmerald,
             duration: const Duration(seconds: 2),
           ),
@@ -608,17 +632,27 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       );
     }
 
-    final initialBvid = widget.bilibiliItem?.bvid ??
-        RegExp(r'BV[a-zA-Z0-9]+', caseSensitive: false).firstMatch(widget.videoPath)?.group(0);
+    final initialBvid =
+        widget.bilibiliItem?.bvid ??
+        RegExp(
+          r'BV[a-zA-Z0-9]+',
+          caseSensitive: false,
+        ).firstMatch(widget.videoPath)?.group(0);
     if (initialBvid != null && initialBvid.isNotEmpty) {
       _loadRelatedVideos(initialBvid);
     }
 
     if (widget.dramaDetail != null) {
       _prefetchManager = HongguoPrefetchManager(widget.dramaDetail!);
-      _prefetchManager!.registerVideoUrl(_currentEpisodeIndex, widget.videoPath);
+      _prefetchManager!.registerVideoUrl(
+        _currentEpisodeIndex,
+        widget.videoPath,
+      );
       if (_currentDocument.isNotEmpty) {
-        _prefetchManager!.registerDocument(_currentEpisodeIndex, _currentDocument);
+        _prefetchManager!.registerDocument(
+          _currentEpisodeIndex,
+          _currentDocument,
+        );
       }
     }
 
@@ -640,7 +674,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   void _onPipActionReceived() {
     final action = PipManager.lastPipAction.value;
     final controller = _controller;
-    if (action == null || controller == null || !controller.value.isInitialized) return;
+    if (action == null || controller == null || !controller.value.isInitialized)
+      return;
     if (action == 'playPause') {
       if (controller.value.isPlaying) {
         controller.pause();
@@ -649,7 +684,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         controller.play();
         _syncTtsWithVideo();
       }
-      unawaited(PipManager.updatePipActions(isPlaying: controller.value.isPlaying));
+      unawaited(
+        PipManager.updatePipActions(isPlaying: controller.value.isPlaying),
+      );
       _startPipControlsTimer();
       if (mounted) setState(() {});
     } else if (action == 'rewind') {
@@ -766,7 +803,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Hệ điều hành iOS chỉ hỗ trợ thu nhỏ trình phát bên trong ứng dụng.'),
+            content: Text(
+              'Hệ điều hành iOS chỉ hỗ trợ thu nhỏ trình phát bên trong ứng dụng.',
+            ),
             duration: Duration(seconds: 2),
           ),
         );
@@ -785,19 +824,35 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     if (!ok && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Thiết bị không hỗ trợ hoặc chưa cấp quyền Picture-in-Picture (PiP).'),
+          content: Text(
+            'Thiết bị không hỗ trợ hoặc chưa cấp quyền Picture-in-Picture (PiP).',
+          ),
           duration: Duration(seconds: 2),
         ),
       );
     }
   }
 
+  TtsAudioScheduler _createTtsScheduler(SubtitleDocument doc) {
+    return TtsAudioScheduler.withTone(
+      doc,
+      pitch: _settings.ttsVoicePitch,
+      warmth: _settings.ttsVoiceWarmth,
+      brightness: _settings.ttsVoiceBrightness,
+    );
+  }
 
   Future<void> _initSettingsAndPlayer() async {
     _settings = await SettingsRepository.getInstance();
+    await _ttsScheduler.setVoiceTone(
+      pitch: _settings.ttsVoicePitch,
+      warmth: _settings.ttsVoiceWarmth,
+      brightness: _settings.ttsVoiceBrightness,
+    );
     _liveTranslator?.dispose();
     _liveTranslator = _createLiveTranslator(_settings);
-    _settings.backgroundPlayEnabled = true; // Luôn tự động bật phát âm thanh nền
+    _settings.backgroundPlayEnabled =
+        true; // Luôn tự động bật phát âm thanh nền
     if (widget.initialTtsEnabled != null) {
       _settings.isTtsPlaybackEnabled = widget.initialTtsEnabled!;
     }
@@ -815,9 +870,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
     try {
       final history = await HistoryRepository.getInstance();
-      final bvid = RegExp(r'BV[a-zA-Z0-9]+', caseSensitive: false).firstMatch(_sourceVideoUrl)?.group(0);
+      final bvid = RegExp(
+        r'BV[a-zA-Z0-9]+',
+        caseSensitive: false,
+      ).firstMatch(_sourceVideoUrl)?.group(0);
       final item = history.getHistory().where((h) {
-        if (h.videoPath == _sourceVideoUrl || h.videoPath == _currentVideoPath) return true;
+        if (h.videoPath == _sourceVideoUrl || h.videoPath == _currentVideoPath)
+          return true;
         if (bvid != null && h.videoPath.contains(bvid)) return true;
         return false;
       }).firstOrNull;
@@ -834,9 +893,15 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     if (widget.dramaDetail != null) {
       if (_prefetchManager == null) {
         _prefetchManager = HongguoPrefetchManager(widget.dramaDetail!);
-        _prefetchManager!.registerVideoUrl(_currentEpisodeIndex, widget.videoPath);
+        _prefetchManager!.registerVideoUrl(
+          _currentEpisodeIndex,
+          widget.videoPath,
+        );
         if (_currentDocument.isNotEmpty) {
-          _prefetchManager!.registerDocument(_currentEpisodeIndex, _currentDocument);
+          _prefetchManager!.registerDocument(
+            _currentEpisodeIndex,
+            _currentDocument,
+          );
         }
       }
       unawaited(_prefetchManager!.preloadFromHistory());
@@ -846,7 +911,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         _currentEpisodeIndex,
         translateCurrentIfEmpty: _currentDocument.isEmpty,
         onCurrentSubtitleReady: (newDoc) async {
-          if (!mounted || _currentEpisodeIndex != (widget.currentEpisodeIndex ?? 1)) {
+          if (!mounted ||
+              _currentEpisodeIndex != (widget.currentEpisodeIndex ?? 1)) {
             return;
           }
           final isPlaying = _controller?.value.isPlaying ?? false;
@@ -854,6 +920,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             _currentDocument = newDoc;
             _ttsScheduler.dispose();
             _ttsScheduler = TtsAudioScheduler(newDoc);
+            _ttsScheduler = _createTtsScheduler(newDoc);
           });
           await _applyAudioVolumes();
           if (isPlaying) {
@@ -878,17 +945,19 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       if (_settings.hongguoAutoDeleteWatched && _currentEpisodeIndex > 3) {
         final maxEpToDelete = _currentEpisodeIndex - 3;
         unawaited(
-          HistoryRepository.getInstance().then((historyRepo) {
-            return historyRepo.autoDeleteWatchedHongguoEpisodes(
-              seriesId: widget.dramaDetail!.seriesId,
-              maxEpisodeIndex: maxEpToDelete,
-              seriesTitle: widget.dramaDetail!.title,
-              onEpisodeDeleted: (ep) => _prefetchManager?.evictEpisode(ep),
-            );
-          }).catchError((e) {
-            debugPrint('[Player] Lỗi dọn tập cũ khi mở player: $e');
-            return 0;
-          }),
+          HistoryRepository.getInstance()
+              .then((historyRepo) {
+                return historyRepo.autoDeleteWatchedHongguoEpisodes(
+                  seriesId: widget.dramaDetail!.seriesId,
+                  maxEpisodeIndex: maxEpToDelete,
+                  seriesTitle: widget.dramaDetail!.title,
+                  onEpisodeDeleted: (ep) => _prefetchManager?.evictEpisode(ep),
+                );
+              })
+              .catchError((e) {
+                debugPrint('[Player] Lỗi dọn tập cũ khi mở player: $e');
+                return 0;
+              }),
         );
       }
     }
@@ -911,8 +980,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     List<({String videoUrl, String audioUrl})> dashPairs,
     List<String> fallbackUrls,
     String? fallbackEdl,
-  }) _extractBilibiliMediaCandidates(BilibiliPlaybackPlan plan) {
-    final dashPairs = plan.dash
+  })
+  _extractBilibiliMediaCandidates(BilibiliPlaybackPlan plan) {
+    final dashPairs =
+        plan.dash
             ?.buildCandidatePairs(maxPairs: 4)
             .map((p) => (videoUrl: p.videoUrl, audioUrl: p.audioUrl))
             .toList() ??
@@ -929,8 +1000,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     final fallbackUrls = plan.muxedUrls.isNotEmpty
         ? plan.muxedUrls
         : (plan.muxedSegments.isNotEmpty
-            ? plan.muxedSegments.first.urls
-            : const <String>[]);
+              ? plan.muxedSegments.first.urls
+              : const <String>[]);
     return (
       dashPairs: dashPairs,
       fallbackUrls: fallbackUrls,
@@ -1005,7 +1076,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         );
         return;
       } catch (e) {
-        debugPrint('[Player] Lỗi tái sử dụng controller (switchMedia): $e. Fallback tạo mới.');
+        debugPrint(
+          '[Player] Lỗi tái sử dụng controller (switchMedia): $e. Fallback tạo mới.',
+        );
         try {
           existing.dispose();
         } catch (_) {}
@@ -1100,7 +1173,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           _settings.bilibiliSessData,
         );
         _bilibiliDetails = details;
-        if (_originalTitle == null || _originalTitle!.isEmpty || _isGenericTitle(_originalTitle)) {
+        if (_originalTitle == null ||
+            _originalTitle!.isEmpty ||
+            _isGenericTitle(_originalTitle)) {
           _originalTitle = details.title;
         }
         if (_currentTitle.isEmpty || _isGenericTitle(_currentTitle)) {
@@ -1114,7 +1189,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           await history.updateTitleForVideo(_sourceVideoUrl, details.title);
           await history.updateTitleForVideo(targetPath, details.title);
           if (details.coverUrl != null && details.coverUrl!.isNotEmpty) {
-            await history.updateCoverForVideo(_sourceVideoUrl, details.coverUrl!);
+            await history.updateCoverForVideo(
+              _sourceVideoUrl,
+              details.coverUrl!,
+            );
             await history.updateCoverForVideo(targetPath, details.coverUrl!);
           }
         } catch (_) {}
@@ -1125,7 +1203,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           bvid: details.bvid,
           bilibiliPage: details.selectedPageIndex,
         );
-        if (cached != null && await cached.exists() && await cached.length() > 1024 * 100) {
+        if (cached != null &&
+            await cached.exists() &&
+            await cached.length() > 1024 * 100) {
           targetPath = cached.path;
           playableUrls = [cached.path];
           await _prepareControllerForMedia(file: cached);
@@ -1142,7 +1222,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             quality: preferredQn,
             cdn: BilibiliCdnService.fromCode(_settings.bilibiliCdnService),
           );
-          targetPath = plan.dash?.videoUrl ??
+          targetPath =
+              plan.dash?.videoUrl ??
               (plan.muxedUrls.isNotEmpty ? plan.muxedUrls.first : targetPath);
           if (plan.muxedUrls.isNotEmpty) {
             playableUrls = plan.muxedUrls;
@@ -1185,7 +1266,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             await history.updateTitleForVideo(_sourceVideoUrl, details.title);
             await history.updateTitleForVideo(targetPath, details.title);
             if (details.coverUrl != null && details.coverUrl!.isNotEmpty) {
-              await history.updateCoverForVideo(_sourceVideoUrl, details.coverUrl!);
+              await history.updateCoverForVideo(
+                _sourceVideoUrl,
+                details.coverUrl!,
+              );
               await history.updateCoverForVideo(targetPath, details.coverUrl!);
             }
           } catch (_) {}
@@ -1206,13 +1290,18 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           seriesId: widget.dramaDetail?.seriesId,
           episodeIndex: _currentEpisodeIndex,
         );
-        if (cached != null && await cached.exists() && await cached.length() > 1024 * 50) {
-          debugPrint('[Player] Tìm thấy video Hồng Quả offline trong cache: ${cached.path}');
+        if (cached != null &&
+            await cached.exists() &&
+            await cached.length() > 1024 * 50) {
+          debugPrint(
+            '[Player] Tìm thấy video Hồng Quả offline trong cache: ${cached.path}',
+          );
           targetPath = cached.path;
           playableUrls = [cached.path];
         } else if (refreshHongguoUrl &&
             !targetPath.contains('hf.space') &&
-            (targetPath.startsWith('http://') || targetPath.startsWith('https://'))) {
+            (targetPath.startsWith('http://') ||
+                targetPath.startsWith('https://'))) {
           // Nếu không có trong cache và URL là online:
           // Đề phòng URL online bị hết hạn từ hôm qua, tự động lấy link mới còn hạn
           try {
@@ -1245,12 +1334,15 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
               }
             }
           } catch (e) {
-            debugPrint('[Player] Không thể re-resolve URL mới cho tập $_currentEpisodeIndex: $e');
+            debugPrint(
+              '[Player] Không thể re-resolve URL mới cho tập $_currentEpisodeIndex: $e',
+            );
           }
         }
 
         final isRemote =
-            targetPath.startsWith('http://') || targetPath.startsWith('https://');
+            targetPath.startsWith('http://') ||
+            targetPath.startsWith('https://');
         if (isRemote) {
           if (httpHeaders.isEmpty) {
             httpHeaders = NetworkHeaderHelper.getHeadersForUri(targetPath);
@@ -1260,25 +1352,27 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             httpHeaders: httpHeaders,
           );
         } else if (MediaStorage.isContentUri(targetPath)) {
-          await _prepareControllerForMedia(
-            contentUri: Uri.parse(targetPath),
-          );
+          await _prepareControllerForMedia(contentUri: Uri.parse(targetPath));
         } else {
-          await _prepareControllerForMedia(
-            file: File(targetPath),
-          );
+          await _prepareControllerForMedia(file: File(targetPath));
         }
       } else {
         _bilibiliDetails = null;
-        if (targetPath.startsWith('http://') || targetPath.startsWith('https://')) {
-          final cached = await VideoCacheManager.findCachedFile(url: targetPath);
-          if (cached != null && await cached.exists() && await cached.length() > 1024 * 100) {
+        if (targetPath.startsWith('http://') ||
+            targetPath.startsWith('https://')) {
+          final cached = await VideoCacheManager.findCachedFile(
+            url: targetPath,
+          );
+          if (cached != null &&
+              await cached.exists() &&
+              await cached.length() > 1024 * 100) {
             targetPath = cached.path;
             playableUrls = [cached.path];
           }
         }
         final isRemote =
-            targetPath.startsWith('http://') || targetPath.startsWith('https://');
+            targetPath.startsWith('http://') ||
+            targetPath.startsWith('https://');
         if (isRemote) {
           if (httpHeaders.isEmpty) {
             httpHeaders = NetworkHeaderHelper.getHeadersForUri(targetPath);
@@ -1288,13 +1382,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             httpHeaders: httpHeaders,
           );
         } else if (MediaStorage.isContentUri(targetPath)) {
-          await _prepareControllerForMedia(
-            contentUri: Uri.parse(targetPath),
-          );
+          await _prepareControllerForMedia(contentUri: Uri.parse(targetPath));
         } else {
-          await _prepareControllerForMedia(
-            file: File(targetPath),
-          );
+          await _prepareControllerForMedia(file: File(targetPath));
         }
       }
 
@@ -1309,7 +1399,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           ? startPosMs.clamp(0, durationMs)
           : (startPosMs > 0 ? startPosMs : 0);
       final shouldRestorePosition =
-          resumePositionMs > 0 && (durationMs <= 0 || resumePositionMs < durationMs);
+          resumePositionMs > 0 &&
+          (durationMs <= 0 || resumePositionMs < durationMs);
       _isScrubbing = shouldRestorePosition;
       _currentPosMs = 0;
       _lastObservedPositionMs = 0;
@@ -1328,18 +1419,23 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       final detail = widget.dramaDetail;
       if (detail != null && detail.seriesId.isNotEmpty) {
         unawaited(
-          HistoryRepository.getInstance().then(
-            (history) => history.markSeriesEpisodeWatched(
-              seriesId: detail.seriesId,
-              episodeIndex: _currentEpisodeIndex,
-              seriesTitle: detail.title,
-            ),
-          ).catchError((_) => false),
+          HistoryRepository.getInstance()
+              .then(
+                (history) => history.markSeriesEpisodeWatched(
+                  seriesId: detail.seriesId,
+                  episodeIndex: _currentEpisodeIndex,
+                  seriesTitle: detail.title,
+                ),
+              )
+              .catchError((_) => false),
         );
       }
-      final isLocalVideo = !targetPath.startsWith('http://') && !targetPath.startsWith('https://');
+      final isLocalVideo =
+          !targetPath.startsWith('http://') &&
+          !targetPath.startsWith('https://');
       // Nếu video là file cục bộ (đã tải về máy) -> phát ngay, không chờ dịch
-      final bool shouldWaitHongguoTranslation = widget.dramaDetail != null &&
+      final bool shouldWaitHongguoTranslation =
+          widget.dramaDetail != null &&
           _currentDocument.isEmpty &&
           !_userChosePlayRaw &&
           !isLocalVideo;
@@ -1349,7 +1445,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         try {
           await _controller!.setPlaybackSpeed(_playbackSpeed);
         } catch (e) {
-          debugPrint('Không thể thiết lập tốc độ phát $_playbackSpeed cho controller mới: $e');
+          debugPrint(
+            'Không thể thiết lập tốc độ phát $_playbackSpeed cho controller mới: $e',
+          );
         }
       }
 
@@ -1475,8 +1573,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         seriesId: widget.dramaDetail?.seriesId,
         episodeIndex: targetIndex,
       );
-      final isInstantReady = isAlreadyCachedUrl ||
-          (cachedDiskFile != null && await cachedDiskFile.exists() && await cachedDiskFile.length() > 1024 * 50);
+      final isInstantReady =
+          isAlreadyCachedUrl ||
+          (cachedDiskFile != null &&
+              await cachedDiskFile.exists() &&
+              await cachedDiskFile.length() > 1024 * 50);
 
       if (!isInstantReady) {
         // Chỉ hiển thị overlay xoay tròn nếu cần tải qua mạng và mất hơn 180ms
@@ -1526,21 +1627,25 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       // của các tập cũ cách 3 tập nếu người dùng xem tuần tự (+1) hoặc xem tiếp
       // Ví dụ: Xem đến tập 4 xóa tập 1, tập 5 xóa tập 2...
       if (_settings.hongguoAutoDeleteWatched && widget.dramaDetail != null) {
-        if (targetIndex == previousIndex + 1 || (previousIndex <= 1 && targetIndex > 3)) {
+        if (targetIndex == previousIndex + 1 ||
+            (previousIndex <= 1 && targetIndex > 3)) {
           final maxEpToDelete = targetIndex - 3;
           if (maxEpToDelete >= 1) {
             unawaited(
-              HistoryRepository.getInstance().then((historyRepo) {
-                return historyRepo.autoDeleteWatchedHongguoEpisodes(
-                  seriesId: widget.dramaDetail!.seriesId,
-                  maxEpisodeIndex: maxEpToDelete,
-                  seriesTitle: widget.dramaDetail!.title,
-                  onEpisodeDeleted: (ep) => _prefetchManager?.evictEpisode(ep),
-                );
-              }).catchError((e) {
-                debugPrint('[Player] Lỗi tự động xóa tập cũ: $e');
-                return 0;
-              }),
+              HistoryRepository.getInstance()
+                  .then((historyRepo) {
+                    return historyRepo.autoDeleteWatchedHongguoEpisodes(
+                      seriesId: widget.dramaDetail!.seriesId,
+                      maxEpisodeIndex: maxEpToDelete,
+                      seriesTitle: widget.dramaDetail!.title,
+                      onEpisodeDeleted: (ep) =>
+                          _prefetchManager?.evictEpisode(ep),
+                    );
+                  })
+                  .catchError((e) {
+                    debugPrint('[Player] Lỗi tự động xóa tập cũ: $e');
+                    return 0;
+                  }),
             );
           }
         }
@@ -1557,6 +1662,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             _currentDocument = newDoc;
             _ttsScheduler.dispose();
             _ttsScheduler = TtsAudioScheduler(newDoc);
+            _ttsScheduler = _createTtsScheduler(newDoc);
           });
           await _applyAudioVolumes();
           if (isPlaying) {
@@ -1617,7 +1723,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                 ),
               ),
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -1634,8 +1743,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                       ),
                     ),
                     IconButton(
-                      icon: const Icon(Icons.tune_rounded,
-                          color: AppTheme.primaryEmerald, size: 20),
+                      icon: const Icon(
+                        Icons.tune_rounded,
+                        color: AppTheme.primaryEmerald,
+                        size: 20,
+                      ),
                       tooltip: 'Cài đặt Hồng Quả',
                       onPressed: () {
                         Navigator.pop(ctx);
@@ -1643,7 +1755,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                       },
                     ),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
                       decoration: BoxDecoration(
                         color: AppTheme.primaryEmerald.withValues(alpha: 0.15),
                         borderRadius: BorderRadius.circular(6),
@@ -1674,7 +1789,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                   itemBuilder: (ctx, i) {
                     final ep = i + 1;
                     final isPlaying = ep == _currentEpisodeIndex;
-                    final isCached = _prefetchManager?.getCachedDocument(ep) != null;
+                    final isCached =
+                        _prefetchManager?.getCachedDocument(ep) != null;
                     final isAccessible = ep <= detail.accessibleEpisodes;
 
                     return InkWell(
@@ -1690,15 +1806,17 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                           color: isPlaying
                               ? AppTheme.primaryEmerald.withValues(alpha: 0.25)
                               : (isCached
-                                  ? const Color(0xFF132F24)
-                                  : const Color(0xFF252631)),
+                                    ? const Color(0xFF132F24)
+                                    : const Color(0xFF252631)),
                           borderRadius: BorderRadius.circular(8),
                           border: Border.all(
                             color: isPlaying
                                 ? AppTheme.primaryEmerald
                                 : (isCached
-                                    ? AppTheme.primaryEmerald.withValues(alpha: 0.5)
-                                    : Colors.white12),
+                                      ? AppTheme.primaryEmerald.withValues(
+                                          alpha: 0.5,
+                                        )
+                                      : Colors.white12),
                             width: isPlaying ? 1.8 : 1,
                           ),
                         ),
@@ -1715,8 +1833,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                   style: TextStyle(
                                     color: isPlaying
                                         ? AppTheme.primaryEmerald
-                                        : (isAccessible ? Colors.white : Colors.white38),
-                                    fontWeight: isPlaying ? FontWeight.bold : FontWeight.w500,
+                                        : (isAccessible
+                                              ? Colors.white
+                                              : Colors.white38),
+                                    fontWeight: isPlaying
+                                        ? FontWeight.bold
+                                        : FontWeight.w500,
                                     fontSize: 13,
                                   ),
                                 ),
@@ -1807,16 +1929,22 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       totalEpisodes = d.totalEpisodes > 0 ? d.totalEpisodes : null;
     } else {
       final b = _bilibiliDetails;
-      final bvid = b?.bvid ??
-          RegExp(r'BV1[0-9a-zA-Z]{9}', caseSensitive: false)
-              .firstMatch(_sourceVideoUrl)
-              ?.group(0) ??
+      final bvid =
+          b?.bvid ??
+          RegExp(
+            r'BV1[0-9a-zA-Z]{9}',
+            caseSensitive: false,
+          ).firstMatch(_sourceVideoUrl)?.group(0) ??
           '';
       id = bvid.isNotEmpty ? 'bili_$bvid' : 'bili_${_currentTitle.hashCode}';
-      title = (b?.title != null && b!.title.isNotEmpty) ? b.title : _currentTitle;
+      title = (b?.title != null && b!.title.isNotEmpty)
+          ? b.title
+          : _currentTitle;
       coverUrl = b?.coverUrl ?? widget.bilibiliItem?.cover;
       source = 'bilibili';
-      targetUrl = bvid.isNotEmpty ? 'https://www.bilibili.com/video/$bvid' : _sourceVideoUrl;
+      targetUrl = bvid.isNotEmpty
+          ? 'https://www.bilibili.com/video/$bvid'
+          : _sourceVideoUrl;
       seriesId = null;
       author = b?.author ?? _authorName;
       totalEpisodes = null;
@@ -1846,7 +1974,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         content: Row(
           children: [
             Icon(
-              added ? Icons.bookmark_added_rounded : Icons.bookmark_remove_rounded,
+              added
+                  ? Icons.bookmark_added_rounded
+                  : Icons.bookmark_remove_rounded,
               color: added ? AppTheme.primaryEmerald : Colors.orangeAccent,
               size: 18,
             ),
@@ -1912,7 +2042,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Không thể dịch tiêu đề lúc này. Vui lòng thử lại!'),
+              content: Text(
+                'Không thể dịch tiêu đề lúc này. Vui lòng thử lại!',
+              ),
               duration: Duration(seconds: 2),
             ),
           );
@@ -1928,7 +2060,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   }
 
   List<BilibiliAnimeItem> get _displayedRelatedVideos {
-    final currentAuthor = _authorName ?? _bilibiliDetails?.author ?? _bilibiliItem?.author ?? '';
+    final currentAuthor =
+        _authorName ?? _bilibiliDetails?.author ?? _bilibiliItem?.author ?? '';
     switch (_selectedRelatedTab) {
       case 'same_author':
         if (currentAuthor.isEmpty) return _blendedRelatedVideos;
@@ -1941,11 +2074,17 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             .toList();
         return fromRelated.isNotEmpty ? fromRelated : _blendedRelatedVideos;
       case 'related':
-        return _rawDirectRelated.isNotEmpty ? _rawDirectRelated : _blendedRelatedVideos;
+        return _rawDirectRelated.isNotEmpty
+            ? _rawDirectRelated
+            : _blendedRelatedVideos;
       case 'explore':
         final explore = <BilibiliAnimeItem>[];
         final seen = <String>{};
-        final curBvid = _bilibiliDetails?.bvid ?? _bilibiliItem?.bvid ?? _lastLoadedRelatedBvid ?? '';
+        final curBvid =
+            _bilibiliDetails?.bvid ??
+            _bilibiliItem?.bvid ??
+            _lastLoadedRelatedBvid ??
+            '';
         if (curBvid.isNotEmpty) seen.add(curBvid);
         for (final it in [..._rawRecommendFeed, ..._rawPopularVideos]) {
           if (it.bvid != null && it.bvid!.isNotEmpty && seen.add(it.bvid!)) {
@@ -1961,7 +2100,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
   Future<void> _loadRelatedVideos(String bvid) async {
     if (bvid.isEmpty) return;
-    if (_lastLoadedRelatedBvid == bvid && _blendedRelatedVideos.isNotEmpty) return;
+    if (_lastLoadedRelatedBvid == bvid && _blendedRelatedVideos.isNotEmpty)
+      return;
     _lastLoadedRelatedBvid = bvid;
     if (mounted) {
       setState(() {
@@ -1980,16 +2120,30 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
       // Nạp song song: Liên quan trực tiếp, Đề xuất AI/Feed cá nhân hóa, và Thịnh hành
       final results = await Future.wait([
-        resolver.getRelatedVideos(bvid, cookie: cookie).catchError((_) => <BilibiliAnimeItem>[]),
-        resolver.getRecommendFeed(pageSize: 15, freshIdx: _recommendFreshIdx, cookie: cookie).catchError((_) => <BilibiliAnimeItem>[]),
-        resolver.getPopularVideos(page: 1, pageSize: 12, cookie: cookie).catchError((_) => <BilibiliAnimeItem>[]),
+        resolver
+            .getRelatedVideos(bvid, cookie: cookie)
+            .catchError((_) => <BilibiliAnimeItem>[]),
+        resolver
+            .getRecommendFeed(
+              pageSize: 15,
+              freshIdx: _recommendFreshIdx,
+              cookie: cookie,
+            )
+            .catchError((_) => <BilibiliAnimeItem>[]),
+        resolver
+            .getPopularVideos(page: 1, pageSize: 12, cookie: cookie)
+            .catchError((_) => <BilibiliAnimeItem>[]),
       ]);
 
       final related = results[0];
       final feed = results[1];
       final popular = results[2];
 
-      final currentAuthor = _authorName ?? _bilibiliDetails?.author ?? _bilibiliItem?.author ?? '';
+      final currentAuthor =
+          _authorName ??
+          _bilibiliDetails?.author ??
+          _bilibiliItem?.author ??
+          '';
       final blended = _blendRecommendations(
         currentBvid: bvid,
         currentAuthor: currentAuthor,
@@ -2017,7 +2171,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   }
 
   Future<void> _refreshRecommendations() async {
-    final bvid = _bilibiliDetails?.bvid ??
+    final bvid =
+        _bilibiliDetails?.bvid ??
         _bilibiliItem?.bvid ??
         _lastLoadedRelatedBvid ??
         '';
@@ -2035,14 +2190,26 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
       final popularPage = (_recommendFreshIdx % 5) + 1;
       final results = await Future.wait([
-        resolver.getRecommendFeed(pageSize: 16, freshIdx: _recommendFreshIdx, cookie: cookie).catchError((_) => <BilibiliAnimeItem>[]),
-        resolver.getPopularVideos(page: popularPage, pageSize: 12, cookie: cookie).catchError((_) => <BilibiliAnimeItem>[]),
+        resolver
+            .getRecommendFeed(
+              pageSize: 16,
+              freshIdx: _recommendFreshIdx,
+              cookie: cookie,
+            )
+            .catchError((_) => <BilibiliAnimeItem>[]),
+        resolver
+            .getPopularVideos(page: popularPage, pageSize: 12, cookie: cookie)
+            .catchError((_) => <BilibiliAnimeItem>[]),
       ]);
 
       final feed = results[0];
       final popular = results[1];
 
-      final currentAuthor = _authorName ?? _bilibiliDetails?.author ?? _bilibiliItem?.author ?? '';
+      final currentAuthor =
+          _authorName ??
+          _bilibiliDetails?.author ??
+          _bilibiliItem?.author ??
+          '';
       final blended = _blendRecommendations(
         currentBvid: bvid,
         currentAuthor: currentAuthor,
@@ -2069,7 +2236,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   }
 
   Future<void> _loadMoreRecommendations() async {
-    final bvid = _bilibiliDetails?.bvid ??
+    final bvid =
+        _bilibiliDetails?.bvid ??
         _bilibiliItem?.bvid ??
         _lastLoadedRelatedBvid ??
         '';
@@ -2085,17 +2253,29 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       final resolver = BilibiliResolver();
       final cookie = settings.bilibiliSessData;
 
-      final moreFeed = await resolver.getRecommendFeed(
-        pageSize: 15,
-        freshIdx: _recommendFreshIdx,
-        cookie: cookie,
-      ).catchError((_) => <BilibiliAnimeItem>[]);
+      final moreFeed = await resolver
+          .getRecommendFeed(
+            pageSize: 15,
+            freshIdx: _recommendFreshIdx,
+            cookie: cookie,
+          )
+          .catchError((_) => <BilibiliAnimeItem>[]);
 
       if (mounted && moreFeed.isNotEmpty) {
-        final existingBvids = _blendedRelatedVideos.map((e) => e.bvid).whereType<String>().toSet();
+        final existingBvids = _blendedRelatedVideos
+            .map((e) => e.bvid)
+            .whereType<String>()
+            .toSet();
         existingBvids.add(bvid);
 
-        final newItems = moreFeed.where((it) => it.bvid != null && it.bvid!.isNotEmpty && !existingBvids.contains(it.bvid!)).toList();
+        final newItems = moreFeed
+            .where(
+              (it) =>
+                  it.bvid != null &&
+                  it.bvid!.isNotEmpty &&
+                  !existingBvids.contains(it.bvid!),
+            )
+            .toList();
 
         setState(() {
           _rawRecommendFeed.addAll(newItems);
@@ -2133,7 +2313,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     for (final item in related) {
       final b = item.bvid;
       if (b == null || b.isEmpty || seenBvids.contains(b)) continue;
-      if (currentAuthor.isNotEmpty && item.author.trim() == currentAuthor.trim()) {
+      if (currentAuthor.isNotEmpty &&
+          item.author.trim() == currentAuthor.trim()) {
         sameAuthorList.add(item);
       } else {
         directRelatedList.add(item);
@@ -2154,7 +2335,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     var sIdx = 0;
     var eIdx = 0;
 
-    while (rIdx < directRelatedList.length || sIdx < sameAuthorList.length || eIdx < exploreList.length) {
+    while (rIdx < directRelatedList.length ||
+        sIdx < sameAuthorList.length ||
+        eIdx < exploreList.length) {
       var addedRelated = 0;
       if (sIdx < sameAuthorList.length && (result.isEmpty || sIdx < 2)) {
         final it = sameAuthorList[sIdx++];
@@ -2243,9 +2426,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         return SafeArea(
           top: false,
           child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxHeight: height * 0.90,
-            ),
+            constraints: BoxConstraints(maxHeight: height * 0.90),
             child: Container(
               decoration: const BoxDecoration(
                 color: Color(0xFF1E202A),
@@ -2258,95 +2439,118 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-              Center(
-                child: Container(
-                  width: 36,
-                  height: 4,
-                  margin: const EdgeInsets.only(bottom: 14),
-                  decoration: BoxDecoration(
-                    color: Colors.white24,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-              const Padding(
-                padding: EdgeInsets.only(left: 4, bottom: 12),
-                child: Row(
-                  children: [
-                    Icon(Icons.high_quality_rounded, color: Color(0xFF00AEEC), size: 22),
-                    SizedBox(width: 8),
-                    Text(
-                      'Chọn chất lượng video Bilibili',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              ...qualities.map((q) {
-                final isSelected = q['key'] == _currentQualityKey;
-                return ListTile(
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                  tileColor: isSelected ? const Color(0xFF00AEEC).withValues(alpha: 0.15) : null,
-                  leading: Icon(
-                    isSelected ? Icons.check_circle_rounded : Icons.radio_button_unchecked,
-                    color: isSelected ? const Color(0xFF00AEEC) : Colors.white38,
-                  ),
-                  title: Row(
-                    children: [
-                      Text(
-                        q['title']!,
-                        style: TextStyle(
-                          color: isSelected ? const Color(0xFF00AEEC) : Colors.white,
-                          fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
-                          fontSize: 14,
+                    Center(
+                      child: Container(
+                        width: 36,
+                        height: 4,
+                        margin: const EdgeInsets.only(bottom: 14),
+                        decoration: BoxDecoration(
+                          color: Colors.white24,
+                          borderRadius: BorderRadius.circular(2),
                         ),
                       ),
-                      if (q['badge'] != null) ...[
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
-                          decoration: BoxDecoration(
-                            color: q['badge'] == 'VIP / SESSDATA'
-                                ? const Color(0xFFFB7299).withValues(alpha: 0.2)
-                                : Colors.white12,
-                            borderRadius: BorderRadius.circular(4),
-                            border: Border.all(
-                              color: q['badge'] == 'VIP / SESSDATA'
-                                  ? const Color(0xFFFB7299)
-                                  : Colors.white24,
-                              width: 0.8,
-                            ),
+                    ),
+                    const Padding(
+                      padding: EdgeInsets.only(left: 4, bottom: 12),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.high_quality_rounded,
+                            color: Color(0xFF00AEEC),
+                            size: 22,
                           ),
-                          child: Text(
-                            q['badge']!,
+                          SizedBox(width: 8),
+                          Text(
+                            'Chọn chất lượng video Bilibili',
                             style: TextStyle(
-                              color: q['badge'] == 'VIP / SESSDATA'
-                                  ? const Color(0xFFFB7299)
-                                  : Colors.white70,
-                              fontSize: 9.5,
+                              color: Colors.white,
+                              fontSize: 16,
                               fontWeight: FontWeight.bold,
                             ),
                           ),
+                        ],
+                      ),
+                    ),
+                    ...qualities.map((q) {
+                      final isSelected = q['key'] == _currentQualityKey;
+                      return ListTile(
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
                         ),
-                      ],
-                    ],
-                  ),
-                  subtitle: Text(
-                    q['subtitle']!,
-                    style: const TextStyle(color: Colors.white54, fontSize: 11.5),
-                  ),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    if (q['key'] != _currentQualityKey) {
-                      _switchBilibiliQuality(q['key']!);
-                    }
-                  },
-                );
-              }),
+                        tileColor: isSelected
+                            ? const Color(0xFF00AEEC).withValues(alpha: 0.15)
+                            : null,
+                        leading: Icon(
+                          isSelected
+                              ? Icons.check_circle_rounded
+                              : Icons.radio_button_unchecked,
+                          color: isSelected
+                              ? const Color(0xFF00AEEC)
+                              : Colors.white38,
+                        ),
+                        title: Row(
+                          children: [
+                            Text(
+                              q['title']!,
+                              style: TextStyle(
+                                color: isSelected
+                                    ? const Color(0xFF00AEEC)
+                                    : Colors.white,
+                                fontWeight: isSelected
+                                    ? FontWeight.bold
+                                    : FontWeight.w600,
+                                fontSize: 14,
+                              ),
+                            ),
+                            if (q['badge'] != null) ...[
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 1.5,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: q['badge'] == 'VIP / SESSDATA'
+                                      ? const Color(0xFFFB7299)
+                                            .withValues(alpha: 0.2)
+                                      : Colors.white12,
+                                  borderRadius: BorderRadius.circular(4),
+                                  border: Border.all(
+                                    color: q['badge'] == 'VIP / SESSDATA'
+                                        ? const Color(0xFFFB7299)
+                                        : Colors.white24,
+                                    width: 0.8,
+                                  ),
+                                ),
+                                child: Text(
+                                  q['badge']!,
+                                  style: TextStyle(
+                                    color: q['badge'] == 'VIP / SESSDATA'
+                                        ? const Color(0xFFFB7299)
+                                        : Colors.white70,
+                                    fontSize: 9.5,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                        subtitle: Text(
+                          q['subtitle']!,
+                          style: const TextStyle(
+                            color: Colors.white54,
+                            fontSize: 11.5,
+                          ),
+                        ),
+                        onTap: () {
+                          Navigator.pop(ctx);
+                          if (q['key'] != _currentQualityKey) {
+                            _switchBilibiliQuality(q['key']!);
+                          }
+                        },
+                      );
+                    }),
                   ],
                 ),
               ),
@@ -2380,8 +2584,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       );
       if (!mounted) return;
 
-      final startPos =
-          currentPositionMs > 0 ? Duration(milliseconds: currentPositionMs) : null;
+      final startPos = currentPositionMs > 0
+          ? Duration(milliseconds: currentPositionMs)
+          : null;
 
       await _prepareControllerForMedia(
         bilibiliPlan: plan,
@@ -2402,7 +2607,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                   .abs() >
               2500) {
         try {
-          await activeController.seekTo(Duration(milliseconds: currentPositionMs));
+          await activeController.seekTo(
+            Duration(milliseconds: currentPositionMs),
+          );
         } catch (_) {}
       }
 
@@ -2415,8 +2622,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         } catch (_) {}
       }
 
-      final newUrl = plan.dash?.videoUrl ??
-          (plan.muxedUrls.isNotEmpty ? plan.muxedUrls.first : _currentVideoPath);
+      final newUrl =
+          plan.dash?.videoUrl ??
+          (plan.muxedUrls.isNotEmpty
+              ? plan.muxedUrls.first
+              : _currentVideoPath);
       _settings.preferredVideoQuality = normalizedQn;
       _settings.bilibiliPreferredQuality = normalizedQn;
 
@@ -2461,7 +2671,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     final details = _bilibiliDetails;
     if (details == null || targetPage == details.selectedPageIndex) return;
 
-    final newUrl = 'https://www.bilibili.com/video/${details.bvid}?p=$targetPage';
+    final newUrl =
+        'https://www.bilibili.com/video/${details.bvid}?p=$targetPage';
     String partTitle = 'P$targetPage';
     for (final p in details.pages) {
       if (p.page == targetPage) {
@@ -2516,7 +2727,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                 ),
               ),
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -2533,7 +2747,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                       ),
                     ),
                     IconButton(
-                      icon: const Icon(Icons.close_rounded, color: Colors.white60, size: 20),
+                      icon: const Icon(
+                        Icons.close_rounded,
+                        color: Colors.white60,
+                        size: 20,
+                      ),
                       onPressed: () => Navigator.pop(ctx),
                     ),
                   ],
@@ -2612,7 +2830,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                 p.part,
                                 style: TextStyle(
                                   color: isPlaying
-                                      ? const Color(0xFFFB7299).withValues(alpha: 0.8)
+                                      ? const Color(0xFFFB7299)
+                                            .withValues(alpha: 0.8)
                                       : Colors.white54,
                                   fontSize: 9.5,
                                 ),
@@ -2645,11 +2864,15 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     }
     if (mid > 0) {
       final resolver = BilibiliResolver();
-      final profile = await resolver.getUploaderProfile(mid, cookie: settings.bilibiliSessData);
+      final profile = await resolver.getUploaderProfile(
+        mid,
+        cookie: settings.bilibiliSessData,
+      );
       if (mounted) {
         setState(() {
           _bilibiliUploaderProfile = profile;
-          _isFollowingBilibiliUploader = isFollowedLocal || (profile?.isFollowing ?? false);
+          _isFollowingBilibiliUploader =
+              isFollowedLocal || (profile?.isFollowing ?? false);
         });
       }
     }
@@ -2850,7 +3073,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   Widget _buildBilibiliBelowContent() {
     final details = _bilibiliDetails;
     final commentCount = _bilibiliCommentResult?.totalCount ?? 0;
-    final commentLabel = commentCount > 0 ? 'Bình luận $commentCount' : 'Bình luận';
+    final commentLabel = commentCount > 0
+        ? 'Bình luận $commentCount'
+        : 'Bình luận';
 
     return Container(
       color: const Color(0xFF14161E),
@@ -2861,7 +3086,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             height: 44,
             padding: const EdgeInsets.symmetric(horizontal: 16),
             decoration: const BoxDecoration(
-              border: Border(bottom: BorderSide(color: Colors.white12, width: 0.8)),
+              border: Border(
+                bottom: BorderSide(color: Colors.white12, width: 0.8),
+              ),
             ),
             child: Row(
               children: [
@@ -2877,9 +3104,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                   isSelected: _bilibiliTabIndex == 1,
                 ),
                 const Spacer(),
-                if (_bilibiliTabIndex == 0 && details != null && details.pages.length > 1)
+                if (_bilibiliTabIndex == 0 &&
+                    details != null &&
+                    details.pages.length > 1)
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 7,
+                      vertical: 2.5,
+                    ),
                     decoration: BoxDecoration(
                       color: const Color(0xFFFB7299).withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(4),
@@ -3009,13 +3241,21 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                             errorBuilder: (_, _, _) => const CircleAvatar(
                               radius: 20,
                               backgroundColor: Color(0xFF282B37),
-                              child: Icon(Icons.person, size: 22, color: Colors.white54),
+                              child: Icon(
+                                Icons.person,
+                                size: 22,
+                                color: Colors.white54,
+                              ),
                             ),
                           )
                         : const CircleAvatar(
                             radius: 20,
                             backgroundColor: Color(0xFF282B37),
-                            child: Icon(Icons.person, size: 22, color: Colors.white54),
+                            child: Icon(
+                              Icons.person,
+                              size: 22,
+                              color: Colors.white54,
+                            ),
                           ),
                   ),
                   const SizedBox(width: 10),
@@ -3039,20 +3279,32 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                             if (fansText.isNotEmpty) ...[
                               Text(
                                 '$fansText fans',
-                                style: const TextStyle(color: Colors.white60, fontSize: 11),
+                                style: const TextStyle(
+                                  color: Colors.white60,
+                                  fontSize: 11,
+                                ),
                               ),
                               if (videoCount > 0)
-                                const Text(' • ', style: TextStyle(color: Colors.white38)),
+                                const Text(
+                                  ' • ',
+                                  style: TextStyle(color: Colors.white38),
+                                ),
                             ],
                             if (videoCount > 0)
                               Text(
                                 '$videoCount video',
-                                style: const TextStyle(color: Colors.white60, fontSize: 11),
+                                style: const TextStyle(
+                                  color: Colors.white60,
+                                  fontSize: 11,
+                                ),
                               )
                             else if (fansText.isEmpty && viewCount.isNotEmpty)
                               Text(
                                 '$viewCount lượt xem',
-                                style: const TextStyle(color: Colors.white54, fontSize: 11),
+                                style: const TextStyle(
+                                  color: Colors.white54,
+                                  fontSize: 11,
+                                ),
                               ),
                           ],
                         ),
@@ -3066,7 +3318,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                     borderRadius: BorderRadius.circular(16),
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 200),
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
                       decoration: BoxDecoration(
                         color: _isFollowingBilibiliUploader
                             ? Colors.white12
@@ -3083,11 +3338,17 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           if (!_isFollowingBilibiliUploader) ...[
-                            const Icon(Icons.add, color: Colors.white, size: 13),
+                            const Icon(
+                              Icons.add,
+                              color: Colors.white,
+                              size: 13,
+                            ),
                             const SizedBox(width: 3),
                           ],
                           Text(
-                            _isFollowingBilibiliUploader ? 'Đã theo dõi' : 'Theo dõi',
+                            _isFollowingBilibiliUploader
+                                ? 'Đã theo dõi'
+                                : 'Theo dõi',
                             style: TextStyle(
                               color: _isFollowingBilibiliUploader
                                   ? Colors.white70
@@ -3249,18 +3510,27 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                 onTap: () => _startOnDemandPipeline(enableTts: false),
                 borderRadius: BorderRadius.circular(8),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 8,
+                    horizontal: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: const Color(0xFF00AEEC).withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: const Color(0xFF00AEEC).withValues(alpha: 0.4)),
+                    border: Border.all(
+                      color: const Color(0xFF00AEEC).withValues(alpha: 0.4),
+                    ),
                   ),
                   child: const FittedBox(
                     fit: BoxFit.scaleDown,
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.subtitles_rounded, color: Color(0xFF00AEEC), size: 15),
+                        Icon(
+                          Icons.subtitles_rounded,
+                          color: Color(0xFF00AEEC),
+                          size: 15,
+                        ),
                         SizedBox(width: 4),
                         Text(
                           'Vietsub AI',
@@ -3284,18 +3554,27 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                 onTap: () => _startOnDemandPipeline(enableTts: true),
                 borderRadius: BorderRadius.circular(8),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 8,
+                    horizontal: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: AppTheme.primaryEmerald.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: AppTheme.primaryEmerald.withValues(alpha: 0.4)),
+                    border: Border.all(
+                      color: AppTheme.primaryEmerald.withValues(alpha: 0.4),
+                    ),
                   ),
                   child: const FittedBox(
                     fit: BoxFit.scaleDown,
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.record_voice_over_rounded, color: AppTheme.primaryEmerald, size: 15),
+                        Icon(
+                          Icons.record_voice_over_rounded,
+                          color: AppTheme.primaryEmerald,
+                          size: 15,
+                        ),
                         SizedBox(width: 4),
                         Text(
                           'Lồng tiếng AI',
@@ -3318,7 +3597,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
               onTap: _showQualitySelectionSheet,
               borderRadius: BorderRadius.circular(8),
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7.5),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 7.5,
+                ),
                 decoration: BoxDecoration(
                   color: Colors.white10,
                   borderRadius: BorderRadius.circular(8),
@@ -3327,7 +3609,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.high_quality_rounded, color: Colors.white70, size: 15),
+                    const Icon(
+                      Icons.high_quality_rounded,
+                      color: Colors.white70,
+                      size: 15,
+                    ),
                     const SizedBox(width: 3),
                     Text(
                       _currentQualityLabel,
@@ -3356,7 +3642,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(color: Colors.white12),
                 ),
-                child: const Icon(Icons.download_for_offline_rounded, color: Colors.white70, size: 18),
+                child: const Icon(
+                  Icons.download_for_offline_rounded,
+                  color: Colors.white70,
+                  size: 18,
+                ),
               ),
             ),
             const SizedBox(width: 6),
@@ -3368,27 +3658,39 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
               child: ValueListenableBuilder<List<WatchLaterItem>>(
                 valueListenable: WatchLaterRepository.watchLaterNotifier,
                 builder: (context, items, _) {
-                  final bvid = details?.bvid ??
-                      RegExp(r'BV1[0-9a-zA-Z]{9}', caseSensitive: false)
-                          .firstMatch(_sourceVideoUrl)
-                          ?.group(0) ??
+                  final bvid =
+                      details?.bvid ??
+                      RegExp(
+                        r'BV1[0-9a-zA-Z]{9}',
+                        caseSensitive: false,
+                      ).firstMatch(_sourceVideoUrl)?.group(0) ??
                       '';
-                  final isWl = items.any((it) =>
-                      it.targetUrl.contains(bvid.isNotEmpty ? bvid : _sourceVideoUrl) ||
-                      it.id == 'bili_$bvid');
+                  final isWl = items.any(
+                    (it) =>
+                        it.targetUrl.contains(
+                          bvid.isNotEmpty ? bvid : _sourceVideoUrl,
+                        ) ||
+                        it.id == 'bili_$bvid',
+                  );
                   return Container(
                     width: 35,
                     height: 33,
                     alignment: Alignment.center,
                     decoration: BoxDecoration(
-                      color: isWl ? const Color(0xFF00AEEC).withValues(alpha: 0.18) : Colors.white10,
+                      color: isWl
+                          ? const Color(0xFF00AEEC).withValues(alpha: 0.18)
+                          : Colors.white10,
                       borderRadius: BorderRadius.circular(8),
                       border: Border.all(
-                        color: isWl ? const Color(0xFF00AEEC).withValues(alpha: 0.6) : Colors.white12,
+                        color: isWl
+                            ? const Color(0xFF00AEEC).withValues(alpha: 0.6)
+                            : Colors.white12,
                       ),
                     ),
                     child: Icon(
-                      isWl ? Icons.bookmark_added_rounded : Icons.bookmark_add_outlined,
+                      isWl
+                          ? Icons.bookmark_added_rounded
+                          : Icons.bookmark_add_outlined,
                       color: isWl ? const Color(0xFF00AEEC) : Colors.white70,
                       size: 18,
                     ),
@@ -3418,7 +3720,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         // 6. Header "Video đề xuất" & Nút "Đổi đề xuất"
         Row(
           children: [
-            const Icon(Icons.auto_awesome_rounded, color: Color(0xFF00AEEC), size: 18),
+            const Icon(
+              Icons.auto_awesome_rounded,
+              color: Color(0xFF00AEEC),
+              size: 18,
+            ),
             const SizedBox(width: 7),
             const Text(
               'Video đề xuất',
@@ -3433,14 +3739,22 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
               const SizedBox(
                 width: 14,
                 height: 14,
-                child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF00AEEC)),
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Color(0xFF00AEEC),
+                ),
               )
             else
               InkWell(
-                onTap: _isRefreshingRelated ? null : () => _refreshRecommendations(),
+                onTap: _isRefreshingRelated
+                    ? null
+                    : () => _refreshRecommendations(),
                 borderRadius: BorderRadius.circular(14),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 9,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.white.withValues(alpha: 0.08),
                     borderRadius: BorderRadius.circular(14),
@@ -3453,10 +3767,17 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                         const SizedBox(
                           width: 11,
                           height: 11,
-                          child: CircularProgressIndicator(strokeWidth: 1.6, color: Color(0xFF00AEEC)),
+                          child: CircularProgressIndicator(
+                            strokeWidth: 1.6,
+                            color: Color(0xFF00AEEC),
+                          ),
                         )
                       else
-                        const Icon(Icons.refresh_rounded, size: 14, color: Color(0xFF00AEEC)),
+                        const Icon(
+                          Icons.refresh_rounded,
+                          size: 14,
+                          color: Color(0xFF00AEEC),
+                        ),
                       const SizedBox(width: 4),
                       const Text(
                         'Đổi đề xuất',
@@ -3492,27 +3813,48 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             ),
           )
         else ...[
-          ..._displayedRelatedVideos.map((item) => _buildRelatedVideoTile(item)),
-          if (_selectedRelatedTab == 'blended' || _selectedRelatedTab == 'explore')
+          ..._displayedRelatedVideos.map(
+            (item) => _buildRelatedVideoTile(item),
+          ),
+          if (_selectedRelatedTab == 'blended' ||
+              _selectedRelatedTab == 'explore')
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 12),
               child: Center(
                 child: TextButton.icon(
-                  onPressed: _isLoadingMoreRelated ? null : () => _loadMoreRecommendations(),
+                  onPressed: _isLoadingMoreRelated
+                      ? null
+                      : () => _loadMoreRecommendations(),
                   icon: _isLoadingMoreRelated
                       ? const SizedBox(
                           width: 14,
                           height: 14,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF00AEEC)),
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Color(0xFF00AEEC),
+                          ),
                         )
-                      : const Icon(Icons.expand_more_rounded, size: 18, color: Color(0xFF00AEEC)),
+                      : const Icon(
+                          Icons.expand_more_rounded,
+                          size: 18,
+                          color: Color(0xFF00AEEC),
+                        ),
                   label: Text(
-                    _isLoadingMoreRelated ? 'Đang nạp thêm...' : 'Tải thêm video đề xuất',
-                    style: const TextStyle(color: Color(0xFF00AEEC), fontSize: 12.5, fontWeight: FontWeight.w600),
+                    _isLoadingMoreRelated
+                        ? 'Đang nạp thêm...'
+                        : 'Tải thêm video đề xuất',
+                    style: const TextStyle(
+                      color: Color(0xFF00AEEC),
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                   style: TextButton.styleFrom(
                     backgroundColor: Colors.white.withValues(alpha: 0.05),
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
+                    ),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(20),
                       side: const BorderSide(color: Colors.white12),
@@ -3557,17 +3899,21 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                 onTap: () => _showAllBilibiliPagesSheet(details),
                 borderRadius: BorderRadius.circular(4),
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 2,
+                  ),
                   child: Row(
                     children: const [
                       Text(
                         'Xem tất cả',
-                        style: TextStyle(
-                          color: Colors.white60,
-                          fontSize: 12,
-                        ),
+                        style: TextStyle(color: Colors.white60, fontSize: 12),
                       ),
-                      Icon(Icons.chevron_right_rounded, size: 16, color: Colors.white60),
+                      Icon(
+                        Icons.chevron_right_rounded,
+                        size: 16,
+                        color: Colors.white60,
+                      ),
                     ],
                   ),
                 ),
@@ -3595,7 +3941,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
                   constraints: const BoxConstraints(minWidth: 84),
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
                   decoration: BoxDecoration(
                     color: isSelected
                         ? const Color(0xFFFB7299).withValues(alpha: 0.18)
@@ -3661,7 +4010,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   }
 
   /// Thẻ Hợp tập (合集 - UGC Season)
-  Widget _buildBilibiliUgcSeasonCard(BilibiliUgcSeason season, String currentBvid) {
+  Widget _buildBilibiliUgcSeasonCard(
+    BilibiliUgcSeason season,
+    String currentBvid,
+  ) {
     int currentIdx = 1;
     for (var i = 0; i < season.episodes.length; i++) {
       if (season.episodes[i].bvid == currentBvid) {
@@ -3730,7 +4082,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-                const Icon(Icons.chevron_right_rounded, size: 18, color: Colors.white38),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  size: 18,
+                  color: Colors.white38,
+                ),
               ],
             ),
           ],
@@ -3800,55 +4156,64 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                   child: CircularProgressIndicator(color: Color(0xFFFB7299)),
                 )
               : _bilibiliComments.isEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: const [
-                          Icon(Icons.chat_bubble_outline_rounded, size: 48, color: Colors.white24),
-                          SizedBox(height: 10),
-                          Text(
-                            'Chưa có bình luận nào cho video này',
-                            style: TextStyle(color: Colors.white54, fontSize: 13),
-                          ),
-                        ],
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: const [
+                      Icon(
+                        Icons.chat_bubble_outline_rounded,
+                        size: 48,
+                        color: Colors.white24,
                       ),
-                    )
-                  : NotificationListener<ScrollNotification>(
-                      onNotification: (scrollInfo) {
-                        if (scrollInfo.metrics.pixels >=
-                                scrollInfo.metrics.maxScrollExtent - 200 &&
-                            !_isLoadingMoreComments &&
-                            _hasMoreComments &&
-                            !_isLoadingBilibiliComments) {
-                          _loadMoreBilibiliComments();
-                        }
-                        return false;
-                      },
-                      child: ListView.separated(
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                        itemCount: _bilibiliComments.length + (_hasMoreComments ? 1 : 0),
-                        separatorBuilder: (_, _) => const Divider(color: Colors.white10, height: 16),
-                        itemBuilder: (ctx, index) {
-                          if (index == _bilibiliComments.length) {
-                            return const Padding(
-                              padding: EdgeInsets.symmetric(vertical: 16),
-                              child: Center(
-                                child: SizedBox(
-                                  width: 20,
-                                  height: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: Color(0xFFFB7299),
-                                  ),
-                                ),
-                              ),
-                            );
-                          }
-                          final comment = _bilibiliComments[index];
-                          return _buildBilibiliCommentTile(comment);
-                        },
+                      SizedBox(height: 10),
+                      Text(
+                        'Chưa có bình luận nào cho video này',
+                        style: TextStyle(color: Colors.white54, fontSize: 13),
                       ),
+                    ],
+                  ),
+                )
+              : NotificationListener<ScrollNotification>(
+                  onNotification: (scrollInfo) {
+                    if (scrollInfo.metrics.pixels >=
+                            scrollInfo.metrics.maxScrollExtent - 200 &&
+                        !_isLoadingMoreComments &&
+                        _hasMoreComments &&
+                        !_isLoadingBilibiliComments) {
+                      _loadMoreBilibiliComments();
+                    }
+                    return false;
+                  },
+                  child: ListView.separated(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 10,
                     ),
+                    itemCount:
+                        _bilibiliComments.length + (_hasMoreComments ? 1 : 0),
+                    separatorBuilder: (_, _) =>
+                        const Divider(color: Colors.white10, height: 16),
+                    itemBuilder: (ctx, index) {
+                      if (index == _bilibiliComments.length) {
+                        return const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 16),
+                          child: Center(
+                            child: SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Color(0xFFFB7299),
+                              ),
+                            ),
+                          ),
+                        );
+                      }
+                      final comment = _bilibiliComments[index];
+                      return _buildBilibiliCommentTile(comment);
+                    },
+                  ),
+                ),
         ),
       ],
     );
@@ -3856,13 +4221,16 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
   Widget _buildCommentEngineChip() {
     final isLocal = _commentTranslationEngine == 'local';
-    final activeColor = isLocal ? const Color(0xFF5AB664) : const Color(0xFF00AEEC);
+    final activeColor = isLocal
+        ? const Color(0xFF5AB664)
+        : const Color(0xFF00AEEC);
 
     return InkWell(
       onTap: _toggleCommentTranslationEngine,
       borderRadius: BorderRadius.circular(12),
       child: Tooltip(
-        message: 'Chạm để đổi qua lại giữa dịch Local (miễn phí) và dịch AI (API)',
+        message:
+            'Chạm để đổi qua lại giữa dịch Local (miễn phí) và dịch AI (API)',
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
           padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
@@ -3878,7 +4246,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(
-                isLocal ? Icons.phone_android_rounded : Icons.auto_awesome_rounded,
+                isLocal
+                    ? Icons.phone_android_rounded
+                    : Icons.auto_awesome_rounded,
                 size: 11.5,
                 color: activeColor,
               ),
@@ -3938,7 +4308,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
   /// Thẻ hiển thị một bình luận Bilibili (có avatar, tên, level, dịch sang tiếng Việt)
   Widget _buildBilibiliCommentTile(BilibiliCommentItem comment) {
-    final hasTranslation = _bilibiliCommentTranslations.containsKey(comment.rpid);
+    final hasTranslation = _bilibiliCommentTranslations.containsKey(
+      comment.rpid,
+    );
     final translatedText = _bilibiliCommentTranslations[comment.rpid] ?? '';
     final isTranslating = _bilibiliTranslatingCommentIds.contains(comment.rpid);
 
@@ -3991,12 +4363,17 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                   if (comment.level > 0) ...[
                     const SizedBox(width: 5),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0.5),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 4,
+                        vertical: 0.5,
+                      ),
                       decoration: BoxDecoration(
-                        color: _getBilibiliLevelColor(comment.level).withValues(alpha: 0.18),
+                        color: _getBilibiliLevelColor(comment.level)
+                            .withValues(alpha: 0.18),
                         borderRadius: BorderRadius.circular(3),
                         border: Border.all(
-                          color: _getBilibiliLevelColor(comment.level).withValues(alpha: 0.5),
+                          color: _getBilibiliLevelColor(comment.level)
+                              .withValues(alpha: 0.5),
                           width: 0.6,
                         ),
                       ),
@@ -4014,28 +4391,43 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
                   // Nút Dịch bình luận sang tiếng Việt
                   InkWell(
-                    onTap: isTranslating ? null : () => _toggleTranslateComment(comment.rpid, comment.message),
+                    onTap: isTranslating
+                        ? null
+                        : () => _toggleTranslateComment(
+                            comment.rpid,
+                            comment.message,
+                          ),
                     borderRadius: BorderRadius.circular(4),
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
                       child: isTranslating
                           ? const SizedBox(
                               width: 11,
                               height: 11,
-                              child: CircularProgressIndicator(strokeWidth: 1.5, color: AppTheme.primaryEmerald),
+                              child: CircularProgressIndicator(
+                                strokeWidth: 1.5,
+                                color: AppTheme.primaryEmerald,
+                              ),
                             )
                           : Row(
                               children: [
                                 Icon(
                                   Icons.translate_rounded,
                                   size: 11.5,
-                                  color: hasTranslation ? AppTheme.primaryEmerald : Colors.white38,
+                                  color: hasTranslation
+                                      ? AppTheme.primaryEmerald
+                                      : Colors.white38,
                                 ),
                                 const SizedBox(width: 3),
                                 Text(
                                   hasTranslation ? 'Gốc' : 'Dịch',
                                   style: TextStyle(
-                                    color: hasTranslation ? AppTheme.primaryEmerald : Colors.white38,
+                                    color: hasTranslation
+                                        ? AppTheme.primaryEmerald
+                                        : Colors.white38,
                                     fontSize: 10,
                                     fontWeight: FontWeight.w600,
                                   ),
@@ -4063,7 +4455,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                 const SizedBox(height: 6),
                 Container(
                   width: double.infinity,
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 7,
+                  ),
                   decoration: BoxDecoration(
                     color: AppTheme.primaryEmerald.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(8),
@@ -4105,24 +4500,41 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                   if (comment.timeText.isNotEmpty)
                     Text(
                       comment.timeText,
-                      style: const TextStyle(color: Colors.white38, fontSize: 10.5),
+                      style: const TextStyle(
+                        color: Colors.white38,
+                        fontSize: 10.5,
+                      ),
                     ),
                   const Spacer(),
                   if (comment.likeCount > 0) ...[
-                    const Icon(Icons.thumb_up_alt_outlined, size: 12, color: Colors.white38),
+                    const Icon(
+                      Icons.thumb_up_alt_outlined,
+                      size: 12,
+                      color: Colors.white38,
+                    ),
                     const SizedBox(width: 3),
                     Text(
                       '${comment.likeCount}',
-                      style: const TextStyle(color: Colors.white38, fontSize: 10.5),
+                      style: const TextStyle(
+                        color: Colors.white38,
+                        fontSize: 10.5,
+                      ),
                     ),
                     const SizedBox(width: 12),
                   ],
                   if (comment.replyCount > 0) ...[
-                    const Icon(Icons.chat_bubble_outline_rounded, size: 12, color: Colors.white38),
+                    const Icon(
+                      Icons.chat_bubble_outline_rounded,
+                      size: 12,
+                      color: Colors.white38,
+                    ),
                     const SizedBox(width: 3),
                     Text(
                       '${comment.replyCount}',
-                      style: const TextStyle(color: Colors.white38, fontSize: 10.5),
+                      style: const TextStyle(
+                        color: Colors.white38,
+                        fontSize: 10.5,
+                      ),
                     ),
                   ],
                 ],
@@ -4178,22 +4590,36 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   }
 
   Widget _buildRelatedFilterBar() {
-    final currentAuthor = _authorName ?? _bilibiliDetails?.author ?? _bilibiliItem?.author ?? '';
-    final hasSameAuthorVideos = currentAuthor.isNotEmpty &&
-        (_rawDirectRelated.any((it) => it.author.trim() == currentAuthor.trim()) ||
-         _blendedRelatedVideos.any((it) => it.author.trim() == currentAuthor.trim()));
+    final currentAuthor =
+        _authorName ?? _bilibiliDetails?.author ?? _bilibiliItem?.author ?? '';
+    final hasSameAuthorVideos =
+        currentAuthor.isNotEmpty &&
+        (_rawDirectRelated.any(
+              (it) => it.author.trim() == currentAuthor.trim(),
+            ) ||
+            _blendedRelatedVideos.any(
+              (it) => it.author.trim() == currentAuthor.trim(),
+            ));
 
     return SizedBox(
       height: 30,
       child: ListView(
         scrollDirection: Axis.horizontal,
         children: [
-          _buildRelatedFilterChip('blended', 'Đa dạng', Icons.auto_awesome_rounded),
+          _buildRelatedFilterChip(
+            'blended',
+            'Đa dạng',
+            Icons.auto_awesome_rounded,
+          ),
           const SizedBox(width: 8),
           _buildRelatedFilterChip('related', 'Liên quan', Icons.tune_rounded),
           if (hasSameAuthorVideos) ...[
             const SizedBox(width: 8),
-            _buildRelatedFilterChip('same_author', 'Cùng kênh', Icons.person_rounded),
+            _buildRelatedFilterChip(
+              'same_author',
+              'Cùng kênh',
+              Icons.person_rounded,
+            ),
           ],
           const SizedBox(width: 8),
           _buildRelatedFilterChip('explore', 'Khám phá', Icons.explore_rounded),
@@ -4265,7 +4691,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: const Center(
-                  child: Icon(Icons.movie_rounded, color: Colors.white12, size: 24),
+                  child: Icon(
+                    Icons.movie_rounded,
+                    color: Colors.white12,
+                    size: 24,
+                  ),
                 ),
               ),
               const SizedBox(width: 10),
@@ -4310,8 +4740,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   }
 
   Widget _buildRelatedVideoTile(BilibiliAnimeItem item) {
-    final currentAuthor = _authorName ?? _bilibiliDetails?.author ?? _bilibiliItem?.author ?? '';
-    final isSameAuthor = currentAuthor.isNotEmpty && item.author.trim() == currentAuthor.trim();
+    final currentAuthor =
+        _authorName ?? _bilibiliDetails?.author ?? _bilibiliItem?.author ?? '';
+    final isSameAuthor =
+        currentAuthor.isNotEmpty && item.author.trim() == currentAuthor.trim();
 
     return InkWell(
       onTap: () {
@@ -4345,20 +4777,29 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                         fit: BoxFit.cover,
                         errorBuilder: (_, _, _) => Container(
                           color: const Color(0xFF282B37),
-                          child: const Icon(Icons.movie_rounded, color: Colors.white24),
+                          child: const Icon(
+                            Icons.movie_rounded,
+                            color: Colors.white24,
+                          ),
                         ),
                       )
                     else
                       Container(
                         color: const Color(0xFF282B37),
-                        child: const Icon(Icons.movie_rounded, color: Colors.white24),
+                        child: const Icon(
+                          Icons.movie_rounded,
+                          color: Colors.white24,
+                        ),
                       ),
                     if (item.durationText.isNotEmpty)
                       Positioned(
                         right: 4,
                         bottom: 4,
                         child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1.5),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 1.5,
+                          ),
                           decoration: BoxDecoration(
                             color: Colors.black.withValues(alpha: 0.8),
                             borderRadius: BorderRadius.circular(4),
@@ -4386,7 +4827,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   FutureBuilder<String>(
-                    future: OfflineMlKitTranslator.translateHongguoTitle(item.title),
+                    future: OfflineMlKitTranslator.translateHongguoTitle(
+                      item.title,
+                    ),
                     initialData: item.title,
                     builder: (context, snapshot) {
                       return Text(
@@ -4406,10 +4849,15 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                   Row(
                     children: [
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 0.8),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 3,
+                          vertical: 0.8,
+                        ),
                         decoration: BoxDecoration(
                           border: Border.all(
-                            color: isSameAuthor ? const Color(0xFFFB7299) : Colors.white30,
+                            color: isSameAuthor
+                                ? const Color(0xFFFB7299)
+                                : Colors.white30,
                             width: 0.8,
                           ),
                           borderRadius: BorderRadius.circular(3),
@@ -4417,7 +4865,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                         child: Text(
                           'UP',
                           style: TextStyle(
-                            color: isSameAuthor ? const Color(0xFFFB7299) : Colors.white60,
+                            color: isSameAuthor
+                                ? const Color(0xFFFB7299)
+                                : Colors.white60,
                             fontSize: 7.5,
                             fontWeight: FontWeight.bold,
                           ),
@@ -4430,21 +4880,30 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            color: isSameAuthor ? const Color(0xFFFB7299) : Colors.white54,
+                            color: isSameAuthor
+                                ? const Color(0xFFFB7299)
+                                : Colors.white54,
                             fontSize: 11,
-                            fontWeight: isSameAuthor ? FontWeight.w600 : FontWeight.normal,
+                            fontWeight: isSameAuthor
+                                ? FontWeight.w600
+                                : FontWeight.normal,
                           ),
                         ),
                       ),
                       if (isSameAuthor) ...[
                         const SizedBox(width: 4),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 1,
+                          ),
                           decoration: BoxDecoration(
-                            color: const Color(0xFFFB7299).withValues(alpha: 0.15),
+                            color: const Color(0xFFFB7299)
+                                .withValues(alpha: 0.15),
                             borderRadius: BorderRadius.circular(3),
                             border: Border.all(
-                              color: const Color(0xFFFB7299).withValues(alpha: 0.5),
+                              color: const Color(0xFFFB7299)
+                                  .withValues(alpha: 0.5),
                               width: 0.8,
                             ),
                           ),
@@ -4464,7 +4923,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                     const SizedBox(height: 2),
                     Text(
                       '${item.viewCountText} lượt xem',
-                      style: const TextStyle(color: Colors.white38, fontSize: 10),
+                      style: const TextStyle(
+                        color: Colors.white38,
+                        fontSize: 10,
+                      ),
                     ),
                   ],
                 ],
@@ -4542,21 +5004,24 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       _userChosePlayRaw = false;
     });
 
-    final newBvid = item?.bvid ??
-        RegExp(r'BV[a-zA-Z0-9]+', caseSensitive: false).firstMatch(newVideoPath)?.group(0);
+    final newBvid =
+        item?.bvid ??
+        RegExp(
+          r'BV[a-zA-Z0-9]+',
+          caseSensitive: false,
+        ).firstMatch(newVideoPath)?.group(0);
     if (newBvid != null && newBvid.isNotEmpty) {
       _loadRelatedVideos(newBvid);
     }
 
     _ttsScheduler = TtsAudioScheduler(newDocument);
-    await _initPlayerForPath(
-      newVideoPath,
-      refreshHongguoUrl: false,
-    );
+    _ttsScheduler = _createTtsScheduler(newDocument);
+    await _initPlayerForPath(newVideoPath, refreshHongguoUrl: false);
   }
 
   void _showDownloadSelectionSheet() {
-    final isBilibili = _bilibiliDetails != null ||
+    final isBilibili =
+        _bilibiliDetails != null ||
         BilibiliResolver.isBilibiliUrl(_sourceVideoUrl) ||
         BilibiliResolver.isBilibiliUrl(_currentVideoPath);
     final isHongguo = widget.dramaDetail != null;
@@ -4739,7 +5204,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                               Container(
                                 padding: const EdgeInsets.all(8),
                                 decoration: BoxDecoration(
-                                  color: AppTheme.primaryEmerald.withValues(alpha: 0.15),
+                                  color: AppTheme.primaryEmerald.withValues(
+                                    alpha: 0.15,
+                                  ),
                                   shape: BoxShape.circle,
                                 ),
                                 child: const Icon(
@@ -4760,7 +5227,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                             ],
                           ),
                           IconButton(
-                            icon: const Icon(Icons.close_rounded, color: Colors.white60, size: 20),
+                            icon: const Icon(
+                              Icons.close_rounded,
+                              color: Colors.white60,
+                              size: 20,
+                            ),
                             onPressed: () => Navigator.pop(ctx),
                           ),
                         ],
@@ -4789,7 +5260,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                               ),
                               decoration: BoxDecoration(
                                 color: isSel
-                                    ? AppTheme.primaryEmerald.withValues(alpha: 0.15)
+                                    ? AppTheme.primaryEmerald.withValues(
+                                        alpha: 0.15,
+                                      )
                                     : const Color(0xFF14151B),
                                 borderRadius: BorderRadius.circular(12),
                                 border: Border.all(
@@ -4813,7 +5286,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                   const SizedBox(width: 12),
                                   Expanded(
                                     child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
                                       children: [
                                         Row(
                                           children: [
@@ -4830,23 +5304,30 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                             if (q['badge'] != null) ...[
                                               const SizedBox(width: 8),
                                               Container(
-                                                padding: const EdgeInsets.symmetric(
-                                                  horizontal: 6,
-                                                  vertical: 1.5,
-                                                ),
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 6,
+                                                      vertical: 1.5,
+                                                    ),
                                                 decoration: BoxDecoration(
-                                                  color: (q['key'] == '80'
-                                                          ? Colors.amber
-                                                          : AppTheme.primaryEmerald)
-                                                      .withValues(alpha: 0.2),
-                                                  borderRadius: BorderRadius.circular(6),
+                                                  color:
+                                                      (q['key'] == '80'
+                                                              ? Colors.amber
+                                                              : AppTheme
+                                                                    .primaryEmerald)
+                                                          .withValues(
+                                                            alpha: 0.2,
+                                                          ),
+                                                  borderRadius:
+                                                      BorderRadius.circular(6),
                                                 ),
                                                 child: Text(
                                                   q['badge']!,
                                                   style: TextStyle(
                                                     color: q['key'] == '80'
                                                         ? Colors.amber
-                                                        : AppTheme.primaryEmerald,
+                                                        : AppTheme
+                                                              .primaryEmerald,
                                                     fontSize: 9.5,
                                                     fontWeight: FontWeight.bold,
                                                   ),
@@ -4859,7 +5340,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                         Text(
                                           q['subtitle']!,
                                           style: TextStyle(
-                                            color: Colors.white.withValues(alpha: 0.55),
+                                            color: Colors.white.withValues(
+                                              alpha: 0.55,
+                                            ),
                                             fontSize: 11,
                                           ),
                                           maxLines: 1,
@@ -4916,7 +5399,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   Future<void> _downloadCurrentVideo({String? quality}) async {
     if (_isDownloadingVideo) return;
     final isHongguo = widget.dramaDetail != null;
-    final isBilibili = _bilibiliDetails != null ||
+    final isBilibili =
+        _bilibiliDetails != null ||
         BilibiliResolver.isBilibiliUrl(_sourceVideoUrl) ||
         BilibiliResolver.isBilibiliUrl(_currentVideoPath);
 
@@ -4949,7 +5433,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
         var streamUrl = _currentVideoPath;
         if (!streamUrl.startsWith('http')) {
-          streamUrl = await _prefetchManager?.getOrResolveUrl(_currentEpisodeIndex) ?? _sourceVideoUrl;
+          streamUrl =
+              await _prefetchManager?.getOrResolveUrl(_currentEpisodeIndex) ??
+              _sourceVideoUrl;
         }
 
         await MultiThreadDownloader.downloadFile(
@@ -4985,11 +5471,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           if (mounted) {
             setState(() {
               _downloadProgress = 1.0;
-              _downloadMessage = '✅ Đã tải Tập $_currentEpisodeIndex thành công!';
+              _downloadMessage =
+                  '✅ Đã tải Tập $_currentEpisodeIndex thành công!';
             });
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text('✅ Tải Tập $_currentEpisodeIndex thành công! Đang chuyển sang phát offline mượt mà...'),
+                content: Text(
+                  '✅ Tải Tập $_currentEpisodeIndex thành công! Đang chuyển sang phát offline mượt mà...',
+                ),
                 backgroundColor: AppTheme.primaryEmerald,
                 duration: const Duration(seconds: 3),
               ),
@@ -5025,7 +5514,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         if (details.coverUrl != null && details.coverUrl!.isNotEmpty) {
           try {
             final history = await HistoryRepository.getInstance();
-            await history.updateCoverForVideo(_sourceVideoUrl, details.coverUrl!);
+            await history.updateCoverForVideo(
+              _sourceVideoUrl,
+              details.coverUrl!,
+            );
           } catch (_) {}
         }
 
@@ -5064,7 +5556,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             await history.updateVideoPath(_sourceVideoUrl, cachedVideo.path);
             await history.updateVideoPath(_currentVideoPath, cachedVideo.path);
             if (_currentTitle.isNotEmpty && !_isGenericTitle(_currentTitle)) {
-              await history.updateTitleForVideo(cachedVideo.path, _currentTitle);
+              await history.updateTitleForVideo(
+                cachedVideo.path,
+                _currentTitle,
+              );
               await history.updateTitleForVideo(_sourceVideoUrl, _currentTitle);
             }
           } catch (_) {}
@@ -5075,7 +5570,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             });
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
-                content: Text('✅ Tải video thành công! Đang chuyển sang phát offline mượt mà...'),
+                content: Text(
+                  '✅ Tải video thành công! Đang chuyển sang phát offline mượt mà...',
+                ),
                 backgroundColor: AppTheme.primaryEmerald,
                 duration: Duration(seconds: 3),
               ),
@@ -5108,7 +5605,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         );
         if (isDouyinSource) {
           try {
-            final details = await DouyinResolver().resolveVideo(_sourceVideoUrl);
+            final details = await DouyinResolver().resolveVideo(
+              _sourceVideoUrl,
+            );
             if (details.playUrls.isNotEmpty) {
               candidateUrls = details.playUrls;
               downloadHeaders = DouyinResolver.cdnHeaders();
@@ -5166,7 +5665,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             });
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
-                content: Text('✅ Tải video thành công! Đang chuyển sang phát offline mượt mà...'),
+                content: Text(
+                  '✅ Tải video thành công! Đang chuyển sang phát offline mượt mà...',
+                ),
                 backgroundColor: AppTheme.primaryEmerald,
                 duration: Duration(seconds: 3),
               ),
@@ -5272,8 +5773,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
     // Chỉ tự động chuyển tập nếu video đã nạp và phát ổn định ít nhất 2.5 giây
     // Tránh tình trạng video vừa mở lên ở vị trí cũ bị trigger chuyển tập ngay lập tức
-    final hasPlayedLongEnough = _playbackStartedAt != null &&
-        now.difference(_playbackStartedAt!) > const Duration(milliseconds: 2500);
+    final hasPlayedLongEnough =
+        _playbackStartedAt != null &&
+        now.difference(_playbackStartedAt!) >
+            const Duration(milliseconds: 2500);
 
     // Tự động chuyển sang tập tiếp theo khi xem xong (video kết thúc và còn < 1s) - Chỉ dành cho phim bộ Hồng Quả
     if (_autoPlayNextEpisode &&
@@ -5355,13 +5858,15 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
   void _monitorPlaybackStall() {
     final controller = _controller;
-    if (!mounted || controller == null || !controller.value.isInitialized) return;
+    if (!mounted || controller == null || !controller.value.isInitialized)
+      return;
     final now = DateTime.now();
     if (_refreshPlaybackStall(now)) {
       setState(() {});
       _syncTtsWithVideo();
     }
-    if ((_bilibiliDetails != null || BilibiliResolver.isBilibiliUrl(_sourceVideoUrl)) &&
+    if ((_bilibiliDetails != null ||
+            BilibiliResolver.isBilibiliUrl(_sourceVideoUrl)) &&
         _isPlaybackStalled &&
         controller.hasBackupBilibiliCdn &&
         now.difference(_lastPositionAdvanceAt) >= const Duration(seconds: 6)) {
@@ -5375,9 +5880,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     }
     if (widget.dramaDetail != null && !_isDowngradingHongguo) {
       final hasErr = controller.value.hasError;
-      final longStall = _isPlaybackStalled &&
-          now.difference(_lastPositionAdvanceAt) >=
-              const Duration(seconds: 20);
+      final longStall =
+          _isPlaybackStalled &&
+          now.difference(_lastPositionAdvanceAt) >= const Duration(seconds: 20);
       if ((hasErr || longStall) && _hongguoDowngradeAttempts < 2) {
         unawaited(
           _attemptHongguoAutoDowngrade(
@@ -5409,7 +5914,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     }
     _isDowngradingHongguo = true;
     try {
-      final info = _hongguoVideoInfo ??
+      final info =
+          _hongguoVideoInfo ??
           await HongguoLocalEngine.resolveVideoInfo(
             vid,
             preferredQuality: _hongguoQuality,
@@ -5422,8 +5928,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       await HongguoCodecCapabilities.instance.learnFailure(curRendition);
       _hongguoExcludedKeys.add(curRendition.uniqueKey);
 
-      final support =
-          await HongguoCodecCapabilities.instance.getHardwareSupport();
+      final support = await HongguoCodecCapabilities.instance
+          .getHardwareSupport();
       final next = info.ladder!.selectDowngrade(
         curRendition,
         hardwareSupport: support,
@@ -5433,7 +5939,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       if (next == null) return;
 
       _hongguoDowngradeAttempts++;
-      final resumeMs = _controller?.value.position.inMilliseconds ?? _currentPosMs;
+      final resumeMs =
+          _controller?.value.position.inMilliseconds ?? _currentPosMs;
       final newUrl = await HongguoLocalEngine.resolveAndGetPlayableUrl(
         detail.seriesId,
         vid,
@@ -5484,7 +5991,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       } catch (_) {}
     }
     if (!mounted) return;
-    final availableTiers = info?.ladder?.availableQualityTiers ??
+    final availableTiers =
+        info?.ladder?.availableQualityTiers ??
         const <String>['1080', '720', '480', '360'];
 
     await showModalBottomSheet<void>(
@@ -5524,16 +6032,19 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                       selected
                           ? Icons.radio_button_checked
                           : Icons.radio_button_off,
-                      color:
-                          selected ? AppTheme.primaryEmerald : Colors.white54,
+                      color: selected
+                          ? AppTheme.primaryEmerald
+                          : Colors.white54,
                     ),
                     title: Text(
                       opt.label,
                       style: TextStyle(
-                        color:
-                            selected ? AppTheme.primaryEmerald : Colors.white,
-                        fontWeight:
-                            selected ? FontWeight.w700 : FontWeight.normal,
+                        color: selected
+                            ? AppTheme.primaryEmerald
+                            : Colors.white,
+                        fontWeight: selected
+                            ? FontWeight.w700
+                            : FontWeight.normal,
                       ),
                     ),
                     onTap: () async {
@@ -5547,16 +6058,16 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                       _settings.hongguoPreferredQuality = opt.key;
                       final resumeMs =
                           _controller?.value.position.inMilliseconds ??
-                              _currentPosMs;
+                          _currentPosMs;
                       try {
                         final fresh =
                             await HongguoLocalEngine.resolveAndGetPlayableUrl(
-                          detail.seriesId,
-                          vid,
-                          episodeIndex: _currentEpisodeIndex,
-                          preferredQuality: opt.key,
-                          forceRedownload: true,
-                        );
+                              detail.seriesId,
+                              vid,
+                              episodeIndex: _currentEpisodeIndex,
+                              preferredQuality: opt.key,
+                              forceRedownload: true,
+                            );
                         if (!mounted) return;
                         await _switchVideo(
                           newVideoPath: fresh,
@@ -5571,7 +6082,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                       } catch (e) {
                         if (!mounted) return;
                         ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Đổi chất lượng thất bại: $e')),
+                          SnackBar(
+                            content: Text('Đổi chất lượng thất bại: $e'),
+                          ),
                         );
                       }
                     },
@@ -5608,10 +6121,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       );
     }
     if (file != null && file.path.isNotEmpty) {
-      return LiveAudioSource(
-        mediaPath: file.path,
-        sourceLabel: _currentTitle,
-      );
+      return LiveAudioSource(mediaPath: file.path, sourceLabel: _currentTitle);
     }
     if (contentUri != null) {
       return LiveAudioSource(
@@ -5798,9 +6308,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         },
         onToggleEnabled: _toggleLiveTranslate,
         onOpenGeminiSettings: () async {
-          await Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => const SettingsScreen()),
-          );
+          await Navigator.of(context)
+              .push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
           if (mounted) setState(() {});
         },
       ),
@@ -5837,8 +6346,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   Future<void> _persistPlaybackPosition({bool force = false}) async {
     if (_isScrubbing && !force) return;
     final now = DateTime.now();
-    if (!force &&
-        now.difference(_lastPositionSaveAt) < _positionSaveInterval) {
+    if (!force && now.difference(_lastPositionSaveAt) < _positionSaveInterval) {
       return;
     }
     final controller = _controller;
@@ -5861,7 +6369,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         );
         final vid = _currentHongguoVid();
         if (vid.isNotEmpty) {
-          final durMs = controller?.value.duration.inMilliseconds ??
+          final durMs =
+              controller?.value.duration.inMilliseconds ??
               _hongguoVideoInfo?.durationMs ??
               0;
           final cloudProgress = HongguoCloudProgress(
@@ -5903,14 +6412,19 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       } else {
         await widget.onPlaybackPositionChanged?.call(positionMs);
 
-        final isBilibili = _bilibiliDetails != null ||
+        final isBilibili =
+            _bilibiliDetails != null ||
             widget.bilibiliItem != null ||
             BilibiliResolver.isBilibiliUrl(_sourceVideoUrl);
 
         final history = await HistoryRepository.getInstance();
-        final bvid = _bilibiliDetails?.bvid ??
+        final bvid =
+            _bilibiliDetails?.bvid ??
             widget.bilibiliItem?.bvid ??
-            RegExp(r'BV1[0-9a-zA-Z]{9}', caseSensitive: false).firstMatch(_sourceVideoUrl)?.group(0);
+            RegExp(
+              r'BV1[0-9a-zA-Z]{9}',
+              caseSensitive: false,
+            ).firstMatch(_sourceVideoUrl)?.group(0);
 
         final effectiveUrl = (bvid != null && bvid.isNotEmpty)
             ? 'https://www.bilibili.com/video/$bvid'
@@ -5918,9 +6432,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
         final effectiveTitle = _currentTitle.isNotEmpty
             ? _currentTitle
-            : (_originalTitle ?? widget.title ?? (isBilibili ? 'Bilibili Video' : 'Video'));
+            : (_originalTitle ??
+                  widget.title ??
+                  (isBilibili ? 'Bilibili Video' : 'Video'));
 
-        final effectiveCover = _coverUrl ??
+        final effectiveCover =
+            _coverUrl ??
             widget.coverUrl ??
             _bilibiliDetails?.coverUrl ??
             widget.bilibiliItem?.cover;
@@ -6017,14 +6534,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     setState(() {
       _currentDocument = shiftedDocument;
       _ttsScheduler = TtsAudioScheduler(shiftedDocument);
+      _ttsScheduler = _createTtsScheduler(shiftedDocument);
     });
     await oldScheduler.dispose();
 
     if (_prefetchManager != null) {
-      _prefetchManager!.registerDocument(
-        _currentEpisodeIndex,
-        shiftedDocument,
-      );
+      _prefetchManager!.registerDocument(_currentEpisodeIndex, shiftedDocument);
     }
 
     if (_settings.isTtsPlaybackEnabled) {
@@ -6041,14 +6556,18 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     }
 
     final history = await HistoryRepository.getInstance();
-    SubtitleDocument? restoredDoc =
-        await history.restoreOriginalSubtitleDocumentForVideo(
-      videoPath: _sourceVideoUrl,
-      seriesId: widget.dramaDetail?.seriesId,
-      episodeIndex: widget.dramaDetail != null ? _currentEpisodeIndex : null,
-    );
+    SubtitleDocument? restoredDoc = await history
+        .restoreOriginalSubtitleDocumentForVideo(
+          videoPath: _sourceVideoUrl,
+          seriesId: widget.dramaDetail?.seriesId,
+          episodeIndex: widget.dramaDetail != null
+              ? _currentEpisodeIndex
+              : null,
+        );
 
-    if (restoredDoc == null && _originalDocument != null && _originalDocument!.isNotEmpty) {
+    if (restoredDoc == null &&
+        _originalDocument != null &&
+        _originalDocument!.isNotEmpty) {
       restoredDoc = _originalDocument!.shiftedBy(0);
       await history.updateSubtitleDocumentForVideo(
         videoPath: _sourceVideoUrl,
@@ -6059,7 +6578,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     }
 
     if (restoredDoc == null) {
-      throw StateError('Không tìm thấy bản lưu mốc gốc hoặc phụ đề đã ở mốc ban đầu.');
+      throw StateError(
+        'Không tìm thấy bản lưu mốc gốc hoặc phụ đề đã ở mốc ban đầu.',
+      );
     }
 
     final oldScheduler = _ttsScheduler;
@@ -6068,14 +6589,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     setState(() {
       _currentDocument = restoredDoc!;
       _ttsScheduler = TtsAudioScheduler(restoredDoc);
+      _ttsScheduler = _createTtsScheduler(restoredDoc);
     });
     await oldScheduler.dispose();
 
     if (_prefetchManager != null) {
-      _prefetchManager!.registerDocument(
-        _currentEpisodeIndex,
-        restoredDoc,
-      );
+      _prefetchManager!.registerDocument(_currentEpisodeIndex, restoredDoc);
     }
 
     if (_settings.isTtsPlaybackEnabled) {
@@ -6154,7 +6673,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     }
   }
 
-
   @override
   Widget build(BuildContext context) {
     if (_playerError != null) {
@@ -6207,9 +6725,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     final controller = _controller;
     final isLandscape =
         MediaQuery.of(context).orientation == Orientation.landscape;
-    final isLocalVideo = !_currentVideoPath.startsWith('http://') &&
+    final isLocalVideo =
+        !_currentVideoPath.startsWith('http://') &&
         !_currentVideoPath.startsWith('https://');
-    final bool isHongguoWaitingTranslation = widget.dramaDetail != null &&
+    final bool isHongguoWaitingTranslation =
+        widget.dramaDetail != null &&
         _currentDocument.isEmpty &&
         !_userChosePlayRaw &&
         !isLocalVideo;
@@ -6224,14 +6744,20 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       );
     }
 
-    final isBilibili = _bilibiliDetails != null ||
+    final isBilibili =
+        _bilibiliDetails != null ||
         widget.bilibiliItem != null ||
         BilibiliResolver.isBilibiliUrl(_sourceVideoUrl) ||
         BilibiliResolver.isBilibiliUrl(_currentVideoPath);
-    final isBilibiliPortrait = !isLandscape && !_isPlayerFullScreen && (isBilibili && widget.dramaDetail == null);
+    final isBilibiliPortrait =
+        !isLandscape &&
+        !_isPlayerFullScreen &&
+        (isBilibili && widget.dramaDetail == null);
 
     final Widget playerWidget;
-    if (_isInitialized && controller != null && controller.value.isInitialized) {
+    if (_isInitialized &&
+        controller != null &&
+        controller.value.isInitialized) {
       playerWidget = _buildVideoPlayerArea(
         controller,
         isLandscape,
@@ -6249,13 +6775,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         child: isBilibiliPortrait
             ? Column(
                 children: [
-                  AspectRatio(
-                    aspectRatio: 16 / 9,
-                    child: playerWidget,
-                  ),
-                  Expanded(
-                    child: _buildBilibiliBelowContent(),
-                  ),
+                  AspectRatio(aspectRatio: 16 / 9, child: playerWidget),
+                  Expanded(child: _buildBilibiliBelowContent()),
                 ],
               )
             : playerWidget,
@@ -6278,7 +6799,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
               Image.network(
                 cover,
                 fit: BoxFit.cover,
-                errorBuilder: (_, _, _) => Container(color: const Color(0xFF0D1117)),
+                errorBuilder: (_, _, _) =>
+                    Container(color: const Color(0xFF0D1117)),
               )
             else
               Container(color: const Color(0xFF0D1117)),
@@ -6307,7 +6829,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
               child: Row(
                 children: [
                   IconButton(
-                    icon: const Icon(Icons.arrow_back, color: Colors.white, size: 22),
+                    icon: const Icon(
+                      Icons.arrow_back,
+                      color: Colors.white,
+                      size: 22,
+                    ),
                     onPressed: () {
                       if (widget.isGlobalPlayer) {
                         GlobalPlayerManager.instance.minimize();
@@ -6355,15 +6881,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             Image.network(
               cover,
               fit: BoxFit.cover,
-              errorBuilder: (_, _, _) => Container(color: const Color(0xFF14161E)),
+              errorBuilder: (_, _, _) =>
+                  Container(color: const Color(0xFF14161E)),
             )
           else
             Container(color: const Color(0xFF14161E)),
 
           // 2. Lớp phủ làm mờ đen nhẹ
-          Container(
-            color: Colors.black.withValues(alpha: 0.45),
-          ),
+          Container(color: Colors.black.withValues(alpha: 0.45)),
 
           // 3. Vòng xoay nạp mượt phong cách Bilibili
           Center(
@@ -6392,7 +6917,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             child: Row(
               children: [
                 IconButton(
-                  icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 20),
+                  icon: const Icon(
+                    Icons.arrow_back_ios_new_rounded,
+                    color: Colors.white,
+                    size: 20,
+                  ),
                   onPressed: () {
                     if (widget.isGlobalPlayer) {
                       GlobalPlayerManager.instance.minimize();
@@ -6531,9 +7060,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const CircularProgressIndicator(
-                      color: Color(0xFF00AEEC),
-                    ),
+                    const CircularProgressIndicator(color: Color(0xFF00AEEC)),
                     const SizedBox(height: 12),
                     Text(
                       'Đang đổi chất lượng sang $_currentQualityLabel...',
@@ -6548,282 +7075,146 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
               ),
             ),
 
-              // 2. Lớp Phụ đề Live Translate tạm thời + Hộp Đen / Phụ đề nổi
-              if (_liveTranslator != null)
-                Positioned(
-                  left: isLandscape ? 48 : 14,
-                  right: isLandscape ? 48 : 14,
-                  bottom:
-                      (isLandscape
-                          ? (_showControls ? 64.0 : 16.0)
-                          : (_showControls ? 86.0 : 22.0)) +
-                      (_currentDocument.isNotEmpty &&
-                              _settings.subtitleMode != 'none'
-                          ? 54.0
-                          : 0.0),
-                  child: Center(
-                    child: LiveTranslateCaptionBanner(
-                      translator: _liveTranslator!,
-                      onTap: _openLiveTranslateSheet,
-                    ),
-                  ),
+          // 2. Lớp Phụ đề Live Translate tạm thời + Hộp Đen / Phụ đề nổi
+          if (_liveTranslator != null)
+            Positioned(
+              left: isLandscape ? 48 : 14,
+              right: isLandscape ? 48 : 14,
+              bottom:
+                  (isLandscape
+                      ? (_showControls ? 64.0 : 16.0)
+                      : (_showControls ? 86.0 : 22.0)) +
+                  (_currentDocument.isNotEmpty &&
+                          _settings.subtitleMode != 'none'
+                      ? 54.0
+                      : 0.0),
+              child: Center(
+                child: LiveTranslateCaptionBanner(
+                  translator: _liveTranslator!,
+                  onTap: _openLiveTranslateSheet,
                 ),
-
-              // 2b. Lớp Hộp Đen (BlackBox) và Phụ đề nổi
-              SubtitleOverlay(
-                document: _currentDocument,
-                currentPositionMs: _currentPosMs,
-                settings: _settings,
-                onDragOffset: (newOffset) {
-                  setState(() {
-                    _settings.subtitleOffsetY = newOffset.clamp(-120.0, 400.0);
-                  });
-                },
               ),
+            ),
 
-              // 3. Lớp chuyển đổi tập phim (Khi đang nạp tập qua mạng)
-              if (_showEpisodeSwitchOverlay)
-                Container(
-                  color: Colors.black54,
-                  child: Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const CircularProgressIndicator(
-                          color: AppTheme.primaryEmerald,
-                        ),
-                        const SizedBox(height: 14),
-                        Text(
-                          'Đang mở Tập ${_switchingTargetEpisode > 0 ? _switchingTargetEpisode : _currentEpisodeIndex}...',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
+          // 2b. Lớp Hộp Đen (BlackBox) và Phụ đề nổi
+          SubtitleOverlay(
+            document: _currentDocument,
+            currentPositionMs: _currentPosMs,
+            settings: _settings,
+            onDragOffset: (newOffset) {
+              setState(() {
+                _settings.subtitleOffsetY = newOffset.clamp(-120.0, 400.0);
+              });
+            },
+          ),
+
+          // 3. Lớp chuyển đổi tập phim (Khi đang nạp tập qua mạng)
+          if (_showEpisodeSwitchOverlay)
+            Container(
+              color: Colors.black54,
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const CircularProgressIndicator(
+                      color: AppTheme.primaryEmerald,
                     ),
-                  ),
+                    const SizedBox(height: 14),
+                    Text(
+                      'Đang mở Tập ${_switchingTargetEpisode > 0 ? _switchingTargetEpisode : _currentEpisodeIndex}...',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
                 ),
+              ),
+            ),
 
-              // Banner tiến trình dịch cho tập hiện tại (Hồng Quả: khi đang phát video và dịch/lồng tiếng chạy ngầm)
-              if (_prefetchManager != null &&
-                  _currentDocument.isEmpty &&
-                  (widget.dramaDetail != null || _userChosePlayRaw))
-                Positioned(
-                  top: 56,
-                  left: 20,
-                  right: 20,
-                  child: ValueListenableBuilder<PrefetchState?>(
-                    valueListenable: _prefetchManager!.prefetchStateNotifier,
-                    builder: (context, state, _) {
-                      if (state == null ||
-                          state.episodeIndex != _currentEpisodeIndex) {
-                        return Center(
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 14,
-                              vertical: 8,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.black.withValues(alpha: 0.85),
-                              borderRadius: BorderRadius.circular(20),
-                              border: Border.all(
-                                color: AppTheme.primaryEmerald.withValues(alpha: 0.6),
-                                width: 1.2,
-                              ),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.5),
-                                  blurRadius: 10,
-                                  offset: const Offset(0, 4),
-                                ),
-                              ],
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const SizedBox(
-                                  width: 14,
-                                  height: 14,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: AppTheme.primaryEmerald,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  _settings.isTtsPlaybackEnabled
-                                      ? 'Đang chuẩn bị sub & lồng tiếng Tập $_currentEpisodeIndex...'
-                                      : 'Đang chuẩn bị dịch phụ đề Tập $_currentEpisodeIndex...',
-                                  style: const TextStyle(
-                                    fontSize: 11.5,
-                                    fontWeight: FontWeight.w600,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      }
-                      final isTranslating = state.isTranslating;
-                      final isFailed = state.status == 'failed';
-                      if (!isTranslating && !isFailed) {
-                        return const SizedBox.shrink();
-                      }
-
-                      return Center(
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 14,
-                            vertical: 8,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withValues(alpha: 0.85),
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(
-                              color: isFailed
-                                  ? Colors.redAccent.withValues(alpha: 0.6)
-                                  : AppTheme.primaryEmerald.withValues(alpha: 0.6),
-                              width: 1.2,
-                            ),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.5),
-                                blurRadius: 10,
-                                offset: const Offset(0, 4),
-                              ),
-                            ],
-                          ),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  if (isTranslating)
-                                    const SizedBox(
-                                      width: 14,
-                                      height: 14,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: AppTheme.primaryEmerald,
-                                      ),
-                                    )
-                                  else if (isFailed)
-                                    const Icon(
-                                      Icons.error_outline_rounded,
-                                      color: Colors.redAccent,
-                                      size: 16,
-                                    ),
-                                  const SizedBox(width: 8),
-                                  Flexible(
-                                    child: Text(
-                                      isFailed
-                                          ? 'Chưa tạo được phụ đề: ${state.message}'
-                                          : (state.message.isNotEmpty
-                                              ? state.message
-                                              : (_settings.isTtsPlaybackEnabled
-                                                  ? 'Đang dịch & tạo lồng tiếng Tập $_currentEpisodeIndex (${(state.progress * 100).toInt()}%)...'
-                                                  : 'Đang bóc tách & dịch phụ đề Tập $_currentEpisodeIndex (${(state.progress * 100).toInt()}%)...')),
-                                      style: TextStyle(
-                                        fontSize: 11.5,
-                                        fontWeight: FontWeight.w600,
-                                        color: isFailed
-                                            ? Colors.redAccent
-                                            : Colors.white,
-                                      ),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                  if (isFailed) ...[
-                                    const SizedBox(width: 8),
-                                    InkWell(
-                                      onTap: () {
-                                        _prefetchManager?.onEpisodePlaying(
-                                          _currentEpisodeIndex,
-                                          translateCurrentIfEmpty: true,
-                                          onCurrentSubtitleReady: (newDoc) {
-                                            if (!mounted) return;
-                                            setState(() {
-                                              _currentDocument = newDoc;
-                                              _ttsScheduler.dispose();
-                                              _ttsScheduler = TtsAudioScheduler(newDoc);
-                                            });
-                                            _applyAudioVolumes();
-                                            if (_controller?.value.isPlaying ?? false) {
-                                              if (_settings.isTtsPlaybackEnabled) {
-                                                final pos = _controller?.value.position.inMilliseconds ?? 0;
-                                                _ttsScheduler.onSeek(pos);
-                                                _syncTtsWithVideo();
-                                              }
-                                            }
-                                          },
-                                        );
-                                      },
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 6,
-                                          vertical: 2,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: Colors.redAccent.withValues(alpha: 0.2),
-                                          borderRadius: BorderRadius.circular(4),
-                                        ),
-                                        child: const Text(
-                                          'Thử lại',
-                                          style: TextStyle(
-                                            fontSize: 10,
-                                            fontWeight: FontWeight.bold,
-                                            color: Colors.white,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ],
-                              ),
-                              if (isTranslating) ...[
-                                const SizedBox(height: 6),
-                                ClipRRect(
-                                  borderRadius: BorderRadius.circular(2),
-                                  child: SizedBox(
-                                    width: 170,
-                                    height: 3.5,
-                                    child: LinearProgressIndicator(
-                                      value: state.progress > 0
-                                          ? state.progress.clamp(0.0, 1.0)
-                                          : null,
-                                      backgroundColor: Colors.white12,
-                                      color: AppTheme.primaryEmerald,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ],
-                          ),
+          // Banner tiến trình dịch cho tập hiện tại (Hồng Quả: khi đang phát video và dịch/lồng tiếng chạy ngầm)
+          if (_prefetchManager != null &&
+              _currentDocument.isEmpty &&
+              (widget.dramaDetail != null || _userChosePlayRaw))
+            Positioned(
+              top: 56,
+              left: 20,
+              right: 20,
+              child: ValueListenableBuilder<PrefetchState?>(
+                valueListenable: _prefetchManager!.prefetchStateNotifier,
+                builder: (context, state, _) {
+                  if (state == null ||
+                      state.episodeIndex != _currentEpisodeIndex) {
+                    return Center(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 8,
                         ),
-                      );
-                    },
-                  ),
-                ),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.85),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: AppTheme.primaryEmerald.withValues(
+                              alpha: 0.6,
+                            ),
+                            width: 1.2,
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.5),
+                              blurRadius: 10,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: AppTheme.primaryEmerald,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              _settings.isTtsPlaybackEnabled
+                                  ? 'Đang chuẩn bị sub & lồng tiếng Tập $_currentEpisodeIndex...'
+                                  : 'Đang chuẩn bị dịch phụ đề Tập $_currentEpisodeIndex...',
+                              style: const TextStyle(
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }
+                  final isTranslating = state.isTranslating;
+                  final isFailed = state.status == 'failed';
+                  if (!isTranslating && !isFailed) {
+                    return const SizedBox.shrink();
+                  }
 
-              // Banner tiến trình dịch theo yêu cầu (Bilibili / Link ngoài)
-              if (_isTranslatingOnDemand)
-                Positioned(
-                  top: 56,
-                  left: 20,
-                  right: 20,
-                  child: Center(
+                  return Center(
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 8,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.black.withValues(alpha: 0.85),
                         borderRadius: BorderRadius.circular(20),
                         border: Border.all(
-                          color: const Color(0xFF00AEEC),
+                          color: isFailed
+                              ? Colors.redAccent.withValues(alpha: 0.6)
+                              : AppTheme.primaryEmerald.withValues(alpha: 0.6),
                           width: 1.2,
                         ),
                         boxShadow: [
@@ -6840,40 +7231,112 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                           Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              const SizedBox(
-                                width: 14,
-                                height: 14,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Color(0xFF00AEEC),
+                              if (isTranslating)
+                                const SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: AppTheme.primaryEmerald,
+                                  ),
+                                )
+                              else if (isFailed)
+                                const Icon(
+                                  Icons.error_outline_rounded,
+                                  color: Colors.redAccent,
+                                  size: 16,
                                 ),
-                              ),
                               const SizedBox(width: 8),
                               Flexible(
                                 child: Text(
-                                  _onDemandProgressMessage,
-                                  style: const TextStyle(
-                                    fontSize: 12,
+                                  isFailed
+                                      ? 'Chưa tạo được phụ đề: ${state.message}'
+                                      : (state.message.isNotEmpty
+                                            ? state.message
+                                            : (_settings.isTtsPlaybackEnabled
+                                                  ? 'Đang dịch & tạo lồng tiếng Tập $_currentEpisodeIndex (${(state.progress * 100).toInt()}%)...'
+                                                  : 'Đang bóc tách & dịch phụ đề Tập $_currentEpisodeIndex (${(state.progress * 100).toInt()}%)...')),
+                                  style: TextStyle(
+                                    fontSize: 11.5,
                                     fontWeight: FontWeight.w600,
-                                    color: Colors.white,
+                                    color: isFailed
+                                        ? Colors.redAccent
+                                        : Colors.white,
                                   ),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                 ),
                               ),
+                              if (isFailed) ...[
+                                const SizedBox(width: 8),
+                                InkWell(
+                                  onTap: () {
+                                    _prefetchManager?.onEpisodePlaying(
+                                      _currentEpisodeIndex,
+                                      translateCurrentIfEmpty: true,
+                                      onCurrentSubtitleReady: (newDoc) {
+                                        if (!mounted) return;
+                                        setState(() {
+                                          _currentDocument = newDoc;
+                                          _ttsScheduler.dispose();
+                                          _ttsScheduler = TtsAudioScheduler(
+                                            newDoc,
+                                          );
+                                        });
+                                        _applyAudioVolumes();
+                                        if (_controller?.value.isPlaying ??
+                                            false) {
+                                          if (_settings.isTtsPlaybackEnabled) {
+                                            final pos =
+                                                _controller
+                                                    ?.value
+                                                    .position
+                                                    .inMilliseconds ??
+                                                0;
+                                            _ttsScheduler.onSeek(pos);
+                                            _syncTtsWithVideo();
+                                          }
+                                        }
+                                      },
+                                    );
+                                  },
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                      vertical: 2,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: Colors.redAccent.withValues(
+                                        alpha: 0.2,
+                                      ),
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: const Text(
+                                      'Thử lại',
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ],
                           ),
-                          if (_onDemandProgressPct > 0) ...[
+                          if (isTranslating) ...[
                             const SizedBox(height: 6),
                             ClipRRect(
                               borderRadius: BorderRadius.circular(2),
                               child: SizedBox(
-                                width: 160,
-                                height: 3,
+                                width: 170,
+                                height: 3.5,
                                 child: LinearProgressIndicator(
-                                  value: _onDemandProgressPct.clamp(0.0, 1.0),
+                                  value: state.progress > 0
+                                      ? state.progress.clamp(0.0, 1.0)
+                                      : null,
                                   backgroundColor: Colors.white12,
-                                  color: const Color(0xFF00AEEC),
+                                  color: AppTheme.primaryEmerald,
                                 ),
                               ),
                             ),
@@ -6881,1059 +7344,1262 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                         ],
                       ),
                     ),
-                  ),
-                ),
+                  );
+                },
+              ),
+            ),
 
-              // Gợi ý tạo Vietsub / Lồng tiếng cho video chưa có phụ đề khi mở controls (Chỉ áp dụng Bilibili / Video ngoài, Hồng Quả đã chọn từ đầu)
-              if (_showControls &&
-                  widget.dramaDetail == null &&
-                  _currentDocument.isEmpty &&
-                  !_isTranslatingOnDemand)
-                Positioned(
-                  top: 56,
-                  left: 20,
-                  right: 20,
-                  child: Center(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.8),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: Colors.white24),
+          // Banner tiến trình dịch theo yêu cầu (Bilibili / Link ngoài)
+          if (_isTranslatingOnDemand)
+            Positioned(
+              top: 56,
+              left: 20,
+              right: 20,
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.85),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: const Color(0xFF00AEEC),
+                      width: 1.2,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.5),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
                       ),
-                      child: Row(
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Icon(Icons.subtitles_outlined, color: Colors.white70, size: 16),
-                          const SizedBox(width: 8),
-                          const Text(
-                            'Xem thử video gốc',
-                            style: TextStyle(color: Colors.white70, fontSize: 11),
-                          ),
-                          const SizedBox(width: 10),
-                          InkWell(
-                            onTap: () => _startOnDemandPipeline(enableTts: false),
-                            borderRadius: BorderRadius.circular(14),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF00AEEC),
-                                borderRadius: BorderRadius.circular(14),
-                              ),
-                              child: const Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(Icons.translate_rounded, color: Colors.white, size: 12),
-                                  SizedBox(width: 4),
-                                  Text(
-                                    'Vietsub AI',
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 11,
-                                    ),
-                                  ),
-                                ],
-                              ),
+                          const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Color(0xFF00AEEC),
                             ),
                           ),
-                          const SizedBox(width: 6),
-                          InkWell(
-                            onTap: () => _startOnDemandPipeline(enableTts: true),
-                            borderRadius: BorderRadius.circular(14),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: AppTheme.primaryEmerald,
-                                borderRadius: BorderRadius.circular(14),
+                          const SizedBox(width: 8),
+                          Flexible(
+                            child: Text(
+                              _onDemandProgressMessage,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.white,
                               ),
-                              child: const Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(Icons.record_voice_over_rounded, color: Colors.black, size: 12),
-                                  SizedBox(width: 4),
-                                  Text(
-                                    'Lồng tiếng AI',
-                                    style: TextStyle(
-                                      color: Colors.black,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 11,
-                                    ),
-                                  ),
-                                ],
-                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                             ),
                           ),
                         ],
                       ),
-                    ),
+                      if (_onDemandProgressPct > 0) ...[
+                        const SizedBox(height: 6),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(2),
+                          child: SizedBox(
+                            width: 160,
+                            height: 3,
+                            child: LinearProgressIndicator(
+                              value: _onDemandProgressPct.clamp(0.0, 1.0),
+                              backgroundColor: Colors.white12,
+                              color: const Color(0xFF00AEEC),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
+              ),
+            ),
 
-              // Màn hình chờ dịch tập mới (Gatekeeper) khi chưa có sub và chưa chọn xem bản gốc
-              if (isHongguoWaitingTranslation)
-                Positioned.fill(
-                  child: _buildHongguoTranslatingGateOverlay(displayTitle),
-                ),
-
-              // 4. Thanh điều khiển Video (Controls)
-              if (_showControls && !isHongguoWaitingTranslation) ...[
-                // Nút quay lại & tiêu đề trên cùng
-                Positioned(
-                  top: 8,
-                  left: 8,
-                  right: 8,
+          // Gợi ý tạo Vietsub / Lồng tiếng cho video chưa có phụ đề khi mở controls (Chỉ áp dụng Bilibili / Video ngoài, Hồng Quả đã chọn từ đầu)
+          if (_showControls &&
+              widget.dramaDetail == null &&
+              _currentDocument.isEmpty &&
+              !_isTranslatingOnDemand)
+            Positioned(
+              top: 56,
+              left: 20,
+              right: 20,
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.8),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: Colors.white24),
+                  ),
                   child: Row(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      _buildTopBarIconButton(
-                        icon: Icons.arrow_back_rounded,
-                        tooltip: 'Quay lại',
-                        onPressed: () {
-                          if (_isPlayerFullScreen) {
-                            setState(() {
-                              _isPlayerFullScreen = false;
-                            });
-                            return;
-                          }
-                          if (widget.isGlobalPlayer) {
-                            if (_settings.miniPlayerEnabled) {
-                              GlobalPlayerManager.instance.minimize();
-                            } else {
-                              GlobalPlayerManager.instance.close();
-                            }
-                          } else {
-                            Navigator.pop(context);
-                          }
-                        },
+                      const Icon(
+                        Icons.subtitles_outlined,
+                        color: Colors.white70,
+                        size: 16,
                       ),
-                      if (displayTitle.isNotEmpty) ...[
-                        const SizedBox(width: 4),
-                        ConstrainedBox(
-                          constraints: BoxConstraints(
-                            maxWidth: isLandscape
-                                ? (MediaQuery.of(context).size.width * 0.32).clamp(140.0, 280.0)
-                                : (MediaQuery.of(context).size.width * 0.45)
-                                    .clamp(130.0, 220.0),
+                      const SizedBox(width: 8),
+                      const Text(
+                        'Xem thử video gốc',
+                        style: TextStyle(color: Colors.white70, fontSize: 11),
+                      ),
+                      const SizedBox(width: 10),
+                      InkWell(
+                        onTap: () => _startOnDemandPipeline(enableTts: false),
+                        borderRadius: BorderRadius.circular(14),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 4,
                           ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF00AEEC),
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: const Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Flexible(
-                                    fit: FlexFit.loose,
-                                    child: Tooltip(
-                                      message: 'Chạm để sao chép: $displayTitle',
-                                      child: InkWell(
-                                        onTap: () => _copyTitleToClipboard(displayTitle),
-                                        borderRadius: BorderRadius.circular(4),
-                                        child: SingleChildScrollView(
-                                          scrollDirection: Axis.horizontal,
-                                          physics: const BouncingScrollPhysics(),
-                                          child: Text(
-                                            displayTitle,
-                                            maxLines: 1,
-                                            softWrap: false,
-                                            style: const TextStyle(
-                                              color: Colors.white,
-                                              fontWeight: FontWeight.bold,
-                                              fontSize: 14,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 6),
-                                  InkWell(
-                                    onTap: _isTranslatingTitle ? null : _togglePlayerTitleTranslation,
-                                    borderRadius: BorderRadius.circular(6),
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                      decoration: BoxDecoration(
-                                        color: _showTranslatedTitle
-                                            ? AppTheme.primaryEmerald.withValues(alpha: 0.25)
-                                            : Colors.white24,
-                                        borderRadius: BorderRadius.circular(6),
-                                        border: Border.all(
-                                          color: _showTranslatedTitle
-                                              ? AppTheme.primaryEmerald.withValues(alpha: 0.5)
-                                              : Colors.white30,
-                                        ),
-                                      ),
-                                      child: _isTranslatingTitle
-                                          ? const SizedBox(
-                                              width: 10,
-                                              height: 10,
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                                color: Colors.white,
-                                              ),
-                                            )
-                                          : Row(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                Icon(
-                                                  Icons.translate_rounded,
-                                                  size: 11,
-                                                  color: _showTranslatedTitle
-                                                      ? AppTheme.primaryEmerald
-                                                      : Colors.white,
-                                                ),
-                                                const SizedBox(width: 3),
-                                                Text(
-                                                  _showTranslatedTitle ? 'Gốc' : 'Dịch',
-                                                  style: TextStyle(
-                                                    color: _showTranslatedTitle
-                                                        ? AppTheme.primaryEmerald
-                                                        : Colors.white,
-                                                    fontSize: 10,
-                                                    fontWeight: FontWeight.bold,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                    ),
-                                  ),
-                                ],
+                              Icon(
+                                Icons.translate_rounded,
+                                color: Colors.white,
+                                size: 12,
                               ),
-                              Padding(
-                                padding: const EdgeInsets.only(top: 2),
-                                child: Row(
+                              SizedBox(width: 4),
+                              Text(
+                                'Vietsub AI',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      InkWell(
+                        onTap: () => _startOnDemandPipeline(enableTts: true),
+                        borderRadius: BorderRadius.circular(14),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: AppTheme.primaryEmerald,
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.record_voice_over_rounded,
+                                color: Colors.black,
+                                size: 12,
+                              ),
+                              SizedBox(width: 4),
+                              Text(
+                                'Lồng tiếng AI',
+                                style: TextStyle(
+                                  color: Colors.black,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
+          // Màn hình chờ dịch tập mới (Gatekeeper) khi chưa có sub và chưa chọn xem bản gốc
+          if (isHongguoWaitingTranslation)
+            Positioned.fill(
+              child: _buildHongguoTranslatingGateOverlay(displayTitle),
+            ),
+
+          // 4. Thanh điều khiển Video (Controls)
+          if (_showControls && !isHongguoWaitingTranslation) ...[
+            // Nút quay lại & tiêu đề trên cùng
+            Positioned(
+              top: 8,
+              left: 8,
+              right: 8,
+              child: Row(
+                children: [
+                  _buildTopBarIconButton(
+                    icon: Icons.arrow_back_rounded,
+                    tooltip: 'Quay lại',
+                    onPressed: () {
+                      if (_isPlayerFullScreen) {
+                        setState(() {
+                          _isPlayerFullScreen = false;
+                        });
+                        return;
+                      }
+                      if (widget.isGlobalPlayer) {
+                        if (_settings.miniPlayerEnabled) {
+                          GlobalPlayerManager.instance.minimize();
+                        } else {
+                          GlobalPlayerManager.instance.close();
+                        }
+                      } else {
+                        Navigator.pop(context);
+                      }
+                    },
+                  ),
+                  if (displayTitle.isNotEmpty) ...[
+                    const SizedBox(width: 4),
+                    ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: isLandscape
+                            ? (MediaQuery.of(context).size.width * 0.32).clamp(
+                                140.0,
+                                280.0,
+                              )
+                            : (MediaQuery.of(context).size.width * 0.45).clamp(
+                                130.0,
+                                220.0,
+                              ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Flexible(
+                                fit: FlexFit.loose,
+                                child: Tooltip(
+                                  message: 'Chạm để sao chép: $displayTitle',
+                                  child: InkWell(
+                                    onTap: () =>
+                                        _copyTitleToClipboard(displayTitle),
+                                    borderRadius: BorderRadius.circular(4),
+                                    child: SingleChildScrollView(
+                                      scrollDirection: Axis.horizontal,
+                                      physics: const BouncingScrollPhysics(),
+                                      child: Text(
+                                        displayTitle,
+                                        maxLines: 1,
+                                        softWrap: false,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 14,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              InkWell(
+                                onTap: _isTranslatingTitle
+                                    ? null
+                                    : _togglePlayerTitleTranslation,
+                                borderRadius: BorderRadius.circular(6),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 2,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: _showTranslatedTitle
+                                        ? AppTheme.primaryEmerald.withValues(
+                                            alpha: 0.25,
+                                          )
+                                        : Colors.white24,
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(
+                                      color: _showTranslatedTitle
+                                          ? AppTheme.primaryEmerald.withValues(
+                                              alpha: 0.5,
+                                            )
+                                          : Colors.white30,
+                                    ),
+                                  ),
+                                  child: _isTranslatingTitle
+                                      ? const SizedBox(
+                                          width: 10,
+                                          height: 10,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: Colors.white,
+                                          ),
+                                        )
+                                      : Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(
+                                              Icons.translate_rounded,
+                                              size: 11,
+                                              color: _showTranslatedTitle
+                                                  ? AppTheme.primaryEmerald
+                                                  : Colors.white,
+                                            ),
+                                            const SizedBox(width: 3),
+                                            Text(
+                                              _showTranslatedTitle
+                                                  ? 'Gốc'
+                                                  : 'Dịch',
+                                              style: TextStyle(
+                                                color: _showTranslatedTitle
+                                                    ? AppTheme.primaryEmerald
+                                                    : Colors.white,
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  (!_currentVideoPath.startsWith('http://') &&
+                                          !_currentVideoPath.startsWith(
+                                            'https://',
+                                          ))
+                                      ? Icons.offline_pin_rounded
+                                      : Icons.cloud_queue_rounded,
+                                  size: 11,
+                                  color:
+                                      (!_currentVideoPath.startsWith(
+                                            'http://',
+                                          ) &&
+                                          !_currentVideoPath.startsWith(
+                                            'https://',
+                                          ))
+                                      ? AppTheme.primaryEmerald
+                                      : const Color(0xFFFFB74D),
+                                ),
+                                const SizedBox(width: 4),
+                                Flexible(
+                                  child: Text(
+                                    (!_currentVideoPath.startsWith('http://') &&
+                                            !_currentVideoPath.startsWith(
+                                              'https://',
+                                            ))
+                                        ? 'Phát offline (Bộ nhớ máy)'
+                                        : 'Phát trực tuyến (Online)',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w600,
+                                      color:
+                                          (!_currentVideoPath.startsWith(
+                                                'http://',
+                                              ) &&
+                                              !_currentVideoPath.startsWith(
+                                                'https://',
+                                              ))
+                                          ? AppTheme.primaryEmerald
+                                          : const Color(0xFFFFB74D),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (_prefetchManager != null)
+                            ValueListenableBuilder<PrefetchState?>(
+                              valueListenable:
+                                  _prefetchManager!.prefetchStateNotifier,
+                              builder: (context, state, _) {
+                                if (state == null || state.status == 'idle') {
+                                  return const SizedBox.shrink();
+                                }
+                                final isReady = state.isReady;
+                                final isFailed = state.isFailed;
+                                final isRetrying = state.isRetrying;
+
+                                final Color stateColor = isReady
+                                    ? AppTheme.primaryEmerald
+                                    : (isFailed
+                                          ? const Color(0xFFEF5350)
+                                          : (isRetrying
+                                                ? const Color(0xFFFFB74D)
+                                                : AppTheme.accentGold));
+
+                                final IconData stateIcon = isReady
+                                    ? Icons.bolt_rounded
+                                    : (isFailed
+                                          ? Icons.error_outline_rounded
+                                          : (isRetrying
+                                                ? Icons.refresh_rounded
+                                                : Icons.hourglass_top_rounded));
+
+                                final String stateText = isReady
+                                    ? 'Sẵn sàng Tập ${state.episodeIndex}'
+                                    : (isFailed
+                                          ? 'Lỗi Tập ${state.episodeIndex} (Chạm thử lại)'
+                                          : (isRetrying
+                                                ? (state.message.isNotEmpty
+                                                      ? state.message
+                                                      : 'Đang thử lại Tập ${state.episodeIndex}...')
+                                                : (state.message.contains(
+                                                            'tải video',
+                                                          ) ||
+                                                          state.status ==
+                                                              'resolving'
+                                                      ? 'Đang tải Tập ${state.episodeIndex} (${(state.progress * 100).toInt()}%)'
+                                                      : 'Đang dịch Tập ${state.episodeIndex} (${(state.progress * 100).toInt()}%)')));
+
+                                final content = Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
                                     Icon(
-                                      (!_currentVideoPath.startsWith('http://') &&
-                                              !_currentVideoPath.startsWith('https://'))
-                                          ? Icons.offline_pin_rounded
-                                          : Icons.cloud_queue_rounded,
-                                      size: 11,
-                                      color: (!_currentVideoPath.startsWith('http://') &&
-                                              !_currentVideoPath.startsWith('https://'))
-                                          ? AppTheme.primaryEmerald
-                                          : const Color(0xFFFFB74D),
+                                      stateIcon,
+                                      size: 12,
+                                      color: stateColor,
                                     ),
                                     const SizedBox(width: 4),
                                     Flexible(
                                       child: Text(
-                                        (!_currentVideoPath.startsWith('http://') &&
-                                                !_currentVideoPath.startsWith('https://'))
-                                            ? 'Phát offline (Bộ nhớ máy)'
-                                            : 'Phát trực tuyến (Online)',
+                                        stateText,
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
                                         style: TextStyle(
                                           fontSize: 10,
                                           fontWeight: FontWeight.w600,
-                                          color: (!_currentVideoPath.startsWith('http://') &&
-                                                  !_currentVideoPath.startsWith('https://'))
-                                              ? AppTheme.primaryEmerald
-                                              : const Color(0xFFFFB74D),
+                                          color: stateColor,
                                         ),
                                       ),
                                     ),
                                   ],
-                                ),
-                              ),
-                              if (_prefetchManager != null)
-                                ValueListenableBuilder<PrefetchState?>(
-                                  valueListenable:
-                                      _prefetchManager!.prefetchStateNotifier,
-                                  builder: (context, state, _) {
-                                    if (state == null ||
-                                        state.status == 'idle') {
-                                      return const SizedBox.shrink();
-                                    }
-                                    final isReady = state.isReady;
-                                    final isFailed = state.isFailed;
-                                    final isRetrying = state.isRetrying;
+                                );
 
-                                    final Color stateColor = isReady
-                                        ? AppTheme.primaryEmerald
-                                        : (isFailed
-                                            ? const Color(0xFFEF5350)
-                                            : (isRetrying
-                                                ? const Color(0xFFFFB74D)
-                                                : AppTheme.accentGold));
-
-                                    final IconData stateIcon = isReady
-                                        ? Icons.bolt_rounded
-                                        : (isFailed
-                                            ? Icons.error_outline_rounded
-                                            : (isRetrying
-                                                ? Icons.refresh_rounded
-                                                : Icons.hourglass_top_rounded));
-
-                                    final String stateText = isReady
-                                        ? 'Sẵn sàng Tập ${state.episodeIndex}'
-                                        : (isFailed
-                                            ? 'Lỗi Tập ${state.episodeIndex} (Chạm thử lại)'
-                                            : (isRetrying
-                                                ? (state.message.isNotEmpty
-                                                    ? state.message
-                                                    : 'Đang thử lại Tập ${state.episodeIndex}...')
-                                                : (state.message.contains('tải video') || state.status == 'resolving'
-                                                    ? 'Đang tải Tập ${state.episodeIndex} (${(state.progress * 100).toInt()}%)'
-                                                    : 'Đang dịch Tập ${state.episodeIndex} (${(state.progress * 100).toInt()}%)')));
-
-                                    final content = Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Icon(
-                                          stateIcon,
-                                          size: 12,
-                                          color: stateColor,
-                                        ),
-                                        const SizedBox(width: 4),
-                                        Flexible(
-                                          child: Text(
-                                            stateText,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: TextStyle(
-                                              fontSize: 10,
-                                              fontWeight: FontWeight.w600,
-                                              color: stateColor,
-                                            ),
+                                return Padding(
+                                  padding: const EdgeInsets.only(top: 2),
+                                  child: isFailed
+                                      ? InkWell(
+                                          borderRadius: BorderRadius.circular(
+                                            4,
                                           ),
-                                        ),
-                                      ],
+                                          onTap: () {
+                                            _prefetchManager?.retryPrefetch(
+                                              episodeIndex: state.episodeIndex,
+                                            );
+                                          },
+                                          child: content,
+                                        )
+                                      : content,
+                                );
+                              },
+                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+
+                  // Danh sách nút công cụ & tiện ích có thể cuộn ngang mượt mà khi quay dọc
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        physics: const BouncingScrollPhysics(),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            // 1. Nút Tự Chuyển Tập & Dịch Ngầm (Đưa lên vị trí đầu tiên)
+                            if (widget.dramaDetail != null) ...[
+                              InkWell(
+                                onTap: () {
+                                  final newVal = !_autoPlayNextEpisode;
+                                  setState(() {
+                                    _autoPlayNextEpisode = newVal;
+                                  });
+                                  _settings.autoPlayNextEpisode = newVal;
+                                  if (newVal) {
+                                    _prefetchManager?.onEpisodePlaying(
+                                      _currentEpisodeIndex,
                                     );
-
-                                    return Padding(
-                                      padding: const EdgeInsets.only(top: 2),
-                                      child: isFailed
-                                          ? InkWell(
-                                              borderRadius: BorderRadius.circular(4),
-                                              onTap: () {
-                                                _prefetchManager?.retryPrefetch(
-                                                  episodeIndex: state.episodeIndex,
-                                                );
-                                              },
-                                              child: content,
-                                            )
-                                          : content,
-                                    );
-                                  },
-                                ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                      ],
-
-                      // Danh sách nút công cụ & tiện ích có thể cuộn ngang mượt mà khi quay dọc
-                      Expanded(
-                        child: Align(
-                          alignment: Alignment.centerRight,
-                          child: SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            physics: const BouncingScrollPhysics(),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                // 1. Nút Tự Chuyển Tập & Dịch Ngầm (Đưa lên vị trí đầu tiên)
-                                if (widget.dramaDetail != null) ...[
-                                  InkWell(
-                                    onTap: () {
-                                      final newVal = !_autoPlayNextEpisode;
-                                      setState(() {
-                                        _autoPlayNextEpisode = newVal;
-                                      });
-                                      _settings.autoPlayNextEpisode = newVal;
-                                      if (newVal) {
-                                        _prefetchManager
-                                            ?.onEpisodePlaying(_currentEpisodeIndex);
-                                        ScaffoldMessenger.of(context).showSnackBar(
-                                          const SnackBar(
-                                            content: Text(
-                                                '▶️ Đã BẬT tự chuyển tập & dịch ngầm'),
-                                            duration: Duration(seconds: 2),
-                                          ),
-                                        );
-                                      } else {
-                                        _prefetchManager?.cancelPrefetch();
-                                        ScaffoldMessenger.of(context).showSnackBar(
-                                          const SnackBar(
-                                            content: Text(
-                                                '⏸️ Đã TẮT tự chuyển tập (Dừng dịch ngầm)'),
-                                            duration: Duration(seconds: 2),
-                                          ),
-                                        );
-                                      }
-                                    },
-                                    borderRadius: BorderRadius.circular(20),
-                                    child: AnimatedContainer(
-                                      duration: const Duration(milliseconds: 200),
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 10,
-                                        vertical: 5,
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          '▶️ Đã BẬT tự chuyển tập & dịch ngầm',
+                                        ),
+                                        duration: Duration(seconds: 2),
                                       ),
-                                      decoration: BoxDecoration(
+                                    );
+                                  } else {
+                                    _prefetchManager?.cancelPrefetch();
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          '⏸️ Đã TẮT tự chuyển tập (Dừng dịch ngầm)',
+                                        ),
+                                        duration: Duration(seconds: 2),
+                                      ),
+                                    );
+                                  }
+                                },
+                                borderRadius: BorderRadius.circular(20),
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 200),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 5,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: _autoPlayNextEpisode
+                                        ? AppTheme.primaryEmerald.withValues(
+                                            alpha: 0.25,
+                                          )
+                                        : Colors.black.withValues(alpha: 0.6),
+                                    borderRadius: BorderRadius.circular(20),
+                                    border: Border.all(
+                                      color: _autoPlayNextEpisode
+                                          ? AppTheme.primaryEmerald
+                                          : Colors.white24,
+                                      width: 1.2,
+                                    ),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        _autoPlayNextEpisode
+                                            ? Icons.play_circle_fill_rounded
+                                            : Icons
+                                                  .pause_circle_outline_rounded,
+                                        size: 16,
                                         color: _autoPlayNextEpisode
                                             ? AppTheme.primaryEmerald
-                                                .withValues(alpha: 0.25)
-                                            : Colors.black.withValues(alpha: 0.6),
-                                        borderRadius: BorderRadius.circular(20),
-                                        border: Border.all(
+                                            : Colors.white70,
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        _autoPlayNextEpisode
+                                            ? 'Tự chuyển'
+                                            : 'Dừng tập',
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.bold,
                                           color: _autoPlayNextEpisode
                                               ? AppTheme.primaryEmerald
-                                              : Colors.white24,
-                                          width: 1.2,
+                                              : Colors.white70,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              _buildTopBarIconButton(
+                                icon: Icons.format_list_numbered_rounded,
+                                tooltip: 'Danh sách tập phim',
+                                onPressed: _showEpisodeListSheet,
+                              ),
+                              _buildTopBarIconButton(
+                                icon: Icons.high_quality_rounded,
+                                iconColor: AppTheme.primaryEmerald,
+                                tooltip:
+                                    'Chất lượng Hồng Quả (${_hongguoQuality == "auto" ? "Tự động" : "${_hongguoQuality}P"})',
+                                onPressed: _showHongguoQualitySheet,
+                              ),
+                              ValueListenableBuilder<HongguoCloudAccountState>(
+                                valueListenable:
+                                    HongguoCloudAccountService.instance.state,
+                                builder: (context, cloudState, _) {
+                                  return _buildTopBarIconButton(
+                                    icon: cloudState.isLoggedIn
+                                        ? Icons.cloud_done_rounded
+                                        : Icons.account_circle_outlined,
+                                    iconColor: cloudState.isLoggedIn
+                                        ? AppTheme.primaryEmerald
+                                        : Colors.white70,
+                                    tooltip: 'Tài khoản Đám mây Hồng Quả',
+                                    onPressed: () =>
+                                        HongguoAccountSheet.show(context),
+                                  );
+                                },
+                              ),
+                              _buildTopBarIconButton(
+                                icon: Icons.settings_rounded,
+                                iconColor: Colors.white70,
+                                tooltip: 'Cài đặt dịch & xem Hồng Quả',
+                                onPressed: () =>
+                                    HongguoSettingsSheet.show(context),
+                              ),
+                              ValueListenableBuilder<List<WatchLaterItem>>(
+                                valueListenable:
+                                    WatchLaterRepository.watchLaterNotifier,
+                                builder: (context, items, _) {
+                                  final sId =
+                                      widget.dramaDetail?.seriesId ?? '';
+                                  final isWl = items.any(
+                                    (it) =>
+                                        it.seriesId == sId ||
+                                        it.id == 'hg_$sId',
+                                  );
+                                  return _buildTopBarIconButton(
+                                    icon: isWl
+                                        ? Icons.bookmark_added_rounded
+                                        : Icons.bookmark_add_outlined,
+                                    iconColor: isWl
+                                        ? AppTheme.primaryEmerald
+                                        : Colors.white70,
+                                    isActive: isWl,
+                                    tooltip: isWl
+                                        ? 'Đã lưu trong Xem sau'
+                                        : 'Lưu vào danh sách Xem sau',
+                                    onPressed: _toggleWatchLater,
+                                  );
+                                },
+                              ),
+                            ],
+
+                            // 2. Nút PiP ngoài màn hình (Picture-in-Picture)
+                            _buildTopBarIconButton(
+                              icon: Icons.picture_in_picture_alt_rounded,
+                              tooltip: Platform.isIOS
+                                  ? 'Thu nhỏ video (Mini-Player)'
+                                  : 'Hình thu nhỏ ngoài màn hình (PiP)',
+                              onPressed: _enterPipMode,
+                            ),
+
+                            // 3. Cài đặt Bilibili (Bánh răng màu cyan)
+                            if (_bilibiliDetails != null ||
+                                BilibiliResolver.isBilibiliUrl(
+                                  _sourceVideoUrl,
+                                )) ...[
+                              _buildTopBarIconButton(
+                                icon: Icons.settings_rounded,
+                                iconColor: const Color(0xFF00AEEC),
+                                tooltip: 'Cài đặt Bilibili',
+                                onPressed: () async {
+                                  final oldCdn = _settings.bilibiliCdnService;
+                                  final oldHwDecode =
+                                      _settings.bilibiliHardwareDecode;
+                                  final oldQuality = _currentQualityKey;
+                                  await BilibiliSettingsSheet.show(
+                                    context,
+                                    onRecreateSubtitles: () {
+                                      _startOnDemandPipeline(
+                                        enableTts:
+                                            _settings.isTtsPlaybackEnabled,
+                                        forceRecreate: true,
+                                      );
+                                    },
+                                  );
+                                  if (!mounted) return;
+                                  final nextQuality =
+                                      BilibiliResolver.normalizeQualityCode(
+                                        _settings
+                                                .bilibiliPreferredQuality
+                                                .isNotEmpty
+                                            ? _settings.bilibiliPreferredQuality
+                                            : _settings.preferredVideoQuality,
+                                      );
+                                  final needReload =
+                                      _bilibiliDetails != null &&
+                                      (oldCdn != _settings.bilibiliCdnService ||
+                                          oldHwDecode !=
+                                              _settings
+                                                  .bilibiliHardwareDecode ||
+                                          oldQuality != nextQuality);
+                                  if (needReload) {
+                                    if (oldHwDecode !=
+                                        _settings.bilibiliHardwareDecode) {
+                                      final stale = _controller;
+                                      _controller = null;
+                                      stale?.removeListener(_onPlayerUpdate);
+                                      stale?.dispose();
+                                    }
+                                    _switchBilibiliQuality(nextQuality);
+                                  } else {
+                                    setState(() {});
+                                  }
+                                },
+                              ),
+                            ],
+
+                            // 4. Nút Bật/Tắt Lồng tiếng AI
+                            _buildTopBarIconButton(
+                              icon: _settings.isTtsPlaybackEnabled
+                                  ? Icons.record_voice_over_rounded
+                                  : Icons.voice_over_off_rounded,
+                              iconColor: _settings.isTtsPlaybackEnabled
+                                  ? Colors.lightGreenAccent
+                                  : Colors.white70,
+                              isActive: _settings.isTtsPlaybackEnabled,
+                              tooltip: _settings.isTtsPlaybackEnabled
+                                  ? 'Đang bật lồng tiếng AI (Chạm để tắt)'
+                                  : 'Đang tắt lồng tiếng AI (Chạm để bật)',
+                              onPressed: () async {
+                                final nextEnabled =
+                                    !_settings.isTtsPlaybackEnabled;
+                                if (nextEnabled &&
+                                    (_liveTranslator?.isEnabled ?? false)) {
+                                  _cancelLiveWarmupPause(
+                                    finishTranslatorWarmup: true,
+                                  );
+                                  await _liveTranslator!.stop();
+                                }
+                                setState(() {
+                                  _settings.isTtsPlaybackEnabled = nextEnabled;
+                                });
+                                await _applyAudioVolumes();
+                                if (_settings.isTtsPlaybackEnabled) {
+                                  if (_prefetchManager != null &&
+                                      _currentDocument.items.isNotEmpty) {
+                                    _prefetchManager!.ensureTtsGenerated(
+                                      _currentDocument,
+                                      episodeIndex: _currentEpisodeIndex,
+                                    );
+                                  }
+                                  final positionMs =
+                                      controller.value.position.inMilliseconds;
+                                  await _ttsScheduler.onSeek(positionMs);
+                                  _syncTtsWithVideo();
+                                }
+                              },
+                            ),
+
+                            // 4b. Nút Nghe Dịch Trực Tiếp (Gemini 3.5 Live)
+                            _buildTopBarIconButton(
+                              icon: Icons.spatial_audio_rounded,
+                              iconColor: (_liveTranslator?.isEnabled ?? false)
+                                  ? const Color(0xFF64B5F6)
+                                  : Colors.white70,
+                              isActive: _liveTranslator?.isEnabled ?? false,
+                              tooltip: (_liveTranslator?.isEnabled ?? false)
+                                  ? 'Nghe Dịch Trực Tiếp (+${_liveTranslator!.leadSeconds.toStringAsFixed(1)}s)'
+                                  : 'Nghe Dịch Trực Tiếp (Gemini 3.5 Live)',
+                              onPressed: _openLiveTranslateSheet,
+                            ),
+
+                            // 5. Chỉnh âm lượng độc lập (Âm lượng kép)
+                            _buildTopBarIconButton(
+                              icon: Icons.graphic_eq_rounded,
+                              tooltip:
+                                  'Chỉnh âm lượng độc lập (Video & Giọng đọc)',
+                              onPressed: () {
+                                showModalBottomSheet(
+                                  context: context,
+                                  backgroundColor: Colors.transparent,
+                                  isScrollControlled: true,
+                                  builder: (ctx) => StatefulBuilder(
+                                    builder: (context, setSheetState) {
+                                      return DualVolumeSheet(
+                                        originalVolume:
+                                            _settings.originalVideoVolume,
+                                        aiVolume: _settings.ttsVolume,
+                                        voicePitch: _settings.ttsVoicePitch,
+                                        voiceWarmth: _settings.ttsVoiceWarmth,
+                                        voiceBrightness:
+                                            _settings.ttsVoiceBrightness,
+                                        onOriginalVolumeChanged: (val) async {
+                                          setState(() {
+                                            _settings.originalVideoVolume = val;
+                                          });
+                                          await _applyAudioVolumes();
+                                          setSheetState(() {});
+                                        },
+                                        onAiVolumeChanged: (val) async {
+                                          setState(() {
+                                            _settings.ttsVolume = val;
+                                          });
+                                          await _ttsScheduler.setVolume(val);
+                                          await _liveTranslator?.setVolume(val);
+                                          setSheetState(() {});
+                                        },
+                                        onVoiceToneChanged:
+                                            ({
+                                              required pitch,
+                                              required warmth,
+                                              required brightness,
+                                            }) async {
+                                              _settings.ttsVoicePitch = pitch;
+                                              _settings.ttsVoiceWarmth = warmth;
+                                              _settings.ttsVoiceBrightness =
+                                                  brightness;
+                                              await _ttsScheduler.setVoiceTone(
+                                                pitch: pitch,
+                                                warmth: warmth,
+                                                brightness: brightness,
+                                              );
+                                              setSheetState(() {});
+                                            },
+                                      );
+                                    },
+                                  ),
+                                );
+                              },
+                            ),
+
+                            // 6. Tùy chỉnh phụ đề & vị trí (Hình CC)
+                            _buildTopBarIconButton(
+                              icon: Icons.closed_caption_rounded,
+                              iconColor: _settings.subtitleMode == 'none'
+                                  ? Colors.white54
+                                  : AppTheme.primaryEmerald,
+                              isActive: _settings.subtitleMode != 'none',
+                              tooltip: 'Tùy chỉnh phụ đề & vị trí (CC)',
+                              onPressed: () {
+                                showModalBottomSheet(
+                                  context: context,
+                                  backgroundColor: Colors.transparent,
+                                  isScrollControlled: true,
+                                  builder: (ctx) => SubtitleControlSheet(
+                                    settings: _settings,
+                                    onChanged: () {
+                                      setState(() {});
+                                    },
+                                    onShiftTimeline: _currentDocument.isEmpty
+                                        ? null
+                                        : _shiftSubtitleTimeline,
+                                    onResetTimelineToOriginal:
+                                        _currentDocument.isEmpty
+                                        ? null
+                                        : _resetSubtitleTimelineToOriginal,
+                                  ),
+                                );
+                              },
+                            ),
+
+                            // 7. Tải video offline (nếu là video online)
+                            if (_currentVideoPath.startsWith('http')) ...[
+                              if (_isDownloadingVideo)
+                                GestureDetector(
+                                  onTap: () {
+                                    setState(() {
+                                      _showDownloadBanner =
+                                          !_showDownloadBanner;
+                                    });
+                                  },
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 4,
+                                    ),
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 4,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: AppTheme.primaryEmerald
+                                            .withValues(
+                                              alpha: _showDownloadBanner
+                                                  ? 0.22
+                                                  : 0.10,
+                                            ),
+                                        borderRadius: BorderRadius.circular(16),
+                                        border: Border.all(
+                                          color: AppTheme.primaryEmerald
+                                              .withValues(
+                                                alpha: _showDownloadBanner
+                                                    ? 0.7
+                                                    : 0.35,
+                                              ),
+                                          width: 1,
                                         ),
                                       ),
                                       child: Row(
                                         mainAxisSize: MainAxisSize.min,
                                         children: [
-                                          Icon(
-                                            _autoPlayNextEpisode
-                                                ? Icons.play_circle_fill_rounded
-                                                : Icons.pause_circle_outline_rounded,
-                                            size: 16,
-                                            color: _autoPlayNextEpisode
-                                                ? AppTheme.primaryEmerald
-                                                : Colors.white70,
+                                          SizedBox(
+                                            width: 13,
+                                            height: 13,
+                                            child: CircularProgressIndicator(
+                                              value: _downloadProgress > 0
+                                                  ? _downloadProgress.clamp(
+                                                      0.0,
+                                                      1.0,
+                                                    )
+                                                  : null,
+                                              strokeWidth: 2,
+                                              color: AppTheme.primaryEmerald,
+                                              backgroundColor: Colors.white12,
+                                            ),
                                           ),
-                                          const SizedBox(width: 4),
+                                          const SizedBox(width: 5),
                                           Text(
-                                            _autoPlayNextEpisode
-                                                ? 'Tự chuyển'
-                                                : 'Dừng tập',
-                                            style: TextStyle(
+                                            '${(_downloadProgress * 100).toInt()}%',
+                                            style: const TextStyle(
+                                              color: AppTheme.primaryEmerald,
                                               fontSize: 11,
                                               fontWeight: FontWeight.bold,
-                                              color: _autoPlayNextEpisode
-                                                  ? AppTheme.primaryEmerald
-                                                  : Colors.white70,
                                             ),
+                                          ),
+                                          const SizedBox(width: 4),
+                                          Icon(
+                                            _showDownloadBanner
+                                                ? Icons.visibility_rounded
+                                                : Icons.visibility_off_rounded,
+                                            color: AppTheme.primaryEmerald
+                                                .withValues(alpha: 0.8),
+                                            size: 13,
                                           ),
                                         ],
                                       ),
                                     ),
                                   ),
-                                  const SizedBox(width: 4),
-                                  _buildTopBarIconButton(
-                                    icon: Icons.format_list_numbered_rounded,
-                                    tooltip: 'Danh sách tập phim',
-                                    onPressed: _showEpisodeListSheet,
-                                  ),
-                                  _buildTopBarIconButton(
-                                    icon: Icons.high_quality_rounded,
-                                    iconColor: AppTheme.primaryEmerald,
-                                    tooltip:
-                                        'Chất lượng Hồng Quả (${_hongguoQuality == "auto" ? "Tự động" : "${_hongguoQuality}P"})',
-                                    onPressed: _showHongguoQualitySheet,
-                                  ),
-                                  ValueListenableBuilder<HongguoCloudAccountState>(
-                                    valueListenable:
-                                        HongguoCloudAccountService.instance.state,
-                                    builder: (context, cloudState, _) {
-                                      return _buildTopBarIconButton(
-                                        icon: cloudState.isLoggedIn
-                                            ? Icons.cloud_done_rounded
-                                            : Icons.account_circle_outlined,
-                                        iconColor: cloudState.isLoggedIn
-                                            ? AppTheme.primaryEmerald
-                                            : Colors.white70,
-                                        tooltip: 'Tài khoản Đám mây Hồng Quả',
-                                        onPressed: () =>
-                                            HongguoAccountSheet.show(context),
-                                      );
-                                    },
-                                  ),
-                                  _buildTopBarIconButton(
-                                    icon: Icons.settings_rounded,
-                                    iconColor: Colors.white70,
-                                    tooltip: 'Cài đặt dịch & xem Hồng Quả',
-                                    onPressed: () => HongguoSettingsSheet.show(context),
-                                  ),
-                                  ValueListenableBuilder<List<WatchLaterItem>>(
-                                    valueListenable: WatchLaterRepository.watchLaterNotifier,
-                                    builder: (context, items, _) {
-                                      final sId = widget.dramaDetail?.seriesId ?? '';
-                                      final isWl = items.any((it) => it.seriesId == sId || it.id == 'hg_$sId');
-                                      return _buildTopBarIconButton(
-                                        icon: isWl ? Icons.bookmark_added_rounded : Icons.bookmark_add_outlined,
-                                        iconColor: isWl ? AppTheme.primaryEmerald : Colors.white70,
-                                        isActive: isWl,
-                                        tooltip: isWl ? 'Đã lưu trong Xem sau' : 'Lưu vào danh sách Xem sau',
-                                        onPressed: _toggleWatchLater,
-                                      );
-                                    },
-                                  ),
-                                ],
-
-                                // 2. Nút PiP ngoài màn hình (Picture-in-Picture)
+                                )
+                              else
                                 _buildTopBarIconButton(
-                                  icon: Icons.picture_in_picture_alt_rounded,
-                                  tooltip: Platform.isIOS
-                                      ? 'Thu nhỏ video (Mini-Player)'
-                                      : 'Hình thu nhỏ ngoài màn hình (PiP)',
-                                  onPressed: _enterPipMode,
+                                  icon: Icons.download_rounded,
+                                  tooltip: 'Tải video về máy để xem offline (không lag)',
+                                  onPressed: _showDownloadSelectionSheet,
                                 ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
 
-                                // 3. Cài đặt Bilibili (Bánh răng màu cyan)
-                                if (_bilibiliDetails != null || BilibiliResolver.isBilibiliUrl(_sourceVideoUrl)) ...[
-                                  _buildTopBarIconButton(
-                                    icon: Icons.settings_rounded,
-                                    iconColor: const Color(0xFF00AEEC),
-                                    tooltip: 'Cài đặt Bilibili',
-                                    onPressed: () async {
-                                      final oldCdn = _settings.bilibiliCdnService;
-                                      final oldHwDecode = _settings.bilibiliHardwareDecode;
-                                      final oldQuality = _currentQualityKey;
-                                      await BilibiliSettingsSheet.show(
-                                        context,
-                                        onRecreateSubtitles: () {
-                                          _startOnDemandPipeline(
-                                            enableTts: _settings.isTtsPlaybackEnabled,
-                                            forceRecreate: true,
-                                          );
-                                        },
-                                      );
-                                      if (!mounted) return;
-                                      final nextQuality = BilibiliResolver.normalizeQualityCode(
-                                        _settings.bilibiliPreferredQuality.isNotEmpty
-                                            ? _settings.bilibiliPreferredQuality
-                                            : _settings.preferredVideoQuality,
-                                      );
-                                      final needReload = _bilibiliDetails != null &&
-                                          (oldCdn != _settings.bilibiliCdnService ||
-                                              oldHwDecode != _settings.bilibiliHardwareDecode ||
-                                              oldQuality != nextQuality);
-                                      if (needReload) {
-                                        if (oldHwDecode != _settings.bilibiliHardwareDecode) {
-                                          final stale = _controller;
-                                          _controller = null;
-                                          stale?.removeListener(_onPlayerUpdate);
-                                          stale?.dispose();
-                                        }
-                                        _switchBilibiliQuality(nextQuality);
-                                      } else {
-                                        setState(() {});
-                                      }
-                                    },
-                                  ),
-                                ],
+            // Nút điều khiển trung tâm (Tập trước, Lùi 10s, Play/Pause, Tới 10s, Tập sau)
+            Center(
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  if (widget.dramaDetail != null) ...[
+                    IconButton(
+                      iconSize: 36,
+                      tooltip: 'Tập trước',
+                      icon: Icon(
+                        Icons.skip_previous_rounded,
+                        color: _hasPreviousEpisode
+                            ? Colors.white
+                            : Colors.white38,
+                      ),
+                      onPressed: _hasPreviousEpisode
+                          ? _playPreviousEpisode
+                          : null,
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  IconButton(
+                    iconSize: 38,
+                    tooltip: 'Lùi 10 giây',
+                    icon: const Icon(Icons.replay_10, color: Colors.white),
+                    onPressed: () => _skipBy(-10000),
+                  ),
+                  const SizedBox(width: 14),
+                  IconButton(
+                    iconSize: 64,
+                    icon: Icon(
+                      controller.value.isPlaying
+                          ? Icons.pause_circle_filled
+                          : Icons.play_circle_filled,
+                      color: Colors.white,
+                    ),
+                    onPressed: () {
+                      setState(() {
+                        controller.value.isPlaying
+                            ? controller.pause()
+                            : controller.play();
+                      });
+                    },
+                  ),
+                  const SizedBox(width: 14),
+                  IconButton(
+                    iconSize: 38,
+                    tooltip: 'Tới 10 giây',
+                    icon: const Icon(Icons.forward_10, color: Colors.white),
+                    onPressed: () => _skipBy(10000),
+                  ),
+                  if (widget.dramaDetail != null) ...[
+                    const SizedBox(width: 8),
+                    IconButton(
+                      iconSize: 36,
+                      tooltip: 'Tập kế tiếp',
+                      icon: Icon(
+                        Icons.skip_next_rounded,
+                        color: _hasNextEpisode ? Colors.white : Colors.white38,
+                      ),
+                      onPressed: _hasNextEpisode ? _playNextEpisode : null,
+                    ),
+                  ],
+                ],
+              ),
+            ),
 
-                                // 4. Nút Bật/Tắt Lồng tiếng AI
-                                _buildTopBarIconButton(
-                                  icon: _settings.isTtsPlaybackEnabled
-                                      ? Icons.record_voice_over_rounded
-                                      : Icons.voice_over_off_rounded,
-                                  iconColor: _settings.isTtsPlaybackEnabled
-                                      ? Colors.lightGreenAccent
-                                      : Colors.white70,
-                                  isActive: _settings.isTtsPlaybackEnabled,
-                                  tooltip: _settings.isTtsPlaybackEnabled
-                                      ? 'Đang bật lồng tiếng AI (Chạm để tắt)'
-                                      : 'Đang tắt lồng tiếng AI (Chạm để bật)',
-                                  onPressed: () async {
-                                    final nextEnabled =
-                                        !_settings.isTtsPlaybackEnabled;
-                                    if (nextEnabled &&
-                                        (_liveTranslator?.isEnabled ?? false)) {
-                                      _cancelLiveWarmupPause(
-                                        finishTranslatorWarmup: true,
-                                      );
-                                      await _liveTranslator!.stop();
-                                    }
-                                    setState(() {
-                                      _settings.isTtsPlaybackEnabled =
-                                          nextEnabled;
-                                    });
-                                    await _applyAudioVolumes();
-                                    if (_settings.isTtsPlaybackEnabled) {
-                                      if (_prefetchManager != null && _currentDocument.items.isNotEmpty) {
-                                        _prefetchManager!.ensureTtsGenerated(_currentDocument, episodeIndex: _currentEpisodeIndex);
-                                      }
-                                      final positionMs =
-                                          controller.value.position.inMilliseconds;
-                                      await _ttsScheduler.onSeek(positionMs);
-                                      _syncTtsWithVideo();
-                                    }
-                                  },
-                                ),
-
-                                // 4b. Nút Nghe Dịch Trực Tiếp (Gemini 3.5 Live)
-                                _buildTopBarIconButton(
-                                  icon: Icons.spatial_audio_rounded,
-                                  iconColor:
-                                      (_liveTranslator?.isEnabled ?? false)
-                                          ? const Color(0xFF64B5F6)
-                                          : Colors.white70,
-                                  isActive:
-                                      _liveTranslator?.isEnabled ?? false,
-                                  tooltip:
-                                      (_liveTranslator?.isEnabled ?? false)
-                                          ? 'Nghe Dịch Trực Tiếp (+${_liveTranslator!.leadSeconds.toStringAsFixed(1)}s)'
-                                          : 'Nghe Dịch Trực Tiếp (Gemini 3.5 Live)',
-                                  onPressed: _openLiveTranslateSheet,
-                                ),
-
-                                // 5. Chỉnh âm lượng độc lập (Âm lượng kép)
-                                _buildTopBarIconButton(
-                                  icon: Icons.graphic_eq_rounded,
-                                  tooltip: 'Chỉnh âm lượng độc lập (Video & Giọng đọc)',
-                                  onPressed: () {
-                                    showModalBottomSheet(
-                                      context: context,
-                                      backgroundColor: Colors.transparent,
-                                      isScrollControlled: true,
-                                      builder: (ctx) => StatefulBuilder(
-                                        builder: (context, setSheetState) {
-                                          return DualVolumeSheet(
-                                            originalVolume: _settings.originalVideoVolume,
-                                            aiVolume: _settings.ttsVolume,
-                                            onOriginalVolumeChanged: (val) async {
-                                              setState(() {
-                                                _settings.originalVideoVolume = val;
-                                              });
-                                              await _applyAudioVolumes();
-                                              setSheetState(() {});
-                                            },
-                                            onAiVolumeChanged: (val) async {
-                                              setState(() {
-                                                _settings.ttsVolume = val;
-                                              });
-                                              await _ttsScheduler.setVolume(val);
-                                              await _liveTranslator?.setVolume(val);
-                                              setSheetState(() {});
-                                            },
-                                          );
-                                        },
-                                      ),
-                                    );
-                                  },
-                                ),
-
-                                // 6. Tùy chỉnh phụ đề & vị trí (Hình CC)
-                                _buildTopBarIconButton(
-                                  icon: Icons.closed_caption_rounded,
-                                  iconColor: _settings.subtitleMode == 'none'
-                                      ? Colors.white54
-                                      : AppTheme.primaryEmerald,
-                                  isActive: _settings.subtitleMode != 'none',
-                                  tooltip: 'Tùy chỉnh phụ đề & vị trí (CC)',
-                                  onPressed: () {
-                                    showModalBottomSheet(
-                                      context: context,
-                                      backgroundColor: Colors.transparent,
-                                      isScrollControlled: true,
-                                      builder: (ctx) => SubtitleControlSheet(
-                                        settings: _settings,
-                                        onChanged: () {
-                                          setState(() {});
-                                        },
-                                        onShiftTimeline:
-                                            _currentDocument.isEmpty
-                                                ? null
-                                                : _shiftSubtitleTimeline,
-                                        onResetTimelineToOriginal:
-                                            _currentDocument.isEmpty
-                                                ? null
-                                                : _resetSubtitleTimelineToOriginal,
-                                      ),
-                                    );
-                                  },
-                                ),
-
-                                // 7. Tải video offline (nếu là video online)
-                                if (_currentVideoPath.startsWith('http')) ...[
-                                  if (_isDownloadingVideo)
-                                    GestureDetector(
-                                      onTap: () {
-                                        setState(() {
-                                          _showDownloadBanner = !_showDownloadBanner;
-                                        });
-                                      },
-                                      child: Padding(
-                                        padding: const EdgeInsets.symmetric(horizontal: 4),
-                                        child: Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 8,
-                                            vertical: 4,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            color: AppTheme.primaryEmerald.withValues(
-                                              alpha: _showDownloadBanner ? 0.22 : 0.10,
-                                            ),
-                                            borderRadius: BorderRadius.circular(16),
-                                            border: Border.all(
-                                              color: AppTheme.primaryEmerald.withValues(
-                                                alpha: _showDownloadBanner ? 0.7 : 0.35,
-                                              ),
-                                              width: 1,
-                                            ),
-                                          ),
-                                          child: Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              SizedBox(
-                                                width: 13,
-                                                height: 13,
-                                                child: CircularProgressIndicator(
-                                                  value: _downloadProgress > 0
-                                                      ? _downloadProgress.clamp(0.0, 1.0)
-                                                      : null,
-                                                  strokeWidth: 2,
-                                                  color: AppTheme.primaryEmerald,
-                                                  backgroundColor: Colors.white12,
-                                                ),
-                                              ),
-                                              const SizedBox(width: 5),
-                                              Text(
-                                                '${(_downloadProgress * 100).toInt()}%',
-                                                style: const TextStyle(
-                                                  color: AppTheme.primaryEmerald,
-                                                  fontSize: 11,
-                                                  fontWeight: FontWeight.bold,
-                                                ),
-                                              ),
-                                              const SizedBox(width: 4),
-                                              Icon(
-                                                _showDownloadBanner
-                                                    ? Icons.visibility_rounded
-                                                    : Icons.visibility_off_rounded,
-                                                color: AppTheme.primaryEmerald
-                                                    .withValues(alpha: 0.8),
-                                                size: 13,
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ),
-                                    )
-                                  else
-                                    _buildTopBarIconButton(
-                                      icon: Icons.download_rounded,
-                                      tooltip: 'Tải video về máy để xem offline (không lag)',
-                                      onPressed: _showDownloadSelectionSheet,
+            // Thanh trượt tua thời gian ở đáy
+            Positioned(
+              bottom: 8,
+              left: 16,
+              right: 16,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        _formatDuration(
+                          Duration(
+                            milliseconds: _isScrubbing
+                                ? _scrubMs
+                                : controller.value.position.inMilliseconds,
+                          ),
+                        ),
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      PopupMenuButton<double>(
+                        tooltip: 'Tốc độ phát',
+                        initialValue: _playbackSpeed,
+                        onSelected: _setPlaybackSpeed,
+                        color: const Color(0xFF252631),
+                        itemBuilder: (context) => _playbackSpeeds
+                            .map(
+                              (speed) => PopupMenuItem<double>(
+                                value: speed,
+                                child: Row(
+                                  children: [
+                                    SizedBox(
+                                      width: 24,
+                                      child: speed == _playbackSpeed
+                                          ? const Icon(
+                                              Icons.check,
+                                              size: 18,
+                                              color: AppTheme.primaryEmerald,
+                                            )
+                                          : null,
                                     ),
-                                ],
-                              ],
-                            ),
+                                    Text(
+                                      '${_formatSpeed(speed)}x',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            )
+                            .toList(),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 6,
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.speed,
+                                color: Colors.white70,
+                                size: 16,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                '${_formatSpeed(_playbackSpeed)}x',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ),
-                    ],
-                  ),
-                ),
-
-                // Nút điều khiển trung tâm (Tập trước, Lùi 10s, Play/Pause, Tới 10s, Tập sau)
-                Center(
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      if (widget.dramaDetail != null) ...[
-                        IconButton(
-                          iconSize: 36,
-                          tooltip: 'Tập trước',
-                          icon: Icon(
-                            Icons.skip_previous_rounded,
-                            color: _hasPreviousEpisode
-                                ? Colors.white
-                                : Colors.white38,
-                          ),
-                          onPressed:
-                              _hasPreviousEpisode ? _playPreviousEpisode : null,
-                        ),
-                        const SizedBox(width: 8),
-                      ],
-                      IconButton(
-                        iconSize: 38,
-                        tooltip: 'Lùi 10 giây',
-                        icon: const Icon(Icons.replay_10, color: Colors.white),
-                        onPressed: () => _skipBy(-10000),
-                      ),
-                      const SizedBox(width: 14),
-                      IconButton(
-                        iconSize: 64,
-                        icon: Icon(
-                          controller.value.isPlaying
-                              ? Icons.pause_circle_filled
-                              : Icons.play_circle_filled,
-                          color: Colors.white,
-                        ),
-                        onPressed: () {
-                          setState(() {
-                            controller.value.isPlaying
-                                ? controller.pause()
-                                : controller.play();
-                          });
-                        },
-                      ),
-                      const SizedBox(width: 14),
-                      IconButton(
-                        iconSize: 38,
-                        tooltip: 'Tới 10 giây',
-                        icon: const Icon(Icons.forward_10, color: Colors.white),
-                        onPressed: () => _skipBy(10000),
-                      ),
-                      if (widget.dramaDetail != null) ...[
-                        const SizedBox(width: 8),
-                        IconButton(
-                          iconSize: 36,
-                          tooltip: 'Tập kế tiếp',
-                          icon: Icon(
-                            Icons.skip_next_rounded,
-                            color: _hasNextEpisode
-                                ? Colors.white
-                                : Colors.white38,
-                          ),
-                          onPressed: _hasNextEpisode ? _playNextEpisode : null,
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-
-                // Thanh trượt tua thời gian ở đáy
-                Positioned(
-                  bottom: 8,
-                  left: 16,
-                  right: 16,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
                       Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          Text(
-                            _formatDuration(
-                              Duration(
-                                milliseconds: _isScrubbing
-                                    ? _scrubMs
-                                    : controller.value.position.inMilliseconds,
+                          // Nút chất lượng video Bilibili (1080P, 720P, ...)
+                          if (_bilibiliDetails != null ||
+                              BilibiliResolver.isBilibiliUrl(_sourceVideoUrl) ||
+                              BilibiliResolver.isBilibiliUrl(
+                                _currentVideoPath,
+                              )) ...[
+                            InkWell(
+                              onTap: _showQualitySelectionSheet,
+                              borderRadius: BorderRadius.circular(4),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 2,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF00AEEC)
+                                      .withValues(alpha: 0.2),
+                                  borderRadius: BorderRadius.circular(4),
+                                  border: Border.all(
+                                    color: const Color(0xFF00AEEC)
+                                        .withValues(alpha: 0.6),
+                                    width: 1,
+                                  ),
+                                ),
+                                child: Text(
+                                  _currentQualityLabel,
+                                  style: const TextStyle(
+                                    color: Color(0xFF00AEEC),
+                                    fontSize: 10.5,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
                               ),
                             ),
+                            const SizedBox(width: 8),
+                          ],
+                          Text(
+                            _formatDuration(controller.value.duration),
                             style: const TextStyle(
                               color: Colors.white70,
                               fontSize: 12,
                               fontWeight: FontWeight.w600,
                             ),
                           ),
-                          PopupMenuButton<double>(
-                            tooltip: 'Tốc độ phát',
-                            initialValue: _playbackSpeed,
-                            onSelected: _setPlaybackSpeed,
-                            color: const Color(0xFF252631),
-                            itemBuilder: (context) => _playbackSpeeds
-                                .map(
-                                  (speed) => PopupMenuItem<double>(
-                                    value: speed,
-                                    child: Row(
-                                      children: [
-                                        SizedBox(
-                                          width: 24,
-                                          child: speed == _playbackSpeed
-                                              ? const Icon(
-                                                  Icons.check,
-                                                  size: 18,
-                                                  color:
-                                                      AppTheme.primaryEmerald,
-                                                )
-                                              : null,
-                                        ),
-                                        Text(
-                                          '${_formatSpeed(speed)}x',
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                )
-                                .toList(),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 6,
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const Icon(
-                                    Icons.speed,
-                                    color: Colors.white70,
-                                    size: 16,
-                                  ),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    '${_formatSpeed(_playbackSpeed)}x',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ],
-                              ),
+                          const SizedBox(width: 4),
+                          IconButton(
+                            iconSize: 22,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                            icon: Icon(
+                              (isLandscape || _isPlayerFullScreen)
+                                  ? Icons.fullscreen_exit_rounded
+                                  : Icons.fullscreen_rounded,
+                              color: Colors.white,
                             ),
-                          ),
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              // Nút chất lượng video Bilibili (1080P, 720P, ...)
-                              if (_bilibiliDetails != null ||
-                                  BilibiliResolver.isBilibiliUrl(_sourceVideoUrl) ||
-                                  BilibiliResolver.isBilibiliUrl(_currentVideoPath)) ...[
-                                InkWell(
-                                  onTap: _showQualitySelectionSheet,
-                                  borderRadius: BorderRadius.circular(4),
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFF00AEEC).withValues(alpha: 0.2),
-                                      borderRadius: BorderRadius.circular(4),
-                                      border: Border.all(
-                                        color: const Color(0xFF00AEEC).withValues(alpha: 0.6),
-                                        width: 1,
-                                      ),
-                                    ),
-                                    child: Text(
-                                      _currentQualityLabel,
-                                      style: const TextStyle(
-                                        color: Color(0xFF00AEEC),
-                                        fontSize: 10.5,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                              ],
-                              Text(
-                                _formatDuration(controller.value.duration),
-                                style: const TextStyle(
-                                  color: Colors.white70,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              const SizedBox(width: 4),
-                              IconButton(
-                                iconSize: 22,
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(),
-                                icon: Icon(
-                                  (isLandscape || _isPlayerFullScreen)
-                                      ? Icons.fullscreen_exit_rounded
-                                      : Icons.fullscreen_rounded,
-                                  color: Colors.white,
-                                ),
-                                tooltip: (isLandscape || _isPlayerFullScreen)
-                                    ? 'Thu nhỏ'
-                                    : 'Toàn màn hình',
-                                onPressed: () {
-                                  setState(() {
-                                    _isPlayerFullScreen = !_isPlayerFullScreen;
-                                  });
-                                },
-                              ),
-                            ],
+                            tooltip: (isLandscape || _isPlayerFullScreen)
+                                ? 'Thu nhỏ'
+                                : 'Toàn màn hình',
+                            onPressed: () {
+                              setState(() {
+                                _isPlayerFullScreen = !_isPlayerFullScreen;
+                              });
+                            },
                           ),
                         ],
                       ),
-                      SliderTheme(
-                        data: SliderTheme.of(context).copyWith(
-                          trackHeight: 3.5,
-                          thumbShape: const RoundSliderThumbShape(
-                            enabledThumbRadius: 6,
-                          ),
-                          overlayShape: const RoundSliderOverlayShape(
-                            overlayRadius: 14,
-                          ),
-                          activeTrackColor: AppTheme.primaryEmerald,
-                          inactiveTrackColor: Colors.white24,
-                          thumbColor: AppTheme.primaryEmerald,
-                          overlayColor: AppTheme.primaryEmerald.withValues(
-                            alpha: 0.2,
-                          ),
-                        ),
-                        child: Slider(
-                          value: (_isScrubbing
+                    ],
+                  ),
+                  SliderTheme(
+                    data: SliderTheme.of(context).copyWith(
+                      trackHeight: 3.5,
+                      thumbShape: const RoundSliderThumbShape(
+                        enabledThumbRadius: 6,
+                      ),
+                      overlayShape: const RoundSliderOverlayShape(
+                        overlayRadius: 14,
+                      ),
+                      activeTrackColor: AppTheme.primaryEmerald,
+                      inactiveTrackColor: Colors.white24,
+                      thumbColor: AppTheme.primaryEmerald,
+                      overlayColor: AppTheme.primaryEmerald.withValues(
+                        alpha: 0.2,
+                      ),
+                    ),
+                    child: Slider(
+                      value:
+                          (_isScrubbing
                                   ? _scrubMs
                                   : _currentPosMs.clamp(
                                       0,
                                       controller.value.duration.inMilliseconds,
                                     ))
                               .toDouble(),
-                          min: 0.0,
-                          max: controller.value.duration.inMilliseconds
-                              .toDouble(),
-                          onChangeStart: (val) {
-                            setState(() {
-                              _isScrubbing = true;
-                              _scrubMs = val.toInt();
-                              _wasPlayingBeforeScrub =
-                                  controller.value.isPlaying;
-                            });
-                            controller.pause();
-                          },
-                          onChanged: (val) {
-                            setState(() {
-                              _scrubMs = val.toInt();
-                            });
-                          },
-                          onChangeEnd: (val) async {
-                            final targetMs = val.toInt();
-                            setState(() {
-                              _isScrubbing = false;
-                              _currentPosMs = targetMs;
-                              _lastObservedPositionMs = targetMs;
-                              _lastPositionAdvanceAt = DateTime.now();
-                            });
-                            await controller.seekTo(
-                              Duration(milliseconds: targetMs),
+                      min: 0.0,
+                      max: controller.value.duration.inMilliseconds.toDouble(),
+                      onChangeStart: (val) {
+                        setState(() {
+                          _isScrubbing = true;
+                          _scrubMs = val.toInt();
+                          _wasPlayingBeforeScrub = controller.value.isPlaying;
+                        });
+                        controller.pause();
+                      },
+                      onChanged: (val) {
+                        setState(() {
+                          _scrubMs = val.toInt();
+                        });
+                      },
+                      onChangeEnd: (val) async {
+                        final targetMs = val.toInt();
+                        setState(() {
+                          _isScrubbing = false;
+                          _currentPosMs = targetMs;
+                          _lastObservedPositionMs = targetMs;
+                          _lastPositionAdvanceAt = DateTime.now();
+                        });
+                        await controller.seekTo(
+                          Duration(milliseconds: targetMs),
+                        );
+                        await _ttsScheduler.onSeek(targetMs);
+                        if (_liveTranslator?.isEnabled == true) {
+                          unawaited(_liveTranslator!.onSeek(targetMs));
+                        }
+                        if (_wasPlayingBeforeScrub) {
+                          if (_liveTranslator?.isEnabled == true &&
+                              (_liveTranslator?.pauseVideoOnWarmup ?? false)) {
+                            _waitingLiveWarmupResume = true;
+                            _liveWarmupTimeoutTimer?.cancel();
+                            _liveWarmupTimeoutTimer = Timer(
+                              const Duration(milliseconds: 2800),
+                              _handleLiveTranslatorFirstOutput,
                             );
-                            await _ttsScheduler.onSeek(targetMs);
-                            if (_liveTranslator?.isEnabled == true) {
-                              unawaited(_liveTranslator!.onSeek(targetMs));
-                            }
-                            if (_wasPlayingBeforeScrub) {
-                              if (_liveTranslator?.isEnabled == true &&
-                                  (_liveTranslator?.pauseVideoOnWarmup ??
-                                      false)) {
-                                _waitingLiveWarmupResume = true;
-                                _liveWarmupTimeoutTimer?.cancel();
-                                _liveWarmupTimeoutTimer = Timer(
-                                  const Duration(milliseconds: 2800),
-                                  _handleLiveTranslatorFirstOutput,
-                                );
-                              } else {
-                                await controller.play();
-                              }
-                            }
-                            _syncTtsWithVideo();
-                          },
-                        ),
-                      ),
-                    ],
+                          } else {
+                            await controller.play();
+                          }
+                        }
+                        _syncTtsWithVideo();
+                      },
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
+            ),
+          ],
 
-              // 5. Thanh hiển thị tiến trình tải video offline (Floating Banner)
-              if (_isDownloadingVideo && _showDownloadBanner)
-                Positioned(
-                  bottom: isLandscape
-                      ? ((_showControls && !isHongguoWaitingTranslation) ? 58 : 12)
-                      : ((_showControls && !isHongguoWaitingTranslation) ? 82 : 24),
-                  left: isLandscape ? 32 : 16,
-                  right: isLandscape ? 32 : 16,
-                  child: Center(
-                    child: isLandscape
-                        ? _buildLandscapeDownloadBanner()
-                        : _buildPortraitDownloadBanner(),
-                  ),
-                ),
-            ],
-          ),
-        );
+          // 5. Thanh hiển thị tiến trình tải video offline (Floating Banner)
+          if (_isDownloadingVideo && _showDownloadBanner)
+            Positioned(
+              bottom: isLandscape
+                  ? ((_showControls && !isHongguoWaitingTranslation) ? 58 : 12)
+                  : ((_showControls && !isHongguoWaitingTranslation) ? 82 : 24),
+              left: isLandscape ? 32 : 16,
+              right: isLandscape ? 32 : 16,
+              child: Center(
+                child: isLandscape
+                    ? _buildLandscapeDownloadBanner()
+                    : _buildPortraitDownloadBanner(),
+              ),
+            ),
+        ],
+      ),
+    );
   }
 
   Widget _buildLandscapeDownloadBanner() {
@@ -8011,11 +8677,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             },
             child: const Padding(
               padding: EdgeInsets.all(2),
-              child: Icon(
-                Icons.close_rounded,
-                color: Colors.white60,
-                size: 14,
-              ),
+              child: Icon(Icons.close_rounded, color: Colors.white60, size: 14),
             ),
           ),
         ],
@@ -8026,10 +8688,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   Widget _buildPortraitDownloadBanner() {
     return Container(
       constraints: const BoxConstraints(maxWidth: 440),
-      padding: const EdgeInsets.symmetric(
-        horizontal: 14,
-        vertical: 9,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
       decoration: BoxDecoration(
         color: const Color(0xFF14161E).withValues(alpha: 0.92),
         borderRadius: BorderRadius.circular(16),
@@ -8118,9 +8777,15 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   Widget _buildHongguoTranslatingGateOverlay(String displayTitle) {
     if (_prefetchManager == null && widget.dramaDetail != null) {
       _prefetchManager = HongguoPrefetchManager(widget.dramaDetail!);
-      _prefetchManager!.registerVideoUrl(_currentEpisodeIndex, widget.videoPath);
+      _prefetchManager!.registerVideoUrl(
+        _currentEpisodeIndex,
+        widget.videoPath,
+      );
       if (_currentDocument.isNotEmpty) {
-        _prefetchManager!.registerDocument(_currentEpisodeIndex, _currentDocument);
+        _prefetchManager!.registerDocument(
+          _currentEpisodeIndex,
+          _currentDocument,
+        );
       }
       _prefetchManager!.onEpisodePlaying(
         _currentEpisodeIndex,
@@ -8131,6 +8796,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             _currentDocument = newDoc;
             _ttsScheduler.dispose();
             _ttsScheduler = TtsAudioScheduler(newDoc);
+            _ttsScheduler = _createTtsScheduler(newDoc);
           });
         },
       );
@@ -8203,11 +8869,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                 valueListenable: _prefetchManager!.prefetchStateNotifier,
                 builder: (context, state, _) {
                   final isFailed = state?.status == 'failed';
-                  final progress = (state != null && state.episodeIndex == _currentEpisodeIndex)
+                  final progress =
+                      (state != null &&
+                          state.episodeIndex == _currentEpisodeIndex)
                       ? state.progress.clamp(0.0, 1.0)
                       : 0.0;
                   final percent = (progress * 100).toInt();
-                  final message = (state != null &&
+                  final message =
+                      (state != null &&
                           state.episodeIndex == _currentEpisodeIndex &&
                           state.message.isNotEmpty)
                       ? state.message
@@ -8242,7 +8911,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                           decoration: BoxDecoration(
                             color: isFailed
                                 ? Colors.redAccent.withValues(alpha: 0.15)
-                                : AppTheme.primaryEmerald.withValues(alpha: 0.15),
+                                : AppTheme.primaryEmerald.withValues(
+                                    alpha: 0.15,
+                                  ),
                             shape: BoxShape.circle,
                           ),
                           child: Center(
@@ -8277,7 +8948,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                         const SizedBox(height: 8),
                         Text(
                           isFailed
-                              ? (state?.message ?? 'Đã xảy ra lỗi trong quá trình bóc tách phụ đề.')
+                              ? (state?.message ??
+                                    'Đã xảy ra lỗi trong quá trình bóc tách phụ đề.')
                               : message,
                           style: TextStyle(
                             color: Colors.white.withValues(alpha: 0.7),
@@ -8315,7 +8987,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: AppTheme.primaryEmerald,
                                 foregroundColor: const Color(0xFF0D1117),
-                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 14,
+                                ),
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(12),
                                 ),
@@ -8349,14 +9023,21 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                   style: OutlinedButton.styleFrom(
                                     foregroundColor: Colors.white,
                                     side: BorderSide(
-                                      color: Colors.white.withValues(alpha: 0.3),
+                                      color: Colors.white.withValues(
+                                        alpha: 0.3,
+                                      ),
                                     ),
-                                    padding: const EdgeInsets.symmetric(vertical: 12),
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 12,
+                                    ),
                                     shape: RoundedRectangleBorder(
                                       borderRadius: BorderRadius.circular(10),
                                     ),
                                   ),
-                                  icon: const Icon(Icons.refresh_rounded, size: 18),
+                                  icon: const Icon(
+                                    Icons.refresh_rounded,
+                                    size: 18,
+                                  ),
                                   label: const Text('Thử lại'),
                                   onPressed: () {
                                     _prefetchManager?.onEpisodePlaying(
@@ -8367,7 +9048,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                         setState(() {
                                           _currentDocument = newDoc;
                                           _ttsScheduler.dispose();
-                                          _ttsScheduler = TtsAudioScheduler(newDoc);
+                                          _ttsScheduler = TtsAudioScheduler(
+                                            newDoc,
+                                          );
                                         });
                                         _applyAudioVolumes();
                                       },
@@ -8381,13 +9064,18 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor: Colors.white24,
                                     foregroundColor: Colors.white,
-                                    padding: const EdgeInsets.symmetric(vertical: 12),
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 12,
+                                    ),
                                     shape: RoundedRectangleBorder(
                                       borderRadius: BorderRadius.circular(10),
                                     ),
                                     elevation: 0,
                                   ),
-                                  icon: const Icon(Icons.play_arrow_rounded, size: 18),
+                                  icon: const Icon(
+                                    Icons.play_arrow_rounded,
+                                    size: 18,
+                                  ),
                                   label: const Text('Xem bản gốc'),
                                   onPressed: () {
                                     setState(() {
@@ -8440,7 +9128,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     }
 
     final durationMs = controller.value.duration.inMilliseconds;
-    final currentPosMs = _currentPosMs.clamp(0, durationMs > 0 ? durationMs : 0);
+    final currentPosMs = _currentPosMs.clamp(
+      0,
+      durationMs > 0 ? durationMs : 0,
+    );
     final isPlaying = controller.value.isPlaying;
 
     return Scaffold(
@@ -8517,7 +9208,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                         children: const [
                           Icon(Icons.replay_10, color: Colors.white, size: 22),
                           SizedBox(height: 2),
-                          Text('-10s', style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
+                          Text(
+                            '-10s',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 9,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -8540,7 +9238,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                         children: const [
                           Icon(Icons.forward_10, color: Colors.white, size: 22),
                           SizedBox(height: 2),
-                          Text('+10s', style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
+                          Text(
+                            '+10s',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 9,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -8578,7 +9283,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                         ],
                       ),
                     ),
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 6,
+                    ),
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
@@ -8601,9 +9309,16 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                 decoration: BoxDecoration(
                                   color: Colors.black.withValues(alpha: 0.55),
                                   shape: BoxShape.circle,
-                                  border: Border.all(color: Colors.white24, width: 0.8),
+                                  border: Border.all(
+                                    color: Colors.white24,
+                                    width: 0.8,
+                                  ),
                                 ),
-                                child: const Icon(Icons.close, color: Colors.white, size: 16),
+                                child: const Icon(
+                                  Icons.close,
+                                  color: Colors.white,
+                                  size: 16,
+                                ),
                               ),
                             ),
                             Row(
@@ -8612,16 +9327,28 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                 GestureDetector(
                                   onTap: _cyclePipAspectRatio,
                                   child: Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                      vertical: 3,
+                                    ),
                                     decoration: BoxDecoration(
-                                      color: Colors.black.withValues(alpha: 0.55),
+                                      color: Colors.black.withValues(
+                                        alpha: 0.55,
+                                      ),
                                       borderRadius: BorderRadius.circular(12),
-                                      border: Border.all(color: Colors.white24, width: 0.8),
+                                      border: Border.all(
+                                        color: Colors.white24,
+                                        width: 0.8,
+                                      ),
                                     ),
                                     child: Row(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
-                                        const Icon(Icons.aspect_ratio_rounded, color: Colors.white, size: 13),
+                                        const Icon(
+                                          Icons.aspect_ratio_rounded,
+                                          color: Colors.white,
+                                          size: 13,
+                                        ),
                                         const SizedBox(width: 3),
                                         Text(
                                           _pipRatioLabel,
@@ -8646,11 +9373,20 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                     width: 28,
                                     height: 28,
                                     decoration: BoxDecoration(
-                                      color: Colors.black.withValues(alpha: 0.55),
+                                      color: Colors.black.withValues(
+                                        alpha: 0.55,
+                                      ),
                                       shape: BoxShape.circle,
-                                      border: Border.all(color: Colors.white24, width: 0.8),
+                                      border: Border.all(
+                                        color: Colors.white24,
+                                        width: 0.8,
+                                      ),
                                     ),
-                                    child: const Icon(Icons.open_in_full_rounded, color: Colors.white, size: 13),
+                                    child: const Icon(
+                                      Icons.open_in_full_rounded,
+                                      color: Colors.white,
+                                      size: 13,
+                                    ),
                                   ),
                                 ),
                               ],
@@ -8674,9 +9410,16 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                 decoration: BoxDecoration(
                                   color: Colors.black.withValues(alpha: 0.55),
                                   shape: BoxShape.circle,
-                                  border: Border.all(color: Colors.white24, width: 0.8),
+                                  border: Border.all(
+                                    color: Colors.white24,
+                                    width: 0.8,
+                                  ),
                                 ),
-                                child: const Icon(Icons.replay_10, color: Colors.white, size: 20),
+                                child: const Icon(
+                                  Icons.replay_10,
+                                  color: Colors.white,
+                                  size: 20,
+                                ),
                               ),
                             ),
                             const SizedBox(width: 18),
@@ -8689,7 +9432,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                   await controller.play();
                                   _syncTtsWithVideo();
                                 }
-                                unawaited(PipManager.updatePipActions(isPlaying: controller.value.isPlaying));
+                                unawaited(
+                                  PipManager.updatePipActions(
+                                    isPlaying: controller.value.isPlaying,
+                                  ),
+                                );
                                 _startPipControlsTimer();
                                 if (mounted) setState(() {});
                               },
@@ -8701,13 +9448,17 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                   shape: BoxShape.circle,
                                   boxShadow: [
                                     BoxShadow(
-                                      color: Colors.black.withValues(alpha: 0.4),
+                                      color: Colors.black.withValues(
+                                        alpha: 0.4,
+                                      ),
                                       blurRadius: 8,
                                     ),
                                   ],
                                 ),
                                 child: Icon(
-                                  isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                                  isPlaying
+                                      ? Icons.pause_rounded
+                                      : Icons.play_arrow_rounded,
                                   color: Colors.black87,
                                   size: 28,
                                 ),
@@ -8726,9 +9477,16 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                 decoration: BoxDecoration(
                                   color: Colors.black.withValues(alpha: 0.55),
                                   shape: BoxShape.circle,
-                                  border: Border.all(color: Colors.white24, width: 0.8),
+                                  border: Border.all(
+                                    color: Colors.white24,
+                                    width: 0.8,
+                                  ),
                                 ),
-                                child: const Icon(Icons.forward_10, color: Colors.white, size: 20),
+                                child: const Icon(
+                                  Icons.forward_10,
+                                  color: Colors.white,
+                                  size: 20,
+                                ),
                               ),
                             ),
                           ],
@@ -8741,12 +9499,18 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 2,
+                                  vertical: 1,
+                                ),
                                 child: Row(
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
                                   children: [
                                     Text(
-                                      _formatDuration(Duration(milliseconds: currentPosMs)),
+                                      _formatDuration(
+                                        Duration(milliseconds: currentPosMs),
+                                      ),
                                       style: const TextStyle(
                                         color: Colors.white70,
                                         fontSize: 9,
@@ -8754,7 +9518,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                       ),
                                     ),
                                     Text(
-                                      _formatDuration(Duration(milliseconds: durationMs)),
+                                      _formatDuration(
+                                        Duration(milliseconds: durationMs),
+                                      ),
                                       style: const TextStyle(
                                         color: Colors.white70,
                                         fontSize: 9,
@@ -8767,9 +9533,17 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                               ClipRRect(
                                 borderRadius: BorderRadius.circular(2),
                                 child: LinearProgressIndicator(
-                                  value: durationMs > 0 ? (currentPosMs / durationMs).clamp(0.0, 1.0) : 0.0,
+                                  value: durationMs > 0
+                                      ? (currentPosMs / durationMs).clamp(
+                                          0.0,
+                                          1.0,
+                                        )
+                                      : 0.0,
                                   backgroundColor: Colors.white24,
-                                  valueColor: const AlwaysStoppedAnimation<Color>(AppTheme.primaryEmerald),
+                                  valueColor:
+                                      const AlwaysStoppedAnimation<Color>(
+                                        AppTheme.primaryEmerald,
+                                      ),
                                   minHeight: 2.5,
                                 ),
                               ),
@@ -8792,7 +9566,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     final controller = _controller;
     final isPlaying = controller?.value.isPlaying ?? false;
     final durationMs = controller?.value.duration.inMilliseconds ?? 0;
-    final currentPosMs = _currentPosMs.clamp(0, durationMs > 0 ? durationMs : 0);
+    final currentPosMs = _currentPosMs.clamp(
+      0,
+      durationMs > 0 ? durationMs : 0,
+    );
 
     return Dismissible(
       key: ValueKey('mini_${widget.videoPath}'),
@@ -8838,7 +9615,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                         child: Stack(
                           fit: StackFit.expand,
                           children: [
-                            if (controller != null && controller.value.isInitialized)
+                            if (controller != null &&
+                                controller.value.isInitialized)
                               FittedBox(
                                 fit: BoxFit.cover,
                                 child: SizedBox(
@@ -8853,7 +9631,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                 fit: BoxFit.cover,
                                 errorBuilder: (_, _, _) => Container(
                                   color: Colors.black54,
-                                  child: const Icon(Icons.movie_rounded, color: Colors.white24),
+                                  child: const Icon(
+                                    Icons.movie_rounded,
+                                    color: Colors.white24,
+                                  ),
                                 ),
                               )
                             else
@@ -8891,7 +9672,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            displayTitle.isNotEmpty ? displayTitle : 'Đang phát video',
+                            displayTitle.isNotEmpty
+                                ? displayTitle
+                                : 'Đang phát video',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
@@ -8905,12 +9688,19 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                             children: [
                               if (widget.dramaDetail != null) ...[
                                 Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 5,
+                                    vertical: 1,
+                                  ),
                                   decoration: BoxDecoration(
-                                    color: AppTheme.primaryEmerald.withValues(alpha: 0.25),
+                                    color: AppTheme.primaryEmerald.withValues(
+                                      alpha: 0.25,
+                                    ),
                                     borderRadius: BorderRadius.circular(4),
                                     border: Border.all(
-                                      color: AppTheme.primaryEmerald.withValues(alpha: 0.4),
+                                      color: AppTheme.primaryEmerald.withValues(
+                                        alpha: 0.4,
+                                      ),
                                       width: 0.8,
                                     ),
                                   ),
@@ -8954,8 +9744,15 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                     IconButton(
                       visualDensity: VisualDensity.compact,
                       padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                      icon: const Icon(Icons.replay_10, color: Colors.white70, size: 20),
+                      constraints: const BoxConstraints(
+                        minWidth: 32,
+                        minHeight: 32,
+                      ),
+                      icon: const Icon(
+                        Icons.replay_10,
+                        color: Colors.white70,
+                        size: 20,
+                      ),
                       tooltip: 'Lùi 10 giây',
                       onPressed: () => _skipBy(-10000),
                     ),
@@ -8964,9 +9761,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                     IconButton(
                       visualDensity: VisualDensity.compact,
                       padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                      constraints: const BoxConstraints(
+                        minWidth: 36,
+                        minHeight: 36,
+                      ),
                       icon: Icon(
-                        isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                        isPlaying
+                            ? Icons.pause_rounded
+                            : Icons.play_arrow_rounded,
                         color: AppTheme.primaryEmerald,
                         size: 26,
                       ),
@@ -8988,8 +9790,15 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                     IconButton(
                       visualDensity: VisualDensity.compact,
                       padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                      icon: const Icon(Icons.forward_10, color: Colors.white70, size: 20),
+                      constraints: const BoxConstraints(
+                        minWidth: 32,
+                        minHeight: 32,
+                      ),
+                      icon: const Icon(
+                        Icons.forward_10,
+                        color: Colors.white70,
+                        size: 20,
+                      ),
                       tooltip: 'Tới 10 giây',
                       onPressed: () => _skipBy(10000),
                     ),
@@ -8998,8 +9807,15 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                     IconButton(
                       visualDensity: VisualDensity.compact,
                       padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                      icon: const Icon(Icons.close_rounded, color: Colors.white70, size: 20),
+                      constraints: const BoxConstraints(
+                        minWidth: 32,
+                        minHeight: 32,
+                      ),
+                      icon: const Icon(
+                        Icons.close_rounded,
+                        color: Colors.white70,
+                        size: 20,
+                      ),
                       tooltip: 'Đóng trình phát',
                       onPressed: () {
                         GlobalPlayerManager.instance.close();
@@ -9015,9 +9831,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                   right: 0,
                   bottom: 0,
                   child: LinearProgressIndicator(
-                    value: durationMs > 0 ? (currentPosMs / durationMs).clamp(0.0, 1.0) : 0.0,
+                    value: durationMs > 0
+                        ? (currentPosMs / durationMs).clamp(0.0, 1.0)
+                        : 0.0,
                     backgroundColor: Colors.white12,
-                    valueColor: const AlwaysStoppedAnimation<Color>(AppTheme.primaryEmerald),
+                    valueColor: const AlwaysStoppedAnimation<Color>(
+                      AppTheme.primaryEmerald,
+                    ),
                     minHeight: 2.5,
                   ),
                 ),
