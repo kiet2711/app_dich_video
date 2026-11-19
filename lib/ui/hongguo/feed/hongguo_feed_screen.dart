@@ -222,8 +222,14 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
   bool _showHeartAnim = false;
   Offset _heartAnimPos = Offset.zero;
 
-  // Tốc độ phát video
+  // Tốc độ phát video & cử chỉ giữ cạnh 2x kiểu TikTok
   double _playbackSpeed = 1.0;
+  bool _isTemp2xActive = false;
+  bool _isHoldingSide2x = false;
+  bool _temp2xWillLock = false;
+  bool _is2xLocked = false;
+  double _speedBeforeTemp2x = 1.0;
+  double _speedBeforeLock2x = 1.0;
 
   // Trạng thái kéo thanh tua (Scrubber)
   bool _isScrubbing = false;
@@ -284,6 +290,10 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
   bool _isPreTranslating = false;
   StreamSubscription<bool>? _completedSub;
   int? _pendingInitialSeekMs;
+  DateTime _lastHistoryPositionSaveAt = DateTime.fromMillisecondsSinceEpoch(0);
+  int _lastHistorySavedPositionMs = -1;
+  String? _lastMarkedWatchedDocKey;
+  static const Duration _historyPositionSaveInterval = Duration(seconds: 4);
 
   @override
   void initState() {
@@ -619,6 +629,21 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         _currentDur = dur;
         _playbackRevision.value++;
 
+        if (_pendingInitialSeekMs == null &&
+            pos.inMilliseconds >= 1500 &&
+            _currentIndex >= 0 &&
+            _currentIndex < _feedItems.length) {
+          final currentItem = _feedItems[_currentIndex];
+          unawaited(
+            _persistFeedPlaybackPosition(
+              currentItem,
+              positionMs: pos.inMilliseconds,
+              durationMs: dur.inMilliseconds,
+              allowCreateForTrackedSeries: true,
+            ),
+          );
+        }
+
         if (_isTtsActive &&
             _ttsScheduler != null &&
             _activeController != null) {
@@ -695,6 +720,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
   @override
   void dispose() {
+    _flushCurrentFeedPlaybackPosition();
     _cancelCascadingPreload();
     _activationRequestId++;
     _feedGeneration++;
@@ -1797,6 +1823,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
   void _onPageChanged(int index) {
     HapticFeedback.selectionClick();
+    _flushCurrentFeedPlaybackPosition();
     _currentIndex = index;
     _tabCurrentIndices[_currentFeedTab] = index;
 
@@ -1960,6 +1987,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     if (_currentFeedTab == tabKey && !forceReload && _feedItems.isNotEmpty) {
       return;
     }
+    _flushCurrentFeedPlaybackPosition();
     _disposeStandbyPlayer();
     final switchGeneration = ++_feedGeneration;
     _activationRequestId++;
@@ -2206,6 +2234,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     }
     if (items.isEmpty) return;
 
+    _flushCurrentFeedPlaybackPosition();
     _disposeStandbyPlayer();
     setState(() {
       _feedGeneration++;
@@ -2253,6 +2282,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     HapticFeedback.lightImpact();
     if (_activeController == null) return;
     if (_activeController!.value.isPlaying) {
+      _flushCurrentFeedPlaybackPosition();
       _cancelLiveWarmupPause(finishTranslatorWarmup: false);
       _activeController!.player.pause();
       _ttsScheduler?.pause();
@@ -2318,12 +2348,10 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         : '${speed}x';
   }
 
-  Future<void> _applyPlaybackSpeed(double speed) async {
-    HapticFeedback.lightImpact();
+  Future<void> _setTransientPlaybackSpeed(double speed) async {
     setState(() {
       _playbackSpeed = speed;
     });
-    _settings?.hongguoPlaybackSpeed = speed;
     await _activeController?.player.setRate(speed);
     if (_isTtsActive && _ttsScheduler != null && _activeController != null) {
       _ttsScheduler!.onVideoStateUpdate(
@@ -2344,6 +2372,119 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       isScrubbing: _isScrubbing,
       playbackSpeed: speed,
     );
+  }
+
+  Future<void> _applyPlaybackSpeed(double speed) async {
+    HapticFeedback.lightImpact();
+    _isTemp2xActive = false;
+    _isHoldingSide2x = false;
+    _temp2xWillLock = false;
+    if ((speed - 2.0).abs() >= 0.01) {
+      _is2xLocked = false;
+    }
+    _settings?.hongguoPlaybackSpeed = speed;
+    await _setTransientPlaybackSpeed(speed);
+  }
+
+  void _onFeedLongPressStart(LongPressStartDetails details) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final dx = details.globalPosition.dx;
+    final isSideZone = dx <= screenWidth * 0.28 || dx >= screenWidth * 0.72;
+    if (!isSideZone) {
+      _isHoldingSide2x = false;
+      _showFeedQuickSettingsSheet();
+      return;
+    }
+
+    HapticFeedback.selectionClick();
+    _isHoldingSide2x = true;
+    _temp2xWillLock = false;
+    if (!_is2xLocked) {
+      _speedBeforeTemp2x = _playbackSpeed;
+      setState(() {
+        _isTemp2xActive = true;
+      });
+      unawaited(_setTransientPlaybackSpeed(2.0));
+    } else {
+      setState(() {
+        _isTemp2xActive = true;
+      });
+    }
+  }
+
+  void _onFeedLongPressMoveUpdate(LongPressMoveUpdateDetails details) {
+    if (!_isHoldingSide2x) return;
+    final dy = details.offsetFromOrigin.dy;
+    final shouldLock = dy >= 48.0;
+    if (shouldLock != _temp2xWillLock) {
+      if (shouldLock) {
+        HapticFeedback.mediumImpact();
+      }
+      setState(() {
+        _temp2xWillLock = shouldLock;
+      });
+    }
+  }
+
+  void _onFeedLongPressEnd(LongPressEndDetails details) {
+    if (!_isHoldingSide2x) return;
+    _finishSide2xHold(allowLock: true);
+  }
+
+  void _onFeedLongPressCancel() {
+    if (!_isHoldingSide2x) return;
+    _finishSide2xHold(allowLock: false);
+  }
+
+  void _finishSide2xHold({required bool allowLock}) {
+    final shouldLock = allowLock && _temp2xWillLock;
+    final wasAlreadyLocked = _is2xLocked;
+    _isHoldingSide2x = false;
+
+    if (shouldLock) {
+      if (wasAlreadyLocked) {
+        // Đã khóa 2x trước đó và người dùng giữ + vuốt xuống lần nữa -> mở khóa về tốc độ cũ
+        final restore = (_speedBeforeLock2x - 2.0).abs() < 0.01
+            ? 1.0
+            : _speedBeforeLock2x;
+        setState(() {
+          _isTemp2xActive = false;
+          _temp2xWillLock = false;
+          _is2xLocked = false;
+        });
+        unawaited(_setTransientPlaybackSpeed(restore));
+      } else {
+        _speedBeforeLock2x = _speedBeforeTemp2x;
+        setState(() {
+          _isTemp2xActive = false;
+          _temp2xWillLock = false;
+          _is2xLocked = true;
+        });
+        unawaited(_setTransientPlaybackSpeed(2.0));
+      }
+      return;
+    }
+
+    setState(() {
+      _isTemp2xActive = false;
+      _temp2xWillLock = false;
+    });
+    if (!wasAlreadyLocked) {
+      unawaited(_setTransientPlaybackSpeed(_speedBeforeTemp2x));
+    }
+  }
+
+  void _unlock2xSpeed() {
+    HapticFeedback.lightImpact();
+    final restore = (_speedBeforeLock2x - 2.0).abs() < 0.01
+        ? 1.0
+        : _speedBeforeLock2x;
+    setState(() {
+      _is2xLocked = false;
+      _isTemp2xActive = false;
+      _temp2xWillLock = false;
+    });
+    unawaited(_setTransientPlaybackSpeed(restore));
   }
 
   /// Mở bộ chọn tốc độ phát video dạng Bottom Sheet
@@ -3325,6 +3466,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     int targetEpisode = 1,
   }) async {
     HapticFeedback.mediumImpact();
+    _flushCurrentFeedPlaybackPosition();
 
     // Lưu lại danh sách khám phá nếu chưa lưu
     if (!_isDramaEpisodeMode) {
@@ -3377,6 +3519,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
     if (_isDramaEpisodeMode && _savedDiscoverItems.isNotEmpty) {
       // Quay lại Discover Feed
+      _flushCurrentFeedPlaybackPosition();
       _disposeStandbyPlayer();
       setState(() {
         _feedGeneration++;
@@ -3394,6 +3537,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       _activePageIndex = -1;
       _activatePage(_currentIndex);
     } else {
+      _flushCurrentFeedPlaybackPosition();
       Navigator.pop(context);
     }
   }
@@ -3504,6 +3648,19 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
             // 4. Thanh điều hướng trên cùng (Top Bar chuẩn Frame 3 / Frame 8)
             _buildTopBar(),
+
+            // 4b. Pill hiển thị trạng thái 2.0x (giữ cạnh để tua nhanh / vuốt xuống để khóa)
+            if ((_isTemp2xActive ||
+                    (_is2xLocked && (_playbackSpeed - 2.0).abs() < 0.01)) &&
+                !_isTranslatingCurrent)
+              Positioned(
+                top: MediaQuery.of(context).padding.top + 54,
+                left: 20,
+                right: 20,
+                child: Center(
+                  child: _build2xSpeedPill(),
+                ),
+              ),
 
             // 5. Banner tiến trình Dịch AI / Lồng tiếng trực tiếp
             if (_isTranslatingCurrent)
@@ -3626,6 +3783,84 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     );
   }
 
+  Widget _build2xSpeedPill() {
+    if (_isTemp2xActive) {
+      final lockReady = _temp2xWillLock;
+      final hintText = _is2xLocked
+          ? (lockReady ? 'Thả tay để tắt 2.0x' : 'Vuốt xuống để tắt khóa 2.0x')
+          : (lockReady ? 'Thả tay để khóa 2.0x' : 'Vuốt xuống để khóa 2.0x');
+      return IgnorePointer(
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 140),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+          decoration: BoxDecoration(
+            color: lockReady
+                ? const Color(0xCCFF6A00)
+                : Colors.black.withValues(alpha: 0.78),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: lockReady
+                  ? Colors.white.withValues(alpha: 0.7)
+                  : const Color(0xFFFF6A00),
+              width: 1.0,
+            ),
+            boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 10)],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                lockReady ? Icons.lock_rounded : Icons.fast_forward_rounded,
+                color: Colors.white,
+                size: 16,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                '2.0x  •  $hintText',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: _unlock2xSpeed,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.78),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: const Color(0xFFFF6A00), width: 1.0),
+          boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 10)],
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.lock_rounded, color: Color(0xFFFF6A00), size: 14),
+            SizedBox(width: 5),
+            Text(
+              'Đang khóa 2.0x',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            SizedBox(width: 6),
+            Icon(Icons.close_rounded, color: Colors.white70, size: 14),
+          ],
+        ),
+      ),
+    );
+  }
+
   /// Giao diện cho từng trang video trong PageView
   Widget _buildFeedPageItem(FeedDramaPageItem item, bool isCurrent) {
     final itemMediaKey = _mediaKey(item);
@@ -3739,7 +3974,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
             ),
           ),
 
-        // Vùng nhận cử chỉ Chạm dừng / Nhấp đúp thả tim (Chạm để khôi phục khi ở Clean Mode)
+        // Vùng nhận cử chỉ Chạm dừng / Nhấp đúp thả tim / Giữ 2 cạnh để bật 2x (vuốt xuống khóa)
         Positioned.fill(
           child: GestureDetector(
             behavior: HitTestBehavior.translucent,
@@ -3753,7 +3988,10 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
             },
             onDoubleTapDown: (details) =>
                 _onDoubleTapAt(details.globalPosition),
-            onLongPress: _showFeedQuickSettingsSheet,
+            onLongPressStart: _onFeedLongPressStart,
+            onLongPressMoveUpdate: _onFeedLongPressMoveUpdate,
+            onLongPressEnd: _onFeedLongPressEnd,
+            onLongPressCancel: _onFeedLongPressCancel,
           ),
         ),
 
@@ -4806,9 +5044,23 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       onTap: () {
         HapticFeedback.lightImpact();
         if (hasDoc) {
+          final nextShowSubtitles = !_showSubtitles;
           setState(() {
-            _showSubtitles = !_showSubtitles;
+            _showSubtitles = nextShowSubtitles;
           });
+          if (nextShowSubtitles) {
+            final doc = _episodeDocuments[docKey];
+            if (doc != null) {
+              unawaited(
+                _saveFeedEpisodeToHistory(
+                  item,
+                  doc,
+                  positionMs: _currentPos.inMilliseconds,
+                  isPrefetch: false,
+                ),
+              );
+            }
+          }
         } else {
           _translateCurrentEpisode(enableTts: false);
         }
@@ -5986,24 +6238,32 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
       _episodeDocuments[targetKey] = doc;
 
-      try {
-        final historyRepo = await HistoryRepository.getInstance();
-        await historyRepo.saveHistory(
-          videoPath: itemToProcess.vid,
-          title:
-              '${itemToProcess.detail.title} - Tập ${itemToProcess.episodeIndex}',
-          document: doc,
-          durationMs: preRealDurationMs,
-          ttsVoice: appliedVoice,
-          seriesId: itemToProcess.detail.seriesId,
-          seriesCover: itemToProcess.detail.cover,
-          episodeIndex: itemToProcess.episodeIndex,
-          totalEpisodes: itemToProcess.detail.totalEpisodes > 0
-              ? itemToProcess.detail.totalEpisodes
-              : itemToProcess.detail.episodes.length,
-          isOnlineStream: true,
-        );
-      } catch (_) {}
+      final currentItem =
+          (_currentIndex >= 0 && _currentIndex < _feedItems.length)
+          ? _feedItems[_currentIndex]
+          : null;
+      final isCurrentlyWatching =
+          currentItem != null && _getVideoDocKey(currentItem) == targetKey;
+      final isSameActiveDrama =
+          _isDramaEpisodeMode &&
+          currentItem != null &&
+          currentItem.detail.seriesId == itemToProcess.detail.seriesId;
+
+      // Chỉ lưu vào Lịch sử nếu đang xem trọn bộ của chính bộ phim đó (với isPrefetch: true)
+      // hoặc người dùng đã chuyển sang đúng tập này trong lúc đang dịch ngầm.
+      // Ở tab Khám phá (!isDramaEpisodeMode), không lưu các phim kế tiếp chưa từng xem vào Lịch sử.
+      if (isCurrentlyWatching || isSameActiveDrama) {
+        try {
+          await _saveFeedEpisodeToHistory(
+            itemToProcess,
+            doc,
+            durationMs: preRealDurationMs,
+            ttsVoice: appliedVoice,
+            positionMs: isCurrentlyWatching ? _currentPos.inMilliseconds : null,
+            isPrefetch: !isCurrentlyWatching,
+          );
+        } catch (_) {}
+      }
 
       debugPrint(
         '[HongguoFeed] ✅ Đã dịch trước ngầm thành công tập ${itemToProcess.episodeIndex}!',
@@ -6021,6 +6281,141 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       } catch (_) {}
       _isPreTranslating = false;
       if (mounted) setState(() {});
+    }
+  }
+
+  Future<void> _saveFeedEpisodeToHistory(
+    FeedDramaPageItem item,
+    SubtitleDocument doc, {
+    int durationMs = 0,
+    String? ttsVoice,
+    int? positionMs,
+    bool isPrefetch = false,
+  }) async {
+    final seriesId = item.detail.seriesId.trim();
+    if (seriesId.isEmpty || item.episodeIndex <= 0) return;
+    final mediaKey = _mediaKey(item);
+    final effectiveDurationMs = durationMs > 0
+        ? durationMs
+        : (_preloadedSources[mediaKey]?.videoInfo?.durationMs ??
+              (_currentIndex >= 0 &&
+                      _currentIndex < _feedItems.length &&
+                      _mediaKey(_feedItems[_currentIndex]) == mediaKey
+                  ? _currentDur.inMilliseconds
+                  : 0));
+    final historyRepo = await HistoryRepository.getInstance();
+    await historyRepo.saveHistory(
+      videoPath: _preloadedSources[mediaKey]?.url ?? item.vid,
+      title: '${item.detail.title} - Tập ${item.episodeIndex}',
+      document: doc,
+      durationMs: effectiveDurationMs,
+      lastPositionMs: (positionMs != null && positionMs > 0) ? positionMs : null,
+      ttsVoice: ttsVoice,
+      seriesId: seriesId,
+      seriesCover: item.detail.cover,
+      episodeIndex: item.episodeIndex,
+      totalEpisodes: item.detail.totalEpisodes > 0
+          ? item.detail.totalEpisodes
+          : item.detail.episodes.length,
+      isPrefetch: isPrefetch,
+      isOnlineStream: true,
+    );
+    if (!isPrefetch) {
+      _lastMarkedWatchedDocKey = _getVideoDocKey(item);
+    }
+  }
+
+  Future<void> _persistFeedPlaybackPosition(
+    FeedDramaPageItem item, {
+    required int positionMs,
+    int durationMs = 0,
+    bool force = false,
+    bool allowCreateForTrackedSeries = false,
+  }) async {
+    final seriesId = item.detail.seriesId.trim();
+    if (seriesId.isEmpty || item.episodeIndex <= 0) return;
+    final docKey = _getVideoDocKey(item);
+    final now = DateTime.now();
+    if (!force &&
+        _lastMarkedWatchedDocKey == docKey &&
+        (now.difference(_lastHistoryPositionSaveAt) < _historyPositionSaveInterval ||
+            positionMs == _lastHistorySavedPositionMs)) {
+      return;
+    }
+
+    _lastHistoryPositionSaveAt = now;
+    _lastHistorySavedPositionMs = positionMs;
+    _lastMarkedWatchedDocKey = docKey;
+
+    try {
+      final historyRepo = await HistoryRepository.getInstance();
+      final updated = positionMs > 0
+          ? await historyRepo.updateSeriesPlaybackPosition(
+              seriesId: seriesId,
+              episodeIndex: item.episodeIndex,
+              positionMs: positionMs,
+              durationMs: durationMs > 0 ? durationMs : null,
+              seriesTitle: item.detail.title,
+            )
+          : await historyRepo.markSeriesEpisodeWatched(
+              seriesId: seriesId,
+              episodeIndex: item.episodeIndex,
+              seriesTitle: item.detail.title,
+            );
+
+      if (!updated) {
+        final memDoc = _episodeDocuments[docKey];
+        if (memDoc != null) {
+          await _saveFeedEpisodeToHistory(
+            item,
+            memDoc,
+            durationMs: durationMs,
+            positionMs: positionMs,
+            isPrefetch: false,
+          );
+        } else if (allowCreateForTrackedSeries && _isDramaEpisodeMode) {
+          final seriesTracked = historyRepo.getHistory().any(
+            (h) => h.seriesId == seriesId,
+          );
+          if (seriesTracked) {
+            await _saveFeedEpisodeToHistory(
+              item,
+              SubtitleDocument(),
+              durationMs: durationMs,
+              positionMs: positionMs,
+              isPrefetch: false,
+            );
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[HongguoFeed] Lỗi cập nhật tiến độ lịch sử: $e');
+    }
+  }
+
+  void _flushCurrentFeedPlaybackPosition({bool force = true}) {
+    if (_pendingInitialSeekMs != null) return;
+    if (_currentIndex < 0 || _currentIndex >= _feedItems.length) return;
+    final item = _feedItems[_currentIndex];
+    final posMs =
+        _activeController?.value.position.inMilliseconds ??
+        _currentPos.inMilliseconds;
+    final durMs =
+        _activeController?.value.duration.inMilliseconds ??
+        _currentDur.inMilliseconds;
+    final docKey = _getVideoDocKey(item);
+    if (posMs >= 1000 ||
+        _lastMarkedWatchedDocKey == docKey ||
+        _episodeDocuments.containsKey(docKey)) {
+      unawaited(
+        _persistFeedPlaybackPosition(
+          item,
+          positionMs: posMs,
+          durationMs: durMs,
+          force: force,
+          allowCreateForTrackedSeries: posMs >= 1000,
+        ),
+      );
     }
   }
 
@@ -6234,6 +6629,15 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         _getVideoDocKey(_feedItems[_currentIndex]) == docKey) {
       await _startTtsPlayback(doc);
       _showSubtitles = true;
+      unawaited(
+        _saveFeedEpisodeToHistory(
+          item,
+          doc,
+          ttsVoice: voice.displayName,
+          positionMs: _currentPos.inMilliseconds,
+          isPrefetch: false,
+        ),
+      );
       if (mounted) setState(() {});
     }
   }
@@ -6257,9 +6661,20 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       if (enableTts) {
         await _ensureTtsAndPlay(doc, item);
       } else {
+        final nextShow = !_showSubtitles;
         setState(() {
-          _showSubtitles = !_showSubtitles;
+          _showSubtitles = nextShow;
         });
+        if (nextShow) {
+          unawaited(
+            _saveFeedEpisodeToHistory(
+              item,
+              doc,
+              positionMs: _currentPos.inMilliseconds,
+              isPrefetch: false,
+            ),
+          );
+        }
       }
       return;
     }
@@ -6270,7 +6685,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       final items = historyRepo.getHistory();
       HistoryItem? matchItem;
       for (final h in items) {
-        if (h.seriesId == seriesId && h.episodeIndex == epIdx) {
+        if (h.seriesId == seriesId && h.extractedEpisodeIndex == epIdx) {
           matchItem = h;
           break;
         }
@@ -6291,6 +6706,14 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
             setState(() {
               _showSubtitles = true;
             });
+            unawaited(
+              _persistFeedPlaybackPosition(
+                item,
+                positionMs: _currentPos.inMilliseconds,
+                durationMs: _currentDur.inMilliseconds,
+                force: true,
+              ),
+            );
           }
           return;
         }
@@ -6528,20 +6951,19 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       // Bước F: LƯU LỊCH SỬ XEM (Có cờ isOnlineStream: true)
       // Chỉ khi bấm Vietsub / Lồng tiếng mới lưu vào lịch sử, tag rõ ràng [Lướt Online]
       try {
-        final historyRepo = await HistoryRepository.getInstance();
-        await historyRepo.saveHistory(
-          videoPath: _preloadedSources[_mediaKey(item)]?.url ?? item.vid,
-          title: '${item.detail.title} - Tập $epIdx',
-          document: doc,
+        final currentItem =
+            (_currentIndex >= 0 && _currentIndex < _feedItems.length)
+            ? _feedItems[_currentIndex]
+            : null;
+        final isStillCurrent =
+            currentItem != null && _getVideoDocKey(currentItem) == docKey;
+        await _saveFeedEpisodeToHistory(
+          item,
+          doc,
           durationMs: manualRealDurationMs,
           ttsVoice: appliedVoice,
-          seriesId: seriesId,
-          seriesCover: item.detail.cover,
-          episodeIndex: epIdx,
-          totalEpisodes: item.detail.totalEpisodes > 0
-              ? item.detail.totalEpisodes
-              : item.detail.episodes.length,
-          isOnlineStream: true, // Tag rõ ràng là lướt online!
+          positionMs: isStillCurrent ? _currentPos.inMilliseconds : null,
+          isPrefetch: !isStillCurrent,
         );
       } catch (e) {
         debugPrint('[HongguoFeed] Lỗi lưu lịch sử: $e');

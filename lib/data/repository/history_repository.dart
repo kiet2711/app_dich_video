@@ -279,9 +279,10 @@ class HistoryRepository {
     }
 
     final now = DateTime.now().millisecondsSinceEpoch;
-    // Nếu là prefetch dịch ngầm: không gán lastWatchedAt và không cướp timestamp của tập đang xem dở
-    final lastWatchedAt = existing?.lastWatchedAt ?? (isPrefetch ? null : now);
-    final timestamp = existing?.timestamp ?? (isPrefetch ? (now - 1000) : now);
+    // Nếu là prefetch dịch ngầm: giữ nguyên lastWatchedAt cũ (null nếu chưa xem),
+    // không cướp timestamp của tập đang xem dở. Nếu lưu chủ động thì cập nhật now.
+    final lastWatchedAt = isPrefetch ? existing?.lastWatchedAt : now;
+    final timestamp = isPrefetch ? (existing?.timestamp ?? (now - 1000)) : now;
 
     final item = HistoryItem(
       id: id,

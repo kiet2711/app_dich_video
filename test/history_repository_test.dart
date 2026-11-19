@@ -390,4 +390,77 @@ void main() {
     expect(reloadedDoc?.items.first.startMs, 1000);
     expect(reloadedDoc?.items.first.endMs, 3000);
   });
+
+  test('prefetch save preserves existing lastWatchedAt while active save updates it', () async {
+    final repo = await HistoryRepository.getInstance();
+    final doc = SubtitleDocument([
+      SubtitleItem(
+        id: 1,
+        startMs: 0,
+        endMs: 1000,
+        originalText: '测试',
+        translatedText: 'Thử nghiệm',
+      ),
+    ]);
+
+    final ep1 = await repo.saveHistory(
+      videoPath: 'vid_1',
+      title: 'Phim A - Tập 1',
+      document: doc,
+      durationMs: 60000,
+      seriesId: 'series-prefetch',
+      episodeIndex: 1,
+    );
+    expect(ep1.lastWatchedAt, isNotNull);
+
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+    final ep2Prefetch = await repo.saveHistory(
+      videoPath: 'vid_2',
+      title: 'Phim A - Tập 2',
+      document: doc,
+      durationMs: 60000,
+      seriesId: 'series-prefetch',
+      episodeIndex: 2,
+      isPrefetch: true,
+    );
+    expect(ep2Prefetch.lastWatchedAt, isNull);
+
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+    final ep3Prefetch = await repo.saveHistory(
+      videoPath: 'vid_3',
+      title: 'Phim A - Tập 3',
+      document: doc,
+      durationMs: 60000,
+      seriesId: 'series-prefetch',
+      episodeIndex: 3,
+      isPrefetch: true,
+    );
+    expect(ep3Prefetch.lastWatchedAt, isNull);
+
+    // Re-prefetching an already-watched episode does not erase or bump its lastWatchedAt
+    final ep1RePrefetch = await repo.saveHistory(
+      videoPath: 'vid_1',
+      title: 'Phim A - Tập 1',
+      document: doc,
+      durationMs: 60000,
+      seriesId: 'series-prefetch',
+      episodeIndex: 1,
+      isPrefetch: true,
+    );
+    expect(ep1RePrefetch.lastWatchedAt, ep1.lastWatchedAt);
+
+    // Watching/translating episode 2 actively sets its lastWatchedAt newer than episode 1
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+    final ep2Active = await repo.saveHistory(
+      videoPath: 'vid_2',
+      title: 'Phim A - Tập 2',
+      document: doc,
+      durationMs: 60000,
+      seriesId: 'series-prefetch',
+      episodeIndex: 2,
+      isPrefetch: false,
+    );
+    expect(ep2Active.lastWatchedAt, isNotNull);
+    expect(ep2Active.lastWatchedAt!, greaterThan(ep1.lastWatchedAt!));
+  });
 }
