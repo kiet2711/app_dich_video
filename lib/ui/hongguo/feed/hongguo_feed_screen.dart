@@ -25,6 +25,7 @@ import '../../../domain/media/audio_extractor.dart';
 import '../../../domain/media/hongguo/hongguo_cloud_account_service.dart';
 import '../../../domain/media/hongguo/hongguo_codec_capabilities.dart';
 import '../../../domain/media/hongguo/hongguo_discovery_service.dart';
+import '../../../domain/media/hongguo/hongguo_feed_warmup_service.dart';
 import '../../../domain/media/hongguo/hongguo_local_engine.dart';
 import '../../../domain/media/hongguo/hongguo_playback_routes.dart';
 import '../../../domain/media/hongguo/hongguo_remote_video.dart';
@@ -48,39 +49,8 @@ import '../../player/subtitle_overlay.dart';
 import '../../settings/settings_screen.dart';
 import '../../theme/app_theme.dart';
 
-/// Dữ liệu của một trang trong Feed
-class FeedDramaPageItem {
-  final HongguoDramaDetail detail;
-  final int episodeIndex;
-  final String vid;
-
-  const FeedDramaPageItem({
-    required this.detail,
-    required this.episodeIndex,
-    required this.vid,
-  });
-}
-
-/// Nguồn phát video trực tiếp kèm key giải mã FFmpeg native
-class _FeedPlaybackSource {
-  final String url;
-  final String? decryptionKey;
-  final Map<String, String> headers;
-  final HongguoVideoInfo? videoInfo;
-  final String vid;
-  final String seriesId;
-  final int episodeIndex;
-
-  const _FeedPlaybackSource({
-    required this.url,
-    this.decryptionKey,
-    this.headers = const {},
-    this.videoInfo,
-    this.vid = '',
-    this.seriesId = '',
-    this.episodeIndex = 1,
-  });
-}
+export '../../../domain/media/hongguo/hongguo_feed_warmup_service.dart'
+    show FeedDramaPageItem;
 
 /// Màn hình lướt video ngắn Hồng Quả dạng Shorts / TikTok Feed
 /// Thiết kế chuẩn 90% giao diện gốc ByteDance / Douyin Short Drama:
@@ -115,6 +85,8 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
   final List<FeedDramaPageItem> _feedItems = [];
   int _currentIndex = 0;
   bool _isLoadingMore = false;
+  bool _isInitialFeedLoading = false;
+  String? _feedLoadError;
 
   // Quản lý chế độ: Đang lướt khám phá nhiều phim (false) hay đang xem các tập của 1 phim (true)
   bool _isDramaEpisodeMode = false;
@@ -173,7 +145,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
   Future<void> _standbySwitchTail = Future<void>.value();
 
   // Nguồn phát trực tiếp (URL + Content Key CENC) đã nạp trước trong RAM
-  final Map<String, _FeedPlaybackSource> _preloadedSources = {};
+  final Map<String, HongguoFeedPreparedSource> _preloadedSources = {};
   final Set<String> _preloadingMediaKeys = {};
 
   // Bộ bảo vệ băng thông và nạp trước bậc thang (Bandwidth Gatekeeper)
@@ -356,11 +328,151 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     });
   }
 
+  bool get _isExploreSessionCacheable =>
+      widget.initialDrama == null &&
+      (widget.discoverDramas == null || widget.discoverDramas!.isEmpty);
+
+  bool _hydrateExploreSessionCache() {
+    if (!_isExploreSessionCacheable) return false;
+    final cache = HongguoFeedSessionCache.instance;
+    if (!cache.hasAnyDiscoverItems) return false;
+
+    _currentFeedTab = _normalizeFeedTab(cache.currentTab);
+    _followFeedItems
+      ..clear()
+      ..addAll(cache.tabItems[HongguoFeedSessionCache.tabFollow] ?? const []);
+    _comicFeedItems
+      ..clear()
+      ..addAll(cache.tabItems[HongguoFeedSessionCache.tabComic] ?? const []);
+    _realFeedItems
+      ..clear()
+      ..addAll(cache.tabItems[HongguoFeedSessionCache.tabReal] ?? const []);
+    _discoverFeedItems
+      ..clear()
+      ..addAll(
+        cache.tabItems[HongguoFeedSessionCache.tabDiscover] ?? const [],
+      );
+
+    for (final entry in cache.tabIndices.entries) {
+      _tabCurrentIndices[entry.key] = entry.value;
+    }
+
+    _comicCursor = cache.comicCursor;
+    _realCursor = cache.realCursor;
+    _comicSelectionOverride = cache.comicSelectionOverride;
+    _realSelectionOverride = cache.realSelectionOverride;
+    _followSeedOffset = cache.followSeedOffset;
+
+    var activeList = _cacheListForTab(_currentFeedTab);
+    if (activeList.isEmpty) {
+      for (final tabKey in const [
+        _tabDiscover,
+        _tabReal,
+        _tabComic,
+        _tabFollow,
+      ]) {
+        final candidate = _cacheListForTab(tabKey);
+        if (candidate.isNotEmpty) {
+          _currentFeedTab = tabKey;
+          activeList = candidate;
+          break;
+        }
+      }
+    }
+
+    if (activeList.isEmpty) return false;
+
+    _feedItems
+      ..clear()
+      ..addAll(activeList);
+    _currentIndex = (_tabCurrentIndices[_currentFeedTab] ?? 0).clamp(
+      0,
+      _feedItems.length - 1,
+    );
+    _tabCurrentIndices[_currentFeedTab] = _currentIndex;
+
+    for (final entry in cache.preparedSources.entries) {
+      if (entry.value.isFresh) {
+        _preloadedSources[entry.key] = entry.value;
+      }
+    }
+
+    if (_pendingInitialSeekMs == null && _feedItems.isNotEmpty) {
+      final restoredPosMs =
+          cache.lastPositionMsByMediaKey[_mediaKey(_feedItems[_currentIndex])];
+      if (restoredPosMs != null && restoredPosMs > 1500) {
+        _pendingInitialSeekMs = restoredPosMs;
+      }
+    }
+    return true;
+  }
+
+  void _saveSessionToCache() {
+    if (!_isExploreSessionCacheable) return;
+    final activeList = !_isDramaEpisodeMode
+        ? _feedItems
+        : _savedDiscoverItems;
+    final activeIndex = !_isDramaEpisodeMode
+        ? _currentIndex
+        : _savedDiscoverIndex;
+
+    if (!_isDramaEpisodeMode) {
+      _tabCurrentIndices[_currentFeedTab] = _currentIndex;
+      _cacheListForTab(_currentFeedTab)
+        ..clear()
+        ..addAll(_feedItems);
+    } else if (_savedDiscoverItems.isNotEmpty) {
+      _tabCurrentIndices[_currentFeedTab] = _savedDiscoverIndex.clamp(
+        0,
+        _savedDiscoverItems.length - 1,
+      );
+      _cacheListForTab(_currentFeedTab)
+        ..clear()
+        ..addAll(_savedDiscoverItems);
+    }
+
+    String? activeMediaKey;
+    int? activePosMs;
+    if (!_isDramaEpisodeMode &&
+        _currentIndex >= 0 &&
+        _currentIndex < _feedItems.length) {
+      activeMediaKey = _mediaKey(_feedItems[_currentIndex]);
+      activePosMs =
+          _activeController?.value.position.inMilliseconds ??
+          _currentPos.inMilliseconds;
+    }
+
+    HongguoFeedSessionCache.instance.saveSessionState(
+      activeTab: _currentFeedTab,
+      activeIndex: activeIndex,
+      activeFeedItems: activeList,
+      followItems: _followFeedItems,
+      comicItems: _comicFeedItems,
+      realItems: _realFeedItems,
+      discoverItems: _discoverFeedItems,
+      indices: _tabCurrentIndices,
+      comicCursor: _comicCursor,
+      realCursor: _realCursor,
+      comicSelectionOverride: _comicSelectionOverride,
+      realSelectionOverride: _realSelectionOverride,
+      followSeedOffset: _followSeedOffset,
+      sources: _preloadedSources,
+      activeMediaKey: activeMediaKey,
+      activePositionMs: activePosMs,
+    );
+  }
+
   Future<void> _bootstrapFeed() async {
     unawaited(HongguoCloudAccountService.instance.initialize());
+    if (_isExploreSessionCacheable && _feedItems.isEmpty && mounted) {
+      setState(() {
+        _isInitialFeedLoading = true;
+        _feedLoadError = null;
+      });
+    }
+
     final settings = await SettingsRepository.getInstance();
     if (!mounted) return;
-    final targetFeedTab = settings.hongguoFeedTab;
 
     setState(() {
       _settings = settings;
@@ -381,18 +493,44 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       }
     });
 
-    final seen = settings.hongguoSeenSeriesIds.toSet();
-    final unseenCount = _feedItems
-        .where((it) => !seen.contains(it.detail.seriesId))
-        .length;
+    if (_isExploreSessionCacheable && _feedItems.isEmpty) {
+      if (HongguoFeedSessionCache.instance.isWarmupInFlight) {
+        await HongguoFeedSessionCache.instance.waitForWarmupIfRunning();
+        if (!mounted) return;
+      }
+      if (_hydrateExploreSessionCache()) {
+        _dramaEpisodeSessionKey++;
+        _replacePageController(_currentIndex);
+        setState(() {
+          _isInitialFeedLoading = false;
+          _feedLoadError = null;
+        });
+      }
+    }
+
+    final targetFeedTab = (_isExploreSessionCacheable && _feedItems.isNotEmpty)
+        ? _currentFeedTab
+        : _normalizeFeedTab(settings.hongguoFeedTab);
     final shouldReload =
-        _feedItems.isEmpty ||
-        unseenCount < 6 ||
-        targetFeedTab != _currentFeedTab;
+        _feedItems.isEmpty || targetFeedTab != _currentFeedTab;
 
     if (!_isDramaEpisodeMode && shouldReload) {
       await _switchFeedTab(targetFeedTab, forceReload: true);
+      if (mounted && _feedItems.isEmpty) {
+        setState(() {
+          _isInitialFeedLoading = false;
+          _feedLoadError =
+              'Chưa tải được nguồn phim đề xuất. Chạm Thử lại để kết nối lại.';
+        });
+      }
       return;
+    }
+
+    if (mounted && (_isInitialFeedLoading || _feedLoadError != null)) {
+      setState(() {
+        _isInitialFeedLoading = false;
+        _feedLoadError = null;
+      });
     }
     _prefetchAdjacentTranslations(_currentIndex);
     await _activatePage(_currentIndex);
@@ -492,21 +630,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     );
   }
 
-  final math.Random _rng = math.Random();
-
   /// Tạo item lướt ngẫu nhiên từ tập 1-10 theo yêu cầu người dùng
   FeedDramaPageItem _createFeedDramaItem(HongguoDramaItem drama) {
-    final detail = _dramaItemToDetail(drama);
-    final totalEp = drama.episodeCount > 0
-        ? drama.episodeCount
-        : (drama.vidList.isNotEmpty ? drama.vidList.length : 1);
-    final maxEp = math.min(10, totalEp);
-    final randomEp = maxEp > 1 ? (_rng.nextInt(maxEp) + 1) : 1;
-    final vid = (drama.vidList.length >= randomEp)
-        ? drama.vidList[randomEp - 1]
-        : (drama.vidList.isNotEmpty ? drama.vidList.first : '');
-
-    return FeedDramaPageItem(detail: detail, episodeIndex: randomEp, vid: vid);
+    return HongguoFeedSessionCache.instance.createFeedDramaItem(drama);
   }
 
   /// Ưu tiên hiển thị các phim chưa xem lên đầu, loại bỏ các phim đã xem để tránh lặp lại
@@ -514,29 +640,12 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     List<HongguoDramaItem> dramas, {
     bool strictFilter = false,
   }) {
-    if (dramas.isEmpty) return dramas;
     final seen = _settings?.hongguoSeenSeriesIds.toSet() ?? <String>{};
-    if (seen.isEmpty) return dramas;
-
-    final unwatched = <HongguoDramaItem>[];
-    final watched = <HongguoDramaItem>[];
-
-    for (final d in dramas) {
-      if (seen.contains(d.seriesId)) {
-        watched.add(d);
-      } else {
-        unwatched.add(d);
-      }
-    }
-
-    // Nếu có đủ phim chưa xem (>= 6) hoặc yêu cầu lọc chặt chẽ, loại bỏ hoàn toàn phim đã xem
-    if (unwatched.length >= 6 || strictFilter) {
-      return unwatched;
-    }
-
-    final rng = math.Random();
-    final shuffledWatched = List<HongguoDramaItem>.from(watched)..shuffle(rng);
-    return [...unwatched, ...shuffledWatched];
+    return HongguoFeedSessionCache.instance.prioritizeUnwatchedDramas(
+      dramas,
+      seenSeriesIds: seen,
+      strictFilter: strictFilter,
+    );
   }
 
   void _initFeedData() {
@@ -559,29 +668,20 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         _discoverFeedItems.add(item);
       }
       _currentIndex = 0;
+    } else {
+      _isDramaEpisodeMode = false;
+      if (!_hydrateExploreSessionCache()) {
+        _currentFeedTab = _normalizeFeedTab(
+          HongguoFeedSessionCache.instance.currentTab,
+        );
+        _currentIndex = 0;
+        _isInitialFeedLoading = true;
+      }
     }
   }
 
-  HongguoDramaDetail _dramaItemToDetail(HongguoDramaItem drama) {
-    return HongguoDramaDetail(
-      seriesId: drama.seriesId,
-      title: drama.title,
-      cover: drama.cover,
-      intro: drama.intro,
-      totalEpisodes: drama.episodeCount,
-      tags: drama.tags,
-      sourceCategory: drama.sourceCategory,
-      categoryIds: drama.categoryIds,
-      episodes: [
-        for (var i = 0; i < drama.vidList.length; i++)
-          HongguoEpisodeItem(
-            index: i + 1,
-            vid: drama.vidList[i],
-            title: 'Tập ${i + 1}',
-          ),
-      ],
-    );
-  }
+  HongguoDramaDetail _dramaItemToDetail(HongguoDramaItem drama) =>
+      HongguoFeedSessionCache.dramaItemToDetail(drama);
 
   void _populateDramaEpisodes(
     HongguoDramaDetail detail, {
@@ -726,6 +826,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
   @override
   void dispose() {
     _flushCurrentFeedPlaybackPosition();
+    _saveSessionToCache();
     _cancelCascadingPreload();
     _activationRequestId++;
     _feedGeneration++;
@@ -854,7 +955,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         );
       }
       _activeVideoInfo = downgradedInfo;
-      _preloadedSources[mediaKey] = _FeedPlaybackSource(
+      _preloadedSources[mediaKey] = HongguoFeedPreparedSource(
         url:
             (_liveTranslator?.isEnabled == true &&
                 downgradedInfo.isDrmProtected)
@@ -1249,9 +1350,52 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       }
 
       // 2. Lấy nguồn phát trực tiếp (ưu tiên từ bộ đệm RAM đã nạp sẵn)
-      _FeedPlaybackSource? source = forceReload
+      HongguoFeedPreparedSource? source = forceReload
           ? null
           : _preloadedSources[mediaKey];
+      if (source != null && !source.isFresh) {
+        source = null;
+      }
+      if (source != null &&
+          source.videoInfo != null &&
+          source.videoInfo!.isDrmProtected) {
+        final info = source.videoInfo!;
+        if (_liveTranslator?.isEnabled == true) {
+          HongguoStreamProxyServer.instance.registerVideoInfo(
+            vid: item.vid,
+            info: info,
+            seriesId: item.detail.seriesId,
+            episodeIndex: item.episodeIndex,
+          );
+          await HongguoStreamProxyServer.instance.ensureStarted();
+          source = HongguoFeedPreparedSource(
+            url: HongguoStreamProxyServer.instance.getStreamUrl(
+              vid: item.vid,
+              seriesId: item.detail.seriesId,
+              episodeIndex: item.episodeIndex,
+            ),
+            videoInfo: info,
+            vid: item.vid,
+            seriesId: item.detail.seriesId,
+            episodeIndex: item.episodeIndex,
+            resolvedAt: source.resolvedAt,
+          );
+          _preloadedSources[mediaKey] = source;
+        } else if (source.url.startsWith('http://127.0.0.1:') &&
+            info.realMainUrl.isNotEmpty) {
+          source = HongguoFeedPreparedSource(
+            url: info.realMainUrl,
+            decryptionKey: info.contentKeyHex,
+            videoInfo: info,
+            vid: item.vid,
+            seriesId: item.detail.seriesId,
+            episodeIndex: item.episodeIndex,
+            headers: HongguoFeedSessionCache.defaultStreamHeaders,
+            resolvedAt: source.resolvedAt,
+          );
+          _preloadedSources[mediaKey] = source;
+        }
+      }
       if (source == null || source.url.isEmpty) {
         source = await _resolveEpisodeStreamSource(
           item,
@@ -1403,7 +1547,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
   }
 
   /// Phân giải nguồn phát trực tiếp: Link CDN ByteDance + CENC Decryption Key (Giải mã phần cứng qua FFmpeg Native)
-  Future<_FeedPlaybackSource> _resolveEpisodeStreamSource(
+  Future<HongguoFeedPreparedSource> _resolveEpisodeStreamSource(
     FeedDramaPageItem item, {
     bool bypassCache = false,
   }) async {
@@ -1449,11 +1593,12 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         if (cached != null &&
             cached.existsSync() &&
             cached.lengthSync() > 1024 * 50) {
-          return _FeedPlaybackSource(
+          return HongguoFeedPreparedSource(
             url: cached.path,
             vid: item.vid,
             seriesId: item.detail.seriesId,
             episodeIndex: item.episodeIndex,
+            isLocalFile: true,
           );
         }
       } catch (_) {}
@@ -1481,7 +1626,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
               seriesId: item.detail.seriesId,
               episodeIndex: item.episodeIndex,
             );
-            return _FeedPlaybackSource(
+            return HongguoFeedPreparedSource(
               url: proxyUrl,
               videoInfo: info,
               vid: item.vid,
@@ -1490,18 +1635,14 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
             );
           }
         }
-        return _FeedPlaybackSource(
+        return HongguoFeedPreparedSource(
           url: info.realMainUrl,
           decryptionKey: info.isDrmProtected ? info.contentKeyHex : null,
           videoInfo: info,
           vid: item.vid,
           seriesId: item.detail.seriesId,
           episodeIndex: item.episodeIndex,
-          headers: const {
-            'User-Agent':
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
-            'Referer': 'https://novel.snssdk.com/',
-          },
+          headers: HongguoFeedSessionCache.defaultStreamHeaders,
         );
       }
     } catch (e) {
@@ -1519,7 +1660,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
           episodeIndex: item.episodeIndex,
         );
         if (publicUrl != null && publicUrl.isNotEmpty) {
-          return _FeedPlaybackSource(
+          return HongguoFeedPreparedSource(
             url: publicUrl,
             vid: item.vid,
             seriesId: item.detail.seriesId,
@@ -1857,6 +1998,17 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
   void _onPageChanged(int index) {
     HapticFeedback.selectionClick();
     _flushCurrentFeedPlaybackPosition();
+    if (!_isDramaEpisodeMode &&
+        _currentIndex >= 0 &&
+        _currentIndex < _feedItems.length) {
+      final prevPosMs =
+          _activeController?.value.position.inMilliseconds ??
+          _currentPos.inMilliseconds;
+      HongguoFeedSessionCache.instance.savePositionMs(
+        _mediaKey(_feedItems[_currentIndex]),
+        prevPosMs,
+      );
+    }
     _currentIndex = index;
     _tabCurrentIndices[_currentFeedTab] = index;
 
@@ -1866,7 +2018,19 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     _activeController?.setVolume(1.0);
 
     _maintainFeedWindow(index);
+    if (!_isDramaEpisodeMode &&
+        index >= 0 &&
+        index < _feedItems.length &&
+        _pendingInitialSeekMs == null) {
+      final savedMs = HongguoFeedSessionCache
+          .instance
+          .lastPositionMsByMediaKey[_mediaKey(_feedItems[index])];
+      if (savedMs != null && savedMs > 1500) {
+        _pendingInitialSeekMs = savedMs;
+      }
+    }
     _activatePage(index);
+    _saveSessionToCache();
 
     // Tự động nạp thêm khi ở chế độ khám phá
     if (!_isDramaEpisodeMode &&
@@ -2044,9 +2208,23 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     _ttsScheduler?.stop();
     _ttsScheduler?.setDocument(null);
 
+    if (_currentIndex >= 0 && _currentIndex < _feedItems.length) {
+      final posMs =
+          _activeController?.value.position.inMilliseconds ??
+          _currentPos.inMilliseconds;
+      HongguoFeedSessionCache.instance.savePositionMs(
+        _mediaKey(_feedItems[_currentIndex]),
+        posMs,
+      );
+    }
+
     setState(() {
       _currentFeedTab = tabKey;
       _isLoadingVideo = true;
+      _feedLoadError = null;
+      if (_feedItems.isEmpty) {
+        _isInitialFeedLoading = true;
+      }
       if (forceReload) {
         _showLoadingIndicator = true;
       }
@@ -2151,16 +2329,40 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
           ? 0
           : (_tabCurrentIndices[tabKey] ?? 0).clamp(0, targetItems.length - 1);
       _currentIndex = restoredIndex;
-      _preloadedSources.clear();
+      _tabCurrentIndices[tabKey] = restoredIndex;
+      _isInitialFeedLoading = false;
+      _feedLoadError = null;
       _preloadingMediaKeys.clear();
+      if (!forceReload) {
+        for (final entry in HongguoFeedSessionCache.instance.preparedSources.entries) {
+          if (entry.value.isFresh) {
+            _preloadedSources[entry.key] = entry.value;
+          }
+        }
+        final savedMs = HongguoFeedSessionCache.instance.lastPositionMsByMediaKey[
+          _mediaKey(targetItems[restoredIndex])
+        ];
+        if (savedMs != null && savedMs > 1500) {
+          _pendingInitialSeekMs = savedMs;
+        }
+      } else {
+        _preloadedSources.clear();
+      }
+      _maintainFeedWindow(restoredIndex);
       _dramaEpisodeSessionKey++;
       _replacePageController(restoredIndex);
       _activePageIndex = -1;
+      _saveSessionToCache();
       await _activatePage(restoredIndex);
     } else {
       setState(() {
         _isLoadingVideo = false;
         _showLoadingIndicator = false;
+        _isInitialFeedLoading = false;
+        if (_feedItems.isEmpty) {
+          _feedLoadError =
+              'Chưa tải được nguồn phim. Vui lòng kiểm tra mạng rồi thử lại.';
+        }
       });
     }
   }
@@ -3693,6 +3895,33 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
                 return _buildFeedPageItem(item, isCurrent);
               },
             ),
+
+            // 1b. Hiệu ứng xoay tròn khi danh sách đang nạp trên nền đen
+            if (_feedItems.isEmpty)
+              Positioned.fill(
+                child: Center(
+                  child: (_feedLoadError == null || _isInitialFeedLoading)
+                      ? const SizedBox(
+                          width: 30,
+                          height: 30,
+                          child: CircularProgressIndicator(
+                            color: Color(0xFFFF6A00),
+                            strokeWidth: 2.6,
+                          ),
+                        )
+                      : FilledButton.icon(
+                          onPressed: () {
+                            _switchFeedTab(_currentFeedTab, forceReload: true);
+                          },
+                          style: FilledButton.styleFrom(
+                            backgroundColor: const Color(0xFFFF6A00),
+                            foregroundColor: Colors.white,
+                          ),
+                          icon: const Icon(Icons.refresh_rounded, size: 18),
+                          label: const Text('Thử lại'),
+                        ),
+                ),
+              ),
 
             // 2. Double Tap Heart Animation
             if (_showHeartAnim)

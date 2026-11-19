@@ -744,9 +744,33 @@ class _HongguoAccountSheetState extends State<HongguoAccountSheet>
     if (_dashboardTabIndex == 0) {
       if (state.history.isEmpty) {
         return Center(
-          child: Text(
-            'Chưa có lịch sử xem trên đám mây',
-            style: TextStyle(color: palette.textMuted),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Text(
+                  state.historyError ?? 'Chưa có lịch sử xem trên đám mây',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: state.historyError != null
+                        ? Colors.redAccent
+                        : palette.textMuted,
+                  ),
+                ),
+                if (state.historyError != null) ...<Widget>[
+                  const SizedBox(height: 10),
+                  TextButton.icon(
+                    onPressed: state.isLoading
+                        ? null
+                        : () => HongguoCloudAccountService.instance
+                            .refreshHistory(),
+                    icon: const Icon(Icons.refresh_rounded, size: 18),
+                    label: const Text('Thử lại'),
+                  ),
+                ],
+              ],
+            ),
           ),
         );
       }

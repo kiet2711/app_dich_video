@@ -1439,6 +1439,7 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ),
       body: SingleChildScrollView(
         physics: const BouncingScrollPhysics(),
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         padding: EdgeInsets.fromLTRB(
           16,
           4,

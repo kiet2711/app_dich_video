@@ -111,6 +111,7 @@ class HongguoCloudAccountState {
   final Set<String> favoritePendingIds;
   final List<HongguoCloudReservation> onlineReservations;
   final List<HongguoCloudReservation> upcomingReservations;
+  final String? historyError;
   final String? onlineReservationsError;
   final String? upcomingReservationsError;
   final bool isLoading;
@@ -125,6 +126,7 @@ class HongguoCloudAccountState {
     this.favoritePendingIds = const <String>{},
     this.onlineReservations = const <HongguoCloudReservation>[],
     this.upcomingReservations = const <HongguoCloudReservation>[],
+    this.historyError,
     this.onlineReservationsError,
     this.upcomingReservationsError,
     this.isLoading = false,
@@ -157,6 +159,8 @@ class HongguoCloudAccountState {
     Set<String>? favoritePendingIds,
     List<HongguoCloudReservation>? onlineReservations,
     List<HongguoCloudReservation>? upcomingReservations,
+    String? historyError,
+    bool clearHistoryError = false,
     String? onlineReservationsError,
     bool clearOnlineError = false,
     String? upcomingReservationsError,
@@ -175,6 +179,8 @@ class HongguoCloudAccountState {
       favoritePendingIds: favoritePendingIds ?? this.favoritePendingIds,
       onlineReservations: onlineReservations ?? this.onlineReservations,
       upcomingReservations: upcomingReservations ?? this.upcomingReservations,
+      historyError:
+          clearHistoryError ? null : (historyError ?? this.historyError),
       onlineReservationsError: clearOnlineError
           ? null
           : (onlineReservationsError ?? this.onlineReservationsError),
@@ -333,71 +339,227 @@ class HongguoCloudAccountService {
     final creds = state.value.credentials;
     if (creds == null || !creds.isValid) return const <HongguoCloudProgress>[];
 
-    final listRaw = await _signedRequest(
-      creds,
-      '/reading/bookapi/read_progress/list/v1/',
-      query: const <String, String>{
-        'book_types': '2',
-        'limit': '50',
-      },
-    );
-    final rowsRaw =
-        listRaw['video_data'] ?? (listRaw['data'] is Map ? listRaw['data']['video_data'] : null);
-    var parsed = parseProgressRows(rowsRaw);
+    try {
+      var listRaw = await _signedRequest(
+        creds,
+        '/reading/bookapi/read_progress/list/v1/',
+        query: const <String, String>{
+          'book_types': '2',
+          'limit': '50',
+        },
+      );
+      var rowsRaw = _extractHistoryRows(listRaw);
+      var parsed = parseProgressRows(rowsRaw);
 
-    if (parsed.isNotEmpty) {
-      final missingIds = parsed
-          .where((e) => e.title.isEmpty && _numericIdRegex.hasMatch(e.seriesId))
-          .map((e) => e.seriesId)
-          .toSet()
-          .toList(growable: false);
-      if (missingIds.isNotEmpty) {
-        final details = await _fetchMultiDetails(creds, missingIds);
-        parsed = parsed.map((p) {
-          final meta = details[p.seriesId];
-          if (meta == null) return p;
-          return p.copyWith(
-            title: meta.title.isNotEmpty ? meta.title : null,
-            cover: meta.cover.isNotEmpty ? meta.cover : null,
-            totalEpisodes: meta.episodeCount > 0 ? meta.episodeCount : null,
-            badge: meta.episodeCount > 0 ? 'Trọn bộ ${meta.episodeCount} tập' : null,
+      if (parsed.isEmpty && listRaw.isNotEmpty) {
+        debugPrint(
+          '[HongguoCloud] read_progress/list(book_types=2) trống; keys=${listRaw.keys.toList()}',
+        );
+        final fallbackRaw = await _signedRequest(
+          creds,
+          '/reading/bookapi/read_progress/list/v1/',
+          query: const <String, String>{
+            'limit': '50',
+          },
+        );
+        final fallbackRows = _extractHistoryRows(fallbackRaw);
+        parsed = parseProgressRows(fallbackRows, videoOnlyFilter: true);
+        if (parsed.isEmpty && fallbackRaw.isNotEmpty) {
+          debugPrint(
+            '[HongguoCloud] read_progress/list(fallback) trống; keys=${fallbackRaw.keys.toList()}',
           );
-        }).toList(growable: false);
+        }
       }
-    }
 
-    if (gen == state.value.generation) {
-      state.value = state.value.copyWith(history: parsed);
+      if (parsed.isNotEmpty) {
+        final missingIds = parsed
+            .where((e) => e.title.isEmpty && _numericIdRegex.hasMatch(e.seriesId))
+            .map((e) => e.seriesId)
+            .toSet()
+            .toList(growable: false);
+        if (missingIds.isNotEmpty) {
+          try {
+            final details = await _fetchMultiDetails(creds, missingIds);
+            final favById = <String, HongguoCloudFavorite>{
+              for (final f in state.value.favorites) f.seriesId: f,
+            };
+            parsed = parsed.map((p) {
+              final meta = details[p.seriesId];
+              final fav = favById[p.seriesId];
+              final title = (meta != null && meta.title.isNotEmpty)
+                  ? meta.title
+                  : (fav?.title ?? '');
+              final cover = (meta != null && meta.cover.isNotEmpty)
+                  ? meta.cover
+                  : (fav?.cover ?? '');
+              final epCnt = (meta != null && meta.episodeCount > 0)
+                  ? meta.episodeCount
+                  : (fav?.totalEpisodes ?? 0);
+              return p.copyWith(
+                title: title.isNotEmpty ? title : null,
+                cover: cover.isNotEmpty ? cover : null,
+                totalEpisodes: epCnt > 0 ? epCnt : null,
+                badge: epCnt > 0 ? 'Trọn bộ $epCnt tập' : null,
+              );
+            }).toList(growable: false);
+          } catch (e) {
+            debugPrint(
+              '[HongguoCloud] Bổ sung chi tiết lịch sử lỗi (giữ nguyên danh sách): ${_sanitizeError(e)}',
+            );
+          }
+        }
+      }
+
+      if (gen == state.value.generation) {
+        state.value = state.value.copyWith(
+          history: parsed,
+          clearHistoryError: true,
+        );
+      }
+      return parsed;
+    } catch (e) {
+      debugPrint('[HongguoCloud] refreshHistory lỗi: ${_sanitizeError(e)}');
+      if (gen == state.value.generation) {
+        state.value = state.value.copyWith(
+          historyError: 'Không tải được lịch sử xem (${_sanitizeError(e)})',
+        );
+      }
+      return state.value.history;
     }
-    return parsed;
+  }
+
+  static dynamic _extractHistoryRows(Map<String, dynamic> root) {
+    final top = root['video_data'] ??
+        root['book_data'] ??
+        root['read_progress_list'] ??
+        root['progress_list'] ??
+        root['data_list'];
+    if (top is List) return top;
+
+    final data = root['data'];
+    if (data is List) return data;
+    if (data is Map) {
+      return data['video_data'] ??
+          data['book_data'] ??
+          data['read_progress_list'] ??
+          data['progress_list'] ??
+          data['list'] ??
+          data['items'] ??
+          data['books'] ??
+          data['video_list'];
+    }
+    return null;
+  }
+
+  static int _readInt(dynamic value, [int fallback = 0]) {
+    if (value == null) return fallback;
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    final s = value.toString().trim();
+    if (s.isEmpty) return fallback;
+    return int.tryParse(s) ?? double.tryParse(s)?.toInt() ?? fallback;
   }
 
   /// Parse dữ liệu `video_data` từ API lịch sử đám mây (giữ chính xác `current_play_time` và chuẩn hoá timestamp sang ms).
-  static List<HongguoCloudProgress> parseProgressRows(dynamic rows) {
+  static List<HongguoCloudProgress> parseProgressRows(
+    dynamic rows, {
+    bool videoOnlyFilter = false,
+  }) {
     if (rows is! List) return const <HongguoCloudProgress>[];
     final out = <HongguoCloudProgress>[];
     for (final item in rows) {
       if (item is! Map) continue;
-      final seriesId = (item['series_id'] ?? item['book_id'] ?? '').toString().trim();
-      final vid = (item['vid'] ?? item['item_id'] ?? '').toString().trim();
+      final nested = item['video_data'] is Map
+          ? item['video_data'] as Map
+          : (item['book_data'] is Map
+                ? item['book_data'] as Map
+                : (item['progress_info'] is Map
+                      ? item['progress_info'] as Map
+                      : item));
+
+      final seriesId = (nested['series_id'] ??
+              nested['book_id'] ??
+              item['series_id'] ??
+              item['book_id'] ??
+              nested['drama_id'] ??
+              '')
+          .toString()
+          .trim();
+      final vid = (nested['vid'] ??
+              nested['item_id'] ??
+              nested['video_id'] ??
+              item['vid'] ??
+              item['item_id'] ??
+              '')
+          .toString()
+          .trim();
       if (seriesId.isEmpty) continue;
 
-      final vidIndex = (item['vid_index'] as num?)?.toInt() ?? 1;
+      if (videoOnlyFilter) {
+        final bookType = _readInt(
+          nested['book_type'] ?? item['book_type'],
+          vid.isNotEmpty ? 2 : -1,
+        );
+        if (bookType != 2 && bookType != 3 && vid.isEmpty) {
+          continue;
+        }
+      }
+
+      final vidIndex = _readInt(
+        nested['vid_index'] ??
+            nested['episode_index'] ??
+            item['vid_index'] ??
+            item['episode_index'],
+        1,
+      );
       final epIndex = vidIndex > 0 ? vidIndex : 1;
-      final posMs = (item['current_play_time'] as num?)?.toInt() ?? 0;
-      final durMs = (item['current_total_time'] as num?)?.toInt() ?? 0;
-      var updatedAt = (item['last_watch_time'] as num?)?.toInt() ??
-          (item['read_timestamp_ms'] as num?)?.toInt() ??
-          0;
+      final posMs = _readInt(
+        nested['current_play_time'] ??
+            nested['play_time'] ??
+            item['current_play_time'] ??
+            item['play_time'],
+      );
+      final durMs = _readInt(
+        nested['current_total_time'] ??
+            nested['total_time'] ??
+            item['current_total_time'] ??
+            item['total_time'],
+      );
+      var updatedAt = _readInt(
+        nested['last_watch_time'] ??
+            nested['read_timestamp_ms'] ??
+            item['last_watch_time'] ??
+            item['read_timestamp_ms'] ??
+            nested['modify_time'] ??
+            item['modify_time'],
+      );
       if (updatedAt > 0 && updatedAt < 100000000000) {
         updatedAt *= 1000;
       }
 
+      final title = (item['series_title'] ??
+              nested['series_title'] ??
+              nested['book_name'] ??
+              item['book_name'] ??
+              nested['title'] ??
+              item['title'] ??
+              '')
+          .toString();
+      final cover = (item['series_cover_url'] ??
+              nested['thumb_url'] ??
+              item['thumb_url'] ??
+              nested['cover'] ??
+              nested['cover_url'] ??
+              nested['series_cover'] ??
+              item['cover'] ??
+              '')
+          .toString();
+
       out.add(
         HongguoCloudProgress(
           seriesId: seriesId,
-          title: item['series_title']?.toString() ?? item['book_name']?.toString() ?? '',
-          cover: item['thumb_url']?.toString() ?? item['cover']?.toString() ?? '',
+          title: title,
+          cover: cover,
           episodeId: vid,
           episodeIndex: epIndex,
           positionMs: posMs < 0 ? 0 : posMs,
@@ -756,27 +918,51 @@ class HongguoCloudAccountService {
     HongguoAccountCredentials creds,
     List<String> seriesIds,
   ) async {
-    if (seriesIds.isEmpty) return const <String, ({String title, String cover, int episodeCount})>{};
-    final raw = await _signedRequest(
-      creds,
-      '/reading/bookapi/multi-detail/v1/',
-      query: <String, String>{
-        'book_id': seriesIds.join(','),
-        'book_type': '2',
-      },
-    );
-    final rows = raw['data'];
+    if (seriesIds.isEmpty) {
+      return const <String, ({String title, String cover, int episodeCount})>{};
+    }
     final map = <String, ({String title, String cover, int episodeCount})>{};
-    if (rows is List) {
-      for (final row in rows) {
-        if (row is! Map) continue;
-        final id = (row['book_id'] ?? row['series_id'] ?? '').toString().trim();
-        if (id.isEmpty) continue;
-        map[id] = (
-          title: (row['book_name'] ?? row['series_title'] ?? row['title'] ?? '')
-              .toString(),
-          cover: (row['thumb_url'] ?? row['series_cover'] ?? '').toString(),
-          episodeCount: _readEpisodeCount(row),
+    const chunkSize = 20;
+    for (var i = 0; i < seriesIds.length; i += chunkSize) {
+      final chunk = seriesIds.sublist(
+        i,
+        (i + chunkSize) > seriesIds.length ? seriesIds.length : (i + chunkSize),
+      );
+      try {
+        final raw = await _signedRequest(
+          creds,
+          '/reading/bookapi/multi-detail/v1/',
+          query: <String, String>{
+            'book_id': chunk.join(','),
+            'book_type': '2',
+          },
+        );
+        final rows = raw['data'] ?? raw['book_data'];
+        if (rows is List) {
+          for (final row in rows) {
+            if (row is! Map) continue;
+            final id =
+                (row['book_id'] ?? row['series_id'] ?? '').toString().trim();
+            if (id.isEmpty) continue;
+            map[id] = (
+              title: (row['book_name'] ??
+                      row['series_title'] ??
+                      row['title'] ??
+                      '')
+                  .toString(),
+              cover: (row['thumb_url'] ??
+                      row['series_cover'] ??
+                      row['series_cover_url'] ??
+                      row['cover_url'] ??
+                      '')
+                  .toString(),
+              episodeCount: _readEpisodeCount(row),
+            );
+          }
+        }
+      } catch (e) {
+        debugPrint(
+          '[HongguoCloud] _fetchMultiDetails batch lỗi: ${_sanitizeError(e)}',
         );
       }
     }

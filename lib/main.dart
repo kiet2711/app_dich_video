@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui';
 
@@ -7,6 +8,7 @@ import 'package:media_kit/media_kit.dart';
 
 import 'data/repository/settings_repository.dart';
 import 'domain/font/custom_font_manager.dart';
+import 'domain/media/hongguo/hongguo_feed_warmup_service.dart';
 import 'domain/media/media_storage.dart';
 import 'player/app_player_controller.dart';
 import 'player/global_player_manager.dart';
@@ -41,7 +43,115 @@ void main() {
   runApp(const CapSubApp());
 }
 
-class CapSubApp extends StatelessWidget {
+void dismissAppKeyboard() {
+  FocusManager.instance.primaryFocus?.unfocus();
+  unawaited(
+    SystemChannels.textInput
+        .invokeMethod<void>('TextInput.hide')
+        .catchError((_) {}),
+  );
+}
+
+class _KeyboardDismissNavigatorObserver extends NavigatorObserver {
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    super.didPush(route, previousRoute);
+    // Clear focus khỏi màn hình cũ trước khi mở sheet/dialog/route mới để khi đóng lại không tự bật bàn phím cũ.
+    FocusManager.instance.primaryFocus?.unfocus();
+  }
+
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    super.didPop(route, previousRoute);
+    dismissAppKeyboard();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      dismissAppKeyboard();
+    });
+  }
+
+  @override
+  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
+    super.didReplace(newRoute: newRoute, oldRoute: oldRoute);
+    dismissAppKeyboard();
+  }
+
+  @override
+  void didRemove(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    super.didRemove(route, previousRoute);
+    dismissAppKeyboard();
+  }
+}
+
+class _GlobalKeyboardCoordinator extends StatefulWidget {
+  final Widget child;
+
+  const _GlobalKeyboardCoordinator({required this.child});
+
+  @override
+  State<_GlobalKeyboardCoordinator> createState() =>
+      _GlobalKeyboardCoordinatorState();
+}
+
+class _GlobalKeyboardCoordinatorState extends State<_GlobalKeyboardCoordinator>
+    with WidgetsBindingObserver {
+  double _lastBottomViewInset = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _lastBottomViewInset = _currentBottomInset();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  double _currentBottomInset() {
+    final views = WidgetsBinding.instance.platformDispatcher.views;
+    if (views.isEmpty) return 0;
+    return views.first.viewInsets.bottom;
+  }
+
+  @override
+  void didChangeMetrics() {
+    final nextBottom = _currentBottomInset();
+    if (_lastBottomViewInset > 0 && nextBottom == 0) {
+      // Đồng bộ unfocus khi người dùng đóng bàn phím từ thanh điều hướng/nút Back Android.
+      FocusManager.instance.primaryFocus?.unfocus();
+    }
+    _lastBottomViewInset = nextBottom;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Actions(
+      actions: <Type, Action<Intent>>{
+        EditableTextTapOutsideIntent:
+            CallbackAction<EditableTextTapOutsideIntent>(
+              onInvoke: (intent) {
+                intent.focusNode.unfocus();
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (FocusManager.instance.primaryFocus == null) {
+                    unawaited(
+                      SystemChannels.textInput
+                          .invokeMethod<void>('TextInput.hide')
+                          .catchError((_) {}),
+                    );
+                  }
+                });
+                return null;
+              },
+            ),
+      },
+      child: widget.child,
+    );
+  }
+}
+
+class CapSubApp extends StatefulWidget {
   final bool skipSplash;
   final Future<void> Function()? onInitialize;
 
@@ -50,6 +160,14 @@ class CapSubApp extends StatelessWidget {
     this.skipSplash = false,
     this.onInitialize,
   });
+
+  @override
+  State<CapSubApp> createState() => _CapSubAppState();
+}
+
+class _CapSubAppState extends State<CapSubApp> {
+  final NavigatorObserver _keyboardNavigatorObserver =
+      _KeyboardDismissNavigatorObserver();
 
   @override
   Widget build(BuildContext context) {
@@ -61,11 +179,15 @@ class CapSubApp extends StatelessWidget {
           title: 'CapSub AI Studio',
           debugShowCheckedModeBanner: false,
           theme: buildAppTheme(palette),
+          navigatorObservers: [_keyboardNavigatorObserver],
+          builder: (context, child) => _GlobalKeyboardCoordinator(
+            child: child ?? const SizedBox.shrink(),
+          ),
           routes: {
-            '/': (context) => skipSplash
+            '/': (context) => widget.skipSplash
                 ? const MainNavigation()
                 : AppStartupSplash(
-                    onInitialize: onInitialize ?? _initializeAppServices,
+                    onInitialize: widget.onInitialize ?? _initializeAppServices,
                     homeBuilder: (_) => const MainNavigation(),
                   ),
             '/settings': (context) => const SettingsScreen(),
@@ -107,6 +229,14 @@ class _MainNavigationState extends State<MainNavigation> {
     AppTabId.bilibili,
     AppTabId.history,
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(HongguoFeedSessionCache.instance.warmupOnAppStart());
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -152,7 +282,15 @@ class _MainNavigationState extends State<MainNavigation> {
           canPop: false,
           onPopInvokedWithResult: (didPop, _) {
             if (didPop) return;
+            final hasKeyboardOrFocus =
+                MediaQuery.viewInsetsOf(context).bottom > 0 ||
+                FocusManager.instance.primaryFocus != null;
+            if (hasKeyboardOrFocus) {
+              dismissAppKeyboard();
+              return;
+            }
             if (Platform.isAndroid && !MediaStorage.shouldSuppressBackMinimize) {
+              dismissAppKeyboard();
               const MethodChannel('com.capcut.capsub/media')
                   .invokeMethod('moveToBack');
             }
@@ -164,7 +302,16 @@ class _MainNavigationState extends State<MainNavigation> {
               extendBody: palette.isFloatingNav && !isFullScreen,
               body: Stack(
                 children: [
-                  IndexedStack(index: _currentIndex, children: screens),
+                  IndexedStack(
+                    index: _currentIndex,
+                    children: [
+                      for (var i = 0; i < screens.length; i++)
+                        ExcludeFocus(
+                          excluding: _currentIndex != i,
+                          child: screens[i],
+                        ),
+                    ],
+                  ),
                   const GlobalPlayerOverlay(),
                 ],
               ),
@@ -251,6 +398,7 @@ class _MainNavigationState extends State<MainNavigation> {
                         color: Colors.transparent,
                         child: InkWell(
                           onTap: () {
+                            dismissAppKeyboard();
                             if (_currentIndex != idx) {
                               HapticFeedback.selectionClick();
                               setState(() => _currentIndex = idx);
@@ -336,6 +484,7 @@ class _MainNavigationState extends State<MainNavigation> {
                   return Expanded(
                     child: InkWell(
                       onTap: () {
+                        dismissAppKeyboard();
                         if (_currentIndex != idx) {
                           HapticFeedback.selectionClick();
                           setState(() => _currentIndex = idx);

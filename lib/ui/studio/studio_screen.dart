@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../data/model/subtitle_document.dart';
+import '../../main.dart' show dismissAppKeyboard;
 import '../home/home_screen.dart';
 import '../theme/app_theme.dart';
 import '../tts/tts_studio_screen.dart';
@@ -28,6 +29,7 @@ class StudioScreenState extends State<StudioScreen> {
 
   /// Nạp video từ nguồn bên ngoài (ví dụ từ Hồng Quả sang)
   void loadOnlineVideo(String url, {String? title}) {
+    dismissAppKeyboard();
     setState(() {
       _subTabIndex = 0;
     });
@@ -36,6 +38,7 @@ class StudioScreenState extends State<StudioScreen> {
 
   /// Mở phụ đề trong tab Lồng Tiếng AI (ví dụ từ Lịch Sử sang)
   void openInTts(String videoPath, SubtitleDocument doc, {String? title}) {
+    dismissAppKeyboard();
     setState(() {
       _currentDoc = doc;
       _currentVideoPath = videoPath;
@@ -46,6 +49,7 @@ class StudioScreenState extends State<StudioScreen> {
 
   /// Chuyển đổi sang tab Tạo Phụ Đề
   void switchToSubtitles() {
+    dismissAppKeyboard();
     setState(() {
       _subTabIndex = 0;
     });
@@ -186,27 +190,34 @@ class StudioScreenState extends State<StudioScreen> {
               child: IndexedStack(
                 index: _subTabIndex,
                 children: [
-                  HomeScreen(
-                    key: _homeKey,
-                    hideAppBar: true,
-                    onNavigateToSettings: widget.onNavigateToSettings,
-                    onProcessCompleted: (doc, videoPath, [title]) {
-                      setState(() {
-                        _currentDoc = doc;
-                        _currentVideoPath = videoPath;
-                        _currentTitle = title;
-                        _subTabIndex = 1;
-                      });
-                    },
-                  ),
-                  TtsStudioScreen(
-                    key: ValueKey(
-                      'tts_${_currentVideoPath ?? ""}_${_currentDoc?.hashCode ?? 0}',
+                  ExcludeFocus(
+                    excluding: _subTabIndex != 0,
+                    child: HomeScreen(
+                      key: _homeKey,
+                      hideAppBar: true,
+                      onNavigateToSettings: widget.onNavigateToSettings,
+                      onProcessCompleted: (doc, videoPath, [title]) {
+                        dismissAppKeyboard();
+                        setState(() {
+                          _currentDoc = doc;
+                          _currentVideoPath = videoPath;
+                          _currentTitle = title;
+                          _subTabIndex = 1;
+                        });
+                      },
                     ),
-                    hideAppBar: true,
-                    initialDoc: _currentDoc,
-                    initialVideoPath: _currentVideoPath,
-                    initialTitle: _currentTitle,
+                  ),
+                  ExcludeFocus(
+                    excluding: _subTabIndex != 1,
+                    child: TtsStudioScreen(
+                      key: ValueKey(
+                        'tts_${_currentVideoPath ?? ""}_${_currentDoc?.hashCode ?? 0}',
+                      ),
+                      hideAppBar: true,
+                      initialDoc: _currentDoc,
+                      initialVideoPath: _currentVideoPath,
+                      initialTitle: _currentTitle,
+                    ),
                   ),
                 ],
               ),
@@ -231,6 +242,7 @@ class StudioScreenState extends State<StudioScreen> {
     return Expanded(
       child: GestureDetector(
         onTap: () {
+          dismissAppKeyboard();
           if (_subTabIndex != index) {
             HapticFeedback.selectionClick();
             setState(() => _subTabIndex = index);

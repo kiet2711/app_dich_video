@@ -27,6 +27,7 @@ import android.os.Looper
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.util.Rational
+import android.view.inputmethod.InputMethodManager
 import android.webkit.MimeTypeMap
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -305,6 +306,14 @@ class MainActivity : FlutterActivity() {
                     result.success(true)
                 }
                 "moveToBack" -> {
+                    val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                    currentFocus?.let { view ->
+                        imm?.hideSoftInputFromWindow(view.windowToken, 0)
+                        view.clearFocus()
+                    }
+                    window?.decorView?.let { decor ->
+                        imm?.hideSoftInputFromWindow(decor.windowToken, 0)
+                    }
                     moveTaskToBack(true)
                     result.success(true)
                 }
