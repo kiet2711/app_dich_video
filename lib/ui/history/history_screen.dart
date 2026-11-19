@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -13,6 +14,7 @@ import '../../data/repository/watch_later_repository.dart';
 import '../../domain/ai/title_translator.dart';
 import '../../domain/media/bilibili_resolver.dart';
 import '../../domain/media/hongguo_resolver.dart';
+import '../../domain/media/media_storage.dart';
 import '../../domain/media/video_cache_manager.dart';
 import '../../data/repository/settings_repository.dart';
 import '../../player/global_player_manager.dart';
@@ -146,6 +148,48 @@ class _HistoryScreenState extends State<HistoryScreen>
   final Set<String> _showTranslatedGroupKeys = {};
   final Set<String> _translatingGroupKeys = {};
   final Map<String, String> _groupTranslatedTitles = {};
+  final Map<String, bool> _offlineAvailability = {};
+  final Set<String> _probingOfflineIds = {};
+
+  bool _isRemoteVideoPath(String path) =>
+      path.startsWith('http://') || path.startsWith('https://');
+
+  bool _isItemOffline(HistoryItem it) {
+    final path = it.videoPath.trim();
+    if (path.isNotEmpty) {
+      if (MediaStorage.isContentUri(path)) return true;
+      if (!_isRemoteVideoPath(path)) {
+        if (File(path).existsSync()) return true;
+      }
+    }
+    final cached = _offlineAvailability[it.id];
+    if (cached != null) return cached;
+    _probeOfflineAvailability(it);
+    return false;
+  }
+
+  void _probeOfflineAvailability(HistoryItem it) {
+    if (_probingOfflineIds.contains(it.id)) return;
+    _probingOfflineIds.add(it.id);
+    unawaited(_resolveOfflineAvailability(it));
+  }
+
+  Future<void> _resolveOfflineAvailability(HistoryItem it) async {
+    final available = await _probeHistoryOfflineExists(it);
+    _probingOfflineIds.remove(it.id);
+
+    if (!mounted) return;
+    final prev = _offlineAvailability[it.id];
+    _offlineAvailability[it.id] = available;
+    if (prev != available && available) {
+      setState(() {});
+    }
+  }
+
+  void _onHistoryNotifierChanged() {
+    _offlineAvailability.clear();
+    _probingOfflineIds.clear();
+  }
 
   Future<void> _toggleTranslateTitle(HistoryItem it) async {
     final isShowing = _showTranslatedItemIds.contains(it.id);
@@ -380,11 +424,13 @@ class _HistoryScreenState extends State<HistoryScreen>
         setState(() {});
       }
     });
+    HistoryRepository.historyNotifier.addListener(_onHistoryNotifierChanged);
     _load();
   }
 
   @override
   void dispose() {
+    HistoryRepository.historyNotifier.removeListener(_onHistoryNotifierChanged);
     _historyTabController.dispose();
     super.dispose();
   }
@@ -1933,11 +1979,12 @@ class _HistoryScreenState extends State<HistoryScreen>
       title = isTranslated && hasTranslated
           ? it.displayTranslatedTitle!
           : it.displayOriginalTitle;
+      final isOffline = _isItemOffline(it);
       subtitle = it.lastPositionMs > 0
           ? (it.durationMs > 0
-              ? 'Đang xem ${_formatMs(it.lastPositionMs)} / ${_formatMs(it.durationMs)}'
-              : 'Đang xem ${_formatMs(it.lastPositionMs)}')
-          : '${it.sentenceCount > 0 ? it.sentenceCount : "?"} câu · ${it.isOnlineStream ? "Lướt Online" : "Offline"}';
+                ? '${_formatMs(it.lastPositionMs)} / ${_formatMs(it.durationMs)}'
+                : _formatMs(it.lastPositionMs))
+          : '${it.sentenceCount > 0 ? "Vietsub" : "Chưa vietsub"} · ${isOffline ? "Offline" : "Online"}';
       coverUrl = (it.seriesCover != null && it.seriesCover!.trim().isNotEmpty)
           ? it.seriesCover
           : it.coverUrl;
@@ -2508,6 +2555,8 @@ class _HistoryScreenState extends State<HistoryScreen>
       DateTime.fromMillisecondsSinceEpoch(it.timestamp),
     );
     final hasVoice = it.ttsVoice != null && it.ttsVoice!.isNotEmpty;
+    final hasVietsub = it.sentenceCount > 0;
+    final isOffline = _isItemOffline(it);
     final isFinished = it.durationMs > 0 && it.lastPositionMs >= it.durationMs * 0.95;
     final isWatching = it.lastPositionMs > 0 && !isFinished;
 
@@ -2810,8 +2859,8 @@ class _HistoryScreenState extends State<HistoryScreen>
                       const SizedBox(width: 4),
                       Text(
                         it.durationMs > 0
-                            ? 'Đang xem dở: ${_formatMs(it.lastPositionMs)} / ${_formatMs(it.durationMs)}'
-                            : 'Đang xem dở: ${_formatMs(it.lastPositionMs)}',
+                            ? '${_formatMs(it.lastPositionMs)} / ${_formatMs(it.durationMs)}'
+                            : _formatMs(it.lastPositionMs),
                         style: TextStyle(
                           color: watchingColor,
                           fontSize: 11,
@@ -2856,12 +2905,12 @@ class _HistoryScreenState extends State<HistoryScreen>
                   vertical: 3,
                 ),
                 decoration: BoxDecoration(
-                  color: it.isOnlineStream
+                  color: !isOffline
                       ? onlineColor.withValues(alpha: 0.12)
                       : accent.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(7),
                   border: Border.all(
-                    color: it.isOnlineStream
+                    color: !isOffline
                         ? onlineColor.withValues(alpha: 0.38)
                         : accent.withValues(alpha: 0.35),
                     width: 0.8,
@@ -2871,17 +2920,17 @@ class _HistoryScreenState extends State<HistoryScreen>
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(
-                      it.isOnlineStream
-                          ? Icons.swipe_vertical_rounded
+                      !isOffline
+                          ? Icons.cloud_outlined
                           : Icons.download_done_rounded,
                       size: 11,
-                      color: it.isOnlineStream ? onlineColor : accent,
+                      color: !isOffline ? onlineColor : accent,
                     ),
                     const SizedBox(width: 4),
                     Text(
-                      it.isOnlineStream ? 'Lướt Online' : 'Offline',
+                      isOffline ? 'Offline' : 'Online',
                       style: TextStyle(
-                        color: it.isOnlineStream ? onlineColor : accent,
+                        color: !isOffline ? onlineColor : accent,
                         fontSize: 10,
                         fontWeight: FontWeight.bold,
                       ),
@@ -2895,15 +2944,17 @@ class _HistoryScreenState extends State<HistoryScreen>
                   vertical: 3,
                 ),
                 decoration: BoxDecoration(
-                  color: palette.surfaceAlt,
+                  color: hasVietsub
+                      ? accent.withValues(alpha: 0.12)
+                      : palette.surfaceAlt,
                   borderRadius: BorderRadius.circular(7),
                 ),
                 child: Text(
-                  '${it.sentenceCount > 0 ? it.sentenceCount : '?'} câu',
+                  hasVietsub ? 'Vietsub' : 'Chưa vietsub',
                   style: TextStyle(
-                    color: accent,
+                    color: hasVietsub ? accent : palette.textMuted,
                     fontSize: 11,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: hasVietsub ? FontWeight.w600 : FontWeight.normal,
                   ),
                 ),
               ),
@@ -3386,7 +3437,7 @@ class _HistoryScreenState extends State<HistoryScreen>
         final VoidCallback onPlayAction;
 
         if (isWatching) {
-          statusText = 'Đang xem dở: Tập $latestEpNum (${_formatMs(latest.lastPositionMs)})';
+          statusText = 'Tập $latestEpNum (${_formatMs(latest.lastPositionMs)})';
           buttonText = 'Xem tiếp Tập $latestEpNum (${_formatMs(latest.lastPositionMs)})';
           buttonIcon = Icons.play_arrow_rounded;
           onPlayAction = () => _showHongguoPlaybackOptions(
@@ -3494,8 +3545,8 @@ class _HistoryScreenState extends State<HistoryScreen>
 
         if (isWatching) {
           statusText = matchedHistory.durationMs > 0
-              ? 'Đang xem dở: ${_formatMs(matchedHistory.lastPositionMs)} / ${_formatMs(matchedHistory.durationMs)}'
-              : 'Đang xem dở: ${_formatMs(matchedHistory.lastPositionMs)}';
+              ? '${_formatMs(matchedHistory.lastPositionMs)} / ${_formatMs(matchedHistory.durationMs)}'
+              : _formatMs(matchedHistory.lastPositionMs);
           buttonText = 'Xem tiếp (${_formatMs(matchedHistory.lastPositionMs)})';
           buttonIcon = Icons.play_arrow_rounded;
         } else if (isFinished) {
@@ -3842,6 +3893,50 @@ class _WatchLaterHistoryLink {
 }
 
 /// Widget hiển thị Bottom Sheet danh sách tập của phim bộ, hỗ trợ xem và chọn nhiều tập để xóa
+Future<bool> _probeHistoryOfflineExists(HistoryItem it) async {
+  try {
+    final path = it.videoPath.trim();
+    if (path.isNotEmpty) {
+      if (MediaStorage.isContentUri(path)) return true;
+      final isRemote =
+          path.startsWith('http://') || path.startsWith('https://');
+      if (!isRemote) {
+        final resolved = await HistoryRepository.resolvePath(path);
+        final file = File(resolved);
+        if (await file.exists() && await file.length() > 0) {
+          return true;
+        }
+      }
+    }
+
+    final bvidMatch =
+        RegExp(r'BV1[0-9a-zA-Z]{9}', caseSensitive: false).firstMatch(path) ??
+        RegExp(r'BV1[0-9a-zA-Z]{9}', caseSensitive: false).firstMatch(it.id) ??
+        RegExp(r'BV1[0-9a-zA-Z]{9}', caseSensitive: false).firstMatch(it.title);
+    final bvid = bvidMatch?.group(0);
+    final pageStr =
+        RegExp(r'[?&]p=(\d+)', caseSensitive: false)
+            .firstMatch(path)
+            ?.group(1) ??
+        '1';
+    final bilibiliPage = int.tryParse(pageStr) ?? 1;
+
+    final cachedFile = await VideoCacheManager.findCachedFile(
+      url: path,
+      seriesId: it.seriesId,
+      episodeIndex: it.extractedEpisodeIndex,
+      bvid: bvid,
+      bilibiliPage: bvid != null ? bilibiliPage : null,
+    );
+    if (cachedFile != null &&
+        await cachedFile.exists() &&
+        await cachedFile.length() > 1024 * 50) {
+      return true;
+    }
+  } catch (_) {}
+  return false;
+}
+
 class _DramaEpisodesSheetWidget extends StatefulWidget {
   final DramaHistoryGroup group;
   final HongguoResolver hongguoResolver;
@@ -3876,6 +3971,34 @@ class _DramaEpisodesSheetWidget extends StatefulWidget {
 class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
   bool _isEpMultiSelect = false;
   final Set<String> _selectedEpIds = {};
+  final Map<String, bool> _epOfflineAvailability = {};
+  final Set<String> _probingEpIds = {};
+
+  bool _isEpisodeOffline(HistoryItem ep) {
+    final path = ep.videoPath.trim();
+    if (path.isNotEmpty) {
+      if (MediaStorage.isContentUri(path)) return true;
+      if (!path.startsWith('http://') && !path.startsWith('https://')) {
+        if (File(path).existsSync()) return true;
+      }
+    }
+    final cached = _epOfflineAvailability[ep.id];
+    if (cached != null) return cached;
+    if (!_probingEpIds.contains(ep.id)) {
+      _probingEpIds.add(ep.id);
+      unawaited(() async {
+        final ok = await _probeHistoryOfflineExists(ep);
+        _probingEpIds.remove(ep.id);
+        if (!mounted) return;
+        final prev = _epOfflineAvailability[ep.id];
+        _epOfflineAvailability[ep.id] = ok;
+        if (prev != ok && ok) {
+          setState(() {});
+        }
+      }());
+    }
+    return false;
+  }
 
   void _enterEpMultiSelect([String? initialId]) {
     HapticFeedback.mediumImpact();
@@ -4349,37 +4472,44 @@ class _DramaEpisodesSheetWidgetState extends State<_DramaEpisodesSheetWidget> {
                                   ),
                                 ),
                                 const SizedBox(width: 8),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 6,
-                                    vertical: 1.5,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: ep.isOnlineStream
-                                        ? onlineColor.withValues(alpha: 0.14)
-                                        : accent.withValues(alpha: 0.14),
-                                    borderRadius: BorderRadius.circular(4),
-                                    border: Border.all(
-                                      color: ep.isOnlineStream
-                                          ? onlineColor.withValues(alpha: 0.4)
-                                          : accent.withValues(alpha: 0.4),
-                                      width: 0.8,
-                                    ),
-                                  ),
-                                  child: Text(
-                                    ep.isOnlineStream ? 'Lướt Online' : 'Offline',
-                                    style: TextStyle(
-                                      color: ep.isOnlineStream ? onlineColor : accent,
-                                      fontSize: 9,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
+                                Builder(
+                                  builder: (context) {
+                                    final isEpOffline = _isEpisodeOffline(ep);
+                                    return Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 6,
+                                        vertical: 1.5,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: !isEpOffline
+                                            ? onlineColor.withValues(alpha: 0.14)
+                                            : accent.withValues(alpha: 0.14),
+                                        borderRadius: BorderRadius.circular(4),
+                                        border: Border.all(
+                                          color: !isEpOffline
+                                              ? onlineColor.withValues(alpha: 0.4)
+                                              : accent.withValues(alpha: 0.4),
+                                          width: 0.8,
+                                        ),
+                                      ),
+                                      child: Text(
+                                        isEpOffline ? 'Offline' : 'Online',
+                                        style: TextStyle(
+                                          color: !isEpOffline
+                                              ? onlineColor
+                                              : accent,
+                                          fontSize: 9,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    );
+                                  },
                                 ),
                               ],
                             ),
                             const SizedBox(height: 3),
                             Text(
-                              'Đã xem: $posStr / $durStr  •  ${ep.sentenceCount} câu',
+                              'Đã xem: $posStr / $durStr  •  ${ep.sentenceCount > 0 ? "Vietsub" : "Chưa vietsub"}',
                               style: TextStyle(
                                 color: palette.textMuted,
                                 fontSize: 11,

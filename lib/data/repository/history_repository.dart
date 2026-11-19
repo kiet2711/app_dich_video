@@ -284,6 +284,8 @@ class HistoryRepository {
     final lastWatchedAt = isPrefetch ? existing?.lastWatchedAt : now;
     final timestamp = isPrefetch ? (existing?.timestamp ?? (now - 1000)) : now;
 
+    final isRemoteVideo =
+        videoPath.startsWith('http://') || videoPath.startsWith('https://');
     final item = HistoryItem(
       id: id,
       title: cleanTitle,
@@ -303,7 +305,8 @@ class HistoryRepository {
       seriesCover: coverUrl ?? seriesCover ?? existing?.seriesCover,
       episodeIndex: episodeIndex ?? existing?.episodeIndex,
       totalEpisodes: totalEpisodes ?? existing?.totalEpisodes,
-      isOnlineStream: isOnlineStream || (existing?.isOnlineStream ?? false),
+      isOnlineStream:
+          isOnlineStream || isRemoteVideo || (existing?.isOnlineStream ?? false),
     );
 
     await addItem(item);
@@ -613,6 +616,8 @@ class HistoryRepository {
       final safePosition = effectiveDuration > 0
           ? nonNegativePosition.clamp(0, effectiveDuration)
           : nonNegativePosition;
+      final isRemoteVideo =
+          videoPath.startsWith('http://') || videoPath.startsWith('https://');
       await saveHistory(
         videoPath: videoPath,
         title: (title != null && title.trim().isNotEmpty) ? title.trim() : 'Bilibili Video',
@@ -620,6 +625,7 @@ class HistoryRepository {
         coverUrl: coverUrl,
         durationMs: effectiveDuration,
         lastPositionMs: safePosition,
+        isOnlineStream: isRemoteVideo,
       );
       return true;
     }

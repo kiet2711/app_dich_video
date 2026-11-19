@@ -46,12 +46,12 @@ class _HongguoScreenState extends State<HongguoScreen> {
   // Tab Đề xuất: 'all' (Dành cho bạn - Bookmall Official) hoặc khóa theo 'short_play' / 'comic_series' / 'ai_series'
   String _discoverScope = 'all';
 
-  // Tab Kho lọc sâu: Lọc đa chiều bằng ByteDance landpage API + lưu trang con trỏ tuần tự
+  // Tab Kho lọc sâu: Lọc đa chiều bằng ByteDance landpage API + con trỏ cuộn vô hạn
   HongguoDiscoverySelection _librarySelection = const HongguoDiscoverySelection(
     genreKind: HongguoGenreKind.realPlay,
     filters: <String, String>{'sort': 'hot_score'},
   );
-  final List<HongguoDiscoveryCursor?> _libraryPageCursors = <HongguoDiscoveryCursor?>[null];
+  HongguoDiscoveryCursor? _libraryNextCursor;
   bool _libraryHasMore = false;
 
   // Tab BXH: 10 bảng xếp hạng chính thức
@@ -60,10 +60,15 @@ class _HongguoScreenState extends State<HongguoScreen> {
   // Bộ lọc kho khi Tìm kiếm: null (Tất cả) hoặc HongguoGenreKind
   HongguoGenreKind? _searchScope;
 
+  static const int _maxInfiniteDramas = 500;
   int _currentPage = 1;
   int _totalPages = 1;
+  int _loadGeneration = 0;
+  int _consecutiveEmptyAppends = 0;
 
   bool _isLoading = false;
+  bool _isLoadingMore = false;
+  bool _hasMore = true;
   String? _errorMessage;
   List<HongguoDramaItem> _dramas = [];
   bool _isSearchMode = false;
@@ -77,10 +82,20 @@ class _HongguoScreenState extends State<HongguoScreen> {
   @override
   void initState() {
     super.initState();
+    _scrollController.addListener(_onGridScroll);
     _assistantController = HongguoAssistantController(resolver: _resolver);
     unawaited(_assistantController.initialize());
     unawaited(HongguoCloudAccountService.instance.initialize());
     _loadSettingsAndInitialData();
+  }
+
+  void _onGridScroll() {
+    if (!_scrollController.hasClients) return;
+    if (_isLoading || _isLoadingMore || !_hasMore || _isAiResultMode) return;
+    final pos = _scrollController.position;
+    if (pos.pixels >= pos.maxScrollExtent - 360) {
+      unawaited(_loadMoreDramas());
+    }
   }
 
   Future<void> _loadSettingsAndInitialData() async {
@@ -152,6 +167,7 @@ class _HongguoScreenState extends State<HongguoScreen> {
 
   @override
   void dispose() {
+    _scrollController.removeListener(_onGridScroll);
     _assistantController.dispose();
     _searchController.dispose();
     _scrollController.dispose();
@@ -159,38 +175,165 @@ class _HongguoScreenState extends State<HongguoScreen> {
   }
 
   HongguoDiscoveryCursor? _discoverScopedCursor;
+  bool _discoverAllUseLandpageFallback = false;
+
+  void _scheduleFillViewportIfNeeded() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      if (_isLoading || _isLoadingMore || !_hasMore || _isAiResultMode) return;
+      final pos = _scrollController.position;
+      if (pos.maxScrollExtent <= 120 || pos.pixels >= pos.maxScrollExtent - 360) {
+        unawaited(_loadMoreDramas());
+      }
+    });
+  }
 
   void _persistLibrarySelection() {
     _settings?.hongguoCatalogDiscoveryJson = _librarySelection.toJsonString();
   }
 
-  Future<void> _loadDramas({bool resetCursor = false}) async {
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-      _isSearchMode = false;
-      _isAiResultMode = false;
-      _aiResultLabel = '';
-    });
+  int _appendUniqueDramas(List<HongguoDramaItem> incoming) {
+    final existingIds = _dramas.map((d) => d.seriesId).toSet();
+    var added = 0;
+    for (final item in incoming) {
+      if (_dramas.length >= _maxInfiniteDramas) break;
+      if (item.seriesId.isEmpty || !existingIds.contains(item.seriesId)) {
+        _dramas.add(item);
+        if (item.seriesId.isNotEmpty) {
+          existingIds.add(item.seriesId);
+        }
+        added++;
+      }
+    }
+    return added;
+  }
+
+  Future<void> _loadDramas({
+    bool resetCursor = false,
+    bool append = false,
+  }) async {
+    final generation = append ? _loadGeneration : ++_loadGeneration;
+    if (append) {
+      if (_isLoading || _isLoadingMore || !_hasMore) return;
+      setState(() {
+        _isLoadingMore = true;
+      });
+    } else {
+      setState(() {
+        _isLoading = true;
+        _isLoadingMore = false;
+        _hasMore = true;
+        _consecutiveEmptyAppends = 0;
+        _errorMessage = null;
+        _isSearchMode = false;
+        _isAiResultMode = false;
+        _aiResultLabel = '';
+      });
+    }
 
     try {
       if (_primaryTab == 'discover') {
         if (_discoverScope == 'all') {
-          if (resetCursor) {
+          if (!append) {
             _discoverScopedCursor = null;
+            _discoverAllUseLandpageFallback = false;
+            var items = await HongguoSimilarEngine.instance
+                .getPersonalizedDiscoverList(resetCursor: resetCursor);
+            if (!mounted || generation != _loadGeneration) return;
+            if (items.isEmpty) {
+              _discoverAllUseLandpageFallback = true;
+              final page = await HongguoDiscoveryService.instance.fetchDiscovery(
+                const HongguoDiscoverySelection(
+                  genreKind: HongguoGenreKind.realPlay,
+                  filters: <String, String>{'sort': 'hot_score'},
+                ),
+              );
+              if (!mounted || generation != _loadGeneration) return;
+              _discoverScopedCursor = page.nextCursor;
+              items = page.items;
+            }
+            setState(() {
+              _dramas = List<HongguoDramaItem>.from(items);
+              _currentPage = 1;
+              _totalPages = 1;
+              _hasMore = _dramas.length < _maxInfiniteDramas;
+              _isLoading = false;
+            });
+          } else {
+            final existingIds = _dramas.map((d) => d.seriesId).toSet();
+            var addedCount = 0;
+
+            if (!_discoverAllUseLandpageFallback) {
+              final items = await HongguoSimilarEngine.instance
+                  .getPersonalizedDiscoverList(
+                    excludedSeriesIds: existingIds,
+                    resetCursor: false,
+                  );
+              if (!mounted || generation != _loadGeneration) return;
+              final fresh = items
+                  .where(
+                    (d) => d.seriesId.isEmpty || !existingIds.contains(d.seriesId),
+                  )
+                  .toList();
+              if (fresh.isNotEmpty) {
+                setState(() {
+                  addedCount = _appendUniqueDramas(fresh);
+                  _consecutiveEmptyAppends = 0;
+                  _hasMore = _dramas.length < _maxInfiniteDramas;
+                  _isLoadingMore = false;
+                });
+              } else {
+                _discoverAllUseLandpageFallback = true;
+              }
+            }
+
+            if (_discoverAllUseLandpageFallback && addedCount == 0) {
+              HongguoDiscoveryPage? lastPage;
+              var totalAdded = 0;
+              for (var tries = 0; tries < 2; tries++) {
+                final page = await HongguoDiscoveryService.instance
+                    .fetchDiscovery(
+                      const HongguoDiscoverySelection(
+                        genreKind: HongguoGenreKind.realPlay,
+                        filters: <String, String>{'sort': 'hot_score'},
+                      ),
+                      cursor: _discoverScopedCursor,
+                      seenIds: existingIds,
+                    );
+                if (!mounted || generation != _loadGeneration) return;
+                lastPage = page;
+                _discoverScopedCursor = page.nextCursor;
+                for (final it in page.items) {
+                  if (it.seriesId.isNotEmpty) {
+                    existingIds.add(it.seriesId);
+                  }
+                }
+                if (page.items.isNotEmpty) {
+                  setState(() {
+                    totalAdded += _appendUniqueDramas(page.items);
+                  });
+                }
+                if (totalAdded > 0 ||
+                    !page.hasMore ||
+                    page.nextCursor == null) {
+                  break;
+                }
+              }
+              if (!mounted || generation != _loadGeneration) return;
+              setState(() {
+                _consecutiveEmptyAppends =
+                    totalAdded == 0 ? _consecutiveEmptyAppends + 1 : 0;
+                _hasMore = (lastPage?.hasMore ?? false) &&
+                    lastPage?.nextCursor != null &&
+                    _dramas.length < _maxInfiniteDramas &&
+                    _consecutiveEmptyAppends < 2;
+                _isLoadingMore = false;
+              });
+            }
           }
-          final items = await HongguoSimilarEngine.instance
-              .getPersonalizedDiscoverList(resetCursor: resetCursor);
-          if (!mounted) return;
-          setState(() {
-            _dramas = items;
-            _currentPage = 1;
-            _totalPages = 1;
-            _isLoading = false;
-          });
         } else {
           final kind = HongguoGenreKind.fromAny(_discoverScope);
-          if (resetCursor) {
+          if (resetCursor && !append) {
             _discoverScopedCursor = null;
           }
           var page = await HongguoDiscoveryService.instance.fetchDiscovery(
@@ -198,9 +341,9 @@ class _HongguoScreenState extends State<HongguoScreen> {
               genreKind: kind,
               filters: const <String, String>{'sort': 'hot_score'},
             ),
-            cursor: _discoverScopedCursor,
+            cursor: append || !resetCursor ? _discoverScopedCursor : null,
           );
-          if (page.items.isEmpty && _discoverScopedCursor != null) {
+          if (page.items.isEmpty && _discoverScopedCursor != null && !append) {
             _discoverScopedCursor = null;
             page = await HongguoDiscoveryService.instance.fetchDiscovery(
               HongguoDiscoverySelection(
@@ -209,57 +352,107 @@ class _HongguoScreenState extends State<HongguoScreen> {
               ),
             );
           }
+          if (!mounted || generation != _loadGeneration) return;
           _discoverScopedCursor = page.nextCursor;
-          if (!mounted) return;
           setState(() {
-            _dramas = page.items;
-            _currentPage = 1;
-            _totalPages = 1;
-            _isLoading = false;
+            if (append) {
+              final added = _appendUniqueDramas(page.items);
+              _consecutiveEmptyAppends =
+                  added == 0 ? _consecutiveEmptyAppends + 1 : 0;
+              _hasMore = page.hasMore &&
+                  page.nextCursor != null &&
+                  _dramas.length < _maxInfiniteDramas &&
+                  _consecutiveEmptyAppends < 2;
+              _isLoadingMore = false;
+            } else {
+              _dramas = List<HongguoDramaItem>.from(page.items);
+              _currentPage = 1;
+              _totalPages = 1;
+              _hasMore = page.hasMore && page.nextCursor != null;
+              _isLoading = false;
+            }
           });
         }
       } else if (_primaryTab == 'library') {
-        if (resetCursor) {
+        if (!append && resetCursor) {
           _currentPage = 1;
-          _libraryPageCursors
-            ..clear()
-            ..add(null);
+          _libraryNextCursor = null;
         }
-        final pageIdx = (_currentPage - 1).clamp(0, _libraryPageCursors.length - 1);
-        final cursor = _libraryPageCursors[pageIdx];
+        final cursor = append ? _libraryNextCursor : null;
         final pageRes = await HongguoDiscoveryService.instance.fetchDiscovery(
           _librarySelection,
           cursor: cursor,
         );
-        if (!mounted) return;
+        if (!mounted || generation != _loadGeneration) return;
         setState(() {
-          _dramas = pageRes.items;
+          _libraryNextCursor = pageRes.nextCursor;
           _libraryHasMore = pageRes.hasMore && pageRes.nextCursor != null;
-          if (_libraryHasMore && _libraryPageCursors.length <= _currentPage) {
-            _libraryPageCursors.add(pageRes.nextCursor);
+          if (append) {
+            final added = _appendUniqueDramas(pageRes.items);
+            _consecutiveEmptyAppends =
+                added == 0 ? _consecutiveEmptyAppends + 1 : 0;
+            _hasMore = _libraryHasMore &&
+                _dramas.length < _maxInfiniteDramas &&
+                _consecutiveEmptyAppends < 2;
+            _currentPage += 1;
+            _isLoadingMore = false;
+          } else {
+            _dramas = List<HongguoDramaItem>.from(pageRes.items);
+            _currentPage = 1;
+            _totalPages = _libraryHasMore ? 2 : 1;
+            _hasMore = _libraryHasMore;
+            _isLoading = false;
           }
-          _totalPages = _libraryHasMore ? _currentPage + 1 : _currentPage;
-          _isLoading = false;
         });
       } else {
+        final targetPage = append ? (_currentPage + 1) : 1;
         final res = await _resolver.browseList(
           category: _selectedRankSlug,
-          page: _currentPage,
+          page: targetPage,
         );
-        if (!mounted) return;
+        if (!mounted || generation != _loadGeneration) return;
         setState(() {
-          _dramas = res.items;
           _currentPage = res.currentPage;
           _totalPages = res.totalPages > 0 ? res.totalPages : 1;
-          _isLoading = false;
+          if (append) {
+            _appendUniqueDramas(res.items);
+            _hasMore = _currentPage < _totalPages &&
+                _dramas.length < _maxInfiniteDramas &&
+                res.items.isNotEmpty;
+            _isLoadingMore = false;
+          } else {
+            _dramas = List<HongguoDramaItem>.from(res.items);
+            _hasMore = _currentPage < _totalPages && res.items.isNotEmpty;
+            _isLoading = false;
+          }
         });
       }
+
+      if (!append) {
+        if (_scrollController.hasClients) {
+          _scrollController.jumpTo(0);
+        }
+        _scheduleFillViewportIfNeeded();
+      }
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || generation != _loadGeneration) return;
       setState(() {
-        _isLoading = false;
-        _errorMessage = 'Không thể tải danh sách phim: $e';
+        if (append) {
+          _isLoadingMore = false;
+        } else {
+          _isLoading = false;
+          _errorMessage = 'Không thể tải danh sách phim: $e';
+        }
       });
+    }
+  }
+
+  Future<void> _loadMoreDramas() async {
+    if (_isLoading || _isLoadingMore || !_hasMore || _isAiResultMode) return;
+    if (_isSearchMode) {
+      await _loadSearchPage(_currentPage + 1, append: true);
+    } else {
+      await _loadDramas(resetCursor: false, append: true);
     }
   }
 
@@ -269,7 +462,7 @@ class _HongguoScreenState extends State<HongguoScreen> {
       setState(() => _primaryTab = 'discover');
     }
     _searchController.clear();
-    await _loadDramas(resetCursor: false);
+    await _loadDramas(resetCursor: false, append: false);
     if (_scrollController.hasClients) {
       unawaited(
         _scrollController.animateTo(
@@ -284,7 +477,7 @@ class _HongguoScreenState extends State<HongguoScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          'Đã nạp thêm ${_dramas.length} phim đề xuất mới!',
+          'Đã đổi ${_dramas.length} phim đề xuất mới!',
           style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
         ),
         duration: const Duration(seconds: 2),
@@ -352,11 +545,20 @@ class _HongguoScreenState extends State<HongguoScreen> {
     await _loadSearchPage(1);
   }
 
-  Future<void> _loadSearchPage(int page) async {
+  Future<void> _loadSearchPage(int page, {bool append = false}) async {
     if (_currentSearchQuery.isEmpty) return;
-    if (!_isLoading && mounted) {
+    final generation = append ? _loadGeneration : ++_loadGeneration;
+    if (append) {
+      if (_isLoading || _isLoadingMore || !_hasMore) return;
+      setState(() {
+        _isLoadingMore = true;
+      });
+    } else if (mounted) {
       setState(() {
         _isLoading = true;
+        _isLoadingMore = false;
+        _hasMore = true;
+        _consecutiveEmptyAppends = 0;
         _errorMessage = null;
         _isSearchMode = true;
         _isAiResultMode = false;
@@ -370,21 +572,37 @@ class _HongguoScreenState extends State<HongguoScreen> {
         genreFilter: _searchScope,
         page: page,
       );
-      if (!mounted) return;
+      if (!mounted || generation != _loadGeneration) return;
       setState(() {
-        _dramas = res.items;
-        _isLoading = false;
         _currentPage = res.currentPage;
         _totalPages = res.totalPages > 0 ? res.totalPages : 1;
+        if (append) {
+          _appendUniqueDramas(res.items);
+          _hasMore = _currentPage < _totalPages &&
+              _dramas.length < _maxInfiniteDramas &&
+              res.items.isNotEmpty;
+          _isLoadingMore = false;
+        } else {
+          _dramas = List<HongguoDramaItem>.from(res.items);
+          _hasMore = _currentPage < _totalPages && res.items.isNotEmpty;
+          _isLoading = false;
+        }
       });
-      if (_scrollController.hasClients) {
-        _scrollController.jumpTo(0);
+      if (!append) {
+        if (_scrollController.hasClients) {
+          _scrollController.jumpTo(0);
+        }
+        _scheduleFillViewportIfNeeded();
       }
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || generation != _loadGeneration) return;
       setState(() {
-        _isLoading = false;
-        _errorMessage = 'Lỗi tìm kiếm: $e';
+        if (append) {
+          _isLoadingMore = false;
+        } else {
+          _isLoading = false;
+          _errorMessage = 'Lỗi tìm kiếm: $e';
+        }
       });
     }
   }
@@ -549,29 +767,15 @@ class _HongguoScreenState extends State<HongguoScreen> {
     );
   }
 
-  void _goToPage(int page) {
-    if (page < 1 || page > _totalPages || page == _currentPage || _isLoading) {
-      return;
-    }
-    HapticFeedback.lightImpact();
-    setState(() {
-      _currentPage = page;
-      _isAiResultMode = false;
-      _aiResultLabel = '';
-    });
-    if (_isSearchMode) {
-      _loadSearchPage(page);
-    } else {
-      _loadDramas(resetCursor: false);
-    }
-  }
-
   void _applyAssistantResults(List<HongguoDramaItem> items, String label) {
     if (!mounted || items.isEmpty) return;
     HapticFeedback.mediumImpact();
+    _loadGeneration++;
     setState(() {
       _dramas = items;
       _isLoading = false;
+      _isLoadingMore = false;
+      _hasMore = false;
       _errorMessage = null;
       _isSearchMode = false;
       _isAiResultMode = true;
@@ -821,7 +1025,7 @@ class _HongguoScreenState extends State<HongguoScreen> {
                       color: accent,
                       backgroundColor: palette.surface,
                       onRefresh: _isSearchMode && _currentSearchQuery.isNotEmpty
-                          ? () => _loadSearchPage(_currentPage)
+                          ? () => _loadSearchPage(1)
                           : () => _loadDramas(resetCursor: true),
                       child: _buildBody(),
                     ),
@@ -1526,16 +1730,14 @@ class _HongguoScreenState extends State<HongguoScreen> {
     final statusTitle = _isAiResultMode
         ? '${_aiResultLabel.isNotEmpty ? _aiResultLabel : "Gợi ý từ Trợ lý AI"} (${_dramas.length})'
         : (_isSearchMode
-            ? (_totalPages > 1
-                ? 'Kết quả tìm kiếm (Trang $_currentPage/$_totalPages)'
-                : 'Kết quả tìm kiếm (${_dramas.length})')
+            ? 'Kết quả tìm kiếm (${_dramas.length})'
             : (_primaryTab == 'discover'
                 ? (_discoverScope == 'all'
                     ? 'Đề xuất cá nhân hóa (${_dramas.length})'
                     : 'Đề xuất ${HongguoGenreKind.fromAny(_discoverScope).label} (${_dramas.length})')
                 : (_primaryTab == 'rank'
-                    ? '$rankLabel (Trang $_currentPage/$_totalPages)'
-                    : '$librarySummary · Trang $_currentPage')));
+                    ? '$rankLabel (${_dramas.length})'
+                    : '$librarySummary (${_dramas.length})')));
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 2, 14, 6),
@@ -1702,8 +1904,8 @@ class _HongguoScreenState extends State<HongguoScreen> {
                       elevation: 0,
                     ),
                     onPressed: _isSearchMode && _currentSearchQuery.isNotEmpty
-                        ? () => _loadSearchPage(_currentPage)
-                        : () => _loadDramas(resetCursor: false),
+                        ? () => _loadSearchPage(1)
+                        : () => _loadDramas(resetCursor: true),
                   ),
                   const SizedBox(width: 10),
                   ElevatedButton.icon(
@@ -1763,30 +1965,93 @@ class _HongguoScreenState extends State<HongguoScreen> {
         final width = constraints.maxWidth;
         final aspectRatio = width < 370 ? 0.58 : 0.61;
 
-        return GridView.builder(
+        return CustomScrollView(
           controller: _scrollController,
           physics: const AlwaysScrollableScrollPhysics(
             parent: BouncingScrollPhysics(),
           ),
-          padding: const EdgeInsets.fromLTRB(14, 4, 14, 72),
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 2,
-            childAspectRatio: aspectRatio,
-            crossAxisSpacing: 12,
-            mainAxisSpacing: 14,
-          ),
-          itemCount: _dramas.length,
-          itemBuilder: (ctx, i) {
-            final drama = _dramas[i];
-            return _DramaCard(
-              drama: drama,
-              index: i + 1,
-              isRankCategory: !_isSearchMode && _primaryTab == 'rank',
-              isTranslationEnabled: _isTranslationEnabled,
-              onTap: () => _openDramaDetail(drama),
-              onLongPress: () => _showDramaQuickMenu(drama),
-            );
-          },
+          slivers: [
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(14, 4, 14, 12),
+              sliver: SliverGrid(
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  childAspectRatio: aspectRatio,
+                  crossAxisSpacing: 12,
+                  mainAxisSpacing: 14,
+                ),
+                delegate: SliverChildBuilderDelegate(
+                  (ctx, i) {
+                    final drama = _dramas[i];
+                    return _DramaCard(
+                      drama: drama,
+                      index: i + 1,
+                      isRankCategory: !_isSearchMode && _primaryTab == 'rank',
+                      isTranslationEnabled: _isTranslationEnabled,
+                      onTap: () => _openDramaDetail(drama),
+                      onLongPress: () => _showDramaQuickMenu(drama),
+                    );
+                  },
+                  childCount: _dramas.length,
+                ),
+              ),
+            ),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 6, 16, 76),
+                child: Center(
+                  child: _isLoadingMore
+                      ? Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: accent,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Đang tải thêm phim...',
+                              style: TextStyle(
+                                color: palette.textSecondary,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        )
+                      : (!_hasMore && _dramas.length > 8 && !_isAiResultMode)
+                      ? TextButton.icon(
+                          onPressed: () {
+                            if (_scrollController.hasClients) {
+                              _scrollController.animateTo(
+                                0,
+                                duration: const Duration(milliseconds: 320),
+                                curve: Curves.easeOut,
+                              );
+                            }
+                          },
+                          icon: Icon(
+                            Icons.arrow_upward_rounded,
+                            size: 15,
+                            color: accent,
+                          ),
+                          label: Text(
+                            'Đã hiển thị ${_dramas.length} phim · Về đầu trang',
+                            style: TextStyle(
+                              color: palette.textSecondary,
+                              fontSize: 12,
+                            ),
+                          ),
+                        )
+                      : const SizedBox.shrink(),
+                ),
+              ),
+            ),
+          ],
         );
       },
     );
@@ -1864,17 +2129,6 @@ class _HongguoScreenState extends State<HongguoScreen> {
 
   Widget _buildBottomActionBar() {
     final palette = AppThemePalette.of(context);
-    final accent = palette.accentFor(AppTabId.hongguo);
-
-    final showPagination = !_isAiResultMode &&
-        (_isSearchMode || _primaryTab != 'discover') &&
-        (_totalPages > 1 || _currentPage > 1);
-    final showDiscoverLoadMore =
-        !_isAiResultMode && !_isSearchMode && _primaryTab == 'discover';
-
-    if (showPagination) {
-      return _buildPaginationBar();
-    }
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -1887,43 +2141,42 @@ class _HongguoScreenState extends State<HongguoScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          if (showDiscoverLoadMore) ...[
-            Flexible(
-              child: ElevatedButton.icon(
-                onPressed: _isLoading ? null : _loadNextDiscoverBatch,
-                icon: const Icon(Icons.auto_awesome_rounded, size: 15),
-                label: Text(
-                  _discoverScope == 'all'
-                      ? 'Tải thêm đề xuất'
-                      : 'Thêm ${HongguoGenreKind.fromAny(_discoverScope).label}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 12,
-                  ),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: accent.withValues(alpha: 0.12),
-                  foregroundColor: accent,
-                  side: BorderSide(
-                    color: accent.withValues(alpha: 0.45),
-                  ),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 7,
-                  ),
-                  minimumSize: const Size(0, 34),
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  elevation: 0,
+          if (_dramas.isNotEmpty)
+            InkWell(
+              onTap: () {
+                if (_scrollController.hasClients) {
+                  _scrollController.animateTo(
+                    0,
+                    duration: const Duration(milliseconds: 280),
+                    curve: Curves.easeOut,
+                  );
+                }
+              },
+              borderRadius: BorderRadius.circular(10),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.vertical_align_top_rounded,
+                      size: 15,
+                      color: palette.textSecondary,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      '${_dramas.length} phim${_hasMore ? " · Cuộn xem thêm" : ""}',
+                      style: TextStyle(
+                        color: palette.textSecondary,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ),
-            const SizedBox(width: 8),
-          ] else
+            )
+          else
             const Spacer(),
           _buildTranslateToggleButton(compact: false),
         ],
@@ -1979,91 +2232,6 @@ class _HongguoScreenState extends State<HongguoScreen> {
             ],
           ),
         ),
-      ),
-    );
-  }
-
-  Widget _buildPaginationBar() {
-    final palette = AppThemePalette.of(context);
-    final accent = palette.accentFor(AppTabId.hongguo);
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: palette.isDark
-            ? palette.surface
-            : palette.surface.withValues(alpha: 0.72),
-        border: Border(top: BorderSide(color: palette.border)),
-      ),
-      child: Row(
-        children: [
-          OutlinedButton.icon(
-            icon: const Icon(Icons.arrow_back_ios_rounded, size: 12),
-            label: const Text('Trước', style: TextStyle(fontSize: 12)),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: _currentPage > 1 ? accent : palette.textMuted,
-              side: BorderSide(
-                color: _currentPage > 1
-                    ? accent.withValues(alpha: 0.5)
-                    : palette.border,
-              ),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              minimumSize: const Size(0, 34),
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            ),
-            onPressed:
-                _currentPage > 1 ? () => _goToPage(_currentPage - 1) : null,
-          ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Center(
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: palette.surfaceAlt,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: palette.border),
-                ),
-                child: Text(
-                  '$_currentPage / $_totalPages',
-                  style: TextStyle(
-                    color: palette.textPrimary,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 6),
-          OutlinedButton(
-            style: OutlinedButton.styleFrom(
-              foregroundColor:
-                  _currentPage < _totalPages ? accent : palette.textMuted,
-              side: BorderSide(
-                color: _currentPage < _totalPages
-                    ? accent.withValues(alpha: 0.5)
-                    : palette.border,
-              ),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              minimumSize: const Size(0, 34),
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            ),
-            onPressed: _currentPage < _totalPages
-                ? () => _goToPage(_currentPage + 1)
-                : null,
-            child: const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text('Sau', style: TextStyle(fontSize: 12)),
-                SizedBox(width: 4),
-                Icon(Icons.arrow_forward_ios_rounded, size: 12),
-              ],
-            ),
-          ),
-          const SizedBox(width: 8),
-          _buildTranslateToggleButton(compact: true),
-        ],
       ),
     );
   }
