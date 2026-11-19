@@ -202,9 +202,15 @@ class _SubtitleControlSheetState extends State<SubtitleControlSheet> {
       ),
     );
 
-    // 3. VỊ TRÍ PHỤ ĐỀ (DI CHUYỂN LÊN / XUỐNG)
+    // 3. VỊ TRÍ PHỤ ĐỀ (TÁCH RIÊNG DỌC / NGANG THEO % CHIỀU CAO MÀN HÌNH)
+    final currentPos = _settings.getSubtitlePosition(isLandscape: isLandscape);
+    final defaultPos = SettingsRepository.defaultSubtitlePosition(
+      isLandscape: isLandscape,
+    );
+    final orientationLabel = isLandscape ? 'Ngang' : 'Dọc';
+
     Widget positionSection = _buildCard(
-      title: 'Vị Trí Phụ Đề: ${_settings.subtitleOffsetY >= 0 ? '+' : ''}${_settings.subtitleOffsetY.toInt()} px',
+      title: 'Vị Trí Phụ Đề ($orientationLabel): ${(currentPos * 100).round()}%',
       icon: Icons.swap_vert,
       child: Column(
         children: [
@@ -212,10 +218,12 @@ class _SubtitleControlSheetState extends State<SubtitleControlSheet> {
             children: [
               IconButton(
                 icon: const Icon(Icons.arrow_downward, color: Color(0xFF64B5F6)),
-                tooltip: 'Hạ xuống (-10px)',
+                tooltip: 'Hạ xuống (-5%)',
                 onPressed: () {
-                  _settings.subtitleOffsetY =
-                      (_settings.subtitleOffsetY - 10).clamp(-80.0, 350.0);
+                  _settings.setSubtitlePosition(
+                    (currentPos - 0.05).clamp(0.0, 1.0),
+                    isLandscape: isLandscape,
+                  );
                   _notify();
                 },
               ),
@@ -227,11 +235,15 @@ class _SubtitleControlSheetState extends State<SubtitleControlSheet> {
                     inactiveTrackColor: const Color(0xFF323444),
                   ),
                   child: Slider(
-                    value: _settings.subtitleOffsetY.clamp(-80.0, 350.0),
-                    min: -80.0,
-                    max: 350.0,
+                    value: currentPos,
+                    min: 0.0,
+                    max: 1.0,
+                    divisions: 100,
                     onChanged: (val) {
-                      _settings.subtitleOffsetY = val;
+                      _settings.setSubtitlePosition(
+                        val,
+                        isLandscape: isLandscape,
+                      );
                       _notify();
                     },
                   ),
@@ -239,10 +251,12 @@ class _SubtitleControlSheetState extends State<SubtitleControlSheet> {
               ),
               IconButton(
                 icon: const Icon(Icons.arrow_upward, color: Color(0xFF64B5F6)),
-                tooltip: 'Nâng lên (+10px)',
+                tooltip: 'Nâng lên (+5%)',
                 onPressed: () {
-                  _settings.subtitleOffsetY =
-                      (_settings.subtitleOffsetY + 10).clamp(-80.0, 350.0);
+                  _settings.setSubtitlePosition(
+                    (currentPos + 0.05).clamp(0.0, 1.0),
+                    isLandscape: isLandscape,
+                  );
                   _notify();
                 },
               ),
@@ -253,7 +267,7 @@ class _SubtitleControlSheetState extends State<SubtitleControlSheet> {
             children: [
               const Expanded(
                 child: Text(
-                  'Vuốt trực tiếp trên phụ đề để kéo',
+                  'Vuốt phụ đề để kéo (tách riêng Dọc & Ngang)',
                   style: TextStyle(color: Colors.white54, fontSize: 11.5),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -268,9 +282,15 @@ class _SubtitleControlSheetState extends State<SubtitleControlSheet> {
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
                 icon: const Icon(Icons.refresh, size: 14),
-                label: const Text('Về đáy (0px)', style: TextStyle(fontSize: 11.5)),
+                label: Text(
+                  'Mặc định (${(defaultPos * 100).round()}%)',
+                  style: const TextStyle(fontSize: 11.5),
+                ),
                 onPressed: () {
-                  _settings.subtitleOffsetY = 0.0;
+                  _settings.setSubtitlePosition(
+                    defaultPos,
+                    isLandscape: isLandscape,
+                  );
                   _notify();
                 },
               ),

@@ -112,7 +112,7 @@ class SettingsRepository {
   set defaultSourceLanguage(String v) => prefs.setString('source_lang', v);
 
   double get subtitleFontSize =>
-      (prefs.getDouble('sub_font_size') ?? 20.0).clamp(5.0, 30.0);
+      (prefs.getDouble('sub_font_size') ?? 14.0).clamp(5.0, 30.0);
   set subtitleFontSize(double v) =>
       prefs.setDouble('sub_font_size', v.clamp(5.0, 30.0));
 
@@ -125,7 +125,7 @@ class SettingsRepository {
       prefs.getStringList('custom_fonts') ?? <String>[];
   set customFonts(List<String> v) => prefs.setStringList('custom_fonts', v);
 
-  bool get isBlackBoxEnabled => prefs.getBool('blackbox_enabled') ?? true;
+  bool get isBlackBoxEnabled => prefs.getBool('blackbox_enabled') ?? false;
   set isBlackBoxEnabled(bool v) => prefs.setBool('blackbox_enabled', v);
 
   double get blackBoxHeight => prefs.getDouble('blackbox_height') ?? 64.0;
@@ -133,6 +133,37 @@ class SettingsRepository {
 
   double get blackBoxOpacity => prefs.getDouble('blackbox_opacity') ?? 0.92;
   set blackBoxOpacity(double v) => prefs.setDouble('blackbox_opacity', v);
+
+  static const double defaultPortraitSubtitlePosition = 0.24;
+  static const double defaultLandscapeSubtitlePosition = 0.06;
+
+  static double defaultSubtitlePosition({required bool isLandscape}) =>
+      isLandscape
+          ? defaultLandscapeSubtitlePosition
+          : defaultPortraitSubtitlePosition;
+
+  double get subtitlePosPortrait =>
+      (prefs.getDouble('sub_pos_portrait') ?? defaultPortraitSubtitlePosition)
+          .clamp(0.0, 1.0);
+  set subtitlePosPortrait(double v) =>
+      prefs.setDouble('sub_pos_portrait', v.clamp(0.0, 1.0));
+
+  double get subtitlePosLandscape =>
+      (prefs.getDouble('sub_pos_landscape') ?? defaultLandscapeSubtitlePosition)
+          .clamp(0.0, 1.0);
+  set subtitlePosLandscape(double v) =>
+      prefs.setDouble('sub_pos_landscape', v.clamp(0.0, 1.0));
+
+  double getSubtitlePosition({required bool isLandscape}) =>
+      isLandscape ? subtitlePosLandscape : subtitlePosPortrait;
+
+  void setSubtitlePosition(double value, {required bool isLandscape}) {
+    if (isLandscape) {
+      subtitlePosLandscape = value;
+    } else {
+      subtitlePosPortrait = value;
+    }
+  }
 
   double get subtitleOffsetY => prefs.getDouble('sub_offset_y') ?? 90.0;
   set subtitleOffsetY(double v) => prefs.setDouble('sub_offset_y', v);

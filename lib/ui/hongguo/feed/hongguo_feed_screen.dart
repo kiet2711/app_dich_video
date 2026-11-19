@@ -488,9 +488,6 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       _isAutoNextEpisode = settings.hongguoAutoNextEpisode;
       _preTranslateCount = settings.hongguoPreTranslateCount;
       _preTranslateMode = settings.hongguoPreTranslateMode;
-      if (settings.subtitleOffsetY == 0.0) {
-        settings.subtitleOffsetY = 90.0;
-      }
     });
 
     if (_isExploreSessionCacheable && _feedItems.isEmpty) {
@@ -4419,9 +4416,12 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
               document: _episodeDocuments[_getVideoDocKey(item)]!,
               currentPositionMs: _currentPos.inMilliseconds,
               settings: _settings!,
-              onDragOffset: (newOffset) {
+              onDragPosition: (newPos, isLandscape) {
                 setState(() {
-                  _settings!.subtitleOffsetY = newOffset.clamp(-80.0, 350.0);
+                  _settings!.setSubtitlePosition(
+                    newPos,
+                    isLandscape: isLandscape,
+                  );
                 });
               },
             ),

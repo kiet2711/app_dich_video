@@ -173,6 +173,10 @@ void main() {
       expect(settings.hongguoFeedTab, equals('comic'));
       expect(settings.prefetchEpisodeCount, equals(2));
       expect(settings.playerBufferSizeMb, equals(128));
+      expect(settings.subtitleFontSize, equals(14.0));
+      expect(settings.isBlackBoxEnabled, isFalse);
+      expect(settings.subtitlePosPortrait, equals(0.24));
+      expect(settings.subtitlePosLandscape, equals(0.06));
       expect(settings.subtitleOffsetY, equals(90.0));
       expect(settings.originalVideoVolume, closeTo(0.57, 0.001));
       expect(settings.ttsVolume, closeTo(0.72, 0.001));

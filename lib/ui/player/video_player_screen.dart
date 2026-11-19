@@ -7101,9 +7101,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             document: _currentDocument,
             currentPositionMs: _currentPosMs,
             settings: _settings,
-            onDragOffset: (newOffset) {
+            onDragPosition: (newPos, isLandscape) {
               setState(() {
-                _settings.subtitleOffsetY = newOffset.clamp(-120.0, 400.0);
+                _settings.setSubtitlePosition(
+                  newPos,
+                  isLandscape: isLandscape,
+                );
               });
             },
           ),
