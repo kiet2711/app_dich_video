@@ -56,18 +56,16 @@ void main() {
     expect(avatarBox.center.dy, lessThan(120));
     expect(settingsBox.center.dy, lessThan(120));
 
-    // Compact load-more button + translate button sit in the bottom bar.
-    final loadMoreFinder = find.text('Tải thêm đề xuất');
+    // Infinite scroll removed the bottom "Tải thêm đề xuất" / "Đổi loạt đề xuất" button;
+    // translate button still sits in the bottom bar.
     final translateFinder = find.byIcon(Icons.translate_rounded);
     expect(find.text('Tải thêm đề xuất mới từ Hồng Quả'), findsNothing);
-    expect(loadMoreFinder, findsOneWidget);
+    expect(find.text('Tải thêm đề xuất'), findsNothing);
+    expect(find.text('Đổi loạt đề xuất'), findsNothing);
     expect(translateFinder, findsOneWidget);
 
-    final loadMoreBox = tester.getRect(loadMoreFinder);
     final translateBox = tester.getRect(translateFinder);
-    expect(loadMoreBox.center.dy, greaterThan(700));
     expect(translateBox.center.dy, greaterThan(700));
-    expect(loadMoreBox.right, lessThan(translateBox.left));
 
     // Typing a query reveals clear + "Tìm" inside search bar without overflow.
     await tester.enterText(searchFieldFinder, 'test');
