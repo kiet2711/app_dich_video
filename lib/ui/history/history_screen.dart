@@ -97,6 +97,9 @@ class DramaHistoryGroup {
     return sortedByEpisode.first;
   }
 
+  HistoryItem? get latestWatchedEpisodeOrNull =>
+      episodes.isEmpty ? null : latestWatchedEpisode;
+
   /// Tập có số thứ tự lớn nhất trong danh sách đã lưu
   int get maxEpisodeIndex {
     int maxIdx = 1;
@@ -941,15 +944,15 @@ class _HistoryScreenState extends State<HistoryScreen>
     HongguoDramaDetail? dramaDetail,
     WatchLaterItem? watchLaterItem,
   }) {
-    final latest = group.latestWatchedEpisode;
-    final targetItem = episodeItem ?? (group.episodes.isNotEmpty ? latest : null);
+    final latest = group.latestWatchedEpisodeOrNull;
+    final targetItem = episodeItem ?? latest;
     final epNum = targetEpisodeIndex ?? (targetItem?.extractedEpisodeIndex ?? 1);
     final resumePosition = (targetItem != null &&
             targetItem.durationMs > 0 &&
             targetItem.lastPositionMs >= targetItem.durationMs * 0.95)
         ? 0
         : (targetItem?.lastPositionMs ?? 0);
-    final isOnlineStream = targetItem?.isOnlineStream ?? false;
+    final isOnlineStream = targetItem?.isOnlineStream ?? (watchLaterItem != null);
     final hasWatchingProgress = resumePosition > 0;
 
     final palette = AppThemePalette.of(context);
@@ -1147,12 +1150,16 @@ class _HistoryScreenState extends State<HistoryScreen>
                             children: [
                               Row(
                                 children: [
-                                  Text(
-                                    'Lướt Shorts Online',
-                                    style: TextStyle(
-                                      color: palette.textPrimary,
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.bold,
+                                  Flexible(
+                                    child: Text(
+                                      'Lướt Shorts Online',
+                                      style: TextStyle(
+                                        color: palette.textPrimary,
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
                                     ),
                                   ),
                                   if (isOnlineStream) ...[
@@ -1212,7 +1219,7 @@ class _HistoryScreenState extends State<HistoryScreen>
                       _openUnwatchedDramaEpisode(epNum, group, dramaDetail);
                     } else if (watchLaterItem != null) {
                       _openWatchLaterHongguo(watchLaterItem, targetEpisodeIndex: epNum);
-                    } else {
+                    } else if (latest != null) {
                       _openSeriesEpisode(
                         latest,
                         group,
@@ -1257,12 +1264,16 @@ class _HistoryScreenState extends State<HistoryScreen>
                             children: [
                               Row(
                                 children: [
-                                  Text(
-                                    'Trình phát đầy đủ (Player)',
-                                    style: TextStyle(
-                                      color: palette.textPrimary,
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.bold,
+                                  Flexible(
+                                    child: Text(
+                                      'Trình phát đầy đủ (Player)',
+                                      style: TextStyle(
+                                        color: palette.textPrimary,
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
                                     ),
                                   ),
                                   if (!isOnlineStream && hasWatchingProgress) ...[
@@ -3140,7 +3151,9 @@ class _HistoryScreenState extends State<HistoryScreen>
   }
 
   Future<void> _openWatchLaterHongguo(WatchLaterItem item, {int targetEpisodeIndex = 1}) async {
-    final dramaId = item.seriesId ?? item.targetUrl;
+    final dramaId = (item.seriesId != null && item.seriesId!.trim().isNotEmpty)
+        ? item.seriesId!.trim()
+        : item.targetUrl;
     HongguoDramaDetail? dramaDetail;
 
     ScaffoldMessenger.of(context).showSnackBar(

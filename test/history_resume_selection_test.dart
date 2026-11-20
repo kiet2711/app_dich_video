@@ -3,10 +3,14 @@ import 'dart:io';
 import 'package:capsub_flutter/data/model/history_item.dart';
 import 'package:capsub_flutter/data/model/subtitle_document.dart';
 import 'package:capsub_flutter/data/model/subtitle_item.dart';
+import 'package:capsub_flutter/data/model/watch_later_item.dart';
 import 'package:capsub_flutter/data/repository/history_repository.dart';
+import 'package:capsub_flutter/data/repository/watch_later_repository.dart';
 import 'package:capsub_flutter/domain/media/hongguo_prefetch_manager.dart';
 import 'package:capsub_flutter/domain/media/hongguo_resolver.dart';
 import 'package:capsub_flutter/ui/history/history_screen.dart';
+import 'package:capsub_flutter/ui/theme/app_theme.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -136,4 +140,82 @@ void main() {
       await tempDir.delete(recursive: true);
     }
   });
+
+  testWidgets(
+    'Watch Later Hongguo item without history opens playback options on Xem ngay (Tập 1)',
+    (tester) async {
+      final emptyGroup = DramaHistoryGroup(
+        seriesKey: '754321',
+        seriesId: '754321',
+        seriesTitle: '年上姐姐不好惹',
+        totalEpisodes: 66,
+        episodes: [],
+      );
+      expect(emptyGroup.latestWatchedEpisodeOrNull, isNull);
+
+      final tempDir = Directory.systemTemp.createTempSync('watch_later_tap_test_');
+      addTearDown(() {
+        if (tempDir.existsSync()) {
+          tempDir.deleteSync(recursive: true);
+        }
+      });
+
+      SharedPreferences.setMockInitialValues({});
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+            const MethodChannel('plugins.flutter.io/path_provider'),
+            (MethodCall methodCall) async => tempDir.path,
+          );
+      addTearDown(() {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(
+              const MethodChannel('plugins.flutter.io/path_provider'),
+              null,
+            );
+      });
+
+      await tester.runAsync(() async {
+        final watchLaterRepo = await WatchLaterRepository.getInstance();
+        await watchLaterRepo.addItem(
+          WatchLaterItem(
+            id: 'hg_754321',
+            title: '年上姐姐不好惹',
+            source: 'hongguo',
+            targetUrl: '754321',
+            seriesId: '754321',
+            totalEpisodes: 66,
+            addedAt: DateTime(2026, 11, 20, 22, 18).millisecondsSinceEpoch,
+          ),
+        );
+      });
+
+      await tester.binding.setSurfaceSize(const Size(412, 915));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildAppTheme(),
+          home: const HistoryScreen(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final watchLaterTab = find.text('Xem sau (1)');
+      await tester.ensureVisible(watchLaterTab);
+      await tester.pumpAndSettle();
+      await tester.tap(watchLaterTab);
+      await tester.pumpAndSettle();
+
+      final watchNowButton = find.text('Xem ngay (Tập 1)');
+      expect(watchNowButton, findsOneWidget);
+
+      await tester.tap(watchNowButton);
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      expect(find.text('CHỌN CHẾ ĐỘ XEM TIẾP'), findsOneWidget);
+      expect(find.text('Lướt Shorts Online'), findsOneWidget);
+      expect(find.text('Trình phát đầy đủ (Player)'), findsOneWidget);
+    },
+  );
 }
