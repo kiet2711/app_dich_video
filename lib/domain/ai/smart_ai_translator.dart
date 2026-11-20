@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
+
 import 'package:dio/dio.dart';
 import 'package:capsub_flutter/data/api/gemini_translator.dart';
 import 'package:capsub_flutter/data/api/groq_translator.dart';
@@ -23,7 +24,8 @@ class TranslationTarget {
   String get id => '${provider.name}:$apiKey:$modelId';
 
   @override
-  String toString() => '[$provider | $modelId | ${apiKey.length > 8 ? "${apiKey.substring(0, 4)}...${apiKey.substring(apiKey.length - 4)}" : apiKey}]';
+  String toString() =>
+      '[$provider | $modelId | ${apiKey.length > 8 ? "${apiKey.substring(0, 4)}...${apiKey.substring(apiKey.length - 4)}" : apiKey}]';
 }
 
 /// Bộ điều phối xoay API & Model đa tầng thông minh (Smart AI Translator)
@@ -46,9 +48,12 @@ class SmartAiTranslator {
   late final GeminiTranslator _geminiTranslator;
   late final GroqTranslator _groqTranslator;
 
-  // Quản lý trạng thái Quota và Key Dead
+  // Quản lý trạng thái Quota, Key Dead và quá tải cụm Server/Model (503)
   final Set<String> _deadKeys = {};
   final Map<String, DateTime> _cooldowns = {};
+  final Map<String, DateTime> _modelServerCooldowns = {};
+  final Map<AiProvider, DateTime> _providerServerCooldowns = {};
+  final Map<AiProvider, int> _providerServerErrorStreak = {};
 
   SmartAiTranslator({
     List<String>? geminiKeys,
@@ -58,56 +63,112 @@ class SmartAiTranslator {
     this.enableCrossProviderFallback = true,
     this.enableDualModelBalancing = true,
     Dio? dio,
-  })  : geminiKeys = (geminiKeys ?? const []).map((k) => k.trim()).where((k) => k.isNotEmpty).toList(),
-        groqKeys = (groqKeys ?? const []).map((k) => k.trim()).where((k) => k.isNotEmpty).toList(),
-        initialModelId = (initialModelId ?? 'gemini-3.1-flash-lite').trim(),
-        _dio = dio ?? Dio(
-          BaseOptions(
-            connectTimeout: const Duration(seconds: 30),
-            receiveTimeout: const Duration(seconds: 90),
-            sendTimeout: const Duration(seconds: 30),
-          ),
-        ) {
+  }) : geminiKeys = (geminiKeys ?? const [])
+           .map((k) => k.trim())
+           .where((k) => k.isNotEmpty)
+           .toList(),
+       groqKeys = (groqKeys ?? const [])
+           .map((k) => k.trim())
+           .where((k) => k.isNotEmpty)
+           .toList(),
+       initialModelId = (initialModelId ?? 'gemini-3.1-flash-lite').trim(),
+       _dio =
+           dio ??
+           Dio(
+             BaseOptions(
+               connectTimeout: const Duration(seconds: 30),
+               receiveTimeout: const Duration(seconds: 90),
+               sendTimeout: const Duration(seconds: 30),
+             ),
+           ) {
     _geminiTranslator = GeminiTranslator(
       apiKeys: this.geminiKeys.isNotEmpty ? this.geminiKeys : ['dummy'],
-      modelId: this.initialModelId.startsWith('gemini') ? this.initialModelId : 'gemini-3.1-flash-lite',
+      modelId: AiModelRegistry.isGeminiFamily(this.initialModelId)
+          ? AiModelRegistry.normalizeModelId(this.initialModelId)
+          : 'gemini-3.1-flash-lite',
       dio: _dio,
     );
     _groqTranslator = GroqTranslator(
       apiKeys: this.groqKeys.isNotEmpty ? this.groqKeys : ['dummy'],
-      modelId: !this.initialModelId.startsWith('gemini') ? this.initialModelId : 'openai/gpt-oss-120b',
+      modelId:
+          AiModelRegistry.detectProvider(this.initialModelId) == AiProvider.groq
+          ? AiModelRegistry.normalizeModelId(this.initialModelId)
+          : 'openai/gpt-oss-120b',
       dio: _dio,
     );
   }
 
-  /// Danh sách các model fallback theo thứ tự ưu tiên cho từng Provider
+  /// Danh sách các model fallback theo thứ tự ưu tiên cho từng Provider.
+  /// Chỉ đưa `requestedModel` vào đầu nếu nó thuộc đúng `provider` đó.
   List<String> getCandidateModels(AiProvider provider, String requestedModel) {
+    final normalizedRequested = AiModelRegistry.normalizeModelId(
+      requestedModel,
+    );
+    final belongsToProvider =
+        normalizedRequested.isNotEmpty &&
+        AiModelRegistry.detectProvider(normalizedRequested) == provider;
+
     if (provider == AiProvider.gemini) {
-      final defaultList = ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite'];
-      if (!defaultList.contains(requestedModel)) {
-        return [requestedModel, ...defaultList];
-      }
-      return [requestedModel, ...defaultList.where((m) => m != requestedModel)];
-    } else if (provider == AiProvider.groq) {
       final defaultList = [
-        'openai/gpt-oss-120b',
-        'openai/gpt-oss-20b',
-        'qwen/qwen3.8-27b',
+        'gemini-3.1-flash-lite',
+        'gemini-3.5-flash-lite',
+        ...AiModelRegistry.allGeminiModels
+            .map((m) => m.id)
+            .where(
+              (id) =>
+                  id != 'gemini-3.1-flash-lite' &&
+                  id != 'gemini-3.5-flash-lite',
+            ),
       ];
-      if (!defaultList.contains(requestedModel)) {
-        return [requestedModel, ...defaultList];
+      if (!belongsToProvider) {
+        return defaultList;
       }
-      return [requestedModel, ...defaultList.where((m) => m != requestedModel)];
+      return [
+        normalizedRequested,
+        ...defaultList.where((m) => m != normalizedRequested),
+      ];
+    } else if (provider == AiProvider.groq) {
+      final defaultList = AiModelRegistry.allGroqModels
+          .map((m) => m.id)
+          .toList();
+      if (!belongsToProvider) {
+        return defaultList;
+      }
+      return [
+        normalizedRequested,
+        ...defaultList.where((m) => m != normalizedRequested),
+      ];
     }
-    return [requestedModel];
+    return [normalizedRequested];
   }
 
-  /// Kiểm tra xem một Target có sẵn sàng sử dụng (không Dead và không trong Cooldown)
+  /// Kiểm tra xem một Target có sẵn sàng sử dụng (không Dead, không Cooldown Key/Model/Server)
   bool isTargetAvailable(TranslationTarget target) {
     if (_deadKeys.contains(target.apiKey)) return false;
+    final now = DateTime.now();
+
+    final providerExp = _providerServerCooldowns[target.provider];
+    if (providerExp != null) {
+      if (now.isBefore(providerExp)) {
+        return false;
+      } else {
+        _providerServerCooldowns.remove(target.provider);
+      }
+    }
+
+    final modelKey = '${target.provider.name}:${target.modelId}';
+    final modelExp = _modelServerCooldowns[modelKey];
+    if (modelExp != null) {
+      if (now.isBefore(modelExp)) {
+        return false;
+      } else {
+        _modelServerCooldowns.remove(modelKey);
+      }
+    }
+
     final exp = _cooldowns[target.id];
     if (exp != null) {
-      if (DateTime.now().isBefore(exp)) {
+      if (now.isBefore(exp)) {
         return false;
       } else {
         _cooldowns.remove(target.id);
@@ -116,7 +177,43 @@ class SmartAiTranslator {
     return true;
   }
 
-  void markCooldown(TranslationTarget target, {Duration duration = const Duration(seconds: 60)}) {
+  bool _isProviderServerInCooldown(AiProvider provider) {
+    final exp = _providerServerCooldowns[provider];
+    if (exp == null) return false;
+    if (DateTime.now().isBefore(exp)) return true;
+    _providerServerCooldowns.remove(provider);
+    return false;
+  }
+
+  void _markModelServerOverload(
+    TranslationTarget target, {
+    Duration duration = const Duration(seconds: 45),
+  }) {
+    final modelKey = '${target.provider.name}:${target.modelId}';
+    _modelServerCooldowns[modelKey] = DateTime.now().add(duration);
+  }
+
+  void _recordProviderServerError(AiProvider provider) {
+    final streak = (_providerServerErrorStreak[provider] ?? 0) + 1;
+    _providerServerErrorStreak[provider] = streak;
+    // Chỉ cần quá tải 2-3 model/slot liên tiếp là tạm nghỉ cả provider 45s để nhảy ngay sang provider dự phòng.
+    if (streak >= 3) {
+      _providerServerCooldowns[provider] = DateTime.now().add(
+        const Duration(seconds: 45),
+      );
+      _providerServerErrorStreak[provider] = 0;
+    }
+  }
+
+  void _clearProviderServerStreak(AiProvider provider) {
+    _providerServerErrorStreak.remove(provider);
+    _providerServerCooldowns.remove(provider);
+  }
+
+  void markCooldown(
+    TranslationTarget target, {
+    Duration duration = const Duration(seconds: 60),
+  }) {
     _cooldowns[target.id] = DateTime.now().add(duration);
   }
 
@@ -143,7 +240,8 @@ class SmartAiTranslator {
       if (code == 401 || code == 403) return true;
       if (code == 400) {
         final data = error.response?.data?.toString().toLowerCase() ?? '';
-        if (data.contains('api_key_invalid') || data.contains('invalid_argument')) {
+        if (data.contains('api_key_invalid') ||
+            data.contains('invalid_argument')) {
           return true;
         }
       }
@@ -157,17 +255,42 @@ class SmartAiTranslator {
         msg.contains('http 403');
   }
 
-  /// Phân biệt lỗi máy chủ tạm thời (500, 502, 503, 504 - Service Unavailable / Server Overload)
+  /// Phân biệt lỗi Model không tồn tại / chưa mở quyền truy cập (HTTP 404)
+  static bool isModelNotFoundError(Object error) {
+    if (error is DioException && error.response?.statusCode == 404) {
+      return true;
+    }
+    final msg = error.toString().toLowerCase();
+    return msg.contains('http 404') || msg.contains('not found for api version');
+  }
+
+  /// Phân biệt lỗi máy chủ tạm thời / timeout nghẽn ban đêm (500, 502, 503, 504, Timeout)
   static bool isServerUnavailableError(Object error) {
     if (error is DioException) {
       final code = error.response?.statusCode;
       if (code == 500 || code == 502 || code == 503 || code == 504) return true;
+      if (error.type == DioExceptionType.receiveTimeout ||
+          error.type == DioExceptionType.connectionTimeout ||
+          error.type == DioExceptionType.sendTimeout) {
+        return true;
+      }
     }
+    // Lưu ý: GeminiTranslator/GroqTranslator bọc DioException thành Exception('... HTTP 5xx: ...')
+    // nên cần bắt đủ cả mã HTTP 5xx lẫn thông điệp timeout thực tế của Dio.
     final msg = error.toString().toLowerCase();
     return msg.contains('503') ||
+        msg.contains('http 500') ||
+        msg.contains('http 502') ||
+        msg.contains('http 504') ||
         msg.contains('service unavailable') ||
+        msg.contains('overloaded') ||
         msg.contains('bad gateway') ||
         msg.contains('gateway timeout') ||
+        msg.contains('internal error') ||
+        msg.contains('receive timeout') ||
+        msg.contains('connection timeout') ||
+        msg.contains('took longer than') ||
+        msg.contains('timed out') ||
         msg.contains('server error');
   }
 
@@ -193,7 +316,8 @@ class SmartAiTranslator {
     }
 
     final items = document.items;
-    final sessionKey = checkpointSessionId ??
+    final sessionKey =
+        checkpointSessionId ??
         TranslationCheckpointManager.generateSessionKey(
           document: document,
           targetLanguage: targetLanguage,
@@ -219,11 +343,16 @@ class SmartAiTranslator {
             'Đã khôi phục $restored/${items.length} câu từ Checkpoint!',
           );
           // Nếu tất cả các câu đã được dịch hoàn tất từ checkpoint
-          final remaining = items.where((it) =>
-              it.translatedText.trim().isEmpty ||
-              it.translatedText.trim() == it.originalText.trim());
+          final remaining = items.where(
+            (it) =>
+                it.translatedText.trim().isEmpty ||
+                it.translatedText.trim() == it.originalText.trim(),
+          );
           if (remaining.isEmpty) {
-            progressCallback?.call(1.0, 'Đã hoàn tất toàn bộ phụ đề từ Checkpoint!');
+            progressCallback?.call(
+              1.0,
+              'Đã hoàn tất toàn bộ phụ đề từ Checkpoint!',
+            );
             await TranslationCheckpointManager.clearCheckpoint(sessionKey);
             return document;
           }
@@ -271,7 +400,8 @@ class SmartAiTranslator {
           for (var c = math.max(0, chunkStartIdx - 4); c < chunkStartIdx; c++) {
             final prevItem = items[c];
             if (prevItem.translatedText.trim().isNotEmpty &&
-                prevItem.translatedText.trim() != prevItem.originalText.trim()) {
+                prevItem.translatedText.trim() !=
+                    prevItem.originalText.trim()) {
               contextItems.add(prevItem);
             }
           }
@@ -348,12 +478,14 @@ class SmartAiTranslator {
     if (items.isEmpty) return const {};
 
     final subItems = items.entries
-        .map((e) => SubtitleItem(
-              id: e.key,
-              startMs: 0,
-              endMs: 1000,
-              originalText: e.value,
-            ))
+        .map(
+          (e) => SubtitleItem(
+            id: e.key,
+            startMs: 0,
+            endMs: 1000,
+            originalText: e.value,
+          ),
+        )
         .toList();
     final doc = SubtitleDocument(subItems);
 
@@ -421,8 +553,13 @@ class SmartAiTranslator {
   }) async {
     final startProvider = AiModelRegistry.detectProvider(initialModelId);
     final providerOrder = <AiProvider>[
-      if (startProvider == AiProvider.gemini) ...[AiProvider.gemini, AiProvider.groq]
-      else ...[AiProvider.groq, AiProvider.gemini],
+      if (startProvider == AiProvider.gemini) ...[
+        AiProvider.gemini,
+        if (enableCrossProviderFallback) AiProvider.groq,
+      ] else ...[
+        AiProvider.groq,
+        if (enableCrossProviderFallback) AiProvider.gemini,
+      ],
     ];
 
     final resolvedMap = <int, String>{};
@@ -436,23 +573,48 @@ class SmartAiTranslator {
 
         final keys = provider == AiProvider.gemini ? geminiKeys : groqKeys;
         if (keys.isEmpty) continue;
+        if (_isProviderServerInCooldown(provider)) {
+          // Chỉ bỏ qua nhanh nếu còn provider dự phòng có key khả dụng.
+          final hasAlternativeProvider =
+              enableCrossProviderFallback &&
+              providerOrder.any(
+                (other) =>
+                    other != provider &&
+                    (other == AiProvider.gemini ? geminiKeys : groqKeys)
+                        .isNotEmpty &&
+                    !_isProviderServerInCooldown(other),
+              );
+          if (hasAlternativeProvider) continue;
+        }
 
         final candidateModels = getCandidateModels(provider, initialModelId);
 
         // Duyệt qua các Key (bắt đầu theo workerId để cân bằng tải)
         final keyCount = keys.length;
         for (var kIdx = 0; kIdx < keyCount; kIdx++) {
+          if (_isProviderServerInCooldown(provider) &&
+              enableCrossProviderFallback &&
+              (provider == AiProvider.gemini ? groqKeys : geminiKeys)
+                  .isNotEmpty) {
+            break;
+          }
           final currentKey = keys[(workerId + kIdx) % keyCount];
           if (_deadKeys.contains(currentKey)) continue;
 
-          // Duyệt qua các Model trên cùng Key đó
-          // Nếu enableDualModelBalancing: luồng chẵn ưu tiên model 0, luồng lẻ ưu tiên model 1
+          // Duyệt qua các Model trên cùng Key đó.
+          // Khi bật DualModelBalancing: chỉ cân bằng trong nhóm model cùng họ/tương đương
+          // (Gemini Flash <-> Flash, Gemma 4 <-> Gemma 4, Groq <-> Groq) để giữ chất lượng đồng đều,
+          // các model còn lại vẫn xếp sau làm dự phòng khi gặp 429/503/404.
           final orderedModels = <String>[];
           if (enableDualModelBalancing && candidateModels.length >= 2) {
-            final primaryIdx = workerId % candidateModels.length;
-            orderedModels.add(candidateModels[primaryIdx]);
+            final primaryGroup = _balancingPoolFor(provider, candidateModels);
+            final primaryIdx = workerId % primaryGroup.length;
+            final picked = primaryGroup[primaryIdx];
+            orderedModels.add(picked);
             if (enableSmartModelFallback) {
-              orderedModels.addAll(candidateModels.where((m) => m != candidateModels[primaryIdx]));
+              orderedModels.addAll(
+                candidateModels.where((m) => m != picked),
+              );
             }
           } else {
             orderedModels.add(candidateModels.first);
@@ -482,6 +644,7 @@ class SmartAiTranslator {
                 customPrompt: customPrompt,
                 targetLanguage: targetLanguage,
               );
+              _clearProviderServerStreak(provider);
 
               final parsedResults = _parseAndAlignResponse(
                 rawResponse: rawResponse,
@@ -519,19 +682,33 @@ class SmartAiTranslator {
                 // Bỏ qua các model khác trên cùng key này, nhảy sang key khác
                 break;
               } else if (isServerUnavailableError(err)) {
-                // 500, 502, 503, 504 - LỖI MÁY CHỦ TẠM THỜI: KHÔNG ĐƯỢC COI LÀ DEAD KEY!
-                markCooldown(target, duration: const Duration(seconds: 20));
+                // 500, 502, 503, 504 hoặc timeout: lỗi nghẽn server/model, KHÔNG đánh chết key.
+                // Cooldown luôn cả model đó trên mọi key (45s) để không lặp vô ích qua 5-10 key cùng model 503,
+                // và nếu cả cụm lỗi liên tiếp -> bật circuit breaker nhảy thẳng sang provider dự phòng (Groq).
+                markCooldown(target, duration: const Duration(seconds: 45));
+                _markModelServerOverload(
+                  target,
+                  duration: const Duration(seconds: 45),
+                );
+                _recordProviderServerError(provider);
                 progressCallback?.call(
                   0.05,
-                  'Server $provider (${target.modelId}) quá tải (503/5xx) ➔ Cooldown 20s và chuyển sang slot khác...',
+                  'Server $provider (${target.modelId}) quá tải (503/5xx) ➔ Chuyển nhanh sang model/nhà cung cấp khác...',
                 );
-                // Chuyển sang model/key tiếp theo
+                if (_isProviderServerInCooldown(provider) &&
+                    enableCrossProviderFallback &&
+                    (provider == AiProvider.gemini ? groqKeys : geminiKeys)
+                        .isNotEmpty) {
+                  break;
+                }
                 continue;
               } else if (isRateLimitError(err)) {
                 markCooldown(target);
                 // Tầng 1: Nếu còn model khác trên cùng key, tiếp tục vòng lặp model
-                if (enableSmartModelFallback && orderedModels.indexOf(model) < orderedModels.length - 1) {
-                  final nextModel = orderedModels[orderedModels.indexOf(model) + 1];
+                if (enableSmartModelFallback &&
+                    orderedModels.indexOf(model) < orderedModels.length - 1) {
+                  final nextModel =
+                      orderedModels[orderedModels.indexOf(model) + 1];
                   progressCallback?.call(
                     0.05,
                     'Model $model đầy Quota ➔ Đổi sang $nextModel trên cùng Key...',
@@ -540,6 +717,13 @@ class SmartAiTranslator {
                 }
                 // Nếu cả model fallback đều dính 429 trên key này, chuyển sang key khác
                 break;
+              } else if (isModelNotFoundError(err)) {
+                markCooldown(target, duration: const Duration(minutes: 5));
+                progressCallback?.call(
+                  0.05,
+                  'Model ${target.modelId} không khả dụng (404) ➔ Chuyển sang model dự phòng...',
+                );
+                continue;
               } else {
                 // Lỗi mạng hoặc lỗi định dạng, thử lại hoặc chuyển slot
                 continue;
@@ -564,7 +748,8 @@ class SmartAiTranslator {
 
     // Nếu sau tất cả các chu kỳ vẫn còn item thiếu: giải cứu an toàn bằng interjection hoặc câu gốc
     for (final item in items) {
-      if (!resolvedMap.containsKey(item.id) || resolvedMap[item.id]!.trim().isEmpty) {
+      if (!resolvedMap.containsKey(item.id) ||
+          resolvedMap[item.id]!.trim().isEmpty) {
         final interjection = resolveInterjection(item.originalText);
         resolvedMap[item.id] = interjection ?? item.originalText;
       }
@@ -577,6 +762,32 @@ class SmartAiTranslator {
     throw Exception(
       'Dịch khối phụ đề thất bại sau khi đã thử tất cả Model & API Key: $lastError',
     );
+  }
+
+  List<String> _balancingPoolFor(
+    AiProvider provider,
+    List<String> candidateModels,
+  ) {
+    if (provider != AiProvider.gemini) {
+      return candidateModels;
+    }
+    final lead = candidateModels.first;
+    final isGemmaLead = AiModelRegistry.isGemmaModel(lead);
+    if (isGemmaLead) {
+      final gemmaPool = candidateModels
+          .where(AiModelRegistry.isGemmaModel)
+          .toList();
+      return gemmaPool.isNotEmpty ? gemmaPool : [lead];
+    }
+    const flashIds = {'gemini-3.1-flash-lite', 'gemini-3.5-flash-lite'};
+    if (flashIds.contains(lead)) {
+      final flashPool = candidateModels
+          .where((m) => flashIds.contains(m))
+          .toList();
+      return flashPool.isNotEmpty ? flashPool : [lead];
+    }
+    // Model tùy chỉnh người dùng vừa chọn riêng: giữ đúng model đó làm ưu tiên số 1.
+    return [lead];
   }
 
   /// Thực thi gọi trực tiếp REST API tương ứng với Target
@@ -599,7 +810,8 @@ class SmartAiTranslator {
         targetLanguage,
         customPrompt,
       );
-      final userPrompt = '''
+      final userPrompt =
+          '''
 [NỘI DUNG BẮT BUỘC DỊCH SANG $targetLanguage 100% CÁC KHỐI PHỤ ĐỀ DƯỚI ĐÂY. PHIÊN ÂM TẤT CẢ HỌ TÊN NHÂN VẬT SANG HÁN VIỆT KHI NGÔN NGỮ ĐÍCH LÀ TIẾNG VIỆT. TUYỆT ĐỐI KHÔNG ĐỂ SÓT CÂU]:
 
 $payloadJson
@@ -617,7 +829,8 @@ $payloadJson
         targetLanguage,
         customPrompt,
       );
-      final userPrompt = '''
+      final userPrompt =
+          '''
 Translate the following subtitles into $targetLanguage.
 Return ONLY valid JSON according to instructions.
 INPUT:
@@ -649,7 +862,8 @@ $payloadJson
       final originalHasContent = containsLetterOrNumber(original);
       final translationHasContent = containsLetterOrNumber(translated);
 
-      if (translated.isEmpty || (originalHasContent && !translationHasContent)) {
+      if (translated.isEmpty ||
+          (originalHasContent && !translationHasContent)) {
         final interjection = resolveInterjection(original);
         if (interjection != null) {
           results[item.id] = interjection;

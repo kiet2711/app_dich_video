@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 import '../../data/repository/settings_repository.dart';
+import 'ai_model_registry.dart';
 import 'offline_mlkit_translator.dart';
 
 /// Dịch tiêu đề phim/video sang tiếng Việt thông minh:
@@ -34,9 +35,11 @@ class TitleTranslator {
 
       if (hasGemini) {
         final key = settings.geminiApiKeys.first.trim();
-        final model = settings.selectedModel.startsWith('gemini')
-            ? settings.selectedModel
-            : 'gemini-3.1-flash-lite';
+        final model = AiModelRegistry.isGeminiFamily(settings.selectedModel)
+            ? AiModelRegistry.normalizeModelId(settings.selectedModel)
+            : (settings.selectedGeminiModel.isNotEmpty
+                  ? AiModelRegistry.normalizeModelId(settings.selectedGeminiModel)
+                  : 'gemini-3.1-flash-lite');
         final url =
             'https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$key';
 
@@ -61,24 +64,23 @@ class TitleTranslator {
           },
         );
 
-        final candidates = response.data['candidates'] as List<dynamic>?;
-        if (candidates != null && candidates.isNotEmpty) {
-          final text = candidates.first['content']?['parts']?[0]?['text']
-              ?.toString()
-              .trim();
-          if (text != null && text.isNotEmpty) {
-            final sanitized = _sanitize(text);
-            if (sanitized.isNotEmpty) {
-              _cache[clean] = sanitized;
-              return sanitized;
-            }
+        final text = _extractAnswerText(response.data);
+        if (text != null && text.isNotEmpty) {
+          final sanitized = _sanitize(text);
+          if (sanitized.isNotEmpty) {
+            _cache[clean] = sanitized;
+            return sanitized;
           }
         }
       } else if (hasGroq) {
         final key = settings.groqApiKeys.first.trim();
-        final model = !settings.selectedModel.startsWith('gemini')
+        final model =
+            AiModelRegistry.detectProvider(settings.selectedModel) ==
+                AiProvider.groq
             ? settings.selectedModel
-            : 'openai/gpt-oss-20b';
+            : (settings.selectedGroqModel.isNotEmpty
+                  ? settings.selectedGroqModel
+                  : 'openai/gpt-oss-20b');
         final url = 'https://api.groq.com/openai/v1/chat/completions';
 
         final response = await _dio.post(
@@ -211,9 +213,11 @@ class TitleTranslator {
 
       if (hasGemini) {
         final key = settings.geminiApiKeys.first.trim();
-        final model = settings.selectedModel.startsWith('gemini')
-            ? settings.selectedModel
-            : 'gemini-3.1-flash-lite';
+        final model = AiModelRegistry.isGeminiFamily(settings.selectedModel)
+            ? AiModelRegistry.normalizeModelId(settings.selectedModel)
+            : (settings.selectedGeminiModel.isNotEmpty
+                  ? AiModelRegistry.normalizeModelId(settings.selectedGeminiModel)
+                  : 'gemini-3.1-flash-lite');
         final url =
             'https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$key';
 
@@ -238,24 +242,23 @@ class TitleTranslator {
           },
         );
 
-        final candidates = response.data['candidates'] as List<dynamic>?;
-        if (candidates != null && candidates.isNotEmpty) {
-          final text = candidates.first['content']?['parts']?[0]?['text']
-              ?.toString()
-              .trim();
-          if (text != null && text.isNotEmpty) {
-            final sanitized = _sanitize(text);
-            if (sanitized.isNotEmpty) {
-              _cache[cacheKey] = sanitized;
-              return sanitized;
-            }
+        final text = _extractAnswerText(response.data);
+        if (text != null && text.isNotEmpty) {
+          final sanitized = _sanitize(text);
+          if (sanitized.isNotEmpty) {
+            _cache[cacheKey] = sanitized;
+            return sanitized;
           }
         }
       } else if (hasGroq) {
         final key = settings.groqApiKeys.first.trim();
-        final model = !settings.selectedModel.startsWith('gemini')
+        final model =
+            AiModelRegistry.detectProvider(settings.selectedModel) ==
+                AiProvider.groq
             ? settings.selectedModel
-            : 'openai/gpt-oss-20b';
+            : (settings.selectedGroqModel.isNotEmpty
+                  ? settings.selectedGroqModel
+                  : 'openai/gpt-oss-20b');
         final url = 'https://api.groq.com/openai/v1/chat/completions';
 
         final response = await _dio.post(
@@ -306,6 +309,30 @@ class TitleTranslator {
     } catch (_) {}
 
     return null;
+  }
+
+  static String? _extractAnswerText(dynamic data) {
+    if (data is! Map) return null;
+    final candidates = data['candidates'];
+    if (candidates is! List || candidates.isEmpty) return null;
+    final first = candidates.first;
+    if (first is! Map) return null;
+    final parts = first['content'] is Map ? first['content']['parts'] : null;
+    if (parts is! List || parts.isEmpty) return null;
+    final nonThought = parts
+        .whereType<Map>()
+        .where((p) => p['thought'] != true)
+        .map((p) => p['text'])
+        .whereType<String>()
+        .join()
+        .trim();
+    if (nonThought.isNotEmpty) return nonThought;
+    return parts
+        .whereType<Map>()
+        .map((p) => p['text'])
+        .whereType<String>()
+        .join()
+        .trim();
   }
 
   static String _sanitize(String raw) {

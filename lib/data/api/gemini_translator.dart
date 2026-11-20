@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 
 import '../model/subtitle_document.dart';
 import '../model/subtitle_item.dart';
+import '../../domain/ai/ai_model_registry.dart';
 import '../../domain/ai/translation_checkpoint_manager.dart';
 
 class GeminiTranslator {
@@ -667,7 +668,10 @@ class GeminiTranslator {
     String? overrideModelId,
     bool requestJson = false,
   }) async {
-    final effectiveModel = overrideModelId ?? modelId;
+    final effectiveModel = AiModelRegistry.normalizeModelId(
+      overrideModelId ?? modelId,
+    );
+    final isGemma = AiModelRegistry.isGemmaModel(effectiveModel);
     final url =
         'https://generativelanguage.googleapis.com/v1beta/models/'
         '$effectiveModel:generateContent?key=$apiKey';
@@ -675,6 +679,7 @@ class GeminiTranslator {
     Map<String, dynamic> buildBody({
       required bool withSchema,
       required bool withMimeType,
+      required bool foldSystemInstruction,
     }) {
       final genConfig = <String, dynamic>{
         'temperature': 0.2,
@@ -703,20 +708,26 @@ class GeminiTranslator {
         };
       }
 
+      final cleanSystem = systemPrompt.trim();
+      final combinedUserPrompt = (foldSystemInstruction && cleanSystem.isNotEmpty)
+          ? '$cleanSystem\n\n$userPrompt'
+          : userPrompt;
+
       return <String, dynamic>{
         'contents': [
           {
             'role': 'user',
             'parts': [
-              {'text': userPrompt},
+              {'text': combinedUserPrompt},
             ],
           },
         ],
-        'systemInstruction': {
-          'parts': [
-            {'text': systemPrompt},
-          ],
-        },
+        if (!foldSystemInstruction && cleanSystem.isNotEmpty)
+          'systemInstruction': {
+            'parts': [
+              {'text': cleanSystem},
+            ],
+          },
         'generationConfig': genConfig,
         'safetySettings': [
           {'category': 'HARM_CATEGORY_HARASSMENT', 'threshold': 'BLOCK_NONE'},
@@ -754,14 +765,25 @@ class GeminiTranslator {
       final firstCandidate = candidates.first;
       final content = firstCandidate is Map ? firstCandidate['content'] : null;
       final parts = content is Map ? content['parts'] : null;
-      final text = parts is List
+      final answerText = parts is List
           ? parts
                 .whereType<Map>()
+                .where((part) => part['thought'] != true)
                 .map((part) => part['text'])
                 .whereType<String>()
                 .join()
                 .trim()
           : '';
+      final text = answerText.isNotEmpty
+          ? answerText
+          : (parts is List
+                ? parts
+                      .whereType<Map>()
+                      .map((part) => part['text'])
+                      .whereType<String>()
+                      .join()
+                      .trim()
+                : '');
 
       if (text.isEmpty) {
         final finishReason = firstCandidate is Map
@@ -777,12 +799,37 @@ class GeminiTranslator {
     }
 
     try {
-      return await send(buildBody(withSchema: requestJson, withMimeType: requestJson));
+      // Gemma 4 qua generateContent không dùng responseSchema/responseMimeType hay systemInstruction riêng.
+      return await send(
+        buildBody(
+          withSchema: requestJson && !isGemma,
+          withMimeType: requestJson && !isGemma,
+          foldSystemInstruction: isGemma,
+        ),
+      );
     } on DioException catch (error) {
-      // Nếu 400 do model không hỗ trợ responseSchema, tự động thử lại chỉ với responseMimeType
-      if (requestJson && error.response?.statusCode == 400) {
+      if (error.response?.statusCode == 400) {
+        if (requestJson && !isGemma) {
+          // Thử bỏ responseSchema nếu model mới chỉ hỗ trợ responseMimeType
+          try {
+            return await send(
+              buildBody(
+                withSchema: false,
+                withMimeType: true,
+                foldSystemInstruction: false,
+              ),
+            );
+          } catch (_) {}
+        }
+        // Fallback tối giản nhất (tương thích model Gemma hoặc model mới chưa mở JSON mode / systemInstruction)
         try {
-          return await send(buildBody(withSchema: false, withMimeType: true));
+          return await send(
+            buildBody(
+              withSchema: false,
+              withMimeType: false,
+              foldSystemInstruction: true,
+            ),
+          );
         } catch (_) {}
       }
 

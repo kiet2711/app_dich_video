@@ -150,6 +150,8 @@ void main() {
           250,
           scrollable: verticalScrollable,
         );
+        await tester.ensureVisible(find.text('Đa luồng & Phân đoạn CapCut'));
+        await tester.pumpAndSettle();
         await tester.tap(find.text('Đa luồng & Phân đoạn CapCut'));
         await tester.pumpAndSettle();
         expect(find.text('SỐ LUỒNG NHẬN DIỆN CAPCUT (STT):'), findsOneWidget);

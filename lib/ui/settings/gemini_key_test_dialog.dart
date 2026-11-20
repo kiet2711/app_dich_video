@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../data/api/gemini_key_checker.dart';
+import '../../domain/ai/ai_model_registry.dart';
 import '../theme/app_theme.dart';
 
 class GeminiKeyTestDialog extends StatefulWidget {
@@ -182,51 +183,55 @@ class _GeminiKeyTestDialogState extends State<GeminiKeyTestDialog> {
                     ),
                     const SizedBox(width: 10),
                     Expanded(
-                      child: DropdownButtonHideUnderline(
-                        child: DropdownButton<String>(
-                          value: ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite']
-                                  .contains(_selectedModel)
-                              ? _selectedModel
-                              : 'gemini-3.5-flash-lite',
-                          isExpanded: true,
-                          dropdownColor: palette.surface,
-                          icon: Icon(
-                            Icons.keyboard_arrow_down,
-                            color: accent,
-                            size: 18,
-                          ),
-                          style: TextStyle(
-                            color: palette.textPrimary,
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                          ),
-                          items: const [
-                            DropdownMenuItem(
-                              value: 'gemini-3.5-flash-lite',
-                              child: Text(
-                                '🤖 Gemini 3.5 Flash-Lite (RPD cao)',
-                                overflow: TextOverflow.ellipsis,
+                      child: Builder(
+                        builder: (_) {
+                          final models = AiModelRegistry.allGeminiModels;
+                          final normalizedCurrent =
+                              AiModelRegistry.normalizeModelId(_selectedModel);
+                          final dropdownValue =
+                              models.any((m) => m.id == normalizedCurrent)
+                              ? normalizedCurrent
+                              : models.first.id;
+                          return DropdownButtonHideUnderline(
+                            child: DropdownButton<String>(
+                              value: dropdownValue,
+                              isExpanded: true,
+                              dropdownColor: palette.surface,
+                              icon: Icon(
+                                Icons.keyboard_arrow_down,
+                                color: accent,
+                                size: 18,
                               ),
-                            ),
-                            DropdownMenuItem(
-                              value: 'gemini-3.1-flash-lite',
-                              child: Text(
-                                '🤖 Gemini 3.1 Flash-Lite (Khuyên dùng)',
-                                overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: palette.textPrimary,
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
                               ),
+                              items: models.map((m) {
+                                final icon = AiModelRegistry.isGemmaModel(m.id)
+                                    ? '💎'
+                                    : (m.isCustom ? '✨' : '🤖');
+                                return DropdownMenuItem<String>(
+                                  value: m.id,
+                                  child: Text(
+                                    '$icon ${m.displayName}',
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                );
+                              }).toList(),
+                              onChanged: _isLoading
+                                  ? null
+                                  : (val) {
+                                      if (val != null && val != _selectedModel) {
+                                        setState(() {
+                                          _selectedModel = val;
+                                        });
+                                        _startCheckAll();
+                                      }
+                                    },
                             ),
-                          ],
-                          onChanged: _isLoading
-                              ? null
-                              : (val) {
-                                  if (val != null && val != _selectedModel) {
-                                    setState(() {
-                                      _selectedModel = val;
-                                    });
-                                    _startCheckAll();
-                                  }
-                                },
-                        ),
+                          );
+                        },
                       ),
                     ),
                   ],

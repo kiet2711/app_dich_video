@@ -92,8 +92,10 @@ class SubtitlingPipeline {
         'Thời lượng media phải lớn hơn 0',
       );
     }
-    if (translationEngine.startsWith('gemini') && apiKeys.isEmpty) {
-      throw StateError('Đã chọn Gemini nhưng chưa cấu hình API Key.');
+    if (AiModelRegistry.isGeminiFamily(translationEngine) &&
+        apiKeys.isEmpty &&
+        groqApiKeys.isEmpty) {
+      throw StateError('Đã chọn Gemini/Gemma nhưng chưa cấu hình API Key.');
     }
     final tempBase = await getTemporaryDirectory();
     final sessionDir = Directory(
@@ -766,10 +768,12 @@ class SubtitlingPipeline {
 
         final effectiveGeminiKeys = apiKeys.isNotEmpty ? apiKeys : settings.geminiApiKeys;
         final effectiveGroqKeys = groqApiKeys.isNotEmpty ? groqApiKeys : settings.groqApiKeys;
-        final effectiveThreadCount = translationEngine.startsWith('gemini')
+        final effectiveThreadCount =
+            AiModelRegistry.isGeminiFamily(translationEngine)
             ? geminiThreadCount
             : groqThreadCount;
-        final effectiveBatchSize = translationEngine.startsWith('gemini')
+        final effectiveBatchSize =
+            AiModelRegistry.isGeminiFamily(translationEngine)
             ? (geminiBatchSize ?? settings.geminiBatchSize)
             : (groqBatchSize ?? settings.groqBatchSize);
 

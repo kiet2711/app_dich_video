@@ -1,5 +1,7 @@
 import 'package:dio/dio.dart';
 
+import '../../domain/ai/ai_model_registry.dart';
+
 enum GeminiKeyStatus {
   alive,
   dead,
@@ -71,9 +73,10 @@ class GeminiKeyChecker {
       );
     }
 
-    final targetModel = modelId.trim().isEmpty
+    final normalizedModel = AiModelRegistry.normalizeModelId(modelId);
+    final targetModel = normalizedModel.isEmpty
         ? 'gemini-3.5-flash-lite'
-        : modelId.trim();
+        : normalizedModel;
 
     final client = dio ??
         Dio(
@@ -223,5 +226,59 @@ class GeminiKeyChecker {
       (k) => checkKey(k, modelId: modelId, dio: dio),
     );
     return Future.wait(futures);
+  }
+
+  /// Quét danh sách model hỗ trợ `generateContent` khả dụng trên API Key (Gemini & Gemma).
+  static Future<List<String>> fetchGenerateContentModels(
+    String apiKey, {
+    Dio? dio,
+  }) async {
+    final cleanKey = apiKey.trim();
+    if (cleanKey.isEmpty) {
+      throw ArgumentError('API Key trống');
+    }
+
+    final client =
+        dio ??
+        Dio(
+          BaseOptions(
+            connectTimeout: const Duration(seconds: 12),
+            receiveTimeout: const Duration(seconds: 20),
+          ),
+        );
+
+    final response = await client.get<Map<String, dynamic>>(
+      'https://generativelanguage.googleapis.com/v1beta/models',
+      queryParameters: {'pageSize': 200},
+      options: Options(headers: {'x-goog-api-key': cleanKey}),
+    );
+
+    final models = response.data?['models'];
+    if (models is! List) return const [];
+
+    final result = <String>[];
+    for (final raw in models) {
+      if (raw is! Map) continue;
+      final methods = raw['supportedGenerationMethods'];
+      final supportsGen =
+          methods is List &&
+          methods.any((m) => m.toString().toLowerCase() == 'generatecontent');
+      if (!supportsGen) continue;
+
+      final id = AiModelRegistry.normalizeModelId(raw['name']?.toString() ?? '');
+      if (id.isEmpty) continue;
+      final lower = id.toLowerCase();
+      if (lower.contains('embedding') ||
+          lower.contains('imagen') ||
+          lower.contains('veo') ||
+          lower.contains('aqa') ||
+          lower.contains('tts')) {
+        continue;
+      }
+      if (lower.startsWith('gemini') || lower.startsWith('gemma')) {
+        result.add(id);
+      }
+    }
+    return result;
   }
 }

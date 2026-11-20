@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../../data/api/gemini_key_checker.dart';
 import '../../data/repository/settings_repository.dart';
+import '../../domain/ai/ai_model_registry.dart';
 import '../../domain/font/custom_font_manager.dart';
 import '../storage/storage_cleaner_screen.dart';
 import '../theme/app_theme.dart';
@@ -18,8 +20,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   SettingsRepository? _settings;
   final _apiKeysController = TextEditingController();
   final _groqApiKeysController = TextEditingController();
+  final _customModelInputController = TextEditingController();
   int _selectedAiProviderTab = 0; // 0: Gemini, 1: Groq
   bool _isAutoResilientExpanded = false;
+  bool _isScanningGeminiModels = false;
+  List<String> _scannedGeminiModels = const [];
 
   // Kiểu A Accordion expansion states (all collapsed by default)
   bool _expandAppearance = false;
@@ -69,9 +74,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       return;
     }
 
-    final currentModel = (_settings?.selectedModel.startsWith('gemini') == true)
-        ? _settings!.selectedModel
-        : 'gemini-3.5-flash-lite';
+    final rawSelected = _settings?.selectedModel ?? '';
+    final currentModel = AiModelRegistry.isGeminiFamily(rawSelected)
+        ? AiModelRegistry.normalizeModelId(rawSelected)
+        : (_settings?.selectedGeminiModel.isNotEmpty == true
+              ? _settings!.selectedGeminiModel
+              : 'gemini-3.5-flash-lite');
 
     showDialog(
       context: context,
@@ -135,6 +143,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
     _apiKeysController.dispose();
     _groqApiKeysController.dispose();
+    _customModelInputController.dispose();
     super.dispose();
   }
 
@@ -327,10 +336,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 style: TextStyle(color: palette.textMuted, fontSize: 12),
               ),
               style: TextButton.styleFrom(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: 4,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 minimumSize: Size.zero,
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
@@ -338,181 +344,179 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ],
         ),
         const SizedBox(height: 8),
-          SizedBox(
-            height: 88,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              physics: const BouncingScrollPhysics(),
-              itemCount: presets.length,
-              separatorBuilder: (_, _) => const SizedBox(width: 8),
-              itemBuilder: (_, i) {
-                final preset = presets[i];
-                final isSelected = palette.mode.id == preset.id;
-                return InkWell(
-                  onTap: () =>
-                      AppThemeController.instance.setThemeMode(preset.id),
-                  borderRadius: BorderRadius.circular(14),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 180),
-                    width: 102,
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: isSelected
-                          ? accent.withValues(
-                              alpha: palette.isDark ? 0.16 : 0.08,
-                            )
-                          : palette.surfaceAlt,
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(
-                        color: isSelected ? accent : palette.border,
-                        width: isSelected ? 1.8 : 1,
-                      ),
+        SizedBox(
+          height: 88,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            physics: const BouncingScrollPhysics(),
+            itemCount: presets.length,
+            separatorBuilder: (_, _) => const SizedBox(width: 8),
+            itemBuilder: (_, i) {
+              final preset = presets[i];
+              final isSelected = palette.mode.id == preset.id;
+              return InkWell(
+                onTap: () =>
+                    AppThemeController.instance.setThemeMode(preset.id),
+                borderRadius: BorderRadius.circular(14),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  width: 102,
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: isSelected
+                        ? accent.withValues(alpha: palette.isDark ? 0.16 : 0.08)
+                        : palette.surfaceAlt,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: isSelected ? accent : palette.border,
+                      width: isSelected ? 1.8 : 1,
                     ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Container(
-                              width: 24,
-                              height: 24,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Container(
+                            width: 24,
+                            height: 24,
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: preset.previewColors,
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              ),
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: preset.isDark
+                                    ? Colors.white24
+                                    : Colors.black12,
+                              ),
+                            ),
+                            alignment: Alignment.center,
+                            child: Container(
+                              width: 8,
+                              height: 8,
                               decoration: BoxDecoration(
-                                gradient: LinearGradient(
-                                  colors: preset.previewColors,
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight,
-                                ),
+                                color: preset.previewDot,
                                 shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: preset.isDark
-                                      ? Colors.white24
-                                      : Colors.black12,
-                                ),
-                              ),
-                              alignment: Alignment.center,
-                              child: Container(
-                                width: 8,
-                                height: 8,
-                                decoration: BoxDecoration(
-                                  color: preset.previewDot,
-                                  shape: BoxShape.circle,
-                                ),
                               ),
                             ),
-                            if (isSelected)
-                              Icon(
-                                Icons.check_circle_rounded,
-                                color: accent,
-                                size: 16,
-                              ),
-                          ],
-                        ),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              preset.name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: palette.textPrimary,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w700,
-                              ),
+                          ),
+                          if (isSelected)
+                            Icon(
+                              Icons.check_circle_rounded,
+                              color: accent,
+                              size: 16,
                             ),
-                            Text(
-                              preset.tag,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: palette.textMuted,
-                                fontSize: 10,
-                              ),
+                        ],
+                      ),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            preset.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: palette.textPrimary,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
                             ),
-                          ],
-                        ),
-                      ],
-                    ),
+                          ),
+                          Text(
+                            preset.tag,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: palette.textMuted,
+                              fontSize: 10,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
-                );
-              },
-            ),
+                ),
+              );
+            },
           ),
-          const SizedBox(height: 16),
+        ),
+        const SizedBox(height: 16),
 
-          // 2. Màu chủ đạo từng tab
-          Text(
-            'MÀU CHỦ ĐẠO TỪNG TAB',
-            style: TextStyle(
-              color: palette.textMuted,
-              fontSize: 11,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0.7,
-            ),
+        // 2. Màu chủ đạo từng tab
+        Text(
+          'MÀU CHỦ ĐẠO TỪNG TAB',
+          style: TextStyle(
+            color: palette.textMuted,
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0.7,
           ),
-          const SizedBox(height: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              color: palette.surfaceAlt,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: palette.border),
-            ),
-            child: Column(
-              children: [
-                for (int i = 0; i < tabEntries.length; i++) ...[
-                  if (i > 0) Divider(height: 16, color: palette.border),
-                  _buildTabAccentRow(
-                    palette: palette,
-                    tab: tabEntries[i].$1,
-                    label: tabEntries[i].$2,
-                    icon: tabEntries[i].$3,
-                  ),
-                ],
-              ],
-            ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: palette.surfaceAlt,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: palette.border),
           ),
-          const SizedBox(height: 16),
-
-          // 3. Kiểu thanh điều hướng
-          Text(
-            'KIỂU THANH ĐIỀU HƯỚNG',
-            style: TextStyle(
-              color: palette.textMuted,
-              fontSize: 11,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0.7,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Row(
+          child: Column(
             children: [
-              Expanded(
-                child: _buildNavStyleOption(
+              for (int i = 0; i < tabEntries.length; i++) ...[
+                if (i > 0) Divider(height: 16, color: palette.border),
+                _buildTabAccentRow(
                   palette: palette,
-                  accent: accent,
-                  styleId: 'floating',
-                  title: 'Viên thuốc nổi',
-                  subtitle: 'Thoáng nổi hiện đại',
-                  icon: Icons.smart_button_rounded,
+                  tab: tabEntries[i].$1,
+                  label: tabEntries[i].$2,
+                  icon: tabEntries[i].$3,
                 ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _buildNavStyleOption(
-                  palette: palette,
-                  accent: accent,
-                  styleId: 'docked',
-                  title: 'Liền đáy gốc',
-                  subtitle: 'Cố định cạnh dưới',
-                  icon: Icons.view_agenda_outlined,
-                ),
-              ),
+              ],
             ],
           ),
-        ],
+        ),
+        const SizedBox(height: 16),
+
+        // 3. Kiểu thanh điều hướng
+        Text(
+          'KIỂU THANH ĐIỀU HƯỚNG',
+          style: TextStyle(
+            color: palette.textMuted,
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0.7,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: _buildNavStyleOption(
+                palette: palette,
+                accent: accent,
+                styleId: 'floating',
+                title: 'Viên thuốc nổi',
+                subtitle: 'Thoáng nổi hiện đại',
+                icon: Icons.smart_button_rounded,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _buildNavStyleOption(
+                palette: palette,
+                accent: accent,
+                styleId: 'docked',
+                title: 'Liền đáy gốc',
+                subtitle: 'Cố định cạnh dưới',
+                icon: Icons.view_agenda_outlined,
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 
@@ -907,6 +911,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onBatchChanged: (v) =>
                 setState(() => _settings!.geminiBatchSize = v),
             batch100Label: '100 câu / request (Cực nhanh, ít gọi API)',
+            provider: AiProvider.gemini,
           )
         else
           _buildProviderConfigPanel(
@@ -931,6 +936,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             batchValue: _settings!.groqBatchSize,
             onBatchChanged: (v) => setState(() => _settings!.groqBatchSize = v),
             batch100Label: '100 câu / request (Cực nhanh trên LPU Groq)',
+            provider: AiProvider.groq,
           ),
 
         const SizedBox(height: 14),
@@ -1163,6 +1169,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     required int batchValue,
     required ValueChanged<int> onBatchChanged,
     required String batch100Label,
+    required AiProvider provider,
   }) {
     final safeBatch = [30, 45, 60, 80, 100].contains(batchValue)
         ? batchValue
@@ -1360,7 +1367,446 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
         ),
+        const SizedBox(height: 16),
+        _buildCustomModelUpdaterCard(
+          palette: palette,
+          tabColor: tabColor,
+          provider: provider,
+        ),
       ],
+    );
+  }
+
+  void _addCustomModelFromInput(AiProvider provider, [String? explicitId]) {
+    final s = _settings;
+    if (s == null) return;
+    final rawText = explicitId ?? _customModelInputController.text;
+    final ids = rawText
+        .split(RegExp(r'[,;\n]'))
+        .map(AiModelRegistry.normalizeModelId)
+        .where((id) => id.isNotEmpty)
+        .toList();
+    if (ids.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Vui lòng nhập tên Model ID trước!')),
+      );
+      return;
+    }
+
+    setState(() {
+      for (final id in ids) {
+        if (provider == AiProvider.gemini) {
+          s.addCustomGeminiModel(id);
+        } else {
+          s.addCustomGroqModel(id);
+        }
+      }
+      final latestId = ids.last;
+      if (provider == AiProvider.gemini) {
+        s.selectedGeminiModel = latestId;
+        if (AiModelRegistry.detectProvider(s.selectedModel) ==
+            AiProvider.gemini) {
+          s.selectedModel = latestId;
+        }
+      } else {
+        s.selectedGroqModel = latestId;
+        if (AiModelRegistry.detectProvider(s.selectedModel) ==
+            AiProvider.groq) {
+          s.selectedModel = latestId;
+        }
+      }
+      if (explicitId == null) {
+        _customModelInputController.clear();
+      }
+    });
+
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          ids.length == 1
+              ? 'Đã cập nhật & chọn model: ${ids.first}'
+              : 'Đã thêm ${ids.length} model mới (đang chọn: ${ids.last})',
+        ),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  Future<void> _scanGeminiModelsFromKey() async {
+    final keys = _parseKeys(_apiKeysController.text);
+    if (keys.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Hãy nhập ít nhất 1 Gemini API Key để quét model!'),
+        ),
+      );
+      return;
+    }
+    if (_settings != null) {
+      _settings!.geminiApiKeys = keys;
+    }
+    setState(() => _isScanningGeminiModels = true);
+    try {
+      final found = await GeminiKeyChecker.fetchGenerateContentModels(
+        keys.first,
+      );
+      if (!mounted) return;
+      setState(() {
+        _scannedGeminiModels = found;
+        _isScanningGeminiModels = false;
+      });
+      if (found.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Không tìm thấy model generateContent nào trên Key này.',
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isScanningGeminiModels = false);
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Quét model thất bại: $e')));
+    }
+  }
+
+  Widget _buildCustomModelUpdaterCard({
+    required AppThemePalette palette,
+    required Color tabColor,
+    required AiProvider provider,
+  }) {
+    final s = _settings!;
+    final isGemini = provider == AiProvider.gemini;
+
+    return ValueListenableBuilder<int>(
+      valueListenable: AiModelRegistry.customModelsRevision,
+      builder: (context, _, _) {
+        final models = isGemini
+            ? AiModelRegistry.allGeminiModels
+            : AiModelRegistry.allGroqModels;
+        final customIds = isGemini ? s.customGeminiModels : s.customGroqModels;
+        final currentSelected = AiModelRegistry.normalizeModelId(
+          isGemini ? s.selectedGeminiModel : s.selectedGroqModel,
+        );
+        final safeValue = models.any((m) => m.id == currentSelected)
+            ? currentSelected
+            : models.first.id;
+
+        return Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: palette.surfaceAlt,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: palette.border),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.model_training_rounded, size: 16, color: tabColor),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      isGemini
+                          ? 'MODEL GEMINI / GEMMA & CẬP NHẬT NÓNG'
+                          : 'MODEL GROQ & CẬP NHẬT NÓNG',
+                      style: TextStyle(
+                        color: palette.textPrimary,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12.5,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 2,
+                ),
+                decoration: BoxDecoration(
+                  color: palette.surface,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: palette.border),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    value: safeValue,
+                    isExpanded: true,
+                    dropdownColor: palette.surface,
+                    icon: Icon(Icons.keyboard_arrow_down, color: tabColor),
+                    style: TextStyle(
+                      color: palette.textPrimary,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    items: models.map((m) {
+                      final icon = AiModelRegistry.isGemmaModel(m.id)
+                          ? '💎'
+                          : (m.isCustom ? '✨' : (isGemini ? '🤖' : '⚡'));
+                      return DropdownMenuItem<String>(
+                        value: m.id,
+                        child: Text(
+                          '$icon ${m.displayName}',
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      );
+                    }).toList(),
+                    onChanged: (val) {
+                      if (val == null) return;
+                      setState(() {
+                        if (isGemini) {
+                          s.selectedGeminiModel = val;
+                          if (AiModelRegistry.detectProvider(s.selectedModel) ==
+                              AiProvider.gemini) {
+                            s.selectedModel = val;
+                          }
+                        } else {
+                          s.selectedGroqModel = val;
+                          if (AiModelRegistry.detectProvider(s.selectedModel) ==
+                              AiProvider.groq) {
+                            s.selectedModel = val;
+                          }
+                        }
+                      });
+                    },
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Thêm Model ID mới (không cần build lại app):',
+                style: TextStyle(color: palette.textSecondary, fontSize: 12),
+              ),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _customModelInputController,
+                      style: TextStyle(
+                        color: palette.textPrimary,
+                        fontSize: 12.5,
+                      ),
+                      onSubmitted: (_) => _addCustomModelFromInput(provider),
+                      decoration: InputDecoration(
+                        isDense: true,
+                        filled: true,
+                        fillColor: palette.surface,
+                        hintText: isGemini
+                            ? 'vd: gemma-4-12b-it, gemini-4-flash...'
+                            : 'vd: llama-4-maverick-17b-128e...',
+                        hintStyle: TextStyle(
+                          color: palette.textMuted,
+                          fontSize: 12,
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 10,
+                        ),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                          borderSide: BorderSide(color: palette.border),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                          borderSide: BorderSide(color: palette.border),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                          borderSide: BorderSide(color: tabColor, width: 1.4),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: tabColor,
+                      foregroundColor: palette.onColor(tabColor),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 11,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    onPressed: () => _addCustomModelFromInput(provider),
+                    icon: const Icon(Icons.add_rounded, size: 17),
+                    label: const Text(
+                      'Thêm',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              if (isGemini) ...[
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Tích hợp sẵn: Gemini 3.1/3.5 Flash-Lite, Gemma 4 (26B A4B & 31B).',
+                        style: TextStyle(
+                          color: palette.textMuted,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    TextButton.icon(
+                      style: TextButton.styleFrom(
+                        foregroundColor: tabColor,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      onPressed: _isScanningGeminiModels
+                          ? null
+                          : _scanGeminiModelsFromKey,
+                      icon: _isScanningGeminiModels
+                          ? SizedBox(
+                              width: 13,
+                              height: 13,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: tabColor,
+                              ),
+                            )
+                          : const Icon(Icons.radar_rounded, size: 15),
+                      label: Text(
+                        _isScanningGeminiModels ? 'Đang quét...' : 'Quét Key',
+                        style: const TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+              if (customIds.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'Model đã tự thêm:',
+                  style: TextStyle(
+                    color: palette.textSecondary,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: customIds.map((id) {
+                    return InputChip(
+                      label: Text(
+                        id,
+                        style: TextStyle(
+                          color: palette.textPrimary,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      backgroundColor: palette.surface,
+                      side: BorderSide(color: tabColor.withValues(alpha: 0.45)),
+                      deleteIcon: Icon(
+                        Icons.close_rounded,
+                        size: 15,
+                        color: palette.textMuted,
+                      ),
+                      onDeleted: () {
+                        setState(() {
+                          if (isGemini) {
+                            s.removeCustomGeminiModel(id);
+                          } else {
+                            s.removeCustomGroqModel(id);
+                          }
+                        });
+                      },
+                      onPressed: () {
+                        setState(() {
+                          if (isGemini) {
+                            s.selectedGeminiModel = id;
+                            if (AiModelRegistry.detectProvider(
+                                  s.selectedModel,
+                                ) ==
+                                AiProvider.gemini) {
+                              s.selectedModel = id;
+                            }
+                          } else {
+                            s.selectedGroqModel = id;
+                            if (AiModelRegistry.detectProvider(
+                                  s.selectedModel,
+                                ) ==
+                                AiProvider.groq) {
+                              s.selectedModel = id;
+                            }
+                          }
+                        });
+                      },
+                    );
+                  }).toList(),
+                ),
+              ],
+              if (isGemini && _scannedGeminiModels.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'Model quét được từ API Key (chạm để thêm):',
+                  style: TextStyle(
+                    color: palette.textSecondary,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: _scannedGeminiModels.map((id) {
+                    final alreadyExists = models.any((m) => m.id == id);
+                    return ActionChip(
+                      avatar: Icon(
+                        alreadyExists
+                            ? Icons.check_circle_rounded
+                            : Icons.add_circle_outline_rounded,
+                        size: 15,
+                        color: alreadyExists ? palette.textMuted : tabColor,
+                      ),
+                      label: Text(
+                        id,
+                        style: TextStyle(
+                          color: alreadyExists
+                              ? palette.textMuted
+                              : palette.textPrimary,
+                          fontSize: 11,
+                        ),
+                      ),
+                      backgroundColor: palette.surface,
+                      side: BorderSide(color: palette.border),
+                      onPressed: alreadyExists
+                          ? null
+                          : () => _addCustomModelFromInput(provider, id),
+                    );
+                  }).toList(),
+                ),
+              ],
+            ],
+          ),
+        );
+      },
     );
   }
 

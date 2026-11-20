@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 enum AiProvider {
   capcut,
   gemini,
@@ -11,6 +13,7 @@ class AiModelInfo {
   final String shortDescription;
   final AiProvider provider;
   final bool isRecommended;
+  final bool isCustom;
 
   const AiModelInfo({
     required this.id,
@@ -18,10 +21,58 @@ class AiModelInfo {
     required this.shortDescription,
     required this.provider,
     this.isRecommended = false,
+    this.isCustom = false,
   });
 }
 
 class AiModelRegistry {
+  static final ValueNotifier<int> customModelsRevision = ValueNotifier<int>(0);
+  static List<String> _customGeminiModelIds = const [];
+  static List<String> _customGroqModelIds = const [];
+
+  static String normalizeModelId(String raw) {
+    var clean = raw.trim();
+    if (clean.toLowerCase().startsWith('models/')) {
+      clean = clean.substring(7).trim();
+    }
+    return clean;
+  }
+
+  static void updateCustomModels({
+    List<String>? geminiModels,
+    List<String>? groqModels,
+  }) {
+    var changed = false;
+    if (geminiModels != null) {
+      final normalized = geminiModels
+          .map(normalizeModelId)
+          .where((id) => id.isNotEmpty)
+          .toSet()
+          .toList(growable: false);
+      if (!listEquals(_customGeminiModelIds, normalized)) {
+        _customGeminiModelIds = normalized;
+        changed = true;
+      }
+    }
+    if (groqModels != null) {
+      final normalized = groqModels
+          .map(normalizeModelId)
+          .where((id) => id.isNotEmpty)
+          .toSet()
+          .toList(growable: false);
+      if (!listEquals(_customGroqModelIds, normalized)) {
+        _customGroqModelIds = normalized;
+        changed = true;
+      }
+    }
+    if (changed) {
+      customModelsRevision.value++;
+    }
+  }
+
+  static List<String> get customGeminiModelIds => _customGeminiModelIds;
+  static List<String> get customGroqModelIds => _customGroqModelIds;
+
   static const List<AiModelInfo> groqModels = [
     AiModelInfo(
       id: 'openai/gpt-oss-120b',
@@ -59,7 +110,55 @@ class AiModelRegistry {
       provider: AiProvider.gemini,
       isRecommended: true,
     ),
+    AiModelInfo(
+      id: 'gemma-4-26b-a4b-it',
+      displayName: 'Gemma 4 26B A4B IT',
+      shortDescription: 'MoE 26B (4B active), nhanh & nhẹ quota',
+      provider: AiProvider.gemini,
+    ),
+    AiModelInfo(
+      id: 'gemma-4-31b-it',
+      displayName: 'Gemma 4 31B IT',
+      shortDescription: 'Gemma 4 31B, hiểu ngữ cảnh sâu',
+      provider: AiProvider.gemini,
+    ),
   ];
+
+  /// Danh sách model Gemini + Gemma 4 + model do người dùng tự thêm.
+  static List<AiModelInfo> get allGeminiModels {
+    final builtInIds = geminiModels.map((m) => m.id).toSet();
+    return [
+      ...geminiModels,
+      for (final customId in _customGeminiModelIds)
+        if (!builtInIds.contains(customId))
+          AiModelInfo(
+            id: customId,
+            displayName: customId,
+            shortDescription: isGemmaModel(customId)
+                ? 'Gemma tùy chỉnh (REST generateContent)'
+                : 'Model Gemini tùy chỉnh',
+            provider: AiProvider.gemini,
+            isCustom: true,
+          ),
+    ];
+  }
+
+  /// Danh sách model Groq mặc định + model do người dùng tự thêm.
+  static List<AiModelInfo> get allGroqModels {
+    final builtInIds = groqModels.map((m) => m.id).toSet();
+    return [
+      ...groqModels,
+      for (final customId in _customGroqModelIds)
+        if (!builtInIds.contains(customId))
+          AiModelInfo(
+            id: customId,
+            displayName: customId,
+            shortDescription: 'Model Groq tùy chỉnh',
+            provider: AiProvider.groq,
+            isCustom: true,
+          ),
+    ];
+  }
 
   /// Model chuyên dụng Live Translate (dịch giọng nói sang giọng nói thời gian thực).
   static const String geminiLiveTranslateModel =
@@ -113,14 +212,36 @@ class AiModelRegistry {
     ],
   };
 
+  static bool isGemmaModel(String modelId) {
+    final clean = normalizeModelId(modelId).toLowerCase();
+    return clean.startsWith('gemma');
+  }
+
+  static bool isGeminiFamily(String modelId) {
+    final clean = normalizeModelId(modelId);
+    final lower = clean.toLowerCase();
+    if (lower.startsWith('gemini') || lower.startsWith('gemma')) return true;
+    return _customGeminiModelIds.contains(clean);
+  }
+
   static AiProvider detectProvider(String modelId) {
-    final clean = modelId.trim().toLowerCase();
+    final normalized = normalizeModelId(modelId);
+    final clean = normalized.toLowerCase();
     if (clean == 'capcut') return AiProvider.capcut;
     if (clean == 'none' || clean.isEmpty) return AiProvider.none;
-    if (clean.startsWith('gemini')) return AiProvider.gemini;
-    if (clean.startsWith('openai/') ||
+    if (_customGeminiModelIds.contains(normalized) ||
+        clean.startsWith('gemini') ||
+        clean.startsWith('gemma')) {
+      return AiProvider.gemini;
+    }
+    if (_customGroqModelIds.contains(normalized) ||
+        clean.startsWith('openai/') ||
         clean.startsWith('qwen/') ||
-        clean.startsWith('groq')) {
+        clean.startsWith('groq') ||
+        clean.startsWith('llama') ||
+        clean.startsWith('meta-llama') ||
+        clean.startsWith('mixtral') ||
+        clean.startsWith('deepseek')) {
       return AiProvider.groq;
     }
     return AiProvider.gemini;

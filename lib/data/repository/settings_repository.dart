@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../domain/ai/ai_model_registry.dart';
+
 class SettingsRepository {
   static SettingsRepository? _instance;
   static const FlutterSecureStorage _secureStorage = FlutterSecureStorage();
@@ -38,8 +40,16 @@ class SettingsRepository {
         await sp.remove('bilibili_sessdata');
       }
       _instance = SettingsRepository._(sp, apiKeys, groqKeys, sessData);
+      _instance!._syncCustomModelsToRegistry();
     }
     return _instance!;
+  }
+
+  void _syncCustomModelsToRegistry() {
+    AiModelRegistry.updateCustomModels(
+      geminiModels: customGeminiModels,
+      groqModels: customGroqModels,
+    );
   }
 
   /// Đọc lại API key mới nhất từ Secure Storage (tránh cache cũ nếu màn khác vừa lưu).
@@ -102,8 +112,86 @@ class SettingsRepository {
 
   String get selectedGeminiModel =>
       prefs.getString('selected_gemini_model') ?? 'gemini-3.1-flash-lite';
-  set selectedGeminiModel(String v) =>
-      prefs.setString('selected_gemini_model', v.trim());
+  set selectedGeminiModel(String v) => prefs.setString(
+    'selected_gemini_model',
+    AiModelRegistry.normalizeModelId(v),
+  );
+
+  List<String> get customGeminiModels =>
+      (prefs.getStringList('custom_gemini_models') ?? const <String>[])
+          .map(AiModelRegistry.normalizeModelId)
+          .where((id) => id.isNotEmpty)
+          .toList();
+
+  set customGeminiModels(List<String> value) {
+    final cleaned = value
+        .map(AiModelRegistry.normalizeModelId)
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList();
+    prefs.setStringList('custom_gemini_models', cleaned);
+    _syncCustomModelsToRegistry();
+  }
+
+  List<String> get customGroqModels =>
+      (prefs.getStringList('custom_groq_models') ?? const <String>[])
+          .map(AiModelRegistry.normalizeModelId)
+          .where((id) => id.isNotEmpty)
+          .toList();
+
+  set customGroqModels(List<String> value) {
+    final cleaned = value
+        .map(AiModelRegistry.normalizeModelId)
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList();
+    prefs.setStringList('custom_groq_models', cleaned);
+    _syncCustomModelsToRegistry();
+  }
+
+  void addCustomGeminiModel(String modelId) {
+    final clean = AiModelRegistry.normalizeModelId(modelId);
+    if (clean.isEmpty) return;
+    final list = List<String>.from(customGeminiModels);
+    if (!list.contains(clean)) {
+      list.add(clean);
+      customGeminiModels = list;
+    }
+  }
+
+  void removeCustomGeminiModel(String modelId) {
+    final clean = AiModelRegistry.normalizeModelId(modelId);
+    final list = customGeminiModels.where((id) => id != clean).toList();
+    customGeminiModels = list;
+    if (selectedGeminiModel == clean) {
+      selectedGeminiModel = 'gemini-3.1-flash-lite';
+    }
+    if (selectedModel == clean) {
+      selectedModel = 'gemini-3.1-flash-lite';
+    }
+  }
+
+  void addCustomGroqModel(String modelId) {
+    final clean = AiModelRegistry.normalizeModelId(modelId);
+    if (clean.isEmpty) return;
+    final list = List<String>.from(customGroqModels);
+    if (!list.contains(clean)) {
+      list.add(clean);
+      customGroqModels = list;
+    }
+  }
+
+  void removeCustomGroqModel(String modelId) {
+    final clean = AiModelRegistry.normalizeModelId(modelId);
+    final list = customGroqModels.where((id) => id != clean).toList();
+    customGroqModels = list;
+    if (selectedGroqModel == clean) {
+      selectedGroqModel = 'openai/gpt-oss-120b';
+    }
+    if (selectedModel == clean) {
+      selectedModel = 'openai/gpt-oss-120b';
+    }
+  }
 
   String get selectedStyle => prefs.getString('selected_style') ?? 'Zhihu';
   set selectedStyle(String v) => prefs.setString('selected_style', v);
@@ -139,8 +227,8 @@ class SettingsRepository {
 
   static double defaultSubtitlePosition({required bool isLandscape}) =>
       isLandscape
-          ? defaultLandscapeSubtitlePosition
-          : defaultPortraitSubtitlePosition;
+      ? defaultLandscapeSubtitlePosition
+      : defaultPortraitSubtitlePosition;
 
   double get subtitlePosPortrait =>
       (prefs.getDouble('sub_pos_portrait') ?? defaultPortraitSubtitlePosition)
@@ -449,8 +537,8 @@ class SettingsRepository {
     }
     return 'comic';
   }
-  set hongguoFeedTab(String v) =>
-      prefs.setString('hongguo_feed_tab', v);
+
+  set hongguoFeedTab(String v) => prefs.setString('hongguo_feed_tab', v);
 
   /// Lưu Dạng phim / Danh mục đã chọn trong tab Lướt: 'category/real-drama', 'category/comic-drama', 'category/ai-drama'
   String get hongguoFeedCategory =>
@@ -471,10 +559,8 @@ class SettingsRepository {
       prefs.setString('hongguo_feed_genre_label', v);
 
   /// Lưu tag tiếng Trung tương ứng
-  String get hongguoFeedZhTag =>
-      prefs.getString('hongguo_feed_zh_tag') ?? '全部';
-  set hongguoFeedZhTag(String v) =>
-      prefs.setString('hongguo_feed_zh_tag', v);
+  String get hongguoFeedZhTag => prefs.getString('hongguo_feed_zh_tag') ?? '全部';
+  set hongguoFeedZhTag(String v) => prefs.setString('hongguo_feed_zh_tag', v);
 
   /// Danh sách các phim Hồng Quả người dùng đã xem gần đây (để ưu tiên hiển thị phim mới)
   List<String> get hongguoSeenSeriesIds =>
@@ -482,7 +568,9 @@ class SettingsRepository {
 
   void addHongguoSeenSeriesId(String id) {
     if (id.isEmpty) return;
-    final list = List<String>.from(prefs.getStringList('hongguo_seen_series_ids') ?? []);
+    final list = List<String>.from(
+      prefs.getStringList('hongguo_seen_series_ids') ?? [],
+    );
     list.remove(id);
     list.insert(0, id);
     if (list.length > 200) {
@@ -492,10 +580,8 @@ class SettingsRepository {
   }
 
   /// Trang thể loại đã duyệt gần nhất
-  int get hongguoFeedGenrePage =>
-      prefs.getInt('hongguo_feed_genre_page') ?? 1;
-  set hongguoFeedGenrePage(int v) =>
-      prefs.setInt('hongguo_feed_genre_page', v);
+  int get hongguoFeedGenrePage => prefs.getInt('hongguo_feed_genre_page') ?? 1;
+  set hongguoFeedGenrePage(int v) => prefs.setInt('hongguo_feed_genre_page', v);
 
   /// Trang thịnh hành đã duyệt gần nhất
   int get hongguoFeedTrendingPage =>
@@ -552,8 +638,7 @@ class SettingsRepository {
   /// Bật giải mã phần cứng GPU cho trình phát video (giảm nóng/giật khi xem Bilibili)
   bool get bilibiliHardwareDecode =>
       prefs.getBool('bilibili_hw_decode') ?? true;
-  set bilibiliHardwareDecode(bool v) =>
-      prefs.setBool('bilibili_hw_decode', v);
+  set bilibiliHardwareDecode(bool v) => prefs.setBool('bilibili_hw_decode', v);
 
   /// Giọng đọc lồng tiếng AI riêng cho Bilibili
   String get bilibiliSelectedTtsVoice =>

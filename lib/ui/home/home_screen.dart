@@ -98,32 +98,6 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     MapEntry('ko-KR', '🇰🇷 Tiếng Hàn (ko-KR)'),
   ];
 
-  static const _geminiEngineOptions = [
-    MapEntry(
-      'gemini-3.1-flash-lite',
-      '🤖 Gemini 3.1 Flash-Lite (Khuyên dùng)',
-    ),
-    MapEntry(
-      'gemini-3.5-flash-lite',
-      '🤖 Gemini 3.5 Flash-Lite (RPD cao)',
-    ),
-  ];
-
-  static const _groqEngineOptions = [
-    MapEntry(
-      'openai/gpt-oss-120b',
-      '⭐ GPT-OSS 120B (OpenAI - Dịch SRT đỉnh cao)',
-    ),
-    MapEntry(
-      'openai/gpt-oss-20b',
-      '⚡ GPT-OSS 20B (OpenAI - Siêu tốc & Gọn nhẹ)',
-    ),
-    MapEntry(
-      'qwen/qwen3.8-27b',
-      '🇨🇳 Qwen 3.8 27B (Alibaba - Chuyên Trung ➔ Việt)',
-    ),
-  ];
-
   static const _targetLanguageOptions = [
     MapEntry('vi-VN', '🇻🇳 Tiếng Việt (Mặc định)'),
     MapEntry('en-US', '🇺🇸 Tiếng Anh (English)'),
@@ -2466,133 +2440,171 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     if (currentProvider == AiProvider.gemini) {
       final hasKey = _settings?.geminiApiKeys.isNotEmpty == true;
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
-            decoration: BoxDecoration(
-              color: palette.surfaceAlt,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: const Color(0xFF4285F4).withValues(alpha: 0.45),
-              ),
-            ),
-            child: DropdownButtonHideUnderline(
-              child: DropdownButton<String>(
-                value: _geminiEngineOptions.any((e) => e.key == _selectedEngine)
-                    ? _selectedEngine
-                    : _geminiEngineOptions.first.key,
-                isExpanded: true,
-                dropdownColor: palette.surface,
-                icon: const Icon(
-                  Icons.arrow_drop_down,
-                  color: Color(0xFF4285F4),
+      return ValueListenableBuilder<int>(
+        valueListenable: AiModelRegistry.customModelsRevision,
+        builder: (context, _, _) {
+          final geminiModels = AiModelRegistry.allGeminiModels;
+          final normalizedSelected =
+              AiModelRegistry.normalizeModelId(_selectedEngine);
+          final safeValue =
+              geminiModels.any((m) => m.id == normalizedSelected)
+              ? normalizedSelected
+              : geminiModels.first.id;
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 2,
                 ),
-                style: TextStyle(
-                  color: palette.textPrimary,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
+                decoration: BoxDecoration(
+                  color: palette.surfaceAlt,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: const Color(0xFF4285F4).withValues(alpha: 0.45),
+                  ),
                 ),
-                items: _geminiEngineOptions.map((entry) {
-                  return DropdownMenuItem<String>(
-                    value: entry.key,
-                    child: Text(
-                      entry.value,
-                      style: TextStyle(
-                        color: palette.textPrimary,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                      ),
-                      overflow: TextOverflow.ellipsis,
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    value: safeValue,
+                    isExpanded: true,
+                    dropdownColor: palette.surface,
+                    icon: const Icon(
+                      Icons.arrow_drop_down,
+                      color: Color(0xFF4285F4),
                     ),
-                  );
-                }).toList(),
-                onChanged: (code) {
-                  if (code != null) {
-                    setState(() => _selectedEngine = code);
-                    _settings?.selectedModel = code;
-                    _settings?.selectedGeminiModel = code;
-                  }
-                },
+                    style: TextStyle(
+                      color: palette.textPrimary,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    items: geminiModels.map((model) {
+                      final icon = AiModelRegistry.isGemmaModel(model.id)
+                          ? '💎'
+                          : (model.isCustom ? '✨' : '🤖');
+                      final suffix = model.isRecommended
+                          ? ' (Khuyên dùng)'
+                          : (model.id == 'gemini-3.5-flash-lite'
+                                ? ' (RPD cao)'
+                                : (model.isCustom ? ' (Tùy chỉnh)' : ''));
+                      return DropdownMenuItem<String>(
+                        value: model.id,
+                        child: Text(
+                          '$icon ${model.displayName}$suffix',
+                          style: TextStyle(
+                            color: palette.textPrimary,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      );
+                    }).toList(),
+                    onChanged: (code) {
+                      if (code != null) {
+                        setState(() => _selectedEngine = code);
+                        _settings?.selectedModel = code;
+                        _settings?.selectedGeminiModel = code;
+                      }
+                    },
+                  ),
+                ),
               ),
-            ),
-          ),
-          if (!hasKey) ...[
-            const SizedBox(height: 6),
-            _buildMissingKeyAlert(
-              title: 'Chưa có Gemini API Key',
-              providerName: 'Gemini',
-            ),
-          ],
-        ],
+              if (!hasKey) ...[
+                const SizedBox(height: 6),
+                _buildMissingKeyAlert(
+                  title: 'Chưa có Gemini API Key',
+                  providerName: 'Gemini',
+                ),
+              ],
+            ],
+          );
+        },
       );
     }
 
     if (currentProvider == AiProvider.groq) {
       final hasKey = _settings?.groqApiKeys.isNotEmpty == true;
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
-            decoration: BoxDecoration(
-              color: palette.surfaceAlt,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: const Color(0xFFD97706).withValues(alpha: 0.45),
-              ),
-            ),
-            child: DropdownButtonHideUnderline(
-              child: DropdownButton<String>(
-                value: _groqEngineOptions.any((e) => e.key == _selectedEngine)
-                    ? _selectedEngine
-                    : _groqEngineOptions.first.key,
-                isExpanded: true,
-                dropdownColor: palette.surface,
-                icon: const Icon(
-                  Icons.arrow_drop_down,
-                  color: Color(0xFFD97706),
+      return ValueListenableBuilder<int>(
+        valueListenable: AiModelRegistry.customModelsRevision,
+        builder: (context, _, _) {
+          final groqModels = AiModelRegistry.allGroqModels;
+          final normalizedSelected =
+              AiModelRegistry.normalizeModelId(_selectedEngine);
+          final safeValue = groqModels.any((m) => m.id == normalizedSelected)
+              ? normalizedSelected
+              : groqModels.first.id;
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 2,
                 ),
-                style: TextStyle(
-                  color: palette.textPrimary,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
+                decoration: BoxDecoration(
+                  color: palette.surfaceAlt,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: const Color(0xFFD97706).withValues(alpha: 0.45),
+                  ),
                 ),
-                items: _groqEngineOptions.map((entry) {
-                  return DropdownMenuItem<String>(
-                    value: entry.key,
-                    child: Text(
-                      entry.value,
-                      style: TextStyle(
-                        color: palette.textPrimary,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                      ),
-                      overflow: TextOverflow.ellipsis,
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    value: safeValue,
+                    isExpanded: true,
+                    dropdownColor: palette.surface,
+                    icon: const Icon(
+                      Icons.arrow_drop_down,
+                      color: Color(0xFFD97706),
                     ),
-                  );
-                }).toList(),
-                onChanged: (code) {
-                  if (code != null) {
-                    setState(() => _selectedEngine = code);
-                    _settings?.selectedModel = code;
-                    _settings?.selectedGroqModel = code;
-                  }
-                },
+                    style: TextStyle(
+                      color: palette.textPrimary,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    items: groqModels.map((model) {
+                      final icon = model.id.contains('qwen')
+                          ? '🇨🇳'
+                          : (model.isCustom ? '✨' : '⚡');
+                      return DropdownMenuItem<String>(
+                        value: model.id,
+                        child: Text(
+                          '$icon ${model.displayName}',
+                          style: TextStyle(
+                            color: palette.textPrimary,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      );
+                    }).toList(),
+                    onChanged: (code) {
+                      if (code != null) {
+                        setState(() => _selectedEngine = code);
+                        _settings?.selectedModel = code;
+                        _settings?.selectedGroqModel = code;
+                      }
+                    },
+                  ),
+                ),
               ),
-            ),
-          ),
-          if (!hasKey) ...[
-            const SizedBox(height: 6),
-            _buildMissingKeyAlert(
-              title: 'Chưa có Groq API Key',
-              providerName: 'Groq',
-            ),
-          ],
-        ],
+              if (!hasKey) ...[
+                const SizedBox(height: 6),
+                _buildMissingKeyAlert(
+                  title: 'Chưa có Groq API Key',
+                  providerName: 'Groq',
+                ),
+              ],
+            ],
+          );
+        },
       );
     }
 

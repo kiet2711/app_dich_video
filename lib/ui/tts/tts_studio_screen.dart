@@ -14,6 +14,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
+import '../../domain/ai/ai_model_registry.dart';
 import '../../domain/ai/smart_ai_translator.dart';
 import '../../data/model/subtitle_document.dart';
 import '../../data/model/voice_model.dart';
@@ -808,7 +809,8 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
 
     final hasAiKeys =
         settings.geminiApiKeys.isNotEmpty || settings.groqApiKeys.isNotEmpty;
-    final effectiveAiThreads = settings.selectedModel.startsWith('gemini')
+    final effectiveAiThreads =
+        AiModelRegistry.isGeminiFamily(settings.selectedModel)
         ? settings.geminiThreadCount
         : settings.groqThreadCount;
 

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../../data/model/subtitle_document.dart';
 import '../../data/repository/history_repository.dart';
 import '../../data/repository/settings_repository.dart';
+import '../../domain/ai/ai_model_registry.dart';
 import '../../domain/ai/smart_ai_translator.dart';
 import '../../domain/media/media_storage.dart';
 import '../theme/app_theme.dart';
@@ -150,10 +151,10 @@ class _ImportSubtitleDialogState extends State<ImportSubtitleDialog> {
         enableCrossProviderFallback: settings.enableCrossProviderFallback,
         enableDualModelBalancing: settings.enableDualModelBalancing,
       );
-      final effectiveThreadCount = model.startsWith('gemini')
+      final effectiveThreadCount = AiModelRegistry.isGeminiFamily(model)
           ? settings.geminiThreadCount
           : settings.groqThreadCount;
-      final effectiveBatchSize = model.startsWith('gemini')
+      final effectiveBatchSize = AiModelRegistry.isGeminiFamily(model)
           ? settings.geminiBatchSize
           : settings.groqBatchSize;
 

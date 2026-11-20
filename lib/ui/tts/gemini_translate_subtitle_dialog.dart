@@ -36,13 +36,27 @@ class _GeminiTranslateSubtitleDialogState
     MapEntry('Tiếng Hàn', '🇰🇷 Tiếng Hàn (Korean)'),
   ];
 
-  final List<MapEntry<String, String>> _modelOptions = const [
-    MapEntry('gemini-3.1-flash-lite', '🌐 Gemini 3.1 Flash-Lite (Khuyên dùng)'),
-    MapEntry('gemini-3.5-flash-lite', '🌐 Gemini 3.5 Flash-Lite (RPD cao)'),
-    MapEntry('openai/gpt-oss-120b', '⚡ Groq: GPT-OSS 120B (OpenAI - SRT đỉnh)'),
-    MapEntry('openai/gpt-oss-20b', '⚡ Groq: GPT-OSS 20B (OpenAI - Siêu tốc)'),
-    MapEntry('qwen/qwen3.8-27b', '🇨🇳 Groq: Qwen 3.8 27B (Trung ➔ Việt)'),
-  ];
+  List<MapEntry<String, String>> _buildModelOptions() {
+    final entries = <MapEntry<String, String>>[];
+    for (final m in AiModelRegistry.allGeminiModels) {
+      final icon = AiModelRegistry.isGemmaModel(m.id)
+          ? '💎'
+          : (m.isCustom ? '✨' : '🌐');
+      final tag = m.isRecommended
+          ? ' (Khuyên dùng)'
+          : (m.id == 'gemini-3.5-flash-lite'
+                ? ' (RPD cao)'
+                : (m.isCustom ? ' (Tùy chỉnh)' : ''));
+      entries.add(MapEntry(m.id, '$icon ${m.displayName}$tag'));
+    }
+    for (final m in AiModelRegistry.allGroqModels) {
+      final icon = m.id.contains('qwen') ? '🇨🇳' : (m.isCustom ? '✨' : '⚡');
+      entries.add(MapEntry(m.id, '$icon Groq: ${m.displayName}'));
+    }
+    return entries;
+  }
+
+  List<MapEntry<String, String>> _modelOptions = const [];
 
   String _selectedTargetLang = 'Tiếng Việt';
   String _selectedModel = 'gemini-3.1-flash-lite';
@@ -56,6 +70,7 @@ class _GeminiTranslateSubtitleDialogState
   @override
   void initState() {
     super.initState();
+    _modelOptions = _buildModelOptions();
     _loadSettings();
   }
 
@@ -65,8 +80,10 @@ class _GeminiTranslateSubtitleDialogState
     setState(() {
       _settings = s;
       _apiKeys = s.geminiApiKeys;
-      if (_modelOptions.any((e) => e.key == s.selectedModel)) {
-        _selectedModel = s.selectedModel;
+      _modelOptions = _buildModelOptions();
+      final normalized = AiModelRegistry.normalizeModelId(s.selectedModel);
+      if (_modelOptions.any((e) => e.key == normalized)) {
+        _selectedModel = normalized;
       } else {
         _selectedModel = 'gemini-3.1-flash-lite';
       }
@@ -130,10 +147,10 @@ class _GeminiTranslateSubtitleDialogState
         enableCrossProviderFallback: _settings?.enableCrossProviderFallback ?? true,
         enableDualModelBalancing: _settings?.enableDualModelBalancing ?? true,
       );
-      final effectiveThreadCount = _selectedModel.startsWith('gemini')
+      final effectiveThreadCount = AiModelRegistry.isGeminiFamily(_selectedModel)
           ? (_settings?.geminiThreadCount ?? 2)
           : (_settings?.groqThreadCount ?? 3);
-      final effectiveBatchSize = _selectedModel.startsWith('gemini')
+      final effectiveBatchSize = AiModelRegistry.isGeminiFamily(_selectedModel)
           ? (_settings?.geminiBatchSize ?? 45)
           : (_settings?.groqBatchSize ?? 45);
 
