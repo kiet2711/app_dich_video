@@ -707,7 +707,7 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     });
     await WakelockPlus.enable();
     await ForegroundServiceManager.start(
-      title: 'CapSub AI - Tạo phụ đề',
+      title: 'Ksub - Tạo phụ đề',
       message: 'Đang chuẩn bị xử lý video...',
       progress: 5,
       maxProgress: 100,
@@ -800,7 +800,7 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         '${outputDir.path}${Platform.pathSeparator}$outputBase.srt',
       );
       final documentFile = File(
-        '${outputDir.path}${Platform.pathSeparator}$outputBase.capsub.json',
+        '${outputDir.path}${Platform.pathSeparator}$outputBase.ksub.json',
       );
 
       final resultDoc = await pipeline.execute(
@@ -1386,7 +1386,7 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   Icon(Icons.movie_rounded, color: accent, size: 26),
                   const SizedBox(width: 10),
                   Text(
-                    'CapSub AI Studio',
+                    'Ksub Studio',
                     style: TextStyle(
                       fontWeight: FontWeight.bold,
                       color: palette.textPrimary,

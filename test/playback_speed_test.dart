@@ -1,4 +1,4 @@
-import 'package:capsub_flutter/data/repository/settings_repository.dart';
+import 'package:ksub/data/repository/settings_repository.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';

@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:capsub_flutter/domain/tts/audio_file_validator.dart';
+import 'package:ksub/domain/tts/audio_file_validator.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

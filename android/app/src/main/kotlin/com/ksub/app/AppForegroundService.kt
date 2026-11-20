@@ -1,4 +1,4 @@
-package com.capcut.capsub_flutter
+package com.ksub.app
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -22,7 +22,7 @@ class AppForegroundService : Service() {
         createNotificationChannel()
         try {
             val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-            wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "CapSub:ForegroundWakeLock").apply {
+            wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Ksub:ForegroundWakeLock").apply {
                 acquire(30 * 60 * 1000L) // Giữ CPU chạy ngầm tối đa 30 phút
             }
         } catch (_: Exception) {
@@ -42,7 +42,7 @@ class AppForegroundService : Service() {
             return START_NOT_STICKY
         }
 
-        val title = intent?.getStringExtra(EXTRA_TITLE) ?: "CapSub AI Studio"
+        val title = intent?.getStringExtra(EXTRA_TITLE) ?: "Ksub"
         val message = intent?.getStringExtra(EXTRA_MESSAGE) ?: "Đang xử lý..."
         val progress = intent?.getIntExtra(EXTRA_PROGRESS, 0) ?: 0
         val maxProgress = intent?.getIntExtra(EXTRA_MAX_PROGRESS, 100) ?: 100
@@ -90,7 +90,7 @@ class AppForegroundService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "Tiến trình chạy nền CapSub",
+                "Tiến trình chạy nền Ksub",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
                 description = "Duy trì tiến trình tạo phụ đề và lồng tiếng khi khóa màn hình"
@@ -130,12 +130,12 @@ class AppForegroundService : Service() {
     }
 
     companion object {
-        const val CHANNEL_ID = "capsub_foreground_channel"
+        const val CHANNEL_ID = "ksub_foreground_channel"
         const val NOTIFICATION_ID = 42018
 
-        const val ACTION_START = "com.capcut.capsub.ACTION_START"
-        const val ACTION_UPDATE = "com.capcut.capsub.ACTION_UPDATE"
-        const val ACTION_STOP = "com.capcut.capsub.ACTION_STOP"
+        const val ACTION_START = "com.ksub.app.ACTION_START"
+        const val ACTION_UPDATE = "com.ksub.app.ACTION_UPDATE"
+        const val ACTION_STOP = "com.ksub.app.ACTION_STOP"
 
         const val EXTRA_TITLE = "extra_title"
         const val EXTRA_MESSAGE = "extra_message"

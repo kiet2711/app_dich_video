@@ -1,8 +1,8 @@
 import 'dart:convert';
 
-import 'package:capsub_flutter/data/repository/settings_repository.dart';
-import 'package:capsub_flutter/domain/media/bilibili_resolver.dart';
-import 'package:capsub_flutter/player/app_player_controller.dart';
+import 'package:ksub/data/repository/settings_repository.dart';
+import 'package:ksub/domain/media/bilibili_resolver.dart';
+import 'package:ksub/player/app_player_controller.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';

@@ -6,7 +6,7 @@ import VideoToolbox
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
-  private let pcmQueue = DispatchQueue(label: "com.capcut.capsub.pcm")
+  private let pcmQueue = DispatchQueue(label: "com.ksub.app.pcm")
   private var pcmSessions: [String: IosPcmStreamSession] = [:]
   private var livePcmPlayer: IosLivePcmPlayer?
   private var iosTtsPool: IosTtsAudioPool?
@@ -44,10 +44,10 @@ import VideoToolbox
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
 
-    guard let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "CapSubMediaPlugin") else {
+    guard let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "KsubMediaPlugin") else {
       return
     }
-    let mediaChannel = FlutterMethodChannel(name: "com.capcut.capsub/media",
+    let mediaChannel = FlutterMethodChannel(name: "com.ksub.app/media",
                                             binaryMessenger: registrar.messenger())
     mediaChannel.setMethodCallHandler { call, result in
       switch call.method {
@@ -135,7 +135,7 @@ import VideoToolbox
       }
     }
 
-    let serviceChannel = FlutterMethodChannel(name: "com.capcut.capsub/foreground_service",
+    let serviceChannel = FlutterMethodChannel(name: "com.ksub.app/foreground_service",
                                               binaryMessenger: registrar.messenger())
     serviceChannel.setMethodCallHandler { call, result in
       switch call.method {
@@ -144,7 +144,7 @@ import VideoToolbox
           result(nil)
           return
         }
-        let title = args["title"] as? String ?? "CapSub AI"
+        let title = args["title"] as? String ?? "Ksub"
         let message = args["message"] as? String ?? ""
         self.showOrUpdateNotification(title: title, body: message)
         result(nil)
@@ -157,7 +157,7 @@ import VideoToolbox
     }
 
     let liveAudioChannel = FlutterMethodChannel(
-      name: "com.capcut.capsub/live_audio",
+      name: "com.ksub.app/live_audio",
       binaryMessenger: registrar.messenger()
     )
     let player = IosLivePcmPlayer(channel: liveAudioChannel)
@@ -214,7 +214,7 @@ import VideoToolbox
     }
 
     let iosTtsChannel = FlutterMethodChannel(
-      name: "com.capcut.capsub/ios_tts_player",
+      name: "com.ksub.app/ios_tts_player",
       binaryMessenger: registrar.messenger()
     )
     let ttsPool = IosTtsAudioPool(channel: iosTtsChannel)
@@ -236,15 +236,15 @@ import VideoToolbox
       content.title = title
       content.body = body
       content.sound = nil
-      let request = UNNotificationRequest(identifier: "CapSubForegroundTask", content: content, trigger: nil)
+      let request = UNNotificationRequest(identifier: "KsubForegroundTask", content: content, trigger: nil)
       center.add(request, withCompletionHandler: nil)
     }
   }
 
   private func clearNotifications() {
     let center = UNUserNotificationCenter.current()
-    center.removeDeliveredNotifications(withIdentifiers: ["CapSubForegroundTask"])
-    center.removePendingNotificationRequests(withIdentifiers: ["CapSubForegroundTask"])
+    center.removeDeliveredNotifications(withIdentifiers: ["KsubForegroundTask"])
+    center.removePendingNotificationRequests(withIdentifiers: ["KsubForegroundTask"])
   }
 
   private func makeMediaUrl(_ path: String) -> URL? {
@@ -271,7 +271,7 @@ import VideoToolbox
         let duration = try await asset.load(.duration)
         let durationMs = Int64((CMTimeGetSeconds(duration) * 1000).rounded())
         guard durationMs > 0 else {
-          throw NSError(domain: "CapSubMedia", code: 1, userInfo: [NSLocalizedDescriptionKey: "Media has no valid duration"])
+          throw NSError(domain: "KsubMedia", code: 1, userInfo: [NSLocalizedDescriptionKey: "Media has no valid duration"])
         }
         self.finish(result, value: durationMs)
       } catch {
@@ -298,14 +298,14 @@ import VideoToolbox
         let assetDuration = try await asset.load(.duration)
         let audioTracks = try await asset.loadTracks(withMediaType: .audio)
         guard let sourceTrack = audioTracks.first else {
-          throw NSError(domain: "CapSubMedia", code: 2, userInfo: [NSLocalizedDescriptionKey: "Không tìm thấy track âm thanh"])
+          throw NSError(domain: "KsubMedia", code: 2, userInfo: [NSLocalizedDescriptionKey: "Không tìm thấy track âm thanh"])
         }
 
         let safeStart = max(0, startMs)
         let startTime = CMTime(value: safeStart, timescale: 1000)
         let remaining = CMTimeSubtract(assetDuration, startTime)
         guard CMTimeCompare(remaining, .zero) > 0 else {
-          throw NSError(domain: "CapSubMedia", code: 3, userInfo: [NSLocalizedDescriptionKey: "Mốc bắt đầu nằm ngoài thời lượng media"])
+          throw NSError(domain: "KsubMedia", code: 3, userInfo: [NSLocalizedDescriptionKey: "Mốc bắt đầu nằm ngoài thời lượng media"])
         }
 
         let requested = requestedDurationMs > 0
@@ -318,7 +318,7 @@ import VideoToolbox
           withMediaType: .audio,
           preferredTrackID: kCMPersistentTrackID_Invalid
         ) else {
-          throw NSError(domain: "CapSubMedia", code: 4, userInfo: [NSLocalizedDescriptionKey: "Không thể tạo audio composition"])
+          throw NSError(domain: "KsubMedia", code: 4, userInfo: [NSLocalizedDescriptionKey: "Không thể tạo audio composition"])
         }
         try compositionTrack.insertTimeRange(
           CMTimeRange(start: startTime, duration: clipDuration),
@@ -338,10 +338,10 @@ import VideoToolbox
           ? AVAssetExportPresetPassthrough
           : AVAssetExportPresetAppleM4A
         guard let exportSession = AVAssetExportSession(asset: composition, presetName: preset) else {
-          throw NSError(domain: "CapSubMedia", code: 5, userInfo: [NSLocalizedDescriptionKey: "Không thể tạo export session"])
+          throw NSError(domain: "KsubMedia", code: 5, userInfo: [NSLocalizedDescriptionKey: "Không thể tạo export session"])
         }
         guard exportSession.supportedFileTypes.contains(.m4a) else {
-          throw NSError(domain: "CapSubMedia", code: 6, userInfo: [NSLocalizedDescriptionKey: "Codec âm thanh không hỗ trợ xuất M4A"])
+          throw NSError(domain: "KsubMedia", code: 6, userInfo: [NSLocalizedDescriptionKey: "Codec âm thanh không hỗ trợ xuất M4A"])
         }
 
         exportSession.outputURL = outputUrl
@@ -356,7 +356,7 @@ import VideoToolbox
 
         guard exportSession.status == .completed else {
           throw exportSession.error ?? NSError(
-            domain: "CapSubMedia",
+            domain: "KsubMedia",
             code: 7,
             userInfo: [NSLocalizedDescriptionKey: "Xuất audio thất bại"]
           )
@@ -505,7 +505,7 @@ private final class IosPcmStreamSession: @unchecked Sendable {
       let duration = try await asset.load(.duration)
       let tracks = try await asset.loadTracks(withMediaType: .audio)
       guard let track = tracks.first else {
-        throw NSError(domain: "CapSubMedia", code: 2, userInfo: [NSLocalizedDescriptionKey: "Không tìm thấy track âm thanh"])
+        throw NSError(domain: "KsubMedia", code: 2, userInfo: [NSLocalizedDescriptionKey: "Không tìm thấy track âm thanh"])
       }
       let secs = CMTimeGetSeconds(duration)
       let durMs = secs.isFinite && secs > 0 ? Int64((secs * 1000).rounded()) : 0
@@ -614,11 +614,11 @@ private final class IosPcmStreamSession: @unchecked Sendable {
         let output = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: Self.pcmSettings)
         output.alwaysCopiesSampleData = false
         guard reader.canAdd(output) else {
-          throw NSError(domain: "CapSubMedia", code: 8, userInfo: [NSLocalizedDescriptionKey: "Không thể đọc track âm thanh"])
+          throw NSError(domain: "KsubMedia", code: 8, userInfo: [NSLocalizedDescriptionKey: "Không thể đọc track âm thanh"])
         }
         reader.add(output)
         guard reader.startReading() else {
-          throw reader.error ?? NSError(domain: "CapSubMedia", code: 9, userInfo: [NSLocalizedDescriptionKey: "AVAssetReader startReading thất bại"])
+          throw reader.error ?? NSError(domain: "KsubMedia", code: 9, userInfo: [NSLocalizedDescriptionKey: "AVAssetReader startReading thất bại"])
         }
         fileReader = reader
         fileOutput = output
@@ -689,7 +689,7 @@ private final class IosPcmStreamSession: @unchecked Sendable {
 
     let composition = AVMutableComposition()
     guard let compTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
-      throw NSError(domain: "CapSubMedia", code: 4, userInfo: [NSLocalizedDescriptionKey: "Không thể tạo audio composition"])
+      throw NSError(domain: "KsubMedia", code: 4, userInfo: [NSLocalizedDescriptionKey: "Không thể tạo audio composition"])
     }
     let timeRange = CMTimeRange(
       start: CMTime(value: winStart, timescale: 1000),
@@ -698,11 +698,11 @@ private final class IosPcmStreamSession: @unchecked Sendable {
     try compTrack.insertTimeRange(timeRange, of: audioTrack, at: .zero)
 
     let tmpUrl = FileManager.default.temporaryDirectory
-      .appendingPathComponent("capsub_pcm_\(UUID().uuidString).m4a")
+      .appendingPathComponent("ksub_pcm_\(UUID().uuidString).m4a")
     defer { try? FileManager.default.removeItem(at: tmpUrl) }
 
     guard let exportSession = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetAppleM4A) else {
-      throw NSError(domain: "CapSubMedia", code: 5, userInfo: [NSLocalizedDescriptionKey: "Không thể tạo export session"])
+      throw NSError(domain: "KsubMedia", code: 5, userInfo: [NSLocalizedDescriptionKey: "Không thể tạo export session"])
     }
     exportSession.outputURL = tmpUrl
     exportSession.outputFileType = .m4a
@@ -714,7 +714,7 @@ private final class IosPcmStreamSession: @unchecked Sendable {
       }
     }
     guard exportSession.status == .completed else {
-      throw exportSession.error ?? NSError(domain: "CapSubMedia", code: 7, userInfo: [NSLocalizedDescriptionKey: "Xuất đoạn PCM thất bại"])
+      throw exportSession.error ?? NSError(domain: "KsubMedia", code: 7, userInfo: [NSLocalizedDescriptionKey: "Xuất đoạn PCM thất bại"])
     }
 
     let localAsset = AVURLAsset(url: tmpUrl)
@@ -726,7 +726,7 @@ private final class IosPcmStreamSession: @unchecked Sendable {
     let reader = try AVAssetReader(asset: localAsset)
     let output = AVAssetReaderTrackOutput(track: localTrack, outputSettings: Self.pcmSettings)
     guard reader.canAdd(output) else {
-      throw NSError(domain: "CapSubMedia", code: 8, userInfo: [NSLocalizedDescriptionKey: "Không đọc được M4A tạm"])
+      throw NSError(domain: "KsubMedia", code: 8, userInfo: [NSLocalizedDescriptionKey: "Không đọc được M4A tạm"])
     }
     reader.add(output)
     reader.startReading()
@@ -773,7 +773,7 @@ private final class IosPcmStreamSession: @unchecked Sendable {
 }
 
 private final class IosLivePcmPlayer: @unchecked Sendable {
-  private let queue = DispatchQueue(label: "com.capcut.capsub.live_audio")
+  private let queue = DispatchQueue(label: "com.ksub.app.live_audio")
   private let channel: FlutterMethodChannel
   private var engine: AVAudioEngine?
   private var playerNode: AVAudioPlayerNode?
@@ -1286,7 +1286,7 @@ private final class IosTtsAudioPlayer {
 
   private let playerId: Int
   private let onCompleted: (Int) -> Void
-  private let queue = DispatchQueue(label: "com.capcut.capsub.ios_tts")
+  private let queue = DispatchQueue(label: "com.ksub.app.ios_tts")
 
   private var engine: AVAudioEngine?
   private var playerNode: AVAudioPlayerNode?

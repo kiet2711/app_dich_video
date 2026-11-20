@@ -148,7 +148,7 @@ class _JustAudioTtsPlayer implements _TtsPlayerBackend {
 
 class _IosChannelTtsPlayer implements _TtsPlayerBackend {
   static const MethodChannel _channel = MethodChannel(
-    'com.capcut.capsub/ios_tts_player',
+    'com.ksub.app/ios_tts_player',
   );
   static const List<double> _eqBandsHz = [60.0, 230.0, 910.0, 3600.0, 14000.0];
   static int _nextPlayerId = 1;

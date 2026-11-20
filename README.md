@@ -1,4 +1,4 @@
-# 🎬 CapSub Flutter
+# 🎬 Ksub
 
 Ứng dụng xem phim ngắn và video nước ngoài (Hồng Quả, Bilibili, video nội bộ) tích hợp dịch phụ đề và lồng tiếng AI tiếng Việt theo thời gian thực trên di động.
 

@@ -7,13 +7,13 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:capsub_flutter/data/repository/settings_repository.dart';
-import 'package:capsub_flutter/domain/ai/ai_model_registry.dart';
-import 'package:capsub_flutter/domain/ai/live/gemini_live_client.dart';
-import 'package:capsub_flutter/domain/ai/live/live_audio_io.dart';
-import 'package:capsub_flutter/domain/ai/live/live_pcm_stream_extractor.dart';
-import 'package:capsub_flutter/domain/ai/live/live_stream_translator.dart';
-import 'package:capsub_flutter/ui/player/live_translate_sheet.dart';
+import 'package:ksub/data/repository/settings_repository.dart';
+import 'package:ksub/domain/ai/ai_model_registry.dart';
+import 'package:ksub/domain/ai/live/gemini_live_client.dart';
+import 'package:ksub/domain/ai/live/live_audio_io.dart';
+import 'package:ksub/domain/ai/live/live_pcm_stream_extractor.dart';
+import 'package:ksub/domain/ai/live/live_stream_translator.dart';
+import 'package:ksub/ui/player/live_translate_sheet.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -532,7 +532,7 @@ void main() {
     test(
       'flushes short turn tail on flushTurn and falls back gracefully on MissingPluginException',
       () async {
-        const channel = MethodChannel('capsub/missing_live_audio_test');
+        const channel = MethodChannel('ksub/missing_live_audio_test');
         final output = LivePcmAudioOutput(
           nativeChannel: channel,
           enableNativeStream: true,

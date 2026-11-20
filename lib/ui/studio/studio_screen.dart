@@ -104,7 +104,7 @@ class StudioScreenState extends State<StudioScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'CapSub Studio',
+                          'Ksub Studio',
                           style: TextStyle(
                             color: palette.textPrimary,
                             fontSize: 16.5,

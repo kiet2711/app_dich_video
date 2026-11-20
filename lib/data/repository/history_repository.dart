@@ -12,7 +12,7 @@ import '../../domain/media/video_cache_manager.dart';
 import '../../domain/tts/tts_cache_helper.dart';
 
 class HistoryRepository {
-  static const String _key = 'capsub_history';
+  static const String _key = 'ksub_history';
   static final ValueNotifier<List<HistoryItem>> historyNotifier =
       ValueNotifier<List<HistoryItem>>([]);
   final SharedPreferences prefs;
@@ -250,7 +250,7 @@ class HistoryRepository {
     final srtFile = existing != null
         ? File(await resolvePath(existing.srtPath))
         : File('${savedSubtitlesDir.path}/sub_$id.srt');
-    final docFile = File('${savedSubtitlesDir.path}/sub_$id.capsub.json');
+    final docFile = File('${savedSubtitlesDir.path}/sub_$id.ksub.json');
 
     await srtFile.writeAsString(document.toSrtString(), flush: true);
     await docFile.writeAsString(jsonEncode(document.toJson()), flush: true);
@@ -374,16 +374,16 @@ class HistoryRepository {
     } else if (RegExp(r'\.[^./\\]+$').hasMatch(resolvedSrtPath)) {
       documentPath = resolvedSrtPath.replaceFirst(
         RegExp(r'\.[^./\\]+$'),
-        '.capsub.json',
+        '.ksub.json',
       );
     } else {
-      documentPath = '$resolvedSrtPath.capsub.json';
+      documentPath = '$resolvedSrtPath.ksub.json';
     }
     final documentFile = File(documentPath);
     await documentFile.parent.create(recursive: true);
 
     final originalSrtPath = resolvedSrtPath.replaceFirst(RegExp(r'\.srt$', caseSensitive: false), '.original.srt');
-    final originalDocPath = documentPath.replaceFirst(RegExp(r'\.capsub\.json$', caseSensitive: false), '.original.capsub.json');
+    final originalDocPath = documentPath.replaceFirst(RegExp(r'\.ksub\.json$', caseSensitive: false), '.original.ksub.json');
     final originalSrtFile = File(originalSrtPath);
     final originalDocFile = File(originalDocPath);
 
@@ -444,15 +444,15 @@ class HistoryRepository {
     } else if (RegExp(r'\.[^./\\]+$').hasMatch(resolvedSrtPath)) {
       documentPath = resolvedSrtPath.replaceFirst(
         RegExp(r'\.[^./\\]+$'),
-        '.capsub.json',
+        '.ksub.json',
       );
     } else {
-      documentPath = '$resolvedSrtPath.capsub.json';
+      documentPath = '$resolvedSrtPath.ksub.json';
     }
     final documentFile = File(documentPath);
 
     final originalSrtPath = resolvedSrtPath.replaceFirst(RegExp(r'\.srt$', caseSensitive: false), '.original.srt');
-    final originalDocPath = documentPath.replaceFirst(RegExp(r'\.capsub\.json$', caseSensitive: false), '.original.capsub.json');
+    final originalDocPath = documentPath.replaceFirst(RegExp(r'\.ksub\.json$', caseSensitive: false), '.original.ksub.json');
     final originalSrtFile = File(originalSrtPath);
     final originalDocFile = File(originalDocPath);
 
@@ -855,23 +855,23 @@ class HistoryRepository {
       }
     } catch (_) {}
 
-    // 3. Xóa file tài liệu cấu trúc .capsub.json và các file phái sinh
+    // 3. Xóa file tài liệu cấu trúc .ksub.json và các file phái sinh
     if (item.documentPath != null && item.documentPath!.isNotEmpty) {
       final resolvedDoc = await resolvePath(item.documentPath!);
       await _deleteIfExists(resolvedDoc);
-      if (resolvedDoc.endsWith('.capsub.json')) {
+      if (resolvedDoc.endsWith('.ksub.json')) {
         final origDoc = resolvedDoc.replaceFirst(
-          RegExp(r'\.capsub\.json$', caseSensitive: false),
-          '.original.capsub.json',
+          RegExp(r'\.ksub\.json$', caseSensitive: false),
+          '.original.ksub.json',
         );
         await _deleteIfExists(origDoc);
       }
     }
-    // Dọn thêm file phụ đề .capsub.json sinh tự động theo resolvedSrt hoặc sub_$id nếu có
+    // Dọn thêm file phụ đề .ksub.json sinh tự động theo resolvedSrt hoặc sub_$id nếu có
     if (resolvedSrt.isNotEmpty) {
       final docFromSrt = resolvedSrt.replaceFirst(
         RegExp(r'\.srt$', caseSensitive: false),
-        '.capsub.json',
+        '.ksub.json',
       );
       if (docFromSrt != resolvedSrt) {
         await _deleteIfExists(docFromSrt);
@@ -880,7 +880,7 @@ class HistoryRepository {
     try {
       final docs = await getApplicationDocumentsDirectory();
       final defaultDoc =
-          '${docs.path}${Platform.pathSeparator}saved_subtitles${Platform.pathSeparator}sub_${item.id}.capsub.json';
+          '${docs.path}${Platform.pathSeparator}saved_subtitles${Platform.pathSeparator}sub_${item.id}.ksub.json';
       await _deleteIfExists(defaultDoc);
     } catch (_) {}
 
@@ -914,7 +914,7 @@ class HistoryRepository {
   }
 
   /// Tự động dọn dẹp các tập phim Hồng Quả cũ đã xem cách 3 tập (theo cài đặt hongguoAutoDeleteWatched)
-  /// Xoá toàn bộ: Video cache, file âm thanh TTS lồng tiếng, phụ đề .srt, .capsub.json và bản ghi lịch sử
+  /// Xoá toàn bộ: Video cache, file âm thanh TTS lồng tiếng, phụ đề .srt, .ksub.json và bản ghi lịch sử
   Future<int> autoDeleteWatchedHongguoEpisodes({
     required String seriesId,
     required int maxEpisodeIndex,

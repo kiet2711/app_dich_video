@@ -1,14 +1,14 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:capsub_flutter/data/api/gemini_translator.dart';
-import 'package:capsub_flutter/data/model/subtitle_document.dart';
-import 'package:capsub_flutter/data/model/subtitle_item.dart';
-import 'package:capsub_flutter/data/repository/settings_repository.dart';
-import 'package:capsub_flutter/domain/ai/ai_model_registry.dart';
-import 'package:capsub_flutter/domain/ai/smart_ai_translator.dart';
-import 'package:capsub_flutter/ui/settings/settings_screen.dart';
-import 'package:capsub_flutter/ui/theme/app_theme.dart';
+import 'package:ksub/data/api/gemini_translator.dart';
+import 'package:ksub/data/model/subtitle_document.dart';
+import 'package:ksub/data/model/subtitle_item.dart';
+import 'package:ksub/data/repository/settings_repository.dart';
+import 'package:ksub/domain/ai/ai_model_registry.dart';
+import 'package:ksub/domain/ai/smart_ai_translator.dart';
+import 'package:ksub/ui/settings/settings_screen.dart';
+import 'package:ksub/ui/theme/app_theme.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -42,7 +42,7 @@ void main() {
   late Directory tempDir;
 
   setUp(() async {
-    tempDir = await Directory.systemTemp.createTemp('capsub_gemma_test_');
+    tempDir = await Directory.systemTemp.createTemp('ksub_gemma_test_');
     SharedPreferences.setMockInitialValues({});
     AiModelRegistry.updateCustomModels(geminiModels: const [], groqModels: const []);
 

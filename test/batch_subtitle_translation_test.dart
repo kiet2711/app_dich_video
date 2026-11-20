@@ -1,9 +1,9 @@
 import 'dart:io';
-import 'package:capsub_flutter/data/api/gemini_translator.dart';
-import 'package:capsub_flutter/data/model/subtitle_document.dart';
-import 'package:capsub_flutter/data/model/subtitle_item.dart';
-import 'package:capsub_flutter/domain/ai/smart_ai_translator.dart';
-import 'package:capsub_flutter/domain/ai/translation_checkpoint_manager.dart';
+import 'package:ksub/data/api/gemini_translator.dart';
+import 'package:ksub/data/model/subtitle_document.dart';
+import 'package:ksub/data/model/subtitle_item.dart';
+import 'package:ksub/domain/ai/smart_ai_translator.dart';
+import 'package:ksub/domain/ai/translation_checkpoint_manager.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';

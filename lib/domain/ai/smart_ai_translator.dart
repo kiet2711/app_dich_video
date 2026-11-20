@@ -2,12 +2,12 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:dio/dio.dart';
-import 'package:capsub_flutter/data/api/gemini_translator.dart';
-import 'package:capsub_flutter/data/api/groq_translator.dart';
-import 'package:capsub_flutter/data/model/subtitle_document.dart';
-import 'package:capsub_flutter/data/model/subtitle_item.dart';
-import 'package:capsub_flutter/domain/ai/ai_model_registry.dart';
-import 'package:capsub_flutter/domain/ai/translation_checkpoint_manager.dart';
+import 'package:ksub/data/api/gemini_translator.dart';
+import 'package:ksub/data/api/groq_translator.dart';
+import 'package:ksub/data/model/subtitle_document.dart';
+import 'package:ksub/data/model/subtitle_item.dart';
+import 'package:ksub/domain/ai/ai_model_registry.dart';
+import 'package:ksub/domain/ai/translation_checkpoint_manager.dart';
 
 /// Mục tiêu điều phối gồm: Nhà cung cấp, API Key và Model ID
 class TranslationTarget {

@@ -1,4 +1,4 @@
-package com.capcut.capsub_flutter
+package com.ksub.app
 
 import android.app.Activity
 import android.app.PendingIntent
@@ -41,10 +41,10 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 
 class MainActivity : FlutterActivity() {
-    private val CHANNEL = "com.capcut.capsub/media"
-    private val FOREGROUND_CHANNEL = "com.capcut.capsub/foreground_service"
-    private val PIP_CHANNEL = "com.capcut.capsub/pip"
-    private val LIVE_AUDIO_CHANNEL = "com.capcut.capsub/live_audio"
+    private val CHANNEL = "com.ksub.app/media"
+    private val FOREGROUND_CHANNEL = "com.ksub.app/foreground_service"
+    private val PIP_CHANNEL = "com.ksub.app/pip"
+    private val LIVE_AUDIO_CHANNEL = "com.ksub.app/live_audio"
     private val mediaExecutor = Executors.newSingleThreadExecutor()
     private val pcmExecutor = Executors.newCachedThreadPool()
     private val pcmReaders = ConcurrentHashMap<String, PcmStreamReader>()
@@ -55,9 +55,9 @@ class MainActivity : FlutterActivity() {
 
     companion object {
         private const val REQUEST_PICK_MEDIA = 42017
-        private const val ACTION_PIP_PLAY_PAUSE = "com.capcut.capsub.PIP_PLAY_PAUSE"
-        private const val ACTION_PIP_REWIND = "com.capcut.capsub.PIP_REWIND"
-        private const val ACTION_PIP_FORWARD = "com.capcut.capsub.PIP_FORWARD"
+        private const val ACTION_PIP_PLAY_PAUSE = "com.ksub.app.PIP_PLAY_PAUSE"
+        private const val ACTION_PIP_REWIND = "com.ksub.app.PIP_REWIND"
+        private const val ACTION_PIP_FORWARD = "com.ksub.app.PIP_FORWARD"
         private const val REQUEST_CODE_PLAY_PAUSE = 101
         private const val REQUEST_CODE_REWIND = 102
         private const val REQUEST_CODE_FORWARD = 103
@@ -332,7 +332,7 @@ class MainActivity : FlutterActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, FOREGROUND_CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
                 "start" -> {
-                    val title = call.argument<String>("title") ?: "CapSub AI Studio"
+                    val title = call.argument<String>("title") ?: "Ksub"
                     val message = call.argument<String>("message") ?: "Đang xử lý..."
                     val progress = call.argument<Int>("progress") ?: 0
                     val maxProgress = call.argument<Int>("maxProgress") ?: 100
@@ -1273,7 +1273,7 @@ class MainActivity : FlutterActivity() {
 
         private val writerThread = Thread(
             { runWriterLoop() },
-            "CapSubLivePcmPlayer",
+            "KsubLivePcmPlayer",
         ).apply {
             isDaemon = true
             start()

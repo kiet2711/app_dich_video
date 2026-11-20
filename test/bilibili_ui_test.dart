@@ -1,8 +1,8 @@
-import 'package:capsub_flutter/data/repository/settings_repository.dart';
-import 'package:capsub_flutter/domain/media/bilibili_resolver.dart';
-import 'package:capsub_flutter/ui/bilibili/bilibili_account_sheet.dart';
-import 'package:capsub_flutter/ui/bilibili/bilibili_screen.dart';
-import 'package:capsub_flutter/ui/bilibili/bilibili_settings_sheet.dart';
+import 'package:ksub/data/repository/settings_repository.dart';
+import 'package:ksub/domain/media/bilibili_resolver.dart';
+import 'package:ksub/ui/bilibili/bilibili_account_sheet.dart';
+import 'package:ksub/ui/bilibili/bilibili_screen.dart';
+import 'package:ksub/ui/bilibili/bilibili_settings_sheet.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';

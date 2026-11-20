@@ -1,4 +1,4 @@
-import 'package:capsub_flutter/domain/ai/ai_model_registry.dart';
+import 'package:ksub/domain/ai/ai_model_registry.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

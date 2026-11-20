@@ -179,7 +179,7 @@ class LivePcmAudioOutput {
   static const int _sampleRate = 24000;
   static const int _nativeStartCushionBytes = 5760; // ~120ms ở 24kHz 16-bit mono
   static const Duration _nativeStartFlushDelay = Duration(milliseconds: 110);
-  static const String nativeChannelName = 'com.capcut.capsub/live_audio';
+  static const String nativeChannelName = 'com.ksub.app/live_audio';
 
   final int firstSegmentBytes;
   final int normalSegmentBytes;

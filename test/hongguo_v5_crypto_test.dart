@@ -5,11 +5,11 @@ import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:capsub_flutter/domain/media/hongguo/hongguo_device_service.dart';
-import 'package:capsub_flutter/domain/media/hongguo/hongguo_medusa_v5.dart';
-import 'package:capsub_flutter/domain/media/hongguo/hongguo_sm3.dart';
-import 'package:capsub_flutter/domain/media/hongguo/hongguo_v5_constants.dart';
-import 'package:capsub_flutter/domain/media/hongguo/hongguo_v5_signer.dart';
+import 'package:ksub/domain/media/hongguo/hongguo_device_service.dart';
+import 'package:ksub/domain/media/hongguo/hongguo_medusa_v5.dart';
+import 'package:ksub/domain/media/hongguo/hongguo_sm3.dart';
+import 'package:ksub/domain/media/hongguo/hongguo_v5_constants.dart';
+import 'package:ksub/domain/media/hongguo/hongguo_v5_signer.dart';
 
 Uint8List _hexToBytes(String hex) {
   final clean = hex.replaceAll(RegExp(r'\s+'), '');

@@ -7,19 +7,19 @@ import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:capsub_flutter/data/model/history_item.dart';
-import 'package:capsub_flutter/data/model/subtitle_document.dart';
-import 'package:capsub_flutter/data/model/subtitle_item.dart';
-import 'package:capsub_flutter/data/model/watch_later_item.dart';
-import 'package:capsub_flutter/domain/ai/live/gemini_live_client.dart';
-import 'package:capsub_flutter/domain/ai/live/live_audio_io.dart';
-import 'package:capsub_flutter/domain/ai/live/live_reply_title_sync.dart';
-import 'package:capsub_flutter/domain/media/bilibili/bilibili_assistant_engine.dart';
-import 'package:capsub_flutter/domain/media/bilibili/bilibili_srt_service.dart';
-import 'package:capsub_flutter/domain/media/bilibili/bilibili_taste_service.dart';
-import 'package:capsub_flutter/domain/media/bilibili_resolver.dart';
-import 'package:capsub_flutter/domain/media/chinese_title_suggestion.dart';
-import 'package:capsub_flutter/ui/bilibili/bilibili_assistant_controller.dart';
+import 'package:ksub/data/model/history_item.dart';
+import 'package:ksub/data/model/subtitle_document.dart';
+import 'package:ksub/data/model/subtitle_item.dart';
+import 'package:ksub/data/model/watch_later_item.dart';
+import 'package:ksub/domain/ai/live/gemini_live_client.dart';
+import 'package:ksub/domain/ai/live/live_audio_io.dart';
+import 'package:ksub/domain/ai/live/live_reply_title_sync.dart';
+import 'package:ksub/domain/media/bilibili/bilibili_assistant_engine.dart';
+import 'package:ksub/domain/media/bilibili/bilibili_srt_service.dart';
+import 'package:ksub/domain/media/bilibili/bilibili_taste_service.dart';
+import 'package:ksub/domain/media/bilibili_resolver.dart';
+import 'package:ksub/domain/media/chinese_title_suggestion.dart';
+import 'package:ksub/ui/bilibili/bilibili_assistant_controller.dart';
 
 typedef _MockResponseBuilder =
     Map<String, dynamic> Function(RequestOptions options);

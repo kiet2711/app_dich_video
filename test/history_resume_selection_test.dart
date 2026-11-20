@@ -1,15 +1,15 @@
 import 'dart:io';
 
-import 'package:capsub_flutter/data/model/history_item.dart';
-import 'package:capsub_flutter/data/model/subtitle_document.dart';
-import 'package:capsub_flutter/data/model/subtitle_item.dart';
-import 'package:capsub_flutter/data/model/watch_later_item.dart';
-import 'package:capsub_flutter/data/repository/history_repository.dart';
-import 'package:capsub_flutter/data/repository/watch_later_repository.dart';
-import 'package:capsub_flutter/domain/media/hongguo_prefetch_manager.dart';
-import 'package:capsub_flutter/domain/media/hongguo_resolver.dart';
-import 'package:capsub_flutter/ui/history/history_screen.dart';
-import 'package:capsub_flutter/ui/theme/app_theme.dart';
+import 'package:ksub/data/model/history_item.dart';
+import 'package:ksub/data/model/subtitle_document.dart';
+import 'package:ksub/data/model/subtitle_item.dart';
+import 'package:ksub/data/model/watch_later_item.dart';
+import 'package:ksub/data/repository/history_repository.dart';
+import 'package:ksub/data/repository/watch_later_repository.dart';
+import 'package:ksub/domain/media/hongguo_prefetch_manager.dart';
+import 'package:ksub/domain/media/hongguo_resolver.dart';
+import 'package:ksub/ui/history/history_screen.dart';
+import 'package:ksub/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';

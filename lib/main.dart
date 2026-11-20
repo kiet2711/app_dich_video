@@ -40,7 +40,7 @@ void main() {
   SystemChrome.setSystemUIOverlayStyle(
     AppThemeController.instance.systemOverlayStyle,
   );
-  runApp(const CapSubApp());
+  runApp(const KsubApp());
 }
 
 void dismissAppKeyboard() {
@@ -151,21 +151,21 @@ class _GlobalKeyboardCoordinatorState extends State<_GlobalKeyboardCoordinator>
   }
 }
 
-class CapSubApp extends StatefulWidget {
+class KsubApp extends StatefulWidget {
   final bool skipSplash;
   final Future<void> Function()? onInitialize;
 
-  const CapSubApp({
+  const KsubApp({
     super.key,
     this.skipSplash = false,
     this.onInitialize,
   });
 
   @override
-  State<CapSubApp> createState() => _CapSubAppState();
+  State<KsubApp> createState() => _KsubAppState();
 }
 
-class _CapSubAppState extends State<CapSubApp> {
+class _KsubAppState extends State<KsubApp> {
   final NavigatorObserver _keyboardNavigatorObserver =
       _KeyboardDismissNavigatorObserver();
 
@@ -176,7 +176,7 @@ class _CapSubAppState extends State<CapSubApp> {
       builder: (context, _) {
         final palette = AppThemeController.instance.palette;
         return MaterialApp(
-          title: 'CapSub AI Studio',
+          title: 'Ksub',
           debugShowCheckedModeBanner: false,
           theme: buildAppTheme(palette),
           navigatorObservers: [_keyboardNavigatorObserver],
@@ -291,7 +291,7 @@ class _MainNavigationState extends State<MainNavigation> {
             }
             if (Platform.isAndroid && !MediaStorage.shouldSuppressBackMinimize) {
               dismissAppKeyboard();
-              const MethodChannel('com.capcut.capsub/media')
+              const MethodChannel('com.ksub.app/media')
                   .invokeMethod('moveToBack');
             }
           },

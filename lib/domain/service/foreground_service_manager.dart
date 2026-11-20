@@ -4,7 +4,7 @@ import 'package:flutter/services.dart';
 
 class ForegroundServiceManager {
   static const MethodChannel _channel = MethodChannel(
-    'com.capcut.capsub/foreground_service',
+    'com.ksub.app/foreground_service',
   );
 
   /// Khởi chạy Foreground Service trên Android với thanh thông báo tiến trình và Partial WakeLock.

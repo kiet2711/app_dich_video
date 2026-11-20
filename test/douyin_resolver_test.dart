@@ -1,8 +1,8 @@
 import 'dart:convert';
 
-import 'package:capsub_flutter/domain/media/douyin_resolver.dart';
-import 'package:capsub_flutter/domain/media/network_header_helper.dart';
-import 'package:capsub_flutter/domain/media/video_cache_manager.dart';
+import 'package:ksub/domain/media/douyin_resolver.dart';
+import 'package:ksub/domain/media/network_header_helper.dart';
+import 'package:ksub/domain/media/video_cache_manager.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 

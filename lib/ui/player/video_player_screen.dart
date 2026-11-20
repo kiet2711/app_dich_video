@@ -5768,7 +5768,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       if (allowBackground && isPlaying) {
         final displayTitle = _currentTitle.isNotEmpty
             ? _currentTitle
-            : (widget.title ?? 'CapSub Video');
+            : (widget.title ?? 'Ksub Video');
         final durationSec = _controller?.value.duration.inSeconds ?? 100;
         final currentSec = _currentPosMs ~/ 1000;
         ForegroundServiceManager.start(
@@ -6517,7 +6517,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       final currentSec = positionMs ~/ 1000;
       final displayTitle = _currentTitle.isNotEmpty
           ? _currentTitle
-          : (widget.title ?? 'CapSub Video');
+          : (widget.title ?? 'Ksub Video');
       unawaited(
         ForegroundServiceManager.update(
           title: displayTitle,

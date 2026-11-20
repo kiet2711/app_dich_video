@@ -3,12 +3,12 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:capsub_flutter/data/model/watch_later_item.dart';
-import 'package:capsub_flutter/data/repository/watch_later_repository.dart';
-import 'package:capsub_flutter/domain/media/hongguo/hongguo_cloud_account_service.dart';
-import 'package:capsub_flutter/domain/media/hongguo/hongguo_discovery_service.dart';
-import 'package:capsub_flutter/domain/media/hongguo/hongguo_similar_engine.dart';
-import 'package:capsub_flutter/domain/media/hongguo_resolver.dart';
+import 'package:ksub/data/model/watch_later_item.dart';
+import 'package:ksub/data/repository/watch_later_repository.dart';
+import 'package:ksub/domain/media/hongguo/hongguo_cloud_account_service.dart';
+import 'package:ksub/domain/media/hongguo/hongguo_discovery_service.dart';
+import 'package:ksub/domain/media/hongguo/hongguo_similar_engine.dart';
+import 'package:ksub/domain/media/hongguo_resolver.dart';
 
 class _FakeDiscoveryService extends HongguoDiscoveryService {
   _FakeDiscoveryService() : super.forSubclass();

@@ -1,8 +1,8 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:capsub_flutter/data/repository/settings_repository.dart';
-import 'package:capsub_flutter/domain/ai/ai_model_registry.dart';
+import 'package:ksub/data/repository/settings_repository.dart';
+import 'package:ksub/domain/ai/ai_model_registry.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

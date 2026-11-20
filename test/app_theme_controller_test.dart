@@ -1,9 +1,9 @@
 import 'dart:io';
 
-import 'package:capsub_flutter/data/repository/settings_repository.dart';
-import 'package:capsub_flutter/main.dart';
-import 'package:capsub_flutter/ui/settings/settings_screen.dart';
-import 'package:capsub_flutter/ui/theme/app_theme.dart';
+import 'package:ksub/data/repository/settings_repository.dart';
+import 'package:ksub/main.dart';
+import 'package:ksub/ui/settings/settings_screen.dart';
+import 'package:ksub/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -20,7 +20,7 @@ void main() {
   late Directory tempDir;
 
   setUp(() async {
-    tempDir = await Directory.systemTemp.createTemp('capsub_theme_test_');
+    tempDir = await Directory.systemTemp.createTemp('ksub_theme_test_');
     SharedPreferences.setMockInitialValues({});
     AppThemeController.instance.resetForTesting();
 
@@ -197,6 +197,73 @@ void main() {
         await tester.tap(find.byIcon(Icons.auto_awesome_rounded).last);
         await tester.pump(const Duration(milliseconds: 300));
         expect(find.text('Studio'), findsOneWidget);
+
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'SettingsScreen displays GitHub author name and repo link and copies cleanly',
+      (tester) async {
+        String? copiedText;
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+              if (call.method == 'Clipboard.setData') {
+                final args = call.arguments as Map<dynamic, dynamic>?;
+                copiedText = args?['text'] as String?;
+              } else if (call.method == 'Clipboard.getData') {
+                return <String, dynamic>{'text': copiedText ?? ''};
+              }
+              return null;
+            });
+        addTearDown(() {
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+              .setMockMethodCallHandler(SystemChannels.platform, null);
+        });
+
+        await tester.binding.setSurfaceSize(const Size(360, 800));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+
+        await tester.pumpWidget(
+          ListenableBuilder(
+            listenable: AppThemeController.instance,
+            builder: (_, _) => MaterialApp(
+              theme: buildAppTheme(),
+              home: const SettingsScreen(),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final verticalScrollable = find.byType(Scrollable).first;
+        await tester.scrollUntilVisible(
+          find.text('https://github.com/kiet2711/app_dich_video'),
+          250,
+          scrollable: verticalScrollable,
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('kiet2711'), findsOneWidget);
+        expect(
+          find.text('https://github.com/kiet2711/app_dich_video'),
+          findsOneWidget,
+        );
+        expect(find.text('Sao chép link Repo'), findsNothing);
+        expect(find.text('Chia sẻ'), findsNothing);
+
+        await tester.ensureVisible(find.text('kiet2711'));
+        await tester.tap(find.text('kiet2711'));
+        await tester.pump();
+        expect(copiedText, 'kiet2711');
+
+        await tester.ensureVisible(
+          find.text('https://github.com/kiet2711/app_dich_video'),
+        );
+        await tester.tap(
+          find.text('https://github.com/kiet2711/app_dich_video'),
+        );
+        await tester.pump();
+        expect(copiedText, 'https://github.com/kiet2711/app_dich_video');
 
         expect(tester.takeException(), isNull);
       },

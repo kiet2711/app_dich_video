@@ -4,7 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../model/watch_later_item.dart';
 
 class WatchLaterRepository {
-  static const String _key = 'capsub_watch_later';
+  static const String _key = 'ksub_watch_later';
   static final ValueNotifier<List<WatchLaterItem>> watchLaterNotifier =
       ValueNotifier<List<WatchLaterItem>>([]);
 

@@ -7,8 +7,8 @@ import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pointycastle/export.dart';
 
-import 'package:capsub_flutter/domain/media/hongguo/hongguo_remote_video.dart';
-import 'package:capsub_flutter/domain/media/hongguo_cenc_decryptor.dart';
+import 'package:ksub/domain/media/hongguo/hongguo_remote_video.dart';
+import 'package:ksub/domain/media/hongguo_cenc_decryptor.dart';
 
 Uint8List _box(String type, List<int> payload) {
   final size = 8 + payload.length;

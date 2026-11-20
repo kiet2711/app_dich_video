@@ -2,9 +2,9 @@
 
 import 'dart:io';
 
-import 'package:capsub_flutter/data/api/capcut_stt_client.dart';
-import 'package:capsub_flutter/data/api/capcut_vod_uploader.dart';
-import 'package:capsub_flutter/data/model/device_config.dart';
+import 'package:ksub/data/api/capcut_stt_client.dart';
+import 'package:ksub/data/api/capcut_vod_uploader.dart';
+import 'package:ksub/data/model/device_config.dart';
 
 void main(List<String> args) async {
   if (args.isEmpty) {

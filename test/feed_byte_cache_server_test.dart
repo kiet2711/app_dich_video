@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:capsub_flutter/domain/media/hongguo/feed_byte_cache_server.dart';
+import 'package:ksub/domain/media/hongguo/feed_byte_cache_server.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 

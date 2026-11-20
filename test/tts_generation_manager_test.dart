@@ -1,5 +1,5 @@
-import 'package:capsub_flutter/data/model/subtitle_item.dart';
-import 'package:capsub_flutter/domain/tts/tts_generation_manager.dart';
+import 'package:ksub/data/model/subtitle_item.dart';
+import 'package:ksub/domain/tts/tts_generation_manager.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

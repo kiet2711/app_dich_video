@@ -297,7 +297,7 @@ class StorageCleanerService {
                 displayName: name,
                 description: isSrt
                     ? 'Tệp phụ đề SRT hoàn chỉnh'
-                    : 'Kịch bản phụ đề CapSub chi tiết',
+                    : 'Kịch bản phụ đề Ksub chi tiết',
                 sizeBytes: stat.size,
                 category: StorageCategory.subtitle,
                 modifiedAt: stat.modified,
@@ -319,7 +319,7 @@ class StorageCleanerService {
           String dispName = name;
           String desc = isSrt
               ? 'Tệp phụ đề SRT hoàn chỉnh'
-              : 'Kịch bản phụ đề CapSub chi tiết';
+              : 'Kịch bản phụ đề Ksub chi tiết';
 
           if (matching == null) {
             isOrphaned = true;

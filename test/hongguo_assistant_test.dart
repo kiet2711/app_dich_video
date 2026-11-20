@@ -2,12 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:capsub_flutter/domain/ai/live/gemini_live_client.dart';
-import 'package:capsub_flutter/domain/ai/live/live_audio_io.dart';
-import 'package:capsub_flutter/domain/media/chinese_title_suggestion.dart';
-import 'package:capsub_flutter/domain/media/hongguo/hongguo_assistant_engine.dart';
-import 'package:capsub_flutter/domain/media/hongguo_resolver.dart';
-import 'package:capsub_flutter/ui/hongguo/hongguo_assistant_controller.dart';
+import 'package:ksub/domain/ai/live/gemini_live_client.dart';
+import 'package:ksub/domain/ai/live/live_audio_io.dart';
+import 'package:ksub/domain/media/chinese_title_suggestion.dart';
+import 'package:ksub/domain/media/hongguo/hongguo_assistant_engine.dart';
+import 'package:ksub/domain/media/hongguo_resolver.dart';
+import 'package:ksub/ui/hongguo/hongguo_assistant_controller.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';

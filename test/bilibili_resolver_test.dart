@@ -1,4 +1,4 @@
-import 'package:capsub_flutter/domain/media/bilibili_resolver.dart';
+import 'package:ksub/domain/media/bilibili_resolver.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 

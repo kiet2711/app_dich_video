@@ -1,4 +1,4 @@
-import 'package:capsub_flutter/data/api/groq_key_checker.dart';
+import 'package:ksub/data/api/groq_key_checker.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 

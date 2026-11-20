@@ -1,9 +1,9 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:capsub_flutter/data/model/subtitle_document.dart';
-import 'package:capsub_flutter/data/model/subtitle_item.dart';
-import 'package:capsub_flutter/domain/ai/ai_model_registry.dart';
-import 'package:capsub_flutter/domain/ai/smart_ai_translator.dart';
+import 'package:ksub/data/model/subtitle_document.dart';
+import 'package:ksub/data/model/subtitle_item.dart';
+import 'package:ksub/domain/ai/ai_model_registry.dart';
+import 'package:ksub/domain/ai/smart_ai_translator.dart';
 
 void main() {
   group('SmartAiTranslator Tests', () {

@@ -1,4 +1,4 @@
-import 'package:capsub_flutter/ui/player/dual_volume_sheet.dart';
+import 'package:ksub/ui/player/dual_volume_sheet.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 

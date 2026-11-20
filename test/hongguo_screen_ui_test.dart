@@ -3,10 +3,10 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:capsub_flutter/domain/media/hongguo/hongguo_cloud_account_service.dart';
-import 'package:capsub_flutter/domain/media/hongguo/hongguo_discovery_service.dart';
-import 'package:capsub_flutter/domain/media/hongguo_resolver.dart';
-import 'package:capsub_flutter/ui/hongguo/hongguo_screen.dart';
+import 'package:ksub/domain/media/hongguo/hongguo_cloud_account_service.dart';
+import 'package:ksub/domain/media/hongguo/hongguo_discovery_service.dart';
+import 'package:ksub/domain/media/hongguo_resolver.dart';
+import 'package:ksub/ui/hongguo/hongguo_screen.dart';
 
 class _FakeTheaterDiscoveryService extends HongguoDiscoveryService {
   _FakeTheaterDiscoveryService() : super.forSubclass();

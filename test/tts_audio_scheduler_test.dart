@@ -1,4 +1,4 @@
-import 'package:capsub_flutter/player/tts_audio_scheduler.dart';
+import 'package:ksub/player/tts_audio_scheduler.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

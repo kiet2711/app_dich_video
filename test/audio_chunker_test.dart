@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:capsub_flutter/domain/media/audio_chunker.dart';
+import 'package:ksub/domain/media/audio_chunker.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -15,7 +15,7 @@ void main() {
 
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(
-            const MethodChannel('com.capcut.capsub/media'),
+            const MethodChannel('com.ksub.app/media'),
             (MethodCall methodCall) async {
               if (methodCall.method == 'extractAudio') {
                 final args = methodCall.arguments as Map<dynamic, dynamic>;
@@ -117,7 +117,7 @@ void main() {
     test('sliceMedia respects actualStartMs returned by native extractor', () async {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(
-            const MethodChannel('com.capcut.capsub/media'),
+            const MethodChannel('com.ksub.app/media'),
             (MethodCall methodCall) async {
               if (methodCall.method == 'extractAudio') {
                 final args = methodCall.arguments as Map<dynamic, dynamic>;

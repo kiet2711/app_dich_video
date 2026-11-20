@@ -1,7 +1,7 @@
 import 'dart:io';
-import 'package:capsub_flutter/domain/media/hongguo/hongguo_device_service.dart';
-import 'package:capsub_flutter/domain/media/hongguo/hongguo_local_engine.dart';
-import 'package:capsub_flutter/domain/media/hongguo/hongguo_sixgod_signer.dart';
+import 'package:ksub/domain/media/hongguo/hongguo_device_service.dart';
+import 'package:ksub/domain/media/hongguo/hongguo_local_engine.dart';
+import 'package:ksub/domain/media/hongguo/hongguo_sixgod_signer.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class MyHttpOverrides extends HttpOverrides {}

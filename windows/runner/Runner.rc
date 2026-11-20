@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.capcut" "\0"
-            VALUE "FileDescription", "capsub_flutter" "\0"
+            VALUE "CompanyName", "com.ksub.app" "\0"
+            VALUE "FileDescription", "Ksub" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "capsub_flutter" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 com.capcut. All rights reserved." "\0"
-            VALUE "OriginalFilename", "capsub_flutter.exe" "\0"
-            VALUE "ProductName", "capsub_flutter" "\0"
+            VALUE "InternalName", "ksub" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 com.ksub.app. All rights reserved." "\0"
+            VALUE "OriginalFilename", "ksub.exe" "\0"
+            VALUE "ProductName", "Ksub" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

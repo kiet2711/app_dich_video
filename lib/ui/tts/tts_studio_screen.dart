@@ -104,7 +104,7 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
           'Đã tạo: ${state.completedCount}/${state.totalCount} câu ($pct%)';
       unawaited(
         ForegroundServiceManager.update(
-          title: 'CapSub AI - Lồng tiếng TTS',
+          title: 'Ksub - Lồng tiếng TTS',
           message: msg,
           progress: pct,
           maxProgress: 100,
@@ -721,7 +721,7 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
 
     await WakelockPlus.enable();
     await ForegroundServiceManager.start(
-      title: 'CapSub AI - Lồng tiếng TTS',
+      title: 'Ksub - Lồng tiếng TTS',
       message: 'Đang chuẩn bị sinh giọng đọc...',
       progress: 0,
       maxProgress: 100,

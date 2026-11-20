@@ -114,7 +114,7 @@ class SubtitleDocument {
 
   String toAssString([String mode = 'translated']) {
     const header = """[Script Info]
-Title: CapSub Studio Subtitles with BlackBox
+Title: Ksub Studio Subtitles with BlackBox
 ScriptType: v4.00+
 WrapStyle: 0
 PlayResX: 1920

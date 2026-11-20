@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:capsub_flutter/data/api/capcut_signer.dart';
+import 'package:ksub/data/api/capcut_signer.dart';
 
 void main() {
   test('testMd5', () {

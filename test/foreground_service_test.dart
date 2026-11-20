@@ -1,5 +1,5 @@
-import 'package:capsub_flutter/domain/media/media_storage.dart';
-import 'package:capsub_flutter/domain/service/foreground_service_manager.dart';
+import 'package:ksub/domain/media/media_storage.dart';
+import 'package:ksub/domain/service/foreground_service_manager.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

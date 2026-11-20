@@ -88,7 +88,7 @@ class AppPlayerController extends ChangeNotifier {
     }
     _platformDetected = true;
     try {
-      final detected = await const MethodChannel('com.capcut.capsub/media')
+      final detected = await const MethodChannel('com.ksub.app/media')
           .invokeMethod<bool>('isEmulator');
       _isAndroidEmulator = detected ?? false;
       debugPrint('[AppPlayerController] isAndroidEmulator=$_isAndroidEmulator');
@@ -116,7 +116,7 @@ class AppPlayerController extends ChangeNotifier {
     _inSilentStandby = silent;
     player = Player(
       configuration: PlayerConfiguration(
-        title: 'CapSub MediaKit Player',
+        title: 'Ksub MediaKit Player',
         bufferSize: _bufferSizeMb * 1024 * 1024,
         muted: silent,
       ),

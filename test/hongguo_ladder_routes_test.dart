@@ -6,10 +6,10 @@ import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:capsub_flutter/domain/media/hongguo/hongguo_codec_capabilities.dart';
-import 'package:capsub_flutter/domain/media/hongguo/hongguo_device_service.dart';
-import 'package:capsub_flutter/domain/media/hongguo/hongguo_local_engine.dart';
-import 'package:capsub_flutter/domain/media/hongguo/hongguo_playback_routes.dart';
+import 'package:ksub/domain/media/hongguo/hongguo_codec_capabilities.dart';
+import 'package:ksub/domain/media/hongguo/hongguo_device_service.dart';
+import 'package:ksub/domain/media/hongguo/hongguo_local_engine.dart';
+import 'package:ksub/domain/media/hongguo/hongguo_playback_routes.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

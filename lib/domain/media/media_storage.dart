@@ -25,7 +25,7 @@ class MediaSelection {
 
 class MediaStorage {
   static const MethodChannel _channel = MethodChannel(
-    'com.capcut.capsub/media',
+    'com.ksub.app/media',
   );
 
   static bool _isPickerActive = false;

@@ -7,12 +7,12 @@ import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:capsub_flutter/domain/media/hongguo/hongguo_auth_service.dart';
-import 'package:capsub_flutter/domain/media/hongguo/hongguo_cloud_account_service.dart';
-import 'package:capsub_flutter/domain/media/hongguo/hongguo_device_service.dart';
-import 'package:capsub_flutter/domain/media/hongguo/hongguo_gorgon.dart';
-import 'package:capsub_flutter/domain/media/hongguo/hongguo_sixgod_signer.dart';
-import 'package:capsub_flutter/domain/media/hongguo/hongguo_v5_constants.dart';
+import 'package:ksub/domain/media/hongguo/hongguo_auth_service.dart';
+import 'package:ksub/domain/media/hongguo/hongguo_cloud_account_service.dart';
+import 'package:ksub/domain/media/hongguo/hongguo_device_service.dart';
+import 'package:ksub/domain/media/hongguo/hongguo_gorgon.dart';
+import 'package:ksub/domain/media/hongguo/hongguo_sixgod_signer.dart';
+import 'package:ksub/domain/media/hongguo/hongguo_v5_constants.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

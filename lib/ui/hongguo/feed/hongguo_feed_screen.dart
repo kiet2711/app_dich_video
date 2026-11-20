@@ -53,6 +53,13 @@ import '../../theme/app_theme.dart';
 export '../../../domain/media/hongguo/hongguo_feed_warmup_service.dart'
     show FeedDramaPageItem;
 
+/// Tính trạng thái ban đầu của nút Tự đổi tập khi mở Feed.
+/// Ở trang lướt đề xuất thông thường (`isDramaEpisodeMode == false`), luôn reset về tắt (`false`).
+bool resolveHongguoFeedAutoNextOnBootstrap({
+  required bool isDramaEpisodeMode,
+  required bool persistedSetting,
+}) => isDramaEpisodeMode && persistedSetting;
+
 /// Màn hình lướt video ngắn Hồng Quả dạng Shorts / TikTok Feed
 /// Thiết kế chuẩn 90% giao diện gốc ByteDance / Douyin Short Drama:
 /// - Hai chế độ liền mạch: Lướt khám phá (Discover Feed) và Xem trọn bộ (Drama Episode Mode)
@@ -64,6 +71,8 @@ class HongguoFeedScreen extends StatefulWidget {
   final int initialEpisodeIndex;
   final int? initialPositionMs;
   final List<HongguoDramaItem>? discoverDramas;
+  @visibleForTesting
+  final bool enablePlayer;
 
   const HongguoFeedScreen({
     super.key,
@@ -71,6 +80,7 @@ class HongguoFeedScreen extends StatefulWidget {
     this.initialEpisodeIndex = 1,
     this.initialPositionMs,
     this.discoverDramas,
+    this.enablePlayer = true,
   });
 
   @override
@@ -259,6 +269,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
   int _preTranslateCount = 2;
   String _preTranslateMode = 'sub_and_tts'; // 'sub_and_tts' | 'sub_only'
   bool _isPreTranslating = false;
+  int _preTranslateToken = 0;
   StreamSubscription<bool>? _completedSub;
   int? _pendingInitialSeekMs;
   Timer? _pageActivateDebounce;
@@ -270,6 +281,17 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
   String? _lastMarkedWatchedDocKey;
   static const Duration _historyPositionSaveInterval = Duration(seconds: 4);
 
+  /// Reset trạng thái nút Tự đổi tập về tắt hẳn khi rời chế độ xem trọn bộ về trang lướt bình thường.
+  void _resetAutoNextState({bool syncPlaylistLoop = true}) {
+    _isAutoNextEpisode = false;
+    _isPreTranslating = false;
+    _preTranslateToken++;
+    _settings?.hongguoAutoNextEpisode = false;
+    if (syncPlaylistLoop) {
+      unawaited(_activeController?.player.setPlaylistMode(PlaylistMode.loop));
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -280,10 +302,11 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         : null;
     _initFeedData();
     _pageController = PageController(initialPage: _currentIndex);
-    _activeController = AppPlayerController(bufferSizeMb: 32);
-
-    _listenToPlayerStreams();
-    _startStallWatchdog();
+    if (widget.enablePlayer) {
+      _activeController = AppPlayerController(bufferSizeMb: 32);
+      _listenToPlayerStreams();
+      _startStallWatchdog();
+    }
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _bootstrapFeed();
@@ -559,7 +582,13 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       _playbackSpeed = settings.hongguoPlaybackSpeed;
       _liveTranslator?.dispose();
       _liveTranslator = _createLiveTranslator(settings);
-      _isAutoNextEpisode = settings.hongguoAutoNextEpisode;
+      _isAutoNextEpisode = resolveHongguoFeedAutoNextOnBootstrap(
+        isDramaEpisodeMode: _isDramaEpisodeMode,
+        persistedSetting: settings.hongguoAutoNextEpisode,
+      );
+      if (!_isDramaEpisodeMode && settings.hongguoAutoNextEpisode) {
+        settings.hongguoAutoNextEpisode = false;
+      }
       _preTranslateCount = settings.hongguoPreTranslateCount;
       _preTranslateMode = settings.hongguoPreTranslateMode;
     });
@@ -1402,6 +1431,14 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     if (!mounted || index < 0 || index >= _feedItems.length) return;
 
     final requestedMediaKey = _mediaKey(_feedItems[index]);
+    if (!widget.enablePlayer) {
+      _activePageIndex = index;
+      _activeMediaKey = requestedMediaKey;
+      _isLoadingVideo = false;
+      _showLoadingIndicator = false;
+      return;
+    }
+
     if (!forceReload &&
         _activePageIndex == index &&
         _activeMediaKey == requestedMediaKey &&
@@ -1886,7 +1923,12 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     required bool warmStream,
     CancelToken? cancelToken,
   }) async {
-    if (!mounted || nextIndex < 0 || nextIndex >= _feedItems.length) return;
+    if (!widget.enablePlayer ||
+        !mounted ||
+        nextIndex < 0 ||
+        nextIndex >= _feedItems.length) {
+      return;
+    }
     if (cancelToken?.isCancelled == true) return;
     final feedGeneration = _feedGeneration;
     final initialMediaKey = _mediaKey(_feedItems[nextIndex]);
@@ -2040,7 +2082,12 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     int index, {
     CancelToken? cancelToken,
   }) async {
-    if (!mounted || index < 0 || index >= _feedItems.length) return;
+    if (!widget.enablePlayer ||
+        !mounted ||
+        index < 0 ||
+        index >= _feedItems.length) {
+      return;
+    }
     if (cancelToken?.isCancelled == true) return;
 
     final feedGeneration = _feedGeneration;
@@ -2744,6 +2791,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       _feedGeneration++;
       _activationRequestId++;
       _isDramaEpisodeMode = false;
+      _resetAutoNextState();
       _feedItems.clear();
       _feedItems.addAll(items);
       _currentIndex = 0;
@@ -4038,6 +4086,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
           fullDetail = fetched;
         }
       } catch (_) {}
+      if (!mounted) return;
     }
 
     final totalCount = fullDetail.episodes.isNotEmpty
@@ -4080,6 +4129,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         _activationRequestId++;
         _isDramaEpisodeMode = false;
         _currentDramaDetail = null;
+        _resetAutoNextState();
         _feedItems.clear();
         _feedItems.addAll(_savedDiscoverItems);
         _currentIndex = _savedDiscoverIndex.clamp(0, _feedItems.length - 1);
@@ -4092,6 +4142,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       _activatePage(_currentIndex);
     } else {
       _flushCurrentFeedPlaybackPosition();
+      if (_isDramaEpisodeMode) {
+        _resetAutoNextState(syncPlaylistLoop: false);
+      }
       Navigator.pop(context);
     }
   }
@@ -5301,9 +5354,16 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
                           size: 11,
                         ),
                         SizedBox(width: 4),
-                        Text(
-                          'Tuyên bố: Nội dung hỗ trợ dịch bởi AI',
-                          style: TextStyle(color: Colors.white38, fontSize: 10),
+                        Flexible(
+                          child: Text(
+                            'Tuyên bố: Nội dung hỗ trợ dịch bởi AI',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.white38,
+                              fontSize: 10,
+                            ),
+                          ),
                         ),
                       ],
                     ),
@@ -5403,17 +5463,21 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
                     size: 16,
                   ),
                   const SizedBox(width: 8),
-                  Text(
-                    _isDramaEpisodeMode
-                        ? 'Chọn tập · Trọn bộ $total tập · Miễn phí'
-                        : 'Xem trọn bộ · Toàn bộ $total tập',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
+                  Expanded(
+                    child: Text(
+                      _isDramaEpisodeMode
+                          ? 'Chọn tập · Trọn bộ $total tập · Miễn phí'
+                          : 'Xem trọn bộ · Toàn bộ $total tập',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
-                  const Spacer(),
+                  const SizedBox(width: 8),
                   Icon(
                     _isDramaEpisodeMode
                         ? Icons.keyboard_arrow_up_rounded
@@ -6051,7 +6115,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
   /// Nút Tự động chuyển tập (Auto Next) & Dịch trước ngầm
   Widget _buildAutoNextEpisodeButton(FeedDramaPageItem item) {
-    return GestureDetector(
+    return HongguoFeedAutoNextButton(
+      isActive: _isAutoNextEpisode,
+      isPreTranslating: _isPreTranslating,
       onTap: () async {
         HapticFeedback.lightImpact();
         if (!_isDramaEpisodeMode) {
@@ -6064,6 +6130,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
             item.detail,
             targetEpisode: item.episodeIndex,
           );
+          if (!mounted || !_isDramaEpisodeMode || !_isAutoNextEpisode) return;
           await _activeController?.player.setPlaylistMode(PlaylistMode.none);
           _triggerPreTranslationQueue();
           if (mounted) {
@@ -6097,6 +6164,10 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
           // Khi đang ở chế độ Xem trọn bộ: Đảo trạng thái Bật / Tắt
           setState(() {
             _isAutoNextEpisode = !_isAutoNextEpisode;
+            if (!_isAutoNextEpisode) {
+              _isPreTranslating = false;
+              _preTranslateToken++;
+            }
           });
           _settings?.hongguoAutoNextEpisode = _isAutoNextEpisode;
           if (_isAutoNextEpisode) {
@@ -6139,70 +6210,6 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         HapticFeedback.mediumImpact();
         _showAutoNextSettingsSheet();
       },
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: _isAutoNextEpisode
-                  ? const Color(0x33FF6A00)
-                  : Colors.black.withValues(alpha: 0.45),
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: _isAutoNextEpisode
-                    ? const Color(0xFFFF6A00)
-                    : Colors.white24,
-                width: _isAutoNextEpisode ? 1.5 : 0.6,
-              ),
-              boxShadow: _isAutoNextEpisode
-                  ? const [BoxShadow(color: Color(0x66FF6A00), blurRadius: 8)]
-                  : null,
-            ),
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                Icon(
-                  _isAutoNextEpisode
-                      ? Icons.playlist_play_rounded
-                      : Icons.skip_next_rounded,
-                  color: _isAutoNextEpisode
-                      ? const Color(0xFFFF6A00)
-                      : Colors.white,
-                  size: 24,
-                ),
-                if (_isPreTranslating)
-                  Positioned(
-                    right: -2,
-                    top: -2,
-                    child: Container(
-                      width: 8,
-                      height: 8,
-                      decoration: const BoxDecoration(
-                        color: Color(0xFFFF6A00),
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            _isAutoNextEpisode ? 'Tự đổi tập' : 'Tự đổi tập',
-            style: TextStyle(
-              color: _isAutoNextEpisode
-                  ? const Color(0xFFFF6A00)
-                  : Colors.white,
-              fontSize: 10,
-              fontWeight: _isAutoNextEpisode
-                  ? FontWeight.bold
-                  : FontWeight.w500,
-              shadows: const [Shadow(color: Colors.black, blurRadius: 2)],
-            ),
-          ),
-        ],
-      ),
     );
   }
 
@@ -6289,7 +6296,13 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
                     value: _isAutoNextEpisode,
                     onChanged: (val) {
                       setSheetState(() => _isAutoNextEpisode = val);
-                      setState(() => _isAutoNextEpisode = val);
+                      setState(() {
+                        _isAutoNextEpisode = val;
+                        if (!val) {
+                          _isPreTranslating = false;
+                          _preTranslateToken++;
+                        }
+                      });
                       _settings?.hongguoAutoNextEpisode = val;
                       if (val) {
                         _activeController?.player.setPlaylistMode(
@@ -6547,9 +6560,15 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
   /// Kích hoạt hàng đợi dịch trước các tập tiếp theo trong nền
   Future<void> _triggerPreTranslationQueue() async {
-    if (!_isAutoNextEpisode || _isPreTranslating || !mounted) return;
+    if (!widget.enablePlayer ||
+        !_isAutoNextEpisode ||
+        _isPreTranslating ||
+        !mounted) {
+      return;
+    }
     if (_feedItems.isEmpty || _currentIndex < 0) return;
 
+    final runToken = _preTranslateToken;
     final startIdx = _currentIndex + 1;
     final endIdx = math.min(
       _feedItems.length - 1,
@@ -6558,7 +6577,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     if (startIdx > endIdx) return;
 
     for (var i = startIdx; i <= endIdx; i++) {
-      if (!_isAutoNextEpisode || !mounted) break;
+      if (!_isAutoNextEpisode || runToken != _preTranslateToken || !mounted) {
+        break;
+      }
       if (i >= _feedItems.length) break;
 
       final targetItem = _feedItems[i];
@@ -6580,6 +6601,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
       // 2. Đã có trong Lịch sử
       final loadedFromHistory = await _checkHistoryForDoc(targetItem);
+      if (!_isAutoNextEpisode || runToken != _preTranslateToken || !mounted) {
+        break;
+      }
       if (loadedFromHistory != null) {
         _episodeDocuments[targetKey] = loadedFromHistory;
         if (_preTranslateMode == 'sub_and_tts') {
@@ -6594,7 +6618,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       }
 
       // 3. Chưa có -> Dịch trước tập này
-      await _preTranslateSingleEpisode(targetItem);
+      await _preTranslateSingleEpisode(targetItem, runToken: runToken);
     }
   }
 
@@ -6652,8 +6676,17 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     } catch (_) {}
   }
 
-  Future<void> _preTranslateSingleEpisode(FeedDramaPageItem targetItem) async {
-    if (!mounted || _isPreTranslating) return;
+  Future<void> _preTranslateSingleEpisode(
+    FeedDramaPageItem targetItem, {
+    required int runToken,
+  }) async {
+    bool shouldContinue() =>
+        mounted &&
+        widget.enablePlayer &&
+        _isAutoNextEpisode &&
+        runToken == _preTranslateToken;
+
+    if (!shouldContinue() || _isPreTranslating) return;
     final targetKey = _getVideoDocKey(targetItem);
     if (_episodeDocuments.containsKey(targetKey)) return;
 
@@ -6689,12 +6722,13 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         } catch (_) {}
       }
 
-      if (itemToProcess.vid.isEmpty) return;
+      if (!shouldContinue() || itemToProcess.vid.isEmpty) return;
 
       final videoInfo = await HongguoLocalEngine.resolveVideoInfo(
         itemToProcess.vid,
         preferLowest: true,
       );
+      if (!shouldContinue()) return;
       final streamUrl = videoInfo.realMainUrl;
       if (streamUrl.isEmpty) return;
 
@@ -6787,7 +6821,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         if (tempAudio.existsSync()) await tempAudio.delete();
       } catch (_) {}
 
-      if (doc.isEmpty) return;
+      if (doc.isEmpty || !shouldContinue()) return;
 
       String? appliedVoice;
       if (_preTranslateMode == 'sub_and_tts') {
@@ -6861,8 +6895,10 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
           await tempAudio.delete();
         }
       } catch (_) {}
-      _isPreTranslating = false;
-      if (mounted) setState(() {});
+      if (runToken == _preTranslateToken) {
+        _isPreTranslating = false;
+        if (mounted) setState(() {});
+      }
     }
   }
 
@@ -8400,4 +8436,86 @@ class _FeedStandbyEntry {
   Future<void> switchTail = Future<void>.value();
 
   _FeedStandbyEntry(this.controller);
+}
+
+/// Nút "Tự đổi tập" ở cột tác vụ bên phải màn hình Lướt Hồng Quả.
+/// Chỉ hiển thị trạng thái sáng/cam & chấm dịch trước khi `isActive == true`.
+class HongguoFeedAutoNextButton extends StatelessWidget {
+  final bool isActive;
+  final bool isPreTranslating;
+  final VoidCallback onTap;
+  final VoidCallback? onLongPress;
+
+  const HongguoFeedAutoNextButton({
+    super.key,
+    required this.isActive,
+    required this.isPreTranslating,
+    required this.onTap,
+    this.onLongPress,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final activeOrange = const Color(0xFFFF6A00);
+    return GestureDetector(
+      onTap: onTap,
+      onLongPress: onLongPress,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: isActive
+                  ? const Color(0x33FF6A00)
+                  : Colors.black.withValues(alpha: 0.45),
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: isActive ? activeOrange : Colors.white24,
+                width: isActive ? 1.5 : 0.6,
+              ),
+              boxShadow: isActive
+                  ? const [BoxShadow(color: Color(0x66FF6A00), blurRadius: 8)]
+                  : null,
+            ),
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Icon(
+                  isActive
+                      ? Icons.playlist_play_rounded
+                      : Icons.skip_next_rounded,
+                  color: isActive ? activeOrange : Colors.white,
+                  size: 24,
+                ),
+                if (isActive && isPreTranslating)
+                  Positioned(
+                    right: -2,
+                    top: -2,
+                    child: Container(
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        color: activeOrange,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Tự đổi tập',
+            style: TextStyle(
+              color: isActive ? activeOrange : Colors.white,
+              fontSize: 10,
+              fontWeight: isActive ? FontWeight.bold : FontWeight.w500,
+              shadows: const [Shadow(color: Colors.black, blurRadius: 2)],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

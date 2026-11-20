@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:capsub_flutter/domain/media/hongguo_resolver.dart';
+import 'package:ksub/domain/media/hongguo_resolver.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 

@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "com.capcut.capsub_flutter"
+    namespace = "com.ksub.app"
     compileSdk = flutter.compileSdkVersion
     // Keep this in sync with the explicit NDK install in GitHub Actions.
     ndkVersion = "28.2.13676358"
@@ -16,8 +16,7 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.capcut.capsub_flutter"
+        applicationId = "com.ksub.app"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion

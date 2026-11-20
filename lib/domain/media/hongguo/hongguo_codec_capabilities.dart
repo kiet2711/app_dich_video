@@ -336,13 +336,13 @@ class HongguoDecoderLessons {
   }
 }
 
-/// Kiểm tra năng lực codec phần cứng qua MethodChannel `com.capcut.capsub/media`
+/// Kiểm tra năng lực codec phần cứng qua MethodChannel `com.ksub.app/media`
 /// (`MediaCodecList` trên Android, `VideoToolbox` trên iOS) và kết hợp `DecoderLessons`.
 class HongguoCodecCapabilities {
   HongguoCodecCapabilities._();
   static final HongguoCodecCapabilities instance = HongguoCodecCapabilities._();
 
-  static const MethodChannel _channel = MethodChannel('com.capcut.capsub/media');
+  static const MethodChannel _channel = MethodChannel('com.ksub.app/media');
 
   final HongguoDecoderLessons lessons = HongguoDecoderLessons();
   HongguoCodecSupport? _cachedSupport;

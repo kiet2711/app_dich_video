@@ -1,6 +1,6 @@
-﻿import 'package:flutter_test/flutter_test.dart';
-import 'package:capsub_flutter/data/model/subtitle_document.dart';
-import 'package:capsub_flutter/data/model/subtitle_item.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:ksub/data/model/subtitle_document.dart';
+import 'package:ksub/data/model/subtitle_item.dart';
 
 void main() {
   group('SubtitleDocument & SubtitleItem tests', () {
@@ -10,7 +10,7 @@ Xin chào các bạn
 
 2
 00:00:04,000 --> 00:00:07,200
-Chào mừng đến với CapSub Studio
+Chào mừng đến với Ksub Studio
 """;
 
     test('SubtitleDocument SRT parse and export test', () {
@@ -24,7 +24,7 @@ Chào mừng đến với CapSub Studio
       expect(doc.items[1].endMs, equals(7200));
       expect(
         doc.items[1].originalText,
-        equals('Chào mừng đến với CapSub Studio'),
+        equals('Chào mừng đến với Ksub Studio'),
       );
 
       final exported = doc.toSrtString();

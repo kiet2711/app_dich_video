@@ -54,7 +54,7 @@ class ContentMediaMetadata {
 
 class AudioExtractor {
   static const MethodChannel _channel = MethodChannel(
-    'com.capcut.capsub/media',
+    'com.ksub.app/media',
   );
 
   static Future<int> probeDuration(String mediaPath) async {

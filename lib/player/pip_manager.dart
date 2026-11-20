@@ -4,7 +4,7 @@ import 'package:flutter/services.dart';
 
 /// Quản lý chế độ Hình trong Hình (Picture-in-Picture - PiP) trên Android/iOS
 class PipManager {
-  static const MethodChannel _channel = MethodChannel('com.capcut.capsub/pip');
+  static const MethodChannel _channel = MethodChannel('com.ksub.app/pip');
   static final ValueNotifier<bool> isInPipMode = ValueNotifier<bool>(false);
   static final ValueNotifier<String?> lastPipAction = ValueNotifier<String?>(null);
   static bool _initialized = false;

@@ -1,5 +1,5 @@
-import 'package:capsub_flutter/domain/tts/tts_generation_manager.dart';
-import 'package:capsub_flutter/ui/tts/tts_error_review_dialog.dart';
+import 'package:ksub/domain/tts/tts_generation_manager.dart';
+import 'package:ksub/ui/tts/tts_error_review_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../data/api/gemini_key_checker.dart';
 import '../../data/repository/settings_repository.dart';
@@ -6,6 +7,7 @@ import '../../domain/ai/ai_model_registry.dart';
 import '../../domain/font/custom_font_manager.dart';
 import '../storage/storage_cleaner_screen.dart';
 import '../theme/app_theme.dart';
+import '../widgets/ksub_logo.dart';
 import 'gemini_key_test_dialog.dart';
 import 'groq_key_test_dialog.dart';
 
@@ -291,6 +293,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                 // Card 6: Quản lý bộ nhớ & Dọn dẹp rác
                 _buildStorageCard(palette),
+                const SizedBox(height: 12),
+
+                // Card 7: Thông tin tác giả & Kho mã nguồn GitHub
+                _buildRepoInfoCard(palette, accent),
               ],
             ),
           ),
@@ -2315,6 +2321,181 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  static const String _appVersion = 'v1.0.0';
+  static const String _githubUsername = 'kiet2711';
+  static const String _githubRepoUrl =
+      'https://github.com/kiet2711/app_dich_video';
+
+  Future<void> _copyToClipboard(String value, String message) async {
+    await Clipboard.setData(ClipboardData(text: value));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Widget _buildRepoInfoCard(AppThemePalette palette, Color accent) {
+    final linkColor = palette.isDark
+        ? Color.lerp(accent, Colors.white, 0.35)!
+        : Color.lerp(accent, Colors.black, 0.18)!;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: palette.border),
+        boxShadow: palette.cardShadows,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const KsubLogoMark(size: 44, showGlow: false),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          'Ksub',
+                          style: TextStyle(
+                            color: palette.textPrimary,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: accent.withValues(alpha: 0.14),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            _appVersion,
+                            style: TextStyle(
+                              color: linkColor,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      'Tác giả & Kho mã nguồn GitHub',
+                      style: TextStyle(
+                        color: palette.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Container(
+            decoration: BoxDecoration(
+              color: palette.surfaceAlt,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: palette.border),
+            ),
+            child: Column(
+              children: [
+                _buildRepoInfoRow(
+                  palette: palette,
+                  icon: Icons.person_rounded,
+                  iconColor: linkColor,
+                  label: 'GitHub',
+                  value: _githubUsername,
+                  onTap: () => _copyToClipboard(
+                    _githubUsername,
+                    'Đã sao chép tên GitHub: $_githubUsername',
+                  ),
+                ),
+                Divider(height: 1, thickness: 1, color: palette.border),
+                _buildRepoInfoRow(
+                  palette: palette,
+                  icon: Icons.code_rounded,
+                  iconColor: linkColor,
+                  label: 'Link Repo',
+                  value: _githubRepoUrl,
+                  valueColor: linkColor,
+                  onTap: () => _copyToClipboard(
+                    _githubRepoUrl,
+                    'Đã sao chép link repo GitHub',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRepoInfoRow({
+    required AppThemePalette palette,
+    required IconData icon,
+    required Color iconColor,
+    required String label,
+    required String value,
+    Color? valueColor,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+          child: Row(
+            children: [
+              Icon(icon, size: 18, color: iconColor),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      style: TextStyle(
+                        color: palette.textMuted,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      value,
+                      style: TextStyle(
+                        color: valueColor ?? palette.textPrimary,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Icon(Icons.copy_rounded, size: 16, color: palette.textMuted),
+            ],
+          ),
+        ),
       ),
     );
   }
