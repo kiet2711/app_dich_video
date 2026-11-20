@@ -1420,13 +1420,43 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       if (detail != null && detail.seriesId.isNotEmpty) {
         unawaited(
           HistoryRepository.getInstance()
-              .then(
-                (history) => history.markSeriesEpisodeWatched(
+              .then((history) async {
+                final marked = await history.markSeriesEpisodeWatched(
                   seriesId: detail.seriesId,
                   episodeIndex: _currentEpisodeIndex,
                   seriesTitle: detail.title,
-                ),
-              )
+                );
+                if (!marked) {
+                  final normTitle = detail.title.trim().toLowerCase();
+                  final seriesTracked = history.getHistory().any(
+                    (h) =>
+                        h.seriesId == detail.seriesId ||
+                        ((h.seriesId == null || h.seriesId!.isEmpty) &&
+                            normTitle.isNotEmpty &&
+                            h.extractedSeriesTitle.trim().toLowerCase() ==
+                                normTitle),
+                  );
+                  if (seriesTracked) {
+                    await history.saveHistory(
+                      videoPath: _sourceVideoUrl.isNotEmpty
+                          ? _sourceVideoUrl
+                          : targetPath,
+                      title: '${detail.title} - Tập $_currentEpisodeIndex',
+                      document: _currentDocument,
+                      durationMs: durationMs,
+                      lastPositionMs: startPosMs > 0 ? startPosMs : null,
+                      seriesId: detail.seriesId,
+                      seriesCover: detail.cover,
+                      episodeIndex: _currentEpisodeIndex,
+                      totalEpisodes: detail.totalEpisodes > 0
+                          ? detail.totalEpisodes
+                          : detail.episodes.length,
+                      isOnlineStream: targetPath.startsWith('http'),
+                    );
+                  }
+                }
+                return marked;
+              })
               .catchError((_) => false),
         );
       }
@@ -6403,11 +6433,39 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             );
           }
         }
-        // Bản ghi cũ có thể chưa có seriesId. Chỉ fallback callback cho đúng
-        // tập ban đầu, tuyệt đối không ghi tiến độ tập mới vào tập đã mở trước đó.
-        if (!updated &&
-            _currentEpisodeIndex == (widget.currentEpisodeIndex ?? 1)) {
-          await widget.onPlaybackPositionChanged?.call(positionMs);
+        if (!updated) {
+          final normTitle = detail.title.trim().toLowerCase();
+          final seriesTracked = history.getHistory().any(
+            (h) =>
+                h.seriesId == detail.seriesId ||
+                ((h.seriesId == null || h.seriesId!.isEmpty) &&
+                    normTitle.isNotEmpty &&
+                    h.extractedSeriesTitle.trim().toLowerCase() == normTitle),
+          );
+          if (seriesTracked || positionMs > 1000) {
+            final durMs =
+                controller?.value.duration.inMilliseconds ??
+                _hongguoVideoInfo?.durationMs ??
+                0;
+            await history.saveHistory(
+              videoPath: _sourceVideoUrl.isNotEmpty
+                  ? _sourceVideoUrl
+                  : _currentVideoPath,
+              title: '${detail.title} - Tập $_currentEpisodeIndex',
+              document: _currentDocument,
+              durationMs: durMs,
+              lastPositionMs: positionMs,
+              seriesId: detail.seriesId,
+              seriesCover: detail.cover,
+              episodeIndex: _currentEpisodeIndex,
+              totalEpisodes: detail.totalEpisodes > 0
+                  ? detail.totalEpisodes
+                  : detail.episodes.length,
+              isOnlineStream: _currentVideoPath.startsWith('http'),
+            );
+          } else if (_currentEpisodeIndex == (widget.currentEpisodeIndex ?? 1)) {
+            await widget.onPlaybackPositionChanged?.call(positionMs);
+          }
         }
       } else {
         await widget.onPlaybackPositionChanged?.call(positionMs);

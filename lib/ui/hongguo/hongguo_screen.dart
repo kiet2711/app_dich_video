@@ -101,6 +101,7 @@ class _HongguoScreenState extends State<HongguoScreen> {
   Future<void> _loadSettingsAndInitialData() async {
     unawaited(_loadTranslationSetting());
     try {
+      await HongguoCloudAccountService.instance.initialize();
       final settings = await SettingsRepository.getInstance();
       if (!mounted) return;
       _settings = settings;
@@ -176,13 +177,14 @@ class _HongguoScreenState extends State<HongguoScreen> {
 
   HongguoDiscoveryCursor? _discoverScopedCursor;
   bool _discoverAllUseLandpageFallback = false;
+  int _discoverAllTagCursorIdx = 0;
 
   void _scheduleFillViewportIfNeeded() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scrollController.hasClients) return;
       if (_isLoading || _isLoadingMore || !_hasMore || _isAiResultMode) return;
       final pos = _scrollController.position;
-      if (pos.maxScrollExtent <= 120 || pos.pixels >= pos.maxScrollExtent - 360) {
+      if (pos.maxScrollExtent <= 40) {
         unawaited(_loadMoreDramas());
       }
     });
@@ -237,6 +239,7 @@ class _HongguoScreenState extends State<HongguoScreen> {
           if (!append) {
             _discoverScopedCursor = null;
             _discoverAllUseLandpageFallback = false;
+            _discoverAllTagCursorIdx = 0;
             var items = await HongguoSimilarEngine.instance
                 .getPersonalizedDiscoverList(resetCursor: resetCursor);
             if (!mounted || generation != _loadGeneration) return;
@@ -245,8 +248,8 @@ class _HongguoScreenState extends State<HongguoScreen> {
               final page = await HongguoDiscoveryService.instance.fetchDiscovery(
                 const HongguoDiscoverySelection(
                   genreKind: HongguoGenreKind.realPlay,
-                  filters: <String, String>{'sort': 'hot_score'},
                 ),
+                useDefaultFeedSort: true,
               );
               if (!mounted || generation != _loadGeneration) return;
               _discoverScopedCursor = page.nextCursor;
@@ -290,19 +293,34 @@ class _HongguoScreenState extends State<HongguoScreen> {
             if (_discoverAllUseLandpageFallback && addedCount == 0) {
               HongguoDiscoveryPage? lastPage;
               var totalAdded = 0;
+              final topTags = await HongguoSimilarEngine.instance
+                  .getTopFavoriteTags(limit: 4);
               for (var tries = 0; tries < 2; tries++) {
+                HongguoDiscoverySelection sel = const HongguoDiscoverySelection(
+                  genreKind: HongguoGenreKind.realPlay,
+                );
+                var useDefaultSort = true;
+                if (topTags.isNotEmpty) {
+                  final tag = topTags[_discoverAllTagCursorIdx % topTags.length];
+                  sel = HongguoDiscoveryService.instance.resolveSelectionForTag(
+                    tag,
+                  );
+                  useDefaultSort = false;
+                }
                 final page = await HongguoDiscoveryService.instance
                     .fetchDiscovery(
-                      const HongguoDiscoverySelection(
-                        genreKind: HongguoGenreKind.realPlay,
-                        filters: <String, String>{'sort': 'hot_score'},
-                      ),
+                      sel,
                       cursor: _discoverScopedCursor,
                       seenIds: existingIds,
+                      useDefaultFeedSort: useDefaultSort,
                     );
                 if (!mounted || generation != _loadGeneration) return;
                 lastPage = page;
                 _discoverScopedCursor = page.nextCursor;
+                if (page.nextCursor == null || !page.hasMore) {
+                  _discoverAllTagCursorIdx++;
+                  _discoverScopedCursor = null;
+                }
                 for (final it in page.items) {
                   if (it.seriesId.isNotEmpty) {
                     existingIds.add(it.seriesId);
@@ -313,9 +331,12 @@ class _HongguoScreenState extends State<HongguoScreen> {
                     totalAdded += _appendUniqueDramas(page.items);
                   });
                 }
-                if (totalAdded > 0 ||
-                    !page.hasMore ||
-                    page.nextCursor == null) {
+                if (totalAdded > 0) {
+                  break;
+                }
+                if (_discoverScopedCursor == null &&
+                    topTags.length <= 1 &&
+                    !page.hasMore) {
                   break;
                 }
               }
@@ -323,8 +344,9 @@ class _HongguoScreenState extends State<HongguoScreen> {
               setState(() {
                 _consecutiveEmptyAppends =
                     totalAdded == 0 ? _consecutiveEmptyAppends + 1 : 0;
-                _hasMore = (lastPage?.hasMore ?? false) &&
-                    lastPage?.nextCursor != null &&
+                _hasMore = (_discoverScopedCursor != null ||
+                        topTags.length > 1 ||
+                        (lastPage?.hasMore ?? false)) &&
                     _dramas.length < _maxInfiniteDramas &&
                     _consecutiveEmptyAppends < 2;
                 _isLoadingMore = false;

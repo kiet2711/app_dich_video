@@ -263,6 +263,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
   bool _isPreTranslating = false;
   StreamSubscription<bool>? _completedSub;
   int? _pendingInitialSeekMs;
+  Timer? _pageActivateDebounce;
   DateTime _lastHistoryPositionSaveAt = DateTime.fromMillisecondsSinceEpoch(0);
   int _lastHistorySavedPositionMs = -1;
   String? _lastMarkedWatchedDocKey;
@@ -271,7 +272,10 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
   @override
   void initState() {
     super.initState();
-    _pendingInitialSeekMs = widget.initialPositionMs;
+    _pendingInitialSeekMs =
+        (widget.initialPositionMs != null && widget.initialPositionMs! > 0)
+        ? widget.initialPositionMs
+        : null;
     _initFeedData();
     _pageController = PageController(initialPage: _currentIndex);
     _activeController = AppPlayerController(bufferSizeMb: 32);
@@ -335,6 +339,10 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
   bool _hydrateExploreSessionCache() {
     if (!_isExploreSessionCacheable) return false;
     final cache = HongguoFeedSessionCache.instance;
+    if (!cache.isCacheValidForCurrentAccount()) {
+      cache.invalidateCache();
+      return false;
+    }
     if (!cache.hasAnyDiscoverItems) return false;
 
     _currentFeedTab = _normalizeFeedTab(cache.currentTab);
@@ -463,7 +471,6 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
   }
 
   Future<void> _bootstrapFeed() async {
-    unawaited(HongguoCloudAccountService.instance.initialize());
     if (_isExploreSessionCacheable && _feedItems.isEmpty && mounted) {
       setState(() {
         _isInitialFeedLoading = true;
@@ -471,8 +478,21 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       });
     }
 
+    await HongguoCloudAccountService.instance.initialize();
     final settings = await SettingsRepository.getInstance();
     if (!mounted) return;
+
+    if (_isExploreSessionCacheable &&
+        !HongguoFeedSessionCache.instance.isCacheValidForCurrentAccount()) {
+      HongguoFeedSessionCache.instance.invalidateCache();
+      _followFeedItems.clear();
+      _comicFeedItems.clear();
+      _realFeedItems.clear();
+      _discoverFeedItems.clear();
+      _feedItems.clear();
+      _preloadedSources.clear();
+      _currentIndex = 0;
+    }
 
     setState(() {
       _settings = settings;
@@ -822,6 +842,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
   @override
   void dispose() {
+    _pageActivateDebounce?.cancel();
     _flushCurrentFeedPlaybackPosition();
     _saveSessionToCache();
     _cancelCascadingPreload();
@@ -1122,6 +1143,17 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
           item.detail.episodes.length,
         ),
       );
+      if (_isDramaEpisodeMode) {
+        unawaited(
+          _persistFeedPlaybackPosition(
+            item,
+            positionMs: posMs,
+            durationMs: durMs,
+            force: true,
+            allowCreateForTrackedSeries: true,
+          ),
+        );
+      }
       if (!_isDramaEpisodeMode &&
           item.detail.totalEpisodes <= 1 &&
           item.detail.episodes.length <= 1) {
@@ -1213,7 +1245,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     });
 
     try {
-      await previousController?.muteAndPause();
+      unawaited(previousController?.muteAndPause());
       await preparedController.unmuteAndPlay(
         rate: _playbackSpeed,
         playlistMode: _isAutoNextEpisode
@@ -1227,6 +1259,16 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         mediaKey: mediaKey,
       )) {
         return true;
+      }
+
+      if (_pendingInitialSeekMs != null) {
+        final seekMs = _pendingInitialSeekMs!;
+        _pendingInitialSeekMs = null;
+        if (seekMs > 0) {
+          unawaited(
+            preparedController.player.seek(Duration(milliseconds: seekMs)),
+          );
+        }
       }
 
       _afterSuccessfulActivation(index);
@@ -1508,6 +1550,8 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
             debugPrint('[HongguoFeedScreen] initial seek error: $e');
           }
         });
+      } else {
+        _pendingInitialSeekMs = null;
       }
 
       // Kiểm tra tập hiện tại đã có phụ đề trong RAM hoặc Lịch sử chưa
@@ -1811,7 +1855,6 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     _standbyController = controller;
     _standbyMediaKey = mediaKey;
     _standbyReady = false;
-    setState(() {});
 
     try {
       await _preloadNextPage(index, warmStream: true, cancelToken: cancelToken);
@@ -1995,6 +2038,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
   void _onPageChanged(int index) {
     HapticFeedback.selectionClick();
     _flushCurrentFeedPlaybackPosition();
+    _pageActivateDebounce?.cancel();
     if (!_isDramaEpisodeMode &&
         _currentIndex >= 0 &&
         _currentIndex < _feedItems.length) {
@@ -2008,6 +2052,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     }
     _currentIndex = index;
     _tabCurrentIndices[_currentFeedTab] = index;
+    if (!_isDramaEpisodeMode) {
+      HongguoFeedSessionCache.instance.tabIndices[_currentFeedTab] = index;
+    }
 
     // Dừng ngay lập tức âm thanh lồng tiếng của tập cũ và reset volume video gốc về 100%
     _ttsScheduler?.stop();
@@ -2026,8 +2073,20 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         _pendingInitialSeekMs = savedMs;
       }
     }
-    _activatePage(index);
-    _saveSessionToCache();
+
+    final nextMediaKey = (index >= 0 && index < _feedItems.length)
+        ? _mediaKey(_feedItems[index])
+        : null;
+    if (_standbyReady &&
+        nextMediaKey != null &&
+        _standbyMediaKey == nextMediaKey) {
+      unawaited(_activatePage(index));
+    } else {
+      _pageActivateDebounce = Timer(const Duration(milliseconds: 90), () {
+        if (!mounted || _currentIndex != index) return;
+        unawaited(_activatePage(index));
+      });
+    }
 
     // Tự động nạp thêm khi ở chế độ khám phá
     if (!_isDramaEpisodeMode &&
@@ -3880,6 +3939,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
               ),
               controller: _pageController,
               scrollDirection: Axis.vertical,
+              allowImplicitScrolling: true,
               physics: _isLandscapeFullscreen
                   ? const NeverScrollableScrollPhysics()
                   : const ClampingScrollPhysics(parent: PageScrollPhysics()),
@@ -4190,7 +4250,8 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         : (9 / 16);
     final isLandscapeVideo = videoAspect > 1.05;
 
-    return Stack(
+    return RepaintBoundary(
+      child: Stack(
       fit: StackFit.expand,
       children: [
         Container(color: Colors.black),
@@ -4430,6 +4491,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         // Lớp Overlay thông tin phim và tác vụ (TikTok / Shorts Layout)
         _buildOverlayUI(item),
       ],
+    ),
     );
   }
 
@@ -6672,10 +6734,15 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
             isPrefetch: false,
           );
         } else if (allowCreateForTrackedSeries && _isDramaEpisodeMode) {
+          final normTitle = item.detail.title.trim().toLowerCase();
           final seriesTracked = historyRepo.getHistory().any(
-            (h) => h.seriesId == seriesId,
+            (h) =>
+                h.seriesId == seriesId ||
+                ((h.seriesId == null || h.seriesId!.isEmpty) &&
+                    normTitle.isNotEmpty &&
+                    h.extractedSeriesTitle.trim().toLowerCase() == normTitle),
           );
-          if (seriesTracked) {
+          if (seriesTracked || positionMs >= 1000) {
             await _saveFeedEpisodeToHistory(
               item,
               SubtitleDocument(),
@@ -6692,7 +6759,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
   }
 
   void _flushCurrentFeedPlaybackPosition({bool force = true}) {
-    if (_pendingInitialSeekMs != null) return;
+    if (_pendingInitialSeekMs != null && _pendingInitialSeekMs! > 0) return;
     if (_currentIndex < 0 || _currentIndex >= _feedItems.length) return;
     final item = _feedItems[_currentIndex];
     final posMs =
@@ -6702,16 +6769,33 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         _activeController?.value.duration.inMilliseconds ??
         _currentDur.inMilliseconds;
     final docKey = _getVideoDocKey(item);
+    HongguoCloudAccountService.instance.scheduleProgressUpload(
+      HongguoCloudProgress(
+        seriesId: item.detail.seriesId,
+        title: item.detail.title,
+        cover: item.detail.cover,
+        episodeId: item.vid,
+        episodeIndex: item.episodeIndex,
+        positionMs: posMs,
+        durationMs: durMs,
+        updatedAtMs: DateTime.now().millisecondsSinceEpoch,
+      ),
+      episodeCount: math.max(
+        item.detail.totalEpisodes,
+        item.detail.episodes.length,
+      ),
+    );
     if (posMs >= 1000 ||
         _lastMarkedWatchedDocKey == docKey ||
-        _episodeDocuments.containsKey(docKey)) {
+        _episodeDocuments.containsKey(docKey) ||
+        _isDramaEpisodeMode) {
       unawaited(
         _persistFeedPlaybackPosition(
           item,
           positionMs: posMs,
           durationMs: durMs,
           force: force,
-          allowCreateForTrackedSeries: posMs >= 1000,
+          allowCreateForTrackedSeries: true,
         ),
       );
     }

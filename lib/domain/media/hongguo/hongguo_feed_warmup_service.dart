@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import '../../../data/repository/settings_repository.dart';
 import '../hongguo_resolver.dart';
 import '../video_cache_manager.dart';
+import 'hongguo_cloud_account_service.dart';
 import 'hongguo_discovery_service.dart';
 import 'hongguo_local_engine.dart';
 import 'hongguo_similar_engine.dart';
@@ -84,6 +85,35 @@ class HongguoFeedSessionCache {
 
   bool hasWarmedInitialTab = false;
   String? lastWarmupError;
+  String? warmedAccountUserId;
+
+  String get currentAccountUserId =>
+      HongguoCloudAccountService.instance.state.value.credentials?.userId ?? '';
+
+  bool isCacheValidForCurrentAccount() {
+    if (warmedAccountUserId == null) return true;
+    return warmedAccountUserId == currentAccountUserId;
+  }
+
+  void invalidateCache() {
+    hasWarmedInitialTab = false;
+    lastWarmupError = null;
+    warmedAccountUserId = null;
+    for (final list in tabItems.values) {
+      list.clear();
+    }
+    tabIndices[tabFollow] = 0;
+    tabIndices[tabComic] = 0;
+    tabIndices[tabReal] = 0;
+    tabIndices[tabDiscover] = 0;
+    comicCursor = null;
+    realCursor = null;
+    comicSelectionOverride = null;
+    realSelectionOverride = null;
+    followSeedOffset = 0;
+    preparedSources.clear();
+    lastPositionMsByMediaKey.clear();
+  }
 
   String currentTab = tabDiscover;
   final Map<String, List<FeedDramaPageItem>> tabItems = {
@@ -207,6 +237,15 @@ class HongguoFeedSessionCache {
 
   Future<void> _performWarmup({required bool forceRefresh}) async {
     try {
+      // Bắt buộc nạp xong tài khoản/Cookie Hồng Quả trước khi lấy đề xuất
+      // để luồng Đề xuất & Mạn kịch/Người thật luôn cá nhân hóa đúng theo tài khoản.
+      await HongguoCloudAccountService.instance.initialize();
+      final activeUserId = currentAccountUserId;
+      if (warmedAccountUserId != null && warmedAccountUserId != activeUserId) {
+        invalidateCache();
+      }
+      warmedAccountUserId = activeUserId;
+
       final settings = await SettingsRepository.getInstance();
       final targetTab = normalizeTab(
         hasAnyDiscoverItems ? currentTab : settings.hongguoFeedTab,
