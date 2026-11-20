@@ -358,6 +358,17 @@ class _MainNavigationState extends State<MainNavigation> {
     AppThemePalette palette,
     List<_BottomNavItem> items,
   ) {
+    final isDark = palette.isDark;
+    final topGlassColor = Color.lerp(
+      palette.navBg,
+      Colors.white,
+      isDark ? 0.14 : 0.48,
+    )!.withValues(alpha: isDark ? 0.72 : 0.80);
+    final midGlassColor = palette.navBg.withValues(alpha: isDark ? 0.56 : 0.62);
+    final bottomGlassColor = palette.navBg.withValues(
+      alpha: isDark ? 0.68 : 0.74,
+    );
+
     return SafeArea(
       top: false,
       child: Padding(
@@ -368,87 +379,181 @@ class _MainNavigationState extends State<MainNavigation> {
             borderRadius: BorderRadius.circular(32),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(
-                  alpha: palette.isDark ? 0.45 : 0.14,
-                ),
-                blurRadius: 24,
-                offset: const Offset(0, 10),
+                color: Colors.black.withValues(alpha: isDark ? 0.52 : 0.11),
+                blurRadius: 28,
+                offset: const Offset(0, 12),
+              ),
+              BoxShadow(
+                color: Colors.black.withValues(alpha: isDark ? 0.24 : 0.05),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
               ),
             ],
           ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(32),
             child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-                decoration: BoxDecoration(
-                  color: palette.navBg,
-                  borderRadius: BorderRadius.circular(32),
-                  border: Border.all(color: palette.border, width: 1),
+              filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+              child: CustomPaint(
+                foregroundPainter: _LiquidGlassRimPainter(
+                  isDark: isDark,
+                  radius: 32,
                 ),
-                child: Row(
-                  children: List.generate(items.length, (idx) {
-                    final it = items[idx];
-                    final isSelected = _currentIndex == idx;
-                    final accent = palette.accentFor(it.tabId);
-                    return Expanded(
-                      flex: isSelected ? 14 : 10,
-                      child: Material(
-                        color: Colors.transparent,
-                        child: InkWell(
-                          onTap: () {
-                            dismissAppKeyboard();
-                            if (_currentIndex != idx) {
-                              HapticFeedback.selectionClick();
-                              setState(() => _currentIndex = idx);
-                            }
-                          },
-                          borderRadius: BorderRadius.circular(26),
-                          splashColor: accent.withValues(alpha: 0.14),
-                          highlightColor: Colors.transparent,
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 220),
-                            curve: Curves.easeOutCubic,
-                            height: double.infinity,
-                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        topGlassColor,
+                        midGlassColor,
+                        bottomGlassColor,
+                      ],
+                      stops: const [0.0, 0.48, 1.0],
+                    ),
+                    borderRadius: BorderRadius.circular(32),
+                  ),
+                  child: Stack(
+                    children: [
+                      Positioned(
+                        top: 1,
+                        left: 22,
+                        right: 22,
+                        height: 18,
+                        child: IgnorePointer(
+                          child: DecoratedBox(
                             decoration: BoxDecoration(
-                              color: isSelected
-                                  ? accent.withValues(alpha: 0.14)
-                                  : Colors.transparent,
-                              borderRadius: BorderRadius.circular(26),
-                            ),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  it.icon,
-                                  size: 20,
-                                  color: isSelected ? accent : palette.textMuted,
-                                ),
-                                if (isSelected) ...[
-                                  const SizedBox(width: 5),
-                                  Flexible(
-                                    child: Text(
-                                      it.label,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontSize: 11.5,
-                                        fontWeight: FontWeight.w800,
-                                        color: accent,
-                                        letterSpacing: -0.2,
-                                      ),
-                                    ),
+                              borderRadius: const BorderRadius.vertical(
+                                top: Radius.circular(24),
+                              ),
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: [
+                                  Colors.white.withValues(
+                                    alpha: isDark ? 0.10 : 0.42,
                                   ),
+                                  Colors.white.withValues(alpha: 0.0),
                                 ],
-                              ],
+                              ),
                             ),
                           ),
                         ),
                       ),
-                    );
-                  }),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 6,
+                        ),
+                        child: Row(
+                          children: List.generate(items.length, (idx) {
+                            final it = items[idx];
+                            final isSelected = _currentIndex == idx;
+                            final accent = palette.accentFor(it.tabId);
+                            return Expanded(
+                              flex: isSelected ? 14 : 10,
+                              child: Material(
+                                color: Colors.transparent,
+                                child: InkWell(
+                                  onTap: () {
+                                    dismissAppKeyboard();
+                                    if (_currentIndex != idx) {
+                                      HapticFeedback.selectionClick();
+                                      setState(() => _currentIndex = idx);
+                                    }
+                                  },
+                                  borderRadius: BorderRadius.circular(26),
+                                  splashColor: accent.withValues(alpha: 0.14),
+                                  highlightColor: Colors.transparent,
+                                  child: AnimatedContainer(
+                                    duration: const Duration(milliseconds: 240),
+                                    curve: Curves.easeOutCubic,
+                                    height: double.infinity,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      gradient: isSelected
+                                          ? LinearGradient(
+                                              begin: Alignment.topLeft,
+                                              end: Alignment.bottomRight,
+                                              colors: [
+                                                Color.lerp(
+                                                  Colors.white,
+                                                  accent,
+                                                  isDark ? 0.55 : 0.25,
+                                                )!.withValues(
+                                                  alpha: isDark ? 0.24 : 0.50,
+                                                ),
+                                                accent.withValues(
+                                                  alpha: isDark ? 0.14 : 0.13,
+                                                ),
+                                              ],
+                                            )
+                                          : null,
+                                      borderRadius: BorderRadius.circular(26),
+                                      border: isSelected
+                                          ? Border.all(
+                                              color: isDark
+                                                  ? Colors.white.withValues(
+                                                      alpha: 0.18,
+                                                    )
+                                                  : Colors.white.withValues(
+                                                      alpha: 0.84,
+                                                    ),
+                                              width: 1,
+                                            )
+                                          : null,
+                                      boxShadow: isSelected
+                                          ? [
+                                              BoxShadow(
+                                                color: accent.withValues(
+                                                  alpha: isDark ? 0.20 : 0.14,
+                                                ),
+                                                blurRadius: 10,
+                                                offset: const Offset(0, 2),
+                                              ),
+                                            ]
+                                          : null,
+                                    ),
+                                    child: Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        Icon(
+                                          it.icon,
+                                          size: 20,
+                                          color: isSelected
+                                              ? accent
+                                              : palette.textMuted,
+                                        ),
+                                        if (isSelected) ...[
+                                          const SizedBox(width: 5),
+                                          Flexible(
+                                            child: Text(
+                                              it.label,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                fontSize: 11.5,
+                                                fontWeight: FontWeight.w800,
+                                                color: accent,
+                                                letterSpacing: -0.2,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            );
+                          }),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -539,5 +644,52 @@ class _MainNavigationState extends State<MainNavigation> {
         ),
       ),
     );
+  }
+}
+
+/// Vẽ viền sáng phản chiếu đa hướng (specular rim) cho thanh điều hướng kính lỏng.
+class _LiquidGlassRimPainter extends CustomPainter {
+  final bool isDark;
+  final double radius;
+
+  const _LiquidGlassRimPainter({required this.isDark, required this.radius});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const strokeWidth = 1.15;
+    final rect = Offset.zero & size;
+    final rrect = RRect.fromRectAndRadius(
+      rect.deflate(strokeWidth / 2),
+      Radius.circular(radius - strokeWidth / 2),
+    );
+
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth
+      ..shader = LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: isDark
+            ? [
+                Colors.white.withValues(alpha: 0.34),
+                Colors.white.withValues(alpha: 0.09),
+                Colors.white.withValues(alpha: 0.04),
+                Colors.white.withValues(alpha: 0.16),
+              ]
+            : [
+                Colors.white.withValues(alpha: 0.94),
+                Colors.white.withValues(alpha: 0.45),
+                Colors.black.withValues(alpha: 0.07),
+                Colors.white.withValues(alpha: 0.72),
+              ],
+        stops: const [0.0, 0.36, 0.68, 1.0],
+      ).createShader(rect);
+
+    canvas.drawRRect(rrect, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _LiquidGlassRimPainter oldDelegate) {
+    return oldDelegate.isDark != isDark || oldDelegate.radius != radius;
   }
 }

@@ -676,71 +676,68 @@ class _BilibiliScreenState extends State<BilibiliScreen>
           statusColor = Colors.white54;
         }
 
-        return Padding(
-          padding: EdgeInsets.only(bottom: palette.isFloatingNav ? 72 : 0),
-          child: Material(
-            color: Colors.transparent,
-            elevation: 8,
+        return Material(
+          color: Colors.transparent,
+          elevation: 8,
+          borderRadius: BorderRadius.circular(28),
+          child: InkWell(
+            onTap: _openAssistantSheet,
             borderRadius: BorderRadius.circular(28),
-            child: InkWell(
-              onTap: _openAssistantSheet,
-              borderRadius: BorderRadius.circular(28),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [accent, secondary],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [accent, secondary],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(28),
+                boxShadow: [
+                  BoxShadow(
+                    color: accent.withValues(alpha: 0.34),
+                    blurRadius: 14,
+                    offset: const Offset(0, 6),
                   ),
-                  borderRadius: BorderRadius.circular(28),
-                  boxShadow: [
-                    BoxShadow(
-                      color: accent.withValues(alpha: 0.34),
-                      blurRadius: 14,
-                      offset: const Offset(0, 6),
-                    ),
-                  ],
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (isBusy)
-                      const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                        ),
-                      )
-                    else
-                      Icon(
-                        isMic ? Icons.mic_rounded : Icons.auto_awesome_rounded,
-                        color: Colors.white,
-                        size: 20,
+                ],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (isBusy)
+                    const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                       ),
-                    const SizedBox(width: 8),
-                    Text(
-                      isMic ? 'Đang nghe...' : 'Trợ lý AI',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13.5,
-                      ),
+                    )
+                  else
+                    Icon(
+                      isMic ? Icons.mic_rounded : Icons.auto_awesome_rounded,
+                      color: Colors.white,
+                      size: 20,
                     ),
-                    const SizedBox(width: 7),
-                    Container(
-                      width: 8,
-                      height: 8,
-                      decoration: BoxDecoration(
-                        color: statusColor,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: Colors.white, width: 1.2),
-                      ),
+                  const SizedBox(width: 8),
+                  Text(
+                    isMic ? 'Đang nghe...' : 'Trợ lý AI',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13.5,
                     ),
-                  ],
-                ),
+                  ),
+                  const SizedBox(width: 7),
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: statusColor,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 1.2),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -755,29 +752,37 @@ class _BilibiliScreenState extends State<BilibiliScreen>
       tab: AppTabId.bilibili,
       child: Scaffold(
         backgroundColor: Colors.transparent,
-        floatingActionButton: _buildAssistantFloatingButton(),
         body: SafeArea(
-          child: Column(
+          child: Stack(
             children: [
-              _buildHeaderSection(),
+              Column(
+                children: [
+                  _buildHeaderSection(),
 
-              if (_hasSearched) ...[
-                _buildSearchResultHeader(),
-                Expanded(child: _buildSearchResultList()),
-              ] else ...[
-                _buildTabBar(),
-                Expanded(
-                  child: TabBarView(
-                    controller: _tabController,
-                    children: [
-                      _buildRecommendTab(),
-                      _buildAiTab(),
-                      _buildPopularTab(),
-                      _buildComicTab(),
-                    ],
-                  ),
-                ),
-              ],
+                  if (_hasSearched) ...[
+                    _buildSearchResultHeader(),
+                    Expanded(child: _buildSearchResultList()),
+                  ] else ...[
+                    _buildTabBar(),
+                    Expanded(
+                      child: TabBarView(
+                        controller: _tabController,
+                        children: [
+                          _buildRecommendTab(),
+                          _buildAiTab(),
+                          _buildPopularTab(),
+                          _buildComicTab(),
+                        ],
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              Positioned(
+                right: 16,
+                bottom: 12,
+                child: _buildAssistantFloatingButton(),
+              ),
             ],
           ),
         ),
