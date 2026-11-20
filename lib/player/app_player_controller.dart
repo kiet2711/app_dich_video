@@ -88,15 +88,15 @@ class AppPlayerController extends ChangeNotifier {
     }
     _platformDetected = true;
     try {
-      final detected = await const MethodChannel(
-        'com.capcut.capsub/media',
-      ).invokeMethod<bool>('isEmulator');
+      final detected = await const MethodChannel('com.capcut.capsub/media')
+          .invokeMethod<bool>('isEmulator');
       _isAndroidEmulator = detected ?? false;
       debugPrint('[AppPlayerController] isAndroidEmulator=$_isAndroidEmulator');
     } catch (_) {
       _isAndroidEmulator = false;
     }
   }
+
   List<({String videoUrl, String audioUrl})> _activeDashPairs = const [];
   Map<String, String> _activeDashHeaders = const {};
   int _activeDashPairIndex = 0;
@@ -104,6 +104,9 @@ class AppPlayerController extends ChangeNotifier {
   bool get isDisposed => _isDisposed;
   Completer<void> _initCompleter = Completer<void>();
   late final Future<void> _baseOptionsFuture;
+  final ValueNotifier<double?> videoAspectNotifier = ValueNotifier<double?>(
+    null,
+  );
 
   AppPlayerController({
     int? bufferSizeMb,
@@ -123,15 +126,17 @@ class AppPlayerController extends ChangeNotifier {
       player,
       configuration: VideoControllerConfiguration(
         vo: useEmulatorDirectSurface ? 'mediacodec_embed' : null,
-        enableHardwareAcceleration:
-            useEmulatorDirectSurface ? true : hardwareDecode,
-        androidAttachSurfaceAfterVideoParameters:
-            Platform.isAndroid ? false : null,
+        enableHardwareAcceleration: useEmulatorDirectSurface
+            ? true
+            : hardwareDecode,
+        androidAttachSurfaceAfterVideoParameters: Platform.isAndroid
+            ? false
+            : null,
         hwdec: useEmulatorDirectSurface
             ? 'mediacodec'
             : (hardwareDecode
-                ? (Platform.isAndroid ? 'mediacodec,auto-safe' : 'auto')
-                : 'no'),
+                  ? (Platform.isAndroid ? 'mediacodec,auto-safe' : 'auto')
+                  : 'no'),
       ),
     );
 
@@ -211,14 +216,14 @@ class AppPlayerController extends ChangeNotifier {
       // KHÔNG đặt `demuxer-readahead-secs` riêng vì sẽ ghi đè `cache-secs`.
       // Để `hysteresis = 3s` trên `cache-secs = 30s` để mpv luôn nạp gối đầu liên tục ở mức 27s-30s,
       // không để cạn sát 0s rồi mới kéo lại mỗi vài giây.
-      await native.setProperty('cache-secs', silentStandby ? '6' : '30');
-      await native.setProperty(
-        'demuxer-hysteresis-secs',
-        silentStandby ? '2' : '3',
-      );
+      await native.setProperty('cache-secs', silentStandby ? '18' : '24');
+      await native.setProperty('demuxer-hysteresis-secs', '3');
       await native.setProperty('cache-pause', 'yes');
       await native.setProperty('cache-pause-initial', 'yes');
-      await native.setProperty('cache-pause-wait', silentStandby ? '0.5' : '1.0');
+      await native.setProperty(
+        'cache-pause-wait',
+        silentStandby ? '0.5' : '1.0',
+      );
       await native.setProperty(
         'demuxer-max-bytes',
         '${forwardMb * 1024 * 1024}',
@@ -286,6 +291,7 @@ class AppPlayerController extends ChangeNotifier {
 
   void _resetCompleterAndState() {
     _initCompleter = Completer<void>();
+    videoAspectNotifier.value = null;
     _value = AppVideoPlayerValue(playbackSpeed: _value.playbackSpeed);
     notifyListeners();
   }
@@ -333,6 +339,9 @@ class AppPlayerController extends ChangeNotifier {
         final h = player.state.height ?? 0;
         final size = Size(w.toDouble(), h > 0 ? h.toDouble() : 1080);
         final ratio = h > 0 ? (w / h) : (16 / 9);
+        if (h > 0 && ratio > 0 && videoAspectNotifier.value != ratio) {
+          videoAspectNotifier.value = ratio;
+        }
         _value = _value.copyWith(
           size: size,
           aspectRatio: ratio > 0 ? ratio : (16 / 9),
@@ -347,6 +356,9 @@ class AppPlayerController extends ChangeNotifier {
         final w = player.state.width ?? 0;
         final size = Size(w > 0 ? w.toDouble() : 1920, h.toDouble());
         final ratio = w > 0 ? (w / h) : (16 / 9);
+        if (w > 0 && ratio > 0 && videoAspectNotifier.value != ratio) {
+          videoAspectNotifier.value = ratio;
+        }
         _value = _value.copyWith(
           size: size,
           aspectRatio: ratio > 0 ? ratio : (16 / 9),
@@ -571,9 +583,7 @@ class AppPlayerController extends ChangeNotifier {
         if (player.platform is NativePlayer) {
           final native = player.platform as NativePlayer;
           await native.setProperty('mute', 'yes');
-          await native.setProperty('aid', 'no');
         }
-        await player.setAudioTrack(AudioTrack.no());
       } catch (_) {}
     } else if (_inSilentStandby) {
       _inSilentStandby = false;
@@ -581,9 +591,7 @@ class AppPlayerController extends ChangeNotifier {
         if (player.platform is NativePlayer) {
           final native = player.platform as NativePlayer;
           await native.setProperty('mute', 'no');
-          await native.setProperty('aid', 'auto');
         }
-        await player.setAudioTrack(AudioTrack.auto());
         await player.setVolume(100.0);
       } catch (_) {}
     }
@@ -634,12 +642,10 @@ class AppPlayerController extends ChangeNotifier {
 
     if (silentStandby) {
       try {
-        await player.setAudioTrack(AudioTrack.no());
         await player.setVolume(0.0);
         if (player.platform is NativePlayer) {
           final native = player.platform as NativePlayer;
           await native.setProperty('mute', 'yes');
-          await native.setProperty('aid', 'no');
         }
       } catch (_) {}
     }
@@ -664,6 +670,7 @@ class AppPlayerController extends ChangeNotifier {
   }
 
   /// Kích hoạt phát video có tiếng (thoát khỏi chế độ standby yên lặng)
+  /// Giữ nguyên audio track và demuxer cache đang mở sẵn để phát ngay không khựng frame.
   Future<void> unmuteAndPlay({
     double rate = 1.0,
     PlaylistMode playlistMode = PlaylistMode.loop,
@@ -671,39 +678,31 @@ class AppPlayerController extends ChangeNotifier {
     if (_isDisposed) return;
     _inSilentStandby = false;
     try {
-      await _applyStreamBufferProperties(isLocalFile: false);
       if (player.platform is NativePlayer) {
         final native = player.platform as NativePlayer;
         await native.setProperty('mute', 'no');
-        await native.setProperty('aid', 'auto');
       }
-      await player.setAudioTrack(AudioTrack.auto());
-      await setVolume(1.0);
-      await player.setPlaylistMode(playlistMode);
-      await player.setRate(rate);
+      await Future.wait([
+        setVolume(1.0),
+        player.setPlaylistMode(playlistMode),
+        player.setRate(rate),
+      ]);
       await player.play();
     } catch (e) {
       debugPrint('[AppPlayerController] unmuteAndPlay lỗi: $e');
     }
   }
 
-  /// Tạm dừng và tắt tiếng hoàn toàn (đưa vào trạng thái standby yên lặng)
+  /// Tạm dừng và tắt tiếng nhẹ nhàng (không hạ cấp cache hay tháo track âm thanh)
   Future<void> muteAndPause() async {
     if (_isDisposed) return;
     _inSilentStandby = true;
     try {
-      await player.pause();
-      await setVolume(0.0);
-      await _applyStreamBufferProperties(
-        isLocalFile: false,
-        silentStandby: true,
-      );
+      await Future.wait([player.pause(), setVolume(0.0)]);
       if (player.platform is NativePlayer) {
         final native = player.platform as NativePlayer;
-        await native.setProperty('mute', 'yes');
-        await native.setProperty('aid', 'no');
+        unawaited(native.setProperty('mute', 'yes'));
       }
-      await player.setAudioTrack(AudioTrack.no());
     } catch (_) {}
   }
 
@@ -788,6 +787,7 @@ class AppPlayerController extends ChangeNotifier {
       sub.cancel();
     }
     _subscriptions.clear();
+    videoAspectNotifier.dispose();
     player.dispose();
     super.dispose();
   }

@@ -264,6 +264,8 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
   StreamSubscription<bool>? _completedSub;
   int? _pendingInitialSeekMs;
   Timer? _pageActivateDebounce;
+  bool _isPageScrolling = false;
+  int? _pendingScrollSettleIndex;
   DateTime _lastHistoryPositionSaveAt = DateTime.fromMillisecondsSinceEpoch(0);
   int _lastHistorySavedPositionMs = -1;
   String? _lastMarkedWatchedDocKey;
@@ -1236,16 +1238,32 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     _listenToPlayerStreams();
 
     _loadingIndicatorTimer?.cancel();
-    setState(() {
-      _isLoadingVideo = false;
-      _showLoadingIndicator = false;
-      _errorMessage = null;
-      _isManuallyPaused = false;
-      _isDescriptionExpanded = false;
-    });
+    final needsUiReset =
+        _showLoadingIndicator ||
+        _errorMessage != null ||
+        _isManuallyPaused ||
+        _isDescriptionExpanded;
+    _isLoadingVideo = false;
+    _showLoadingIndicator = false;
+    _errorMessage = null;
+    _isManuallyPaused = false;
+    _isDescriptionExpanded = false;
+    if (needsUiReset) {
+      setState(() {});
+    }
 
     try {
-      unawaited(previousController?.muteAndPause());
+      // Dừng nhẹ player cũ trước khi unmute player mới (~2ms) để hai decoder
+      // không tranh chấp audio focus hay lock native ngay lúc chuyển khung hình.
+      await previousController?.muteAndPause();
+      if (!_isActivationCurrent(
+        requestId: requestId,
+        feedGeneration: feedGeneration,
+        mediaKey: mediaKey,
+      )) {
+        return true;
+      }
+
       await preparedController.unmuteAndPlay(
         rate: _playbackSpeed,
         playlistMode: _isAutoNextEpisode
@@ -1271,8 +1289,21 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         }
       }
 
-      _afterSuccessfulActivation(index);
-      unawaited(_preloadAheadEpisodes(index));
+      // Nhường 140ms cho những khung hình đầu tiên xuất hiện mượt mà trước khi
+      // chạy kiểm tra lịch sử & nạp trước tập kế tiếp.
+      unawaited(
+        Future<void>.delayed(const Duration(milliseconds: 140), () {
+          if (!_isActivationCurrent(
+            requestId: requestId,
+            feedGeneration: feedGeneration,
+            mediaKey: mediaKey,
+          )) {
+            return;
+          }
+          _afterSuccessfulActivation(index);
+          unawaited(_preloadAheadEpisodes(index));
+        }),
+      );
       return true;
     } catch (e) {
       debugPrint('[HongguoFeedScreen] Lỗi đổi sang player đã nạp sẵn: $e');
@@ -1319,13 +1350,19 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       _disposeStandbyPlayer();
     }
 
-    setState(() {
-      _isLoadingVideo = true;
-      _showLoadingIndicator = false;
-      _errorMessage = null;
-      _isManuallyPaused = false;
-      _isDescriptionExpanded = false;
-    });
+    final needsLoadingReset =
+        _showLoadingIndicator ||
+        _errorMessage != null ||
+        _isManuallyPaused ||
+        _isDescriptionExpanded;
+    _isLoadingVideo = true;
+    _showLoadingIndicator = false;
+    _errorMessage = null;
+    _isManuallyPaused = false;
+    _isDescriptionExpanded = false;
+    if (needsLoadingReset) {
+      setState(() {});
+    }
     _loadingIndicatorTimer = Timer(const Duration(milliseconds: 400), () {
       if (_isActivationCurrent(
             requestId: requestId,
@@ -1561,10 +1598,12 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         mediaKey: mediaKey,
       )) {
         _loadingIndicatorTimer?.cancel();
-        setState(() {
-          _isLoadingVideo = false;
-          _showLoadingIndicator = false;
-        });
+        final wasShowingIndicator = _showLoadingIndicator;
+        _isLoadingVideo = false;
+        _showLoadingIndicator = false;
+        if (wasShowingIndicator) {
+          setState(() {});
+        }
       }
 
       // Mở sẵn N+1 trên player dự phòng và chuẩn bị metadata N+2.
@@ -1934,7 +1973,6 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       if (!switched) return;
 
       _standbyReady = true;
-      setState(() {});
       await _restoreActivePlaybackAfterStandbyOpen(controller);
     } catch (e) {
       if (_isStandbyRequestCurrent(
@@ -2056,9 +2094,10 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       HongguoFeedSessionCache.instance.tabIndices[_currentFeedTab] = index;
     }
 
-    // Dừng ngay lập tức âm thanh lồng tiếng của tập cũ và reset volume video gốc về 100%
+    // Dừng ngay âm thanh lồng tiếng và tạm dừng nhẹ player cũ trước khi sang tập mới.
     _ttsScheduler?.stop();
     _ttsScheduler?.setDocument(null);
+    unawaited(_activeController?.player.pause());
     _activeController?.setVolume(1.0);
 
     _maintainFeedWindow(index);
@@ -2077,14 +2116,30 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     final nextMediaKey = (index >= 0 && index < _feedItems.length)
         ? _mediaKey(_feedItems[index])
         : null;
-    if (_standbyReady &&
+    final hasStandbyReady =
+        _standbyReady &&
         nextMediaKey != null &&
-        _standbyMediaKey == nextMediaKey) {
+        _standbyMediaKey == nextMediaKey;
+
+    if (!hasStandbyReady) {
+      // Bắt đầu nạp trước URL ngầm trong khi PageView đang trôi, chưa chạm player/UI.
+      unawaited(_preloadNextPage(index, warmStream: true));
+    }
+
+    if (!_isPageScrolling) {
+      _pendingScrollSettleIndex = null;
       unawaited(_activatePage(index));
     } else {
-      _pageActivateDebounce = Timer(const Duration(milliseconds: 90), () {
+      // Đợi hoạt ảnh lật trang dừng hẳn (ScrollEndNotification) mới kích hoạt
+      // phát/swap player để khung hình chuyển trang luôn mượt, không giật lúc đáp.
+      _pendingScrollSettleIndex = index;
+      _pageActivateDebounce = Timer(const Duration(milliseconds: 260), () {
         if (!mounted || _currentIndex != index) return;
-        unawaited(_activatePage(index));
+        if (_pendingScrollSettleIndex == index) {
+          _pendingScrollSettleIndex = null;
+          _isPageScrolling = false;
+          unawaited(_activatePage(index));
+        }
       });
     }
 
@@ -3933,24 +3988,43 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         body: Stack(
           children: [
             // 1. Vertical PageView lướt video dạng TikTok/Shorts
-            PageView.builder(
-              key: ValueKey(
-                'hongguo_page_view_${_isDramaEpisodeMode ? _currentDramaDetail?.seriesId : _currentFeedTab}_$_dramaEpisodeSessionKey',
-              ),
-              controller: _pageController,
-              scrollDirection: Axis.vertical,
-              allowImplicitScrolling: true,
-              physics: _isLandscapeFullscreen
-                  ? const NeverScrollableScrollPhysics()
-                  : const ClampingScrollPhysics(parent: PageScrollPhysics()),
-              itemCount: _feedItems.length,
-              onPageChanged: _onPageChanged,
-              itemBuilder: (context, index) {
-                final item = _feedItems[index];
-                final isCurrent = index == _currentIndex;
-
-                return _buildFeedPageItem(item, isCurrent);
+            NotificationListener<ScrollNotification>(
+              onNotification: (notification) {
+                if (notification.depth != 0 ||
+                    notification.metrics.axis != Axis.vertical) {
+                  return false;
+                }
+                if (notification is ScrollStartNotification) {
+                  _isPageScrolling = true;
+                } else if (notification is ScrollEndNotification) {
+                  _isPageScrolling = false;
+                  final targetIndex = _pendingScrollSettleIndex;
+                  if (targetIndex != null && targetIndex == _currentIndex) {
+                    _pendingScrollSettleIndex = null;
+                    _pageActivateDebounce?.cancel();
+                    unawaited(_activatePage(targetIndex));
+                  }
+                }
+                return false;
               },
+              child: PageView.builder(
+                key: ValueKey(
+                  'hongguo_page_view_${_isDramaEpisodeMode ? _currentDramaDetail?.seriesId : _currentFeedTab}_$_dramaEpisodeSessionKey',
+                ),
+                controller: _pageController,
+                scrollDirection: Axis.vertical,
+                physics: _isLandscapeFullscreen
+                    ? const NeverScrollableScrollPhysics()
+                    : const ClampingScrollPhysics(parent: PageScrollPhysics()),
+                itemCount: _feedItems.length,
+                onPageChanged: _onPageChanged,
+                itemBuilder: (context, index) {
+                  final item = _feedItems[index];
+                  final isCurrent = index == _currentIndex;
+
+                  return _buildFeedPageItem(item, isCurrent);
+                },
+              ),
             ),
 
             // 1b. Hiệu ứng xoay tròn khi danh sách đang nạp trên nền đen
@@ -4242,34 +4316,18 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         : (_standbyReady && _standbyMediaKey == itemMediaKey
               ? _standbyController
               : null);
-    final videoAspect =
-        (pageController != null &&
-            pageController.value.isInitialized &&
-            pageController.value.aspectRatio > 0)
-        ? pageController.value.aspectRatio
-        : (9 / 16);
-    final isLandscapeVideo = videoAspect > 1.05;
 
     return RepaintBoundary(
       child: Stack(
       fit: StackFit.expand,
       children: [
-        Container(color: Colors.black),
-
-        // Video Player
-        if (pageController != null && (!isCurrent || _errorMessage == null))
-          Center(
-            child: AspectRatio(
-              aspectRatio: videoAspect,
-              child: Video(
-                key: ValueKey(
-                  'feed_player_${pageController.hashCode}_$itemMediaKey',
-                ),
-                controller: pageController.videoController,
-                controls: NoVideoControls,
-              ),
-            ),
-          ),
+        // Lớp poster nền + bề mặt Video (không nháy đen, không rebuild cả màn hình khi đổi tỉ lệ)
+        _FeedVideoSurface(
+          controller: pageController,
+          mediaKey: itemMediaKey,
+          coverUrl: item.detail.cover,
+          showVideo: pageController != null && (!isCurrent || _errorMessage == null),
+        ),
 
         // Vòng xoay nạp video chỉ hiện khi độ trễ vượt quá 400 ms.
         if (isCurrent && _showLoadingIndicator)
@@ -4371,52 +4429,65 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
         // Nút xoay xem toàn màn hình cho video ngang (Nằm trên Positioned.fill để nhận tap nhạy bén)
         if (isCurrent &&
-            isLandscapeVideo &&
+            pageController != null &&
             !_isLandscapeFullscreen &&
             !_isCleanMode)
-          Positioned(
-            left: 0,
-            right: 0,
-            top: MediaQuery.of(context).size.height * 0.5 + 130,
-            child: Center(
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: _toggleLandscapeFullscreen,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 7,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.55),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: Colors.white30, width: 0.8),
-                    boxShadow: const [
-                      BoxShadow(color: Colors.black45, blurRadius: 8),
-                    ],
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.fullscreen_rounded,
-                        color: Colors.white,
-                        size: 16,
+          ValueListenableBuilder<double?>(
+            valueListenable: pageController.videoAspectNotifier,
+            builder: (context, notifiedRatio, _) {
+              final ratio =
+                  notifiedRatio ??
+                  (pageController.value.isInitialized
+                      ? pageController.value.aspectRatio
+                      : (9 / 16));
+              if (ratio <= 1.05) {
+                return const SizedBox.shrink();
+              }
+              return Positioned(
+                left: 0,
+                right: 0,
+                top: MediaQuery.of(context).size.height * 0.5 + 130,
+                child: Center(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: _toggleLandscapeFullscreen,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 7,
                       ),
-                      SizedBox(width: 6),
-                      Text(
-                        'Xem toàn màn hình',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
-                        ),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.55),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: Colors.white30, width: 0.8),
+                        boxShadow: const [
+                          BoxShadow(color: Colors.black45, blurRadius: 8),
+                        ],
                       ),
-                    ],
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.fullscreen_rounded,
+                            color: Colors.white,
+                            size: 16,
+                          ),
+                          SizedBox(width: 6),
+                          Text(
+                            'Xem toàn màn hình',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
-              ),
-            ),
+              );
+            },
           ),
 
         // Nút phục hồi giao diện nổi nhỏ khi đang ở Chế độ ẩn nút (Clean Mode)
@@ -6870,12 +6941,11 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
           }
         }
       } else {
-        // Tập này chưa hề dịch -> Đảm bảo tắt hẳn TTS và volume 100%
+        // Tập này chưa hề dịch -> Đảm bảo tắt hẳn TTS và volume 100% (không setState thừa)
         if (_isCurrentMedia(index, mediaKey)) {
           _ttsScheduler?.stop();
           _ttsScheduler?.setDocument(null);
           _activeController?.setVolume(1.0);
-          if (mounted) setState(() {});
         }
       }
     } catch (e) {
@@ -8084,6 +8154,85 @@ class _EqualizerBar extends StatelessWidget {
       decoration: BoxDecoration(
         color: const Color(0xFFFF6A00),
         borderRadius: BorderRadius.circular(1),
+      ),
+    );
+  }
+}
+
+/// Hiển thị ảnh bìa phim làm lớp lót tức thì theo kiểu TikTok khi chưa có frame đầu
+/// và chỉ cập nhật cục bộ bề mặt `Video` khi có tỉ lệ khung hình thực, tránh nháy đen & rebuild trang.
+class _FeedVideoSurface extends StatelessWidget {
+  final AppPlayerController? controller;
+  final String mediaKey;
+  final String coverUrl;
+  final bool showVideo;
+
+  const _FeedVideoSurface({
+    required this.controller,
+    required this.mediaKey,
+    required this.coverUrl,
+    required this.showVideo,
+  });
+
+  Widget _buildCoverBackdrop({required bool visible}) {
+    if (coverUrl.trim().isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Positioned.fill(
+      child: AnimatedOpacity(
+        opacity: visible ? 1.0 : 0.0,
+        duration: const Duration(milliseconds: 160),
+        curve: Curves.easeOut,
+        child: Image.network(
+          coverUrl,
+          fit: BoxFit.cover,
+          cacheWidth: 540,
+          gaplessPlayback: true,
+          filterQuality: FilterQuality.low,
+          errorBuilder: (_, _, _) => const SizedBox.shrink(),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final activeCtrl = controller;
+    if (!showVideo || activeCtrl == null) {
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          const ColoredBox(color: Colors.black),
+          _buildCoverBackdrop(visible: true),
+        ],
+      );
+    }
+
+    return ValueListenableBuilder<double?>(
+      valueListenable: activeCtrl.videoAspectNotifier,
+      builder: (context, notifiedRatio, child) {
+        final hasReadyAspect = notifiedRatio != null && notifiedRatio > 0;
+        final videoAspect = hasReadyAspect ? notifiedRatio : (9 / 16);
+
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            const ColoredBox(color: Colors.black),
+            _buildCoverBackdrop(visible: !hasReadyAspect),
+            Center(
+              child: AspectRatio(
+                aspectRatio: videoAspect,
+                child: child!,
+              ),
+            ),
+          ],
+        );
+      },
+      child: Video(
+        key: ValueKey('feed_player_${activeCtrl.hashCode}_$mediaKey'),
+        controller: activeCtrl.videoController,
+        controls: NoVideoControls,
+        fill: Colors.transparent,
       ),
     );
   }
