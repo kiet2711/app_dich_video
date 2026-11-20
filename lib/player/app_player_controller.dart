@@ -469,9 +469,12 @@ class AppPlayerController extends ChangeNotifier {
     Map<String, String> headers = const {},
     Duration? startPosition,
     bool play = false,
+    bool applyBufferProperties = true,
   }) async {
     if (_isDisposed) return;
-    await _applyStreamBufferProperties(isLocalFile: false);
+    if (applyBufferProperties) {
+      await _applyStreamBufferProperties(isLocalFile: false);
+    }
     await _applyNetworkStreamOptions(urlForHint: videoUrl, headers: headers);
     final edlUri = buildBilibiliEdlUri(videoUrl: videoUrl, audioUrl: audioUrl);
     await player.open(
@@ -579,10 +582,14 @@ class AppPlayerController extends ChangeNotifier {
     if (silentStandby) {
       _inSilentStandby = true;
       try {
-        await player.setVolume(0.0);
+        await Future.wait([
+          player.setVolume(0.0),
+          player.setAudioTrack(AudioTrack.no()),
+        ]);
         if (player.platform is NativePlayer) {
           final native = player.platform as NativePlayer;
           await native.setProperty('mute', 'yes');
+          await native.setProperty('aid', 'no');
         }
       } catch (_) {}
     } else if (_inSilentStandby) {
@@ -591,8 +598,12 @@ class AppPlayerController extends ChangeNotifier {
         if (player.platform is NativePlayer) {
           final native = player.platform as NativePlayer;
           await native.setProperty('mute', 'no');
+          await native.setProperty('aid', 'auto');
         }
-        await player.setVolume(100.0);
+        await Future.wait([
+          player.setAudioTrack(AudioTrack.auto()),
+          player.setVolume(100.0),
+        ]);
       } catch (_) {}
     }
 
@@ -625,11 +636,16 @@ class AppPlayerController extends ChangeNotifier {
         headers: headers,
         startPosition: startPosition,
         play: play,
+        applyBufferProperties: false,
       );
     } else if (file != null) {
-      await openFile(file, play: play);
+      await openFile(file, play: play, applyBufferProperties: false);
     } else if (contentUri != null) {
-      await openContentUri(contentUri, play: play);
+      await openContentUri(
+        contentUri,
+        play: play,
+        applyBufferProperties: false,
+      );
     } else if (networkUrl != null && networkUrl.isNotEmpty) {
       await openNetwork(
         networkUrl,
@@ -637,15 +653,20 @@ class AppPlayerController extends ChangeNotifier {
         decryptionKey: decryptionKey,
         startPosition: startPosition,
         play: play,
+        applyBufferProperties: false,
       );
     }
 
     if (silentStandby) {
       try {
-        await player.setVolume(0.0);
+        await Future.wait([
+          player.setAudioTrack(AudioTrack.no()),
+          player.setVolume(0.0),
+        ]);
         if (player.platform is NativePlayer) {
           final native = player.platform as NativePlayer;
           await native.setProperty('mute', 'yes');
+          await native.setProperty('aid', 'no');
         }
       } catch (_) {}
     }
@@ -669,8 +690,8 @@ class AppPlayerController extends ChangeNotifier {
     }
   }
 
-  /// Kích hoạt phát video có tiếng (thoát khỏi chế độ standby yên lặng)
-  /// Giữ nguyên audio track và demuxer cache đang mở sẵn để phát ngay không khựng frame.
+  /// Kích hoạt phát video có tiếng (thoát khỏi chế độ standby yên lặng).
+  /// Giữ nguyên cấu hình demuxer cache đang có, chỉ bật lại audio track & phát ngay.
   Future<void> unmuteAndPlay({
     double rate = 1.0,
     PlaylistMode playlistMode = PlaylistMode.loop,
@@ -683,6 +704,7 @@ class AppPlayerController extends ChangeNotifier {
         await native.setProperty('mute', 'no');
       }
       await Future.wait([
+        player.setAudioTrack(AudioTrack.auto()),
         setVolume(1.0),
         player.setPlaylistMode(playlistMode),
         player.setRate(rate),
@@ -693,15 +715,19 @@ class AppPlayerController extends ChangeNotifier {
     }
   }
 
-  /// Tạm dừng và tắt tiếng nhẹ nhàng (không hạ cấp cache hay tháo track âm thanh)
+  /// Tạm dừng và nhả audio track ngay (~2ms) để standby không chiếm audio focus của video đang phát.
   Future<void> muteAndPause() async {
     if (_isDisposed) return;
     _inSilentStandby = true;
     try {
-      await Future.wait([player.pause(), setVolume(0.0)]);
+      await Future.wait([
+        player.pause(),
+        setVolume(0.0),
+        player.setAudioTrack(AudioTrack.no()),
+      ]);
       if (player.platform is NativePlayer) {
         final native = player.platform as NativePlayer;
-        unawaited(native.setProperty('mute', 'yes'));
+        await native.setProperty('mute', 'yes');
       }
     } catch (_) {}
   }
@@ -713,11 +739,14 @@ class AppPlayerController extends ChangeNotifier {
     String? decryptionKey,
     Duration? startPosition,
     bool play = false,
+    bool applyBufferProperties = true,
   }) async {
     if (_isDisposed) return;
     _activeDashPairs = const [];
     _activeDashPairIndex = 0;
-    await _applyStreamBufferProperties(isLocalFile: false);
+    if (applyBufferProperties) {
+      await _applyStreamBufferProperties(isLocalFile: false);
+    }
     await _applyNetworkStreamOptions(
       urlForHint: url,
       headers: headers,
@@ -736,22 +765,34 @@ class AppPlayerController extends ChangeNotifier {
   }
 
   /// Phát file video cục bộ trên máy
-  Future<void> openFile(File file, {bool play = false}) async {
+  Future<void> openFile(
+    File file, {
+    bool play = false,
+    bool applyBufferProperties = true,
+  }) async {
     if (_isDisposed) return;
     _activeDashPairs = const [];
     _activeDashPairIndex = 0;
-    await _applyStreamBufferProperties(isLocalFile: true);
+    if (applyBufferProperties) {
+      await _applyStreamBufferProperties(isLocalFile: true);
+    }
     await _applyNetworkStreamOptions();
     final uri = Uri.file(file.path);
     await player.open(Media(uri.toString()), play: play);
   }
 
   /// Phát Content URI (Android)
-  Future<void> openContentUri(Uri uri, {bool play = false}) async {
+  Future<void> openContentUri(
+    Uri uri, {
+    bool play = false,
+    bool applyBufferProperties = true,
+  }) async {
     if (_isDisposed) return;
     _activeDashPairs = const [];
     _activeDashPairIndex = 0;
-    await _applyStreamBufferProperties(isLocalFile: true);
+    if (applyBufferProperties) {
+      await _applyStreamBufferProperties(isLocalFile: true);
+    }
     await _applyNetworkStreamOptions();
     await player.open(Media(uri.toString()), play: play);
   }

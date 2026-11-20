@@ -22,6 +22,7 @@ import '../../../domain/ai/live/live_pcm_stream_extractor.dart';
 import '../../../domain/ai/live/live_stream_translator.dart';
 import '../../../domain/ai/offline_mlkit_translator.dart';
 import '../../../domain/media/audio_extractor.dart';
+import '../../../domain/media/hongguo/feed_byte_cache_server.dart';
 import '../../../domain/media/hongguo/hongguo_cloud_account_service.dart';
 import '../../../domain/media/hongguo/hongguo_codec_capabilities.dart';
 import '../../../domain/media/hongguo/hongguo_discovery_service.dart';
@@ -77,7 +78,7 @@ class HongguoFeedScreen extends StatefulWidget {
 }
 
 class _HongguoFeedScreenState extends State<HongguoFeedScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   final HongguoResolver _resolver = HongguoResolver();
   late PageController _pageController;
 
@@ -128,21 +129,18 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
   final List<FeedDramaPageItem> _realFeedItems = [];
   final List<FeedDramaPageItem> _discoverFeedItems = [];
 
-  // Hai player luân phiên: player hiện tại phát, player dự phòng mở sẵn trang kế.
-  // Mỗi trang có texture riêng nên kéo giữ giữa hai trang không phải đổi media
-  // trên cùng một surface.
+  // Pool player tinh gọn chuẩn TikTok: 1 active + tối đa 2 standby (N+1 & N-1 = tối đa 3 decoder,
+  // an toàn phần cứng trên mọi máy Android/iOS), kết hợp FeedByteCacheServer nạp trước 1.5MB đầu
+  // của N+1..N+4 và giữ chunk của N-1..N-4 trong RAM/Disk LRU.
+  static const int _maxStandbyPlayers = 2;
   AppPlayerController? _activeController;
   String? _activeMediaKey;
-  AppPlayerController? _standbyController;
-  String? _standbyMediaKey;
-  bool _standbyReady = false;
-  int _standbyRequestId = 0;
+  final List<_FeedStandbyEntry> _standbyEntries = [];
   int? _activePageIndex;
   int _dramaEpisodeSessionKey = 0;
   int _feedGeneration = 0;
   int _activationRequestId = 0;
   Future<void> _playerSwitchTail = Future<void>.value();
-  Future<void> _standbySwitchTail = Future<void>.value();
 
   // Nguồn phát trực tiếp (URL + Content Key CENC) đã nạp trước trong RAM
   final Map<String, HongguoFeedPreparedSource> _preloadedSources = {};
@@ -266,6 +264,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
   Timer? _pageActivateDebounce;
   bool _isPageScrolling = false;
   int? _pendingScrollSettleIndex;
+  bool _wasPlayingBeforeBackground = false;
   DateTime _lastHistoryPositionSaveAt = DateTime.fromMillisecondsSinceEpoch(0);
   int _lastHistorySavedPositionMs = -1;
   String? _lastMarkedWatchedDocKey;
@@ -274,6 +273,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _pendingInitialSeekMs =
         (widget.initialPositionMs != null && widget.initialPositionMs! > 0)
         ? widget.initialPositionMs
@@ -288,6 +288,32 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _bootstrapFeed();
     });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      _cancelCascadingPreload();
+      _flushCurrentFeedPlaybackPosition();
+      final isPlayingNow = _activeController?.value.isPlaying ?? false;
+      if (!_wasPlayingBeforeBackground && !_isManuallyPaused && isPlayingNow) {
+        _wasPlayingBeforeBackground = true;
+        unawaited(_activeController?.player.pause());
+        _ttsScheduler?.pause();
+      }
+    } else if (state == AppLifecycleState.resumed) {
+      if (_wasPlayingBeforeBackground &&
+          !_isManuallyPaused &&
+          _activeController != null &&
+          !_activeController!.isDisposed) {
+        _wasPlayingBeforeBackground = false;
+        unawaited(_activeController!.player.play());
+        _ttsScheduler?.resume();
+        _scheduleCascadingPreloadIfNeeded();
+      }
+    }
   }
 
   String _mediaKey(FeedDramaPageItem item) =>
@@ -314,15 +340,41 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         _mediaKey(_feedItems[_currentIndex]) == mediaKey;
   }
 
-  void _disposeStandbyPlayer() {
-    _standbyRequestId++;
-    _standbySwitchTail = Future<void>.value();
-    final controller = _standbyController;
-    _standbyController = null;
-    _standbyMediaKey = null;
-    _standbyReady = false;
-    if (controller != null && !identical(controller, _activeController)) {
-      controller.dispose();
+  AppPlayerController? _standbyControllerForMediaKey(String? mediaKey) {
+    if (mediaKey == null || mediaKey.isEmpty) return null;
+    for (final entry in _standbyEntries) {
+      if (entry.ready &&
+          entry.mediaKey == mediaKey &&
+          !entry.controller.isDisposed &&
+          !identical(entry.controller, _activeController)) {
+        return entry.controller;
+      }
+    }
+    return null;
+  }
+
+  void _disposeStandbyPlayers() {
+    for (final entry in _standbyEntries) {
+      entry.requestId++;
+      entry.mediaKey = null;
+      entry.ready = false;
+      entry.switchTail = Future<void>.value();
+      if (!identical(entry.controller, _activeController) &&
+          !entry.controller.isDisposed) {
+        entry.controller.dispose();
+      }
+    }
+    _standbyEntries.clear();
+  }
+
+  void _cancelPendingStandbyForMediaKey(String mediaKey) {
+    for (final entry in _standbyEntries) {
+      if (entry.mediaKey == mediaKey && !entry.ready) {
+        entry.requestId++;
+        entry.mediaKey = null;
+        entry.ready = false;
+        unawaited(entry.controller.muteAndPause());
+      }
     }
   }
 
@@ -706,7 +758,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     HongguoDramaDetail detail, {
     int initialEpisode = 1,
   }) {
-    _disposeStandbyPlayer();
+    _disposeStandbyPlayers();
     _feedGeneration++;
     _activationRequestId++;
     _feedItems.clear();
@@ -844,13 +896,13 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _pageActivateDebounce?.cancel();
     _flushCurrentFeedPlaybackPosition();
     _saveSessionToCache();
     _cancelCascadingPreload();
     _activationRequestId++;
     _feedGeneration++;
-    _standbyRequestId++;
     _completedSub?.cancel();
     _errorSub?.cancel();
     _stallWatchdog?.cancel();
@@ -864,12 +916,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     _ttsScheduler = null;
     _liveTranslator?.dispose();
     _liveTranslator = null;
-    final standbyController = _standbyController;
-    _standbyController = null;
-    if (standbyController != null &&
-        !identical(standbyController, _activeController)) {
-      standbyController.dispose();
-    }
+    _disposeStandbyPlayers();
     _activeController?.dispose();
     _activeController = null;
     _preloadedSources.clear();
@@ -906,11 +953,24 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
           currentPos > Duration.zero &&
           currentPos == _lastObservedPos) {
         _stallTickCount++;
-        if (_stallTickCount == 4 || _stallTickCount == 12) {
+        if (_stallTickCount == 4) {
           debugPrint(
             '[HongguoFeedScreen] ⚡ Phục hồi phát video tại $currentPos',
           );
           player.play();
+        } else if (_stallTickCount == 12) {
+          debugPrint(
+            '[HongguoFeedScreen] 🔁 Kích lại nhịp phát (pause->play) tại $currentPos',
+          );
+          unawaited(() async {
+            await player.pause();
+            if (!mounted ||
+                _isManuallyPaused ||
+                _activeController?.player != player) {
+              return;
+            }
+            await player.play();
+          }());
         } else if (_stallTickCount >= 55 && !_isRecoveringDowngrade) {
           _stallTickCount = 0;
           unawaited(
@@ -1022,7 +1082,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     _settings?.hongguoPreferredQuality = qualityKey;
     _excludedRenditionKeys.clear();
     _downgradeAttempts = 0;
-    _disposeStandbyPlayer();
+    _disposeStandbyPlayers();
     _preloadedSources.clear();
     if (_currentIndex >= 0 && _currentIndex < _feedItems.length) {
       _pendingInitialSeekMs =
@@ -1220,22 +1280,47 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     required int feedGeneration,
     required String mediaKey,
   }) async {
-    final preparedController = _standbyController;
-    if (!_standbyReady ||
-        _standbyMediaKey != mediaKey ||
-        preparedController == null ||
-        preparedController.isDisposed) {
+    final standbyIdx = _standbyEntries.indexWhere(
+      (e) =>
+          e.ready &&
+          e.mediaKey == mediaKey &&
+          !e.controller.isDisposed &&
+          !identical(e.controller, _activeController),
+    );
+    if (standbyIdx < 0) {
       return false;
     }
 
+    final preparedEntry = _standbyEntries.removeAt(standbyIdx);
+    preparedEntry.requestId++;
+    preparedEntry.mediaKey = null;
+    preparedEntry.ready = false;
+    final preparedController = preparedEntry.controller;
+
     final previousController = _activeController;
-    _standbyRequestId++;
+    final previousMediaKey = _activeMediaKey;
     _activeController = preparedController;
     _activeMediaKey = mediaKey;
-    _standbyController = previousController;
-    _standbyMediaKey = null;
-    _standbyReady = false;
+    _playerSwitchTail = Future<void>.value();
     _listenToPlayerStreams();
+
+    // Giữ lại player vừa phát (N-1) trong pool để nếu lướt ngược lại không phải tải lại.
+    if (previousController != null &&
+        !previousController.isDisposed &&
+        !identical(previousController, preparedController)) {
+      final preservedEntry = _FeedStandbyEntry(previousController)
+        ..mediaKey = previousMediaKey
+        ..ready = previousMediaKey != null && previousMediaKey.isNotEmpty;
+      _standbyEntries.insert(0, preservedEntry);
+      while (_standbyEntries.length > _maxStandbyPlayers) {
+        final evicted = _evictLeastUsefulStandbyEntry();
+        if (evicted == null) break;
+        if (!identical(evicted.controller, _activeController) &&
+            !evicted.controller.isDisposed) {
+          evicted.controller.dispose();
+        }
+      }
+    }
 
     _loadingIndicatorTimer?.cancel();
     final needsUiReset =
@@ -1282,7 +1367,9 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       if (_pendingInitialSeekMs != null) {
         final seekMs = _pendingInitialSeekMs!;
         _pendingInitialSeekMs = null;
-        if (seekMs > 0) {
+        final curMs = preparedController.value.position.inMilliseconds;
+        // Nếu player trong pool đang dừng đúng gần vị trí cũ (lướt ngược N-1), không cần seek lại.
+        if (seekMs > 0 && (curMs - seekMs).abs() > 1500) {
           unawaited(
             preparedController.player.seek(Duration(milliseconds: seekMs)),
           );
@@ -1346,9 +1433,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
     // Nếu người dùng đến trang khi player dự phòng vẫn đang mở, hủy bản mở
     // dở để active player không phải cạnh tranh decoder/network cho cùng video.
-    if (_standbyMediaKey == mediaKey) {
-      _disposeStandbyPlayer();
-    }
+    _cancelPendingStandbyForMediaKey(mediaKey);
 
     final needsLoadingReset =
         _showLoadingIndicator ||
@@ -1515,22 +1600,24 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         )) {
           return false;
         }
-        if (source!.url.startsWith('http://') ||
-            source.url.startsWith('https://')) {
+        final resolvedSource = source!;
+        if (resolvedSource.url.startsWith('http://') ||
+            resolvedSource.url.startsWith('https://')) {
+          final playUrl = await _toCachedFeedStreamUrl(resolvedSource);
+          final isLocalCache = playUrl.startsWith('http://127.0.0.1:');
           await _activeController!.switchMedia(
-            networkUrl: source.url,
-            decryptionKey: source.decryptionKey,
-            headers: source.headers.isNotEmpty
-                ? source.headers
-                : const {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
-                    'Referer': 'https://novel.snssdk.com/',
-                  },
+            networkUrl: playUrl,
+            decryptionKey: resolvedSource.decryptionKey,
+            headers: isLocalCache
+                ? const {}
+                : (resolvedSource.headers.isNotEmpty
+                      ? resolvedSource.headers
+                      : HongguoFeedSessionCache.defaultStreamHeaders),
             play: false,
           );
         } else {
           await _activeController!.switchMedia(
-            file: File(source.url),
+            file: File(resolvedSource.url),
             play: false,
           );
         }
@@ -1753,29 +1840,47 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     throw StateError('Không thể lấy link phát cho video ${item.vid}');
   }
 
-  void _warmupConnection(String url, CancelToken? cancelToken) {
-    if (cancelToken?.isCancelled == true) return;
-    unawaited(() async {
-      try {
-        final dio = Dio();
-        await dio.head(
-          url,
-          options: Options(
-            headers: const {
-              'User-Agent':
-                  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
-              'Referer': 'https://novel.snssdk.com/',
-            },
-            receiveTimeout: const Duration(seconds: 4),
-            sendTimeout: const Duration(seconds: 4),
-          ),
-          cancelToken: cancelToken,
-        );
-      } catch (_) {}
-    }());
+  Future<String> _toCachedFeedStreamUrl(
+    HongguoFeedPreparedSource source,
+  ) async {
+    if (source.isLocalFile || !FeedByteCacheServer.isCacheableUrl(source.url)) {
+      return source.url;
+    }
+    try {
+      await FeedByteCacheServer.instance.ensureStarted();
+      final headers = source.headers.isNotEmpty
+          ? source.headers
+          : HongguoFeedSessionCache.defaultStreamHeaders;
+      return FeedByteCacheServer.instance.registerStream(
+        url: source.url,
+        headers: headers,
+        cacheKeyHint: '${source.seriesId}_${source.episodeIndex}_${source.vid}',
+      );
+    } catch (_) {
+      return source.url;
+    }
   }
 
-  /// Nạp trước metadata & warm-up kết nối CDN; hỗ trợ CancelToken để bảo vệ băng thông
+  Future<void> _warmStreamBytes(
+    HongguoFeedPreparedSource source, {
+    CancelToken? cancelToken,
+  }) async {
+    if (cancelToken?.isCancelled == true) return;
+    if (source.isLocalFile || !FeedByteCacheServer.isCacheableUrl(source.url)) {
+      return;
+    }
+    final headers = source.headers.isNotEmpty
+        ? source.headers
+        : HongguoFeedSessionCache.defaultStreamHeaders;
+    await FeedByteCacheServer.instance.preloadFirstBytes(
+      url: source.url,
+      headers: headers,
+      cacheKeyHint: '${source.seriesId}_${source.episodeIndex}_${source.vid}',
+      cancelToken: cancelToken,
+    );
+  }
+
+  /// Nạp trước metadata & tải sẵn 1.5MB byte đầu vào FeedByteCacheServer; hỗ trợ CancelToken.
   Future<void> _preloadNextPage(
     int nextIndex, {
     required bool warmStream,
@@ -1791,10 +1896,8 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
     final cachedSource = _preloadedSources[initialMediaKey];
     if (cachedSource != null && cachedSource.url.isNotEmpty) {
-      if (warmStream &&
-          (cachedSource.url.startsWith('http://') ||
-              cachedSource.url.startsWith('https://'))) {
-        _warmupConnection(cachedSource.url, cancelToken);
+      if (warmStream) {
+        await _warmStreamBytes(cachedSource, cancelToken: cancelToken);
       }
       return;
     }
@@ -1840,10 +1943,8 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       }
       _preloadedSources[initialMediaKey] = source;
 
-      if (warmStream &&
-          (source.url.startsWith('http://') ||
-              source.url.startsWith('https://'))) {
-        _warmupConnection(source.url, cancelToken);
+      if (warmStream) {
+        await _warmStreamBytes(source, cancelToken: cancelToken);
       }
     } catch (_) {
     } finally {
@@ -1852,21 +1953,87 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
   }
 
   bool _isStandbyRequestCurrent({
+    required _FeedStandbyEntry entry,
     required int requestId,
     required int feedGeneration,
     required int index,
     required String mediaKey,
-    required AppPlayerController controller,
   }) {
     return mounted &&
-        requestId == _standbyRequestId &&
+        requestId == entry.requestId &&
         feedGeneration == _feedGeneration &&
         index >= 0 &&
         index < _feedItems.length &&
         _mediaKey(_feedItems[index]) == mediaKey &&
-        _standbyMediaKey == mediaKey &&
-        identical(_standbyController, controller) &&
-        !identical(_activeController, controller);
+        entry.mediaKey == mediaKey &&
+        _standbyEntries.contains(entry) &&
+        !identical(_activeController, entry.controller);
+  }
+
+  _FeedStandbyEntry? _evictLeastUsefulStandbyEntry() {
+    if (_standbyEntries.isEmpty) return null;
+    final currentIdx = _currentIndex;
+    final keyToIndex = <String, int>{};
+    for (
+      var i = math.max(0, currentIdx - 6);
+      i < math.min(_feedItems.length, currentIdx + 7);
+      i++
+    ) {
+      keyToIndex[_mediaKey(_feedItems[i])] = i;
+    }
+
+    var worstListIdx = 0;
+    var worstScore = -1;
+    for (var i = 0; i < _standbyEntries.length; i++) {
+      final entry = _standbyEntries[i];
+      final key = entry.mediaKey;
+      if (key == null || key.isEmpty) {
+        worstListIdx = i;
+        break;
+      }
+      final itemIdx = keyToIndex[key];
+      if (itemIdx == null) {
+        worstListIdx = i;
+        break;
+      }
+      final delta = itemIdx - currentIdx;
+      // Ưu tiên giữ: N+1 (0ms lướt tiến) và N-1 (0ms lướt ngược); N+2..N+4 & N-2..N-4
+      // đã có FeedByteCacheServer nạp sẵn 1.5MB đầu trong RAM/Disk nên không cần tốn thêm decoder.
+      final int score;
+      if (delta == 1) {
+        score = 0;
+      } else if (delta == -1) {
+        score = 10;
+      } else if (delta == 2) {
+        score = 25;
+      } else {
+        score = 100 + delta.abs() * 10 + (delta < 0 ? 5 : 0);
+      }
+      if (score > worstScore) {
+        worstScore = score;
+        worstListIdx = i;
+      }
+    }
+    return _standbyEntries.removeAt(worstListIdx);
+  }
+
+  _FeedStandbyEntry _acquireStandbyEntryFor(String mediaKey) {
+    _standbyEntries.removeWhere(
+      (e) => e.controller.isDisposed || identical(e.controller, _activeController),
+    );
+    if (_standbyEntries.length < _maxStandbyPlayers) {
+      final entry = _FeedStandbyEntry(
+        AppPlayerController(bufferSizeMb: 16, silent: true),
+      );
+      _standbyEntries.add(entry);
+      return entry;
+    }
+    final reused = _evictLeastUsefulStandbyEntry()!;
+    reused.requestId++;
+    reused.ready = false;
+    reused.mediaKey = mediaKey;
+    _standbyEntries.add(reused);
+    return reused;
   }
 
   Future<void> _prepareStandbyPlayer(
@@ -1878,31 +2045,29 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
 
     final feedGeneration = _feedGeneration;
     final mediaKey = _mediaKey(_feedItems[index]);
-    if (_activeMediaKey == mediaKey || _standbyMediaKey == mediaKey) return;
+    if (_activeMediaKey == mediaKey) return;
+    final existingIndex = _standbyEntries.indexWhere(
+      (e) =>
+          e.mediaKey == mediaKey &&
+          !e.controller.isDisposed &&
+          !identical(e.controller, _activeController),
+    );
+    if (existingIndex >= 0) return;
 
-    final requestId = ++_standbyRequestId;
-    final existingController = _standbyController;
-    final AppPlayerController controller;
-    if (existingController == null ||
-        existingController.isDisposed ||
-        identical(existingController, _activeController)) {
-      controller = AppPlayerController(bufferSizeMb: 16, silent: true);
-    } else {
-      controller = existingController;
-    }
-
-    _standbyController = controller;
-    _standbyMediaKey = mediaKey;
-    _standbyReady = false;
+    final entry = _acquireStandbyEntryFor(mediaKey);
+    final controller = entry.controller;
+    final requestId = ++entry.requestId;
+    entry.mediaKey = mediaKey;
+    entry.ready = false;
 
     try {
       await _preloadNextPage(index, warmStream: true, cancelToken: cancelToken);
       if (!_isStandbyRequestCurrent(
+            entry: entry,
             requestId: requestId,
             feedGeneration: feedGeneration,
             index: index,
             mediaKey: mediaKey,
-            controller: controller,
           ) ||
           (cancelToken?.isCancelled == true)) {
         return;
@@ -1913,11 +2078,11 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       if (source == null || source.url.isEmpty) {
         source = await _resolveEpisodeStreamSource(item);
         if (!_isStandbyRequestCurrent(
+              entry: entry,
               requestId: requestId,
               feedGeneration: feedGeneration,
               index: index,
               mediaKey: mediaKey,
-              controller: controller,
             ) ||
             (cancelToken?.isCancelled == true)) {
           return;
@@ -1925,70 +2090,75 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
         _preloadedSources[mediaKey] = source;
       }
 
-      final switchFuture = _standbySwitchTail.then<bool>((_) async {
+      final switchFuture = entry.switchTail.then<bool>((_) async {
         if (!_isStandbyRequestCurrent(
+          entry: entry,
           requestId: requestId,
           feedGeneration: feedGeneration,
           index: index,
           mediaKey: mediaKey,
-          controller: controller,
         )) {
           return false;
         }
-        if (source!.url.startsWith('http://') ||
-            source.url.startsWith('https://')) {
+        final resolvedSource = source!;
+        if (resolvedSource.url.startsWith('http://') ||
+            resolvedSource.url.startsWith('https://')) {
+          final playUrl = await _toCachedFeedStreamUrl(resolvedSource);
+          final isLocalCache = playUrl.startsWith('http://127.0.0.1:');
           await controller.switchMedia(
-            networkUrl: source.url,
-            decryptionKey: source.decryptionKey,
-            headers: source.headers.isNotEmpty
-                ? source.headers
-                : const {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
-                    'Referer': 'https://novel.snssdk.com/',
-                  },
+            networkUrl: playUrl,
+            decryptionKey: resolvedSource.decryptionKey,
+            headers: isLocalCache
+                ? const {}
+                : (resolvedSource.headers.isNotEmpty
+                      ? resolvedSource.headers
+                      : HongguoFeedSessionCache.defaultStreamHeaders),
             play: false,
             silentStandby: true,
           );
         } else {
           await controller.switchMedia(
-            file: File(source.url),
+            file: File(resolvedSource.url),
             play: false,
             silentStandby: true,
           );
         }
         await controller.player.setRate(_playbackSpeed);
         return _isStandbyRequestCurrent(
+          entry: entry,
           requestId: requestId,
           feedGeneration: feedGeneration,
           index: index,
           mediaKey: mediaKey,
-          controller: controller,
         );
       });
-      _standbySwitchTail = switchFuture.then<void>(
+      entry.switchTail = switchFuture.then<void>(
         (_) {},
         onError: (Object _, StackTrace _) {},
       );
       final switched = await switchFuture;
       if (!switched) return;
 
-      _standbyReady = true;
+      entry.ready = true;
       await _restoreActivePlaybackAfterStandbyOpen(controller);
     } catch (e) {
       if (_isStandbyRequestCurrent(
+        entry: entry,
         requestId: requestId,
         feedGeneration: feedGeneration,
         index: index,
         mediaKey: mediaKey,
-        controller: controller,
       )) {
         debugPrint('[HongguoFeedScreen] Không thể nạp player kế tiếp: $e');
-        _standbyReady = false;
+        entry.ready = false;
       }
     }
   }
 
-  /// N+1 mở trên standby player; N+2 & N+3 nạp trước Chunk 0 vào RAM/Disk; N+4 nạp URL.
+  /// Cơ chế nạp trước bậc thang chuẩn TikTok/MDL:
+  /// - N+1: Mở sẵn trên standby player + tải sẵn 1.5MB đầu vào FeedByteCacheServer (0ms).
+  /// - N+2, N+3, N+4: Tải sẵn 1.5MB đầu (6-10s đầu) vào RAM/Disk cache mà không tốn thêm decoder.
+  /// - N+5: Phân giải trước URL nguồn phát.
   /// Có cơ chế Bảo Vệ Băng Thông (Bandwidth Gatekeeper) tự động nhường mạng cho video đang xem.
   Future<void> _preloadAheadEpisodes(int currentIndex) async {
     final feedGeneration = _feedGeneration;
@@ -2006,65 +2176,55 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     final cancelToken = CancelToken();
     _cascadingPreloadCancelToken = cancelToken;
 
-    // Đợi 500ms để video hiện tại bắt đầu phát và ổn định nhịp render/audio
-    await Future<void>.delayed(const Duration(milliseconds: 500));
-    if (!isStillCurrent() || cancelToken.isCancelled || _isPlayerBuffering)
+    // Đợi 400ms để video hiện tại bắt đầu phát và ổn định nhịp render/audio
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    if (!isStillCurrent() || cancelToken.isCancelled || _isPlayerBuffering) {
       return;
+    }
 
-    // 1. Bước 1: Nạp N+1 (Standby player + Chunk 0 2MB)
+    // 1. N+1: Mở sẵn trên standby player (qua FeedByteCacheServer nên đồng thời cache 1.5MB đầu)
     final nextIndex = currentIndex + 1;
     if (nextIndex < _feedItems.length) {
       await _prepareStandbyPlayer(nextIndex, cancelToken: cancelToken);
     }
-    if (!isStillCurrent() || cancelToken.isCancelled || _isPlayerBuffering)
+    if (!isStillCurrent() || cancelToken.isCancelled || _isPlayerBuffering) {
       return;
+    }
 
-    // 2. Bước 2: Nạp metadata & warm-up kết nối CDN cho N+2 (DNS, TLS, TCP)
-    final secondNextIndex = currentIndex + 2;
-    if (secondNextIndex < _feedItems.length) {
-      await Future<void>.delayed(const Duration(milliseconds: 250));
-      if (!isStillCurrent() || cancelToken.isCancelled || _isPlayerBuffering)
+    // 2. N+2, N+3, N+4: Nạp trước 1.5MB đầu vào FeedByteCacheServer (không tốn decoder)
+    for (final offset in const [2, 3, 4]) {
+      final targetIdx = currentIndex + offset;
+      if (targetIdx >= _feedItems.length) break;
+      await Future<void>.delayed(const Duration(milliseconds: 140));
+      if (!isStillCurrent() || cancelToken.isCancelled || _isPlayerBuffering) {
         return;
+      }
       await _preloadNextPage(
-        secondNextIndex,
+        targetIdx,
         warmStream: true,
         cancelToken: cancelToken,
       );
     }
-    if (!isStillCurrent() || cancelToken.isCancelled || _isPlayerBuffering)
+    if (!isStillCurrent() || cancelToken.isCancelled || _isPlayerBuffering) {
       return;
-
-    // 3. Bước 3: Nạp metadata & warm-up kết nối CDN cho N+3
-    final thirdNextIndex = currentIndex + 3;
-    if (thirdNextIndex < _feedItems.length) {
-      await Future<void>.delayed(const Duration(milliseconds: 300));
-      if (!isStillCurrent() || cancelToken.isCancelled || _isPlayerBuffering)
-        return;
-      await _preloadNextPage(
-        thirdNextIndex,
-        warmStream: true,
-        cancelToken: cancelToken,
-      );
     }
-    if (!isStillCurrent() || cancelToken.isCancelled || _isPlayerBuffering)
-      return;
 
-    // 4. Bước 4: Nạp trước URL cho N+4 (warmStream: false, chuẩn bị sẵn link CDN)
-    final fourthNextIndex = currentIndex + 4;
-    if (fourthNextIndex < _feedItems.length) {
+    // 3. N+5: Nạp trước URL nguồn phát
+    final fifthNextIndex = currentIndex + 5;
+    if (fifthNextIndex < _feedItems.length) {
       await _preloadNextPage(
-        fourthNextIndex,
+        fifthNextIndex,
         warmStream: false,
         cancelToken: cancelToken,
       );
     }
   }
 
-  /// Duy trì [-2 .. +3] xung quanh vị trí xem trong RAM (Giữ cả tập n-2 theo yêu cầu của bạn).
+  /// Duy trì [-3 .. +5] xung quanh vị trí xem trong RAM (khớp cửa sổ pre-cache byte).
   void _maintainFeedWindow(int currentIndex) {
     if (currentIndex < 0 || currentIndex >= _feedItems.length) return;
     final retainedMediaKeys = <String>{};
-    for (var offset = -2; offset <= 3; offset++) {
+    for (var offset = -3; offset <= 5; offset++) {
       final idx = currentIndex + offset;
       if (idx >= 0 && idx < _feedItems.length) {
         retainedMediaKeys.add(_mediaKey(_feedItems[idx]));
@@ -2094,11 +2254,10 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       HongguoFeedSessionCache.instance.tabIndices[_currentFeedTab] = index;
     }
 
-    // Dừng ngay âm thanh lồng tiếng và tạm dừng nhẹ player cũ trước khi sang tập mới.
+    // Dừng ngay âm thanh lồng tiếng và tạm dừng nhẹ player cũ (không vặn volume lên 100% trước khi pause).
     _ttsScheduler?.stop();
     _ttsScheduler?.setDocument(null);
     unawaited(_activeController?.player.pause());
-    _activeController?.setVolume(1.0);
 
     _maintainFeedWindow(index);
     if (!_isDramaEpisodeMode &&
@@ -2116,10 +2275,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     final nextMediaKey = (index >= 0 && index < _feedItems.length)
         ? _mediaKey(_feedItems[index])
         : null;
-    final hasStandbyReady =
-        _standbyReady &&
-        nextMediaKey != null &&
-        _standbyMediaKey == nextMediaKey;
+    final hasStandbyReady = _standbyControllerForMediaKey(nextMediaKey) != null;
 
     if (!hasStandbyReady) {
       // Bắt đầu nạp trước URL ngầm trong khi PageView đang trôi, chưa chạm player/UI.
@@ -2296,7 +2452,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
       return;
     }
     _flushCurrentFeedPlaybackPosition();
-    _disposeStandbyPlayer();
+    _disposeStandbyPlayers();
     final switchGeneration = ++_feedGeneration;
     _activationRequestId++;
     _isLoadingMore = false;
@@ -2583,7 +2739,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     if (items.isEmpty) return;
 
     _flushCurrentFeedPlaybackPosition();
-    _disposeStandbyPlayer();
+    _disposeStandbyPlayers();
     setState(() {
       _feedGeneration++;
       _activationRequestId++;
@@ -3918,7 +4074,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     if (_isDramaEpisodeMode && _savedDiscoverItems.isNotEmpty) {
       // Quay lại Discover Feed
       _flushCurrentFeedPlaybackPosition();
-      _disposeStandbyPlayer();
+      _disposeStandbyPlayers();
       setState(() {
         _feedGeneration++;
         _activationRequestId++;
@@ -4313,9 +4469,7 @@ class _HongguoFeedScreenState extends State<HongguoFeedScreen>
     final itemMediaKey = _mediaKey(item);
     final pageController = _activeMediaKey == itemMediaKey
         ? _activeController
-        : (_standbyReady && _standbyMediaKey == itemMediaKey
-              ? _standbyController
-              : null);
+        : _standbyControllerForMediaKey(itemMediaKey);
 
     return RepaintBoundary(
       child: Stack(
@@ -8236,4 +8390,14 @@ class _FeedVideoSurface extends StatelessWidget {
       ),
     );
   }
+}
+
+class _FeedStandbyEntry {
+  final AppPlayerController controller;
+  String? mediaKey;
+  bool ready = false;
+  int requestId = 0;
+  Future<void> switchTail = Future<void>.value();
+
+  _FeedStandbyEntry(this.controller);
 }
