@@ -213,7 +213,7 @@ class _HongguoDiscoveryFilterSheetState
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Bộ lọc Thể loại Đa chiều',
+                        'Bộ lọc (筛选)',
                         style: TextStyle(
                           color: palette.textPrimary,
                           fontSize: 16,
@@ -221,7 +221,7 @@ class _HongguoDiscoveryFilterSheetState
                         ),
                       ),
                       Text(
-                        'Kết hợp đồng thời Dạng phim + Bối cảnh + Đối tượng + Chủ đề',
+                        'Chủ đề · Thiết lập · Bối cảnh · Kho nội dung',
                         style: TextStyle(color: palette.textMuted, fontSize: 11),
                       ),
                     ],
@@ -355,9 +355,13 @@ class _HongguoDiscoveryFilterSheetState
                   ),
                   onPressed: () {
                     HapticFeedback.lightImpact();
-                    setState(() => _selection = _selection.resetFilters());
+                    setState(
+                      () => _selection = HongguoDiscoverySelection(
+                        genreKind: _selection.genreKind,
+                      ),
+                    );
                   },
-                  child: const Text('Đặt lại', style: TextStyle(fontSize: 13)),
+                  child: const Text('Xóa lọc', style: TextStyle(fontSize: 13)),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
@@ -394,14 +398,14 @@ class _HongguoDiscoveryFilterSheetState
 
   List<HongguoSelectorGroup> _orderedGroups(List<HongguoSelectorGroup> raw) {
     const priority = <String>[
-      'sort',
-      'category_dim_art_style',
-      'gender',
-      'category_dim_epoch',
       'category_dim_theme',
       'category_dim_role',
+      'category_dim_epoch',
+      'category_dim_art_style',
+      'gender',
       'creation_status',
       'online_time',
+      'sort',
     ];
     final sorted = List<HongguoSelectorGroup>.from(raw);
     sorted.sort((a, b) {
@@ -419,9 +423,12 @@ class _HongguoDiscoveryFilterSheetState
   ) {
     final current = _selection.valueOf(group.type);
     final isSort = group.type == 'sort';
-    final effectiveCurrent = isSort && current.isEmpty ? 'hot_score' : current;
+    final effectiveCurrent = current;
 
-    final isExpanded = _expandedGroups.contains(group.type);
+    final isMainCatalogAxis = group.type == 'category_dim_theme' ||
+        group.type == 'category_dim_role' ||
+        group.type == 'category_dim_epoch';
+    final isExpanded = isMainCatalogAxis || _expandedGroups.contains(group.type);
     const collapseLimit = 14;
     final needsCollapse = !isExpanded && group.options.length > collapseLimit;
     var visibleOptions = needsCollapse
@@ -456,7 +463,7 @@ class _HongguoDiscoveryFilterSheetState
             if (group.type == 'category_dim_epoch')
               Flexible(
                 child: Text(
-                  '(gồm Học đường, Đô thị, Cổ đại...)',
+                  '(Đô thị, Học đường, Cổ đại...)',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
@@ -468,44 +475,114 @@ class _HongguoDiscoveryFilterSheetState
           ],
         ),
         const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            if (!isSort)
+        if (isMainCatalogAxis)
+          LayoutBuilder(
+            builder: (context, constraints) {
+              const spacing = 8.0;
+              final itemWidth = (constraints.maxWidth - spacing * 2) / 3;
+              return Wrap(
+                spacing: spacing,
+                runSpacing: spacing,
+                children: [
+                  for (final opt in visibleOptions)
+                    SizedBox(
+                      width: itemWidth,
+                      child: _buildGridChip(
+                        palette: palette,
+                        accent: accent,
+                        label: opt.viLabel,
+                        isSelected: effectiveCurrent == opt.id,
+                        onTap: () => setState(
+                          () => _selection = _selection.withFilter(
+                            group.type,
+                            effectiveCurrent == opt.id ? '' : opt.id,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              );
+            },
+          )
+        else
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
               _buildChip(
                 palette: palette,
                 accent: accent,
-                label: 'Tất cả',
+                label: isSort ? '✨ Theo tài khoản' : 'Tất cả',
                 isSelected: effectiveCurrent.isEmpty,
                 onTap: () => setState(
                   () => _selection = _selection.withFilter(group.type, ''),
                 ),
               ),
-            for (final opt in visibleOptions)
-              _buildChip(
-                palette: palette,
-                accent: accent,
-                label: opt.viLabel,
-                isSelected: effectiveCurrent == opt.id,
-                onTap: () => setState(
-                  () => _selection = _selection.withFilter(
-                    group.type,
-                    !isSort && effectiveCurrent == opt.id ? '' : opt.id,
+              for (final opt in visibleOptions)
+                _buildChip(
+                  palette: palette,
+                  accent: accent,
+                  label: opt.viLabel,
+                  isSelected: effectiveCurrent == opt.id,
+                  onTap: () => setState(
+                    () => _selection = _selection.withFilter(
+                      group.type,
+                      effectiveCurrent == opt.id ? '' : opt.id,
+                    ),
                   ),
                 ),
-              ),
-            if (needsCollapse)
-              _buildChip(
-                palette: palette,
-                accent: accent,
-                label: 'Xem tất cả (${group.options.length}) ▾',
-                isSelected: false,
-                onTap: () => setState(() => _expandedGroups.add(group.type)),
-              ),
-          ],
-        ),
+              if (needsCollapse)
+                _buildChip(
+                  palette: palette,
+                  accent: accent,
+                  label: 'Xem tất cả (${group.options.length}) ▾',
+                  isSelected: false,
+                  onTap: () => setState(() => _expandedGroups.add(group.type)),
+                ),
+            ],
+          ),
       ],
+    );
+  }
+
+  Widget _buildGridChip({
+    required AppThemePalette palette,
+    required Color accent,
+    required String label,
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: () {
+        HapticFeedback.selectionClick();
+        onTap();
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 140),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 9),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: isSelected
+              ? accent.withValues(alpha: palette.isDark ? 0.22 : 0.14)
+              : palette.surfaceAlt,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: isSelected ? accent : palette.border,
+            width: isSelected ? 1.3 : 0.7,
+          ),
+        ),
+        child: Text(
+          label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: isSelected ? accent : palette.textSecondary,
+            fontSize: 12,
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+          ),
+        ),
+      ),
     );
   }
 

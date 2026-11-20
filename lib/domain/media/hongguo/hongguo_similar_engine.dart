@@ -414,8 +414,8 @@ class HongguoSimilarEngine {
     }
   }
 
-  /// Tạo luồng Shorts đề xuất chuẩn từ ByteDance Official Feed (`bookmall/tab/v1/` -> `cell/change/v1/`),
-  /// hoặc lọc chính xác theo kho nếu `preferredKind` được chỉ định (không trộn Người thật/Hoạt hình/AI).
+  /// Tạo luồng Shorts đề xuất chuẩn từ ByteDance Official Account API (`bookmall/tab/v1/` -> `cell/change/v1/`),
+  /// hoặc lấy luồng tự nhiên cá nhân hóa theo kho nếu `preferredKind` được chỉ định (không trộn thuật toán local).
   Future<List<HongguoDramaItem>> getPersonalizedDiscoverList({
     Set<String>? excludedSeriesIds,
     HongguoGenreKind? preferredKind,
@@ -433,22 +433,15 @@ class HongguoSimilarEngine {
     final result = <HongguoDramaItem>[];
     final localSeen = <String>{...seenIds};
 
-    // Nếu người dùng khóa 1 kho cụ thể (vd chỉ AI / chỉ Hoạt hình) -> truy vấn landpage chính xác theo gu
+    // Nếu khóa 1 kho cụ thể (vd chỉ AI / chỉ Hoạt hình / chỉ Người thật) -> gọi landpage luồng mặc định (sort: [])
+    // để server ByteDance trả đề xuất cá nhân hóa theo tài khoản Hồng Quả.
     if (preferredKind != null) {
-      final topTags = await getTopFavoriteTags(limit: 3);
-      HongguoDiscoverySelection sel = HongguoDiscoverySelection(
-        genreKind: preferredKind,
-        filters: const <String, String>{'sort': 'hot_score'},
-      );
-      if (topTags.isNotEmpty) {
-        final pickedTag = topTags[Random().nextInt(topTags.length)];
-        sel = _discovery.resolveSelectionForTag(
-          pickedTag,
-          preferredSourceCategory: preferredKind.categorySlug,
-        );
-      }
       try {
-        final page = await _discovery.fetchDiscovery(sel, seenIds: localSeen);
+        final page = await _discovery.fetchDiscovery(
+          HongguoDiscoverySelection(genreKind: preferredKind),
+          seenIds: localSeen,
+          useDefaultFeedSort: true,
+        );
         for (final item in page.items) {
           if (localSeen.add(item.seriesId)) {
             result.add(item);
@@ -458,7 +451,7 @@ class HongguoSimilarEngine {
       return result;
     }
 
-    // Chế độ mặc định ("Dành cho bạn"): gọi feed trang chủ chính thức của App Hồng Quả
+    // Chế độ mặc định ("Dành cho bạn"): gọi trực tiếp feed trang chủ chính thức theo tài khoản Hồng Quả
     try {
       _officialFeedCursor = _officialFeedCursor.copyWith(
         seenIds: <String>{..._officialFeedCursor.seenIds, ...seenIds},
@@ -473,28 +466,6 @@ class HongguoSimilarEngine {
         }
       }
     } catch (_) {}
-
-    // Nếu user có gu rõ ràng (topTags), xen kẽ thêm đúng tag qua landpage (giữ đúng định dạng, không search web mù)
-    final topTags = await getTopFavoriteTags(limit: 2);
-    if (topTags.isNotEmpty && result.length < 18) {
-      try {
-        final preferredTag = topTags.first;
-        final kind = _inferPreferredKindFromTags(topTags);
-        final sel = _discovery.resolveSelectionForTag(
-          preferredTag,
-          preferredSourceCategory: kind.categorySlug,
-        );
-        final tagPage = await _discovery.fetchDiscovery(sel, seenIds: localSeen);
-        var added = 0;
-        for (final item in tagPage.items) {
-          if (added >= 6) break;
-          if (localSeen.add(item.seriesId)) {
-            result.add(item);
-            added++;
-          }
-        }
-      } catch (_) {}
-    }
 
     return result;
   }
@@ -614,17 +585,5 @@ class HongguoSimilarEngine {
       directFollowCount: directCount,
       isCloudLoggedIn: isLoggedIn,
     );
-  }
-
-  static HongguoGenreKind _inferPreferredKindFromTags(List<String> tags) {
-    for (final t in tags) {
-      if (t == '漫剧' || t == '2D漫' || t == '3D漫' || t == '动态漫') {
-        return HongguoGenreKind.comicSeries;
-      }
-      if (t == 'AI剧' || t == 'AI短剧') {
-        return HongguoGenreKind.aiSeries;
-      }
-    }
-    return HongguoGenreKind.realPlay;
   }
 }

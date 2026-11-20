@@ -242,6 +242,19 @@ void main() {
       );
       expect(realSchool.genreKind, HongguoGenreKind.realPlay);
       expect(realSchool.valueOf('category_dim_epoch'), 'cate_5315');
+
+      final realVillage = service.resolveSelectionForTag(
+        '乡村',
+        preferredSourceCategory: 'category/real-drama',
+        defaultSort: '',
+      );
+      expect(realVillage.genreKind, HongguoGenreKind.realPlay);
+      expect(realVillage.valueOf('category_dim_epoch'), 'cate_5314');
+      expect(realVillage.valueOf('sort'), isEmpty);
+
+      expect(translateHongguoTag('古言'), 'Ngôn tình cổ đại');
+      expect(translateHongguoTag('现言'), 'Ngôn tình hiện đại');
+      expect(translateHongguoTag('一见钟情'), 'Nhất kiến chung tình');
     });
 
     test('parseDiscoveryResponse extracts dramas, dynamic selectors & next cursor', () {

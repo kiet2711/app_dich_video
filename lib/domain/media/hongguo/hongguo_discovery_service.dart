@@ -139,9 +139,12 @@ const Map<String, String> kHongguoTagLabels = <String, String>{
   '恋爱': 'Yêu đương',
   '都市爱情': 'Đô thị ái tình',
   '古风爱情': 'Cổ phong ái tình',
+  '古言': 'Ngôn tình cổ đại',
+  '现言': 'Ngôn tình hiện đại',
   '奇幻爱情': 'Kỳ ảo ái tình',
   '先婚后爱': 'Cưới trước yêu sau',
   '闪婚': 'Cưới chớp nhoáng',
+  '一见钟情': 'Nhất kiến chung tình',
   '契约': 'Hợp đồng hôn nhân',
   '虐恋': 'Ngược luyến',
   '追妻': 'Truy thê',
@@ -243,13 +246,33 @@ const Map<String, String> kHongguoTagLabels = <String, String>{
   '轻喜剧': 'Hài nhẹ nhàng',
   '黑化归来': 'Hắc hóa trở lại',
 
-  // --- BXH / Khác ---
+  '法律': 'Pháp luật',
+  '刑侦': 'Hình sự / Phá án',
+  '抗战': 'Kháng chiến',
+  '家国情怀': 'Tình cảm gia quốc',
+  '武侠': 'Võ hiệp',
+  '权谋': 'Quyền mưu',
+  '特种兵': 'Đặc công',
+  '医生': 'Bác sĩ',
+  '丧尸': 'Zombie',
+  '黑道': 'Hắc đạo',
+  '灵魂互换': 'Hoán đổi linh hồn',
+  '家长里短': 'Chuyện gia đình',
+  '传承觉醒': 'Thức tỉnh truyền thừa',
+  '反派主角': 'Phản diện chính',
+  '暴富': 'Phất lên bất ngờ',
+  '捞偏门': 'Giới ngầm',
+  '福宝': 'Phúc bảo',
+  '业界精英': 'Tinh anh ngành',
+  '养成系': 'Hệ dưỡng thành',
   '热播榜': 'Thịnh hành',
   '红果热播榜': 'Bảng Hot Hồng Quả',
   '真人剧热播榜': 'Hot Người Thật',
   '漫剧热播榜': 'Hot Hoạt Hình',
   'AI剧热播榜': 'Hot Phim AI',
   '新剧': 'Phim mới',
+  '今日上新': 'Mới hôm nay',
+  '红果首发': 'Độc quyền Hồng Quả',
 };
 
 /// Dịch nhanh tên tag/nhãn tiếng Trung sang tiếng Việt thân thiện.
@@ -967,6 +990,7 @@ class HongguoDiscoveryService {
     String? preferredSourceCategory,
     List<String> categoryIds = const <String>[],
     List<String> allDramaTags = const <String>[],
+    String defaultSort = 'hot_score',
   }) {
     final cleanZh = rawZhTag.replaceAll(RegExp(r'[\[\]#\s]'), '').trim();
 
@@ -985,7 +1009,9 @@ class HongguoDiscoveryService {
     );
 
     final groups = getSelectorGroups(kind);
-    final filters = <String, String>{'sort': 'hot_score'};
+    final filters = <String, String>{
+      if (defaultSort.isNotEmpty) 'sort': defaultSort,
+    };
 
     // 2. Khớp trực tiếp theo tên hiển thị trong selector_rows của đúng kho đó
     bool matchedDirect = false;
@@ -1062,6 +1088,20 @@ class HongguoDiscoveryService {
       case '豪门':
       case '豪门千金':
         filters['category_dim_epoch'] = 'cate_5318';
+        return;
+      case '乡村':
+        filters['category_dim_epoch'] = 'cate_5314';
+        return;
+      case '神豪':
+        filters['category_dim_role'] = 'cate_5203';
+        return;
+      case '古言':
+        filters['category_dim_theme'] = 'cate_5007';
+        filters['gender'] = '0';
+        return;
+      case '现言':
+        filters['category_dim_theme'] = 'cate_5000';
+        filters['gender'] = '0';
         return;
       case '霸总':
       case '总裁':
@@ -1542,13 +1582,13 @@ class HongguoDiscoveryService {
       } catch (_) {}
     }
 
-    // Fallback về landpage hot_score nếu bookmall tạm thời không trả item mới
+    // Fallback về landpage luồng cá nhân hóa mặc định (sort: []) nếu bookmall tạm thời không trả item mới
     final fallbackPage = await fetchDiscovery(
       const HongguoDiscoverySelection(
         genreKind: HongguoGenreKind.realPlay,
-        filters: <String, String>{'sort': 'hot_score'},
       ),
       seenIds: activeCursor.seenIds,
+      useDefaultFeedSort: true,
     );
     return HongguoOfficialFeedPage(
       items: fallbackPage.items,
